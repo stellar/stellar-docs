@@ -1,0 +1,457 @@
+---
+title: Handle Custom Assets
+order: 60
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import { Alert } from "@site/src/components/Alert";
+
+<Alert>
+
+In this section of the tutorial, we'll add the ability to hold and transfer custom assets to the basic wallet we built in previous sections. It asssumes that you've already completed [Build a Basic Wallet](./basic-wallet.mdx) and [Make XLM Payments](./xlm-payments.mdx).
+
+</Alert>
+
+[View pay boilerplate code on GitHub][1]
+
+## What's a Custom Asset?
+
+Stellar allows anyone to easily issue an asset, and all assets can be held, transferred, and traded just like XLM, the network token. Every asset _other_ than XLM exists on the network in the form of trustlines: an asset holder explicitly agrees to allow a balance of a specific token issued by a specific issuing account by creating a persistent ledger entry tied to the holding account. You can find out more in the guide to [creating custom assets](../issuing-assets/index.mdx).
+
+Each trustline increases the user's [base reserve](../glossary/minimum-balance.mdx) by 0.5 XLM, and in this tutorial, we'll go over how to set up your wallet to create trustlines and manage the base reserve on behalf of a user.
+
+## Add Trustlines Button
+
+To enable custom asset handling, we need to modify three files and create one new one. Let’s start with our modifications. First up the `./events/render.tsx` file. We need to add a button for creating these new trustlines!
+
+<CodeExample>
+
+```tsx
+import { h } from "@stencil/core";
+import { has as loHas } from "lodash-es";
+
+export default function render() {
+  return [
+    <stellar-prompt prompter={this.prompter} />,
+
+    this.account ? (
+      [
+        <div class="account-key">
+          <p>{this.account.publicKey}</p>
+          <button
+            class="small"
+            type="button"
+            onClick={(e) => this.copyAddress(e)}
+          >
+            Copy Address
+          </button>
+          <button
+            class="small"
+            type="button"
+            onClick={(e) => this.copySecret(e)}
+          >
+            Copy Secret
+          </button>
+        </div>,
+
+        <button
+          class={this.loading.trust ? "loading" : null}
+          type="button"
+          onClick={(e) => this.trustAsset(e)}
+        >
+          {this.loading.trust ? <stellar-loader /> : null} Trust Asset
+        </button>,
+        <button
+          class={this.loading.pay ? "loading" : null}
+          type="button"
+          onClick={(e) => this.makePayment(e)}
+        >
+          {this.loading.pay ? <stellar-loader /> : null} Make Payment
+        </button>,
+      ]
+    ) : (
+      <button
+        class={this.loading.fund ? "loading" : null}
+        type="button"
+        onClick={(e) => this.createAccount(e)}
+      >
+        {this.loading.fund ? <stellar-loader /> : null} Create Account
+      </button>
+    ),
+
+    this.error ? (
+      <pre class="error">{JSON.stringify(this.error, null, 2)}</pre>
+    ) : null,
+
+    loHas(this.account, "state") ? (
+      <pre class="account-state">
+        {JSON.stringify(this.account.state, null, 2)}
+      </pre>
+    ) : null,
+
+    this.account
+      ? [
+          <button
+            class={this.loading.update ? "loading" : null}
+            type="button"
+            onClick={(e) => this.updateAccount(e)}
+          >
+            {this.loading.update ? <stellar-loader /> : null} Update Account
+          </button>,
+          <button type="button" onClick={(e) => this.signOut(e)}>
+            Sign Out
+          </button>,
+        ]
+      : null,
+  ];
+}
+```
+
+</CodeExample>
+
+If you look closely you’ll spot the Trust Asset button right below our `account-key` div. Nothing funky here, just a button that triggers `this.trustAsset` method which we’ll add in a moment.
+
+Next up, let’s update the `./methods/makePayment.ts` file.
+
+<CodeExample>
+
+```ts
+import sjcl from "@tinyanvil/sjcl";
+import {
+  Keypair,
+  Account,
+  TransactionBuilder,
+  BASE_FEE,
+  Networks,
+  Operation,
+  Asset,
+} from "stellar-sdk";
+import { has as loHas } from "lodash-es";
+
+import { handleError } from "@services/error";
+
+export default async function makePayment(e: Event) {
+  try {
+    e.preventDefault();
+
+    let instructions = await this.setPrompt("{Amount} {Asset} {Destination}");
+    instructions = instructions.split(" ");
+
+    if (!/xlm/gi.test(instructions[1]))
+      instructions[3] = await this.setPrompt(
+        `Who issues the ${instructions[1]} asset?`,
+        "Enter ME to refer to yourself",
+      );
+
+    const pincode = await this.setPrompt("Enter your keystore pincode");
+
+    if (!instructions || !pincode) return;
+
+    const keypair = Keypair.fromSecret(
+      sjcl.decrypt(pincode, this.account.keystore),
+    );
+
+    if (/me/gi.test(instructions[3])) instructions[3] = keypair.publicKey();
+
+    this.error = null;
+    this.loading = { ...this.loading, pay: true };
+
+    await this.server
+      .accounts()
+      .accountId(keypair.publicKey())
+      .call()
+      .then(({ sequence }) => {
+        const account = new Account(keypair.publicKey(), sequence);
+        const transaction = new TransactionBuilder(account, {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET,
+        })
+          .addOperation(
+            Operation.payment({
+              destination: instructions[2],
+              asset: instructions[3]
+                ? new Asset(instructions[1], instructions[3])
+                : Asset.native(),
+              amount: instructions[0],
+            }),
+          )
+          .setTimeout(0)
+          .build();
+
+        transaction.sign(keypair);
+        return this.server.submitTransaction(transaction).catch((err) => {
+          if (
+            // Paying an account which doesn't exist, create it instead
+            loHas(err, "response.data.extras.result_codes.operations") &&
+            err.response.data.status === 400 &&
+            err.response.data.extras.result_codes.operations.indexOf(
+              "op_no_destination",
+            ) !== -1 &&
+            !instructions[3]
+          ) {
+            const transaction = new TransactionBuilder(account, {
+              fee: BASE_FEE,
+              networkPassphrase: Networks.TESTNET,
+            })
+              .addOperation(
+                Operation.createAccount({
+                  destination: instructions[2],
+                  startingBalance: instructions[0],
+                }),
+              )
+              .setTimeout(0)
+              .build();
+
+            transaction.sign(keypair);
+            return this.server.submitTransaction(transaction);
+          } else throw err;
+        });
+      })
+      .then((res) => console.log(res))
+      .finally(() => {
+        this.loading = { ...this.loading, pay: false };
+        this.updateAccount();
+      });
+  } catch (err) {
+    this.error = handleError(err);
+  }
+}
+```
+
+</CodeExample>
+
+This is a big file that was covered in great detail in the [Make XLM Payments](./xlm-payments.mdx) tutorial, so we’ll just focus on the changes we need to make to support custom asset payments.
+
+<CodeExample>
+
+```ts
+let instructions = await this.setPrompt("{Amount} {Asset} {Destination}");
+instructions = instructions.split(" ");
+
+if (!/xlm/gi.test(instructions[1]))
+  instructions[3] = await this.setPrompt(
+    `Who issues the ${instructions[1]} asset?`,
+    "Enter ME to refer to yourself",
+  );
+```
+
+</CodeExample>
+
+This change allows us to indicate a specific asset code we’d like use to make a payment and triggers an additional prompt to set the issuer for that asset if it’s not the native XLM.
+
+<CodeExample>
+
+```ts
+if (/me/gi.test(instructions[3])) instructions[3] = keypair.publicKey();
+```
+
+</CodeExample>
+
+This is just a nifty little helper shortcut to allow us to use the `ME` “issuer” to swap with our actual account publicKey. Niceties make the world go ‘round.
+
+<CodeExample>
+
+```ts
+asset: instructions[3] ? new Asset(instructions[1], instructions[3]) : Asset.native(),
+```
+
+</CodeExample>
+
+The final noteworthy change is a ternary operation that switches our payment asset between the native XLM and a custom asset based off of responses to our prompt. Essentially, if `instructions[3]` exists — meaning there is an issuer — use that issuer and custom token as the asset for the payment. Otherwise, just use the native `Asset`.
+
+The final changes are in the `wallet.ts` itself and tie together all the other updates as well as pull in the new `trustAsset` method.
+
+<CodeExample>
+
+```ts
+import { Component, State, Prop } from "@stencil/core";
+import { Server, ServerApi } from "stellar-sdk";
+
+import componentWillLoad from "./events/componentWillLoad";
+import render from "./events/render";
+
+import createAccount from "./methods/createAccount";
+import updateAccount from "./methods/updateAccount";
+import trustAsset from "./methods/trustAsset"; // NEW
+import makePayment from "./methods/makePayment"; // UPDATE
+import copyAddress from "./methods/copyAddress";
+import copySecret from "./methods/copySecret";
+import signOut from "./methods/signOut";
+import setPrompt from "./methods/setPrompt";
+
+import { Prompter } from "@prompt/prompt";
+
+interface StellarAccount {
+  publicKey: string;
+  keystore: string;
+  state?: ServerApi.AccountRecord;
+}
+
+interface Loading {
+  // UPDATE
+  fund?: boolean;
+  pay?: boolean;
+  trust?: boolean; // NEW
+  update?: boolean;
+}
+
+@Component({
+  tag: "stellar-wallet",
+  styleUrl: "wallet.scss",
+  shadow: true,
+})
+export class Wallet {
+  @State() account: StellarAccount;
+  @State() prompter: Prompter = { show: false };
+  @State() loading: Loading = {};
+  @State() error: any = null;
+
+  @Prop() server: Server;
+
+  // Component events
+  componentWillLoad() {}
+  render() {}
+
+  // Stellar methods
+  createAccount = createAccount;
+  updateAccount = updateAccount;
+  trustAsset = trustAsset; // NEW
+  makePayment = makePayment; // UPDATE
+  copyAddress = copyAddress;
+  copySecret = copySecret;
+  signOut = signOut;
+
+  // Misc methods
+  setPrompt = setPrompt;
+}
+
+Wallet.prototype.componentWillLoad = componentWillLoad;
+Wallet.prototype.render = render;
+```
+
+</CodeExample>
+
+Only thing worth seeing here besides the inclusion of the new `trustAsset` method is the addition of the `trust?: boolean,` in the `Loading` class.
+
+## Add Trustlines
+
+Alright so, finally we get to the `./methods/trustAsset.ts` file!
+
+<CodeExample>
+
+```ts
+import sjcl from "@tinyanvil/sjcl";
+import {
+  Keypair,
+  Account,
+  TransactionBuilder,
+  BASE_FEE,
+  Networks,
+  Operation,
+  Asset,
+} from "stellar-sdk";
+
+import { handleError } from "@services/error";
+
+export default async function trustAsset(
+  e?: Event,
+  asset?: string,
+  issuer?: string,
+  pincode?: string,
+) {
+  try {
+    if (e) e.preventDefault();
+
+    let instructions;
+
+    if (asset && issuer) instructions = [asset, issuer];
+    else {
+      instructions = await this.setPrompt("{Asset} {Issuer}");
+      instructions = instructions.split(" ");
+    }
+
+    pincode = pincode || (await this.setPrompt("Enter your keystore pincode"));
+
+    if (!instructions || !pincode) return;
+
+    const keypair = Keypair.fromSecret(
+      sjcl.decrypt(pincode, this.account.keystore),
+    );
+
+    this.error = null;
+    this.loading = { ...this.loading, trust: true };
+
+    await this.server
+      .accounts()
+      .accountId(keypair.publicKey())
+      .call()
+      .then(({ sequence }) => {
+        const account = new Account(keypair.publicKey(), sequence);
+        const transaction = new TransactionBuilder(account, {
+          fee: BASE_FEE,
+          networkPassphrase: Networks.TESTNET,
+        })
+          .addOperation(
+            Operation.changeTrust({
+              asset: new Asset(instructions[0], instructions[1]),
+            }),
+          )
+          .setTimeout(0)
+          .build();
+
+        transaction.sign(keypair);
+        return this.server.submitTransaction(transaction);
+      })
+      .then((res) => console.log(res))
+      .finally(() => {
+        this.loading = { ...this.loading, trust: false };
+        this.updateAccount();
+      });
+  } catch (err) {
+    this.error = handleError(err);
+  }
+}
+```
+
+</CodeExample>
+
+This is similar to the `makePayment` method but there are a couple tiny tweaks worth noting:
+
+<CodeExample>
+
+```ts
+export default async function trustAsset(
+  e?: Event,
+  asset?: string,
+  issuer?: string,
+  pincode?: string
+) {
+  try {
+    if (e)
+      e.preventDefault()
+
+    let instructions
+
+    if (
+      asset
+      && issuer
+    ) instructions = [asset, issuer]
+
+    else {
+      instructions = await this.setPrompt('{Asset} {Issuer}')
+      instructions = instructions.split(' ')
+    }
+
+    pincode = pincode || await this.setPrompt('Enter your keystore pincode')
+```
+
+</CodeExample>
+
+We’re allowing the inclusion of several arguments in this function, namely `asset`, `issuer`, and `pincode`. We won’t be making use of them here, but transparently creating trustlines from within other functions will prove useful later.
+
+If we have any of those variables set, we can “preload” our interface a bit, and even bypass user input altogether if a pincode is provided. Again, not something we’ll make use of quite yet, but once we look into depositing and withdrawing assets from an Anchor or accepting incoming payments for which we don’t yet have a trustline this functionality will prove useful.
+
+So there we have it! The ability to accept and pay with custom assets on Stellar!
+
+[1]: https://github.com/stellar/docs-wallet/tree/pay
+[3]: https://github.com/stellar/docs-wallet/tree/trustline
