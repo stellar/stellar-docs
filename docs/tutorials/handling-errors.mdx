@@ -1,0 +1,247 @@
+---
+title: Handling Errors Gracefully
+order: 100
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+When working with a payment network like Stellar[,](https://www.youtube.com/watch/TLXo9IFVboY) expecting the unexpected is critical in ensuring a good user experience: one in which money doesn't get lost, actions happen when they're supposed to (or as early as they can), and everyone's view of the network is as accurate as possible.
+
+In many of the tutorials and code samples throughout this documentation, we've minimized the error handling code to reduce verbosity and focus on the essence of the examples. Here, we'll do the exact opposite, because error handling _is_ the essence: by the end, you should be able to categorize errors and understand the best, most idiomatic way to handle them in your application.
+
+This document is broken down into two main sections. In the [first section](#resolution-strategies), we cover the recommended resolution strategies that apply to most error scenarios developers may encounter. Then, in the [second section](#managing-specific-errors), we dive deeper into the errors themselves; refer to this latter section if you have encountered a specific error and want a broader understanding of its causes.
+
+## Resolution Strategies
+
+Despite the fact that there are many ways to interact with the Stellar network through the Horizon API, the possible actions fall into two main categories: **queries** (any `GET` request, like to `/accounts`) and **transaction submissions** (a `POST /transactions`). Though there are a myriad of possible error codes (again, we break some down [later](#managing-specific-errors)) when executing these actions, they can be handled through a few primary strategies:
+
+- **Adjusting the request** to resolve structural errors with queries or transaction submissions is the first line of defense: if you've included a bad parameter, malformed your XDR, or otherwise didn't follow the endpoint's specification, the error can be resolved by referencing the details or result codes of the error response.
+- **Retrying until success** is the recommended way to work around latency or congestion issues encountered anywhere along the pipeline between your machine and the Stellar network. This ephemeral scenario is [unavoidable](https://en.wikipedia.org/wiki/High_availability#%22Nines%22) due to the very nature of a distributed system.
+- **Adjusting the transaction** can also resolve issues but it should only be done with _extreme_ care: if one of the above scenarios is in effect, it's possible to trigger destructive duplicate actions (like sending a payment twice).
+
+Let's dive into these strategies in detail. The main scenario we'll focus on is transaction submission, since it's an action with meaningful side-effects rather than a read-only request.
+
+### Request Adjustments
+
+> We cannot direct the wind, but we can adjust the sails.
+
+Some errors cannot be overcome without changes to the request itself.
+
+#### Queries
+
+Many of the `GET` requests have specific parameter requirements, and while the [SDKs](../software-and-sdks/) can help enforce them, you can still pass invalid arguments (e.g. an asset string that isn't [SEP-11 conformant](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0011.md#asset)) that error out every time. In this scenario, there's nothing you can do aside from following the [API specification](/api) precisely. The `extras` field of the error response will often clue you in on where to look and what to look for:
+
+<CodeExample>
+
+```bash
+curl -s https://horizon-testnet.stellar.org/claimable_balances/0000 | jq '.extras'
+{
+  "invalid_field": "id",
+  "reason": "Invalid claimable balance ID"
+}
+```
+
+</CodeExample>
+
+Note that the SDKs make it a point to distinguish an **invalid request** (as above) vs. a **missing resource** (a `404 Not Found`) (e.g. the generic `NetworkError` vs. a `NotFoundError` in the JavaScript SDK), where the latter might not be considered an error depending on your situation.
+
+#### Transaction Submissions
+
+Certain transaction submission failures also need adjustments to succeed. If the XDR is malformed or the transaction is somehow otherwise invalid, you'll encounter a `400 Bad Request` (for example, when excluding a source account as seen in the [API reference example](/api/errors/response/)). Both transactions and their requisite operations can easily be malformed: look at the `extras.result_codes` field for details and cross-reference them with the appropriate [Result Codes documentation](/api/errors/result-codes/) to determine specifics.
+
+Another class of safe adjustments involves transaction fees: if you get a `tx_insufficient_fee` error, it's worth reading the [later section](#insufficient-fees-and-surge-pricing) to adjust your fee-paying strategy.
+
+### Retrying Until Success
+
+> If at first you don't succeed,\
+> Try, try again.
+
+The old adage rings true in this case. There are many possible scenarios (for example: `504 Timeout`s, transient outages, congestion on the Stellar network) in which retrying your transaction submission is the only viable fallback. This should be considered the last line of defense, though; often-times, the error can be rectified by a [safe modification](#transaction-submissions) to the transaction.
+
+Since there's no mechanism to "cancel" a transaction after it has been submitted, the first key to successful retries is leveraging [timebounds](https://developers.stellar.org/docs/glossary/transactions/#time-bounds): though optional, timebounds allow you to introduce a bit of determinism into an innately non-deterministic system. If the timebound has been exceeded, the transaction has a definitive, final state: either it made it into a ledger or it timed out. The second key comes from a certain Horizon guarantee: **you can safely retry submission as long as you don't modify the transaction**. Specifically,
+
+> If the transaction has already been successfully applied to the ledger, Horizon will simply return the saved result and not attempt to submit the transaction again. Only in cases where a transaction’s status is unknown (and thus will have a chance of being included into a ledger) will a resubmission to the network occur.
+
+_(The above excerpt is from [this example](https://developers.stellar.org/docs/tutorials/send-and-receive-payments/#send-a-payment).)_
+
+In other words, if your transaction makes it through at any point in time, you'll get your previously submitted transaction back for all subsequent retries.
+
+#### Example Scenario
+
+Suppose you submit a transaction and it enters the queue of the Stellar network, but Horizon crashes while giving you a response. Uncertain about the transaction status, you resubmit (with no changes!) until either **(a)** Horizon comes back up to give you a reply or **(b)** your timebounds are exceeded. There are only two possible results: the transaction makes it into a ledger (exactly once!) and Horizon gives you the response, or the transaction never makes it out of the queue and you receive the corresponding `tx_too_late` response.
+
+#### Example Implementation
+
+<CodeExample>
+
+```js
+let server = sdk.Server("horizon.stellar.org");
+
+function submitTransaction(tx, timeout) {
+  if (!tx.timeBounds || tx.timeBounds.maxTime === 0) {
+    throw new Error("Always set a reasonable timebound!");
+  }
+  const expiration = parseInt(tx.timeBounds.maxTime);
+
+  return server.submitTransaction(tx).catch(function (error) {
+    if (isNonRetryErrorCase(error)) {
+      // ...do other error handling...
+      return;
+    }
+
+    // the tx no longer has a chance of making it into a ledger
+    if (Date.now() >= expiration) {
+      return new Error("The transaction timed out.");
+    }
+    
+    timeout = timeout || 1; // start the (linear) back-off process
+    return sleep(timeout).then(function () {
+      return submitTransaction(tx, timeout + 5);
+    });
+  });
+}
+```
+
+</CodeExample>
+
+_(We assume the existence of a `sleep` implementation akin to the one [here](https://stackoverflow.com/a/39914235).)_
+
+#### Details: Retry Backoff
+
+Be sure to integrate backoff into your retry mechanism. In our example error-handling code above, we implement a simple linear backoff, but there are [plenty of recommendations](https://backoff-utils.readthedocs.io/en/latest/strategies.html#why-are-backoff-strategies-useful) out there for various other strategies you can employ. Backoff is important both for maintaining performance and avoiding [rate-limiting](#rate-limiting) issues.
+
+### Unsafe Transaction Adjustments
+
+As outlined in the section on [retries](#retrying-until-success), resubmitting an _unchanged_ (and valid) transaction (with the same operations, signatures, sequence number, etc.) is always safe to do. You should be careful when working around an error that _does_ require changes to the transaction, though: it's very possible to cause **duplication transactions** which can result in all sorts of problems (double-payments, erroneous trustlines, etc.).
+
+#### Example: Invalid Sequence Numbers
+
+These errors typically occur when you have an outdated view of an account due to other transactions happening outside of your worldview. This could be because the account is used on multiple devices, you have concurrent submissions happening, or a number of other reasons. Thankfully, the solution is **usually** relatively simple: retrieve the account details and try again with an updated sequence number.
+
+<CodeExample>
+
+```js
+// suppose `account` is an outdated `AccountResponse` object
+let tx = sdk.TransactionBuilder(account, ...)/* etc */.build()
+server.submitTransaction(tx).catch(function (error)) {
+  if (error.response && error.status == 400 && error.extras && 
+      error.extras.result_codes.transaction == sdk.TX_BAD_SEQ) {
+    return server.accounts()
+      .accountId(account.accountId())
+      .then(function (response) {
+        let tx = sdk.TransactionBuilder(response, ...)/* etc */.build()
+        return server.submitTransaction(tx);
+      });
+  }
+  // ...other error conditions...
+}
+```
+
+</CodeExample>
+
+Despite the solution's simplicity, things can go very wrong very fast if you don't understand _why_ the error occurred.
+
+Suppose you submit transactions from multiple places in your application concurrently, and your user spammed the "Send Payment" button a few times in their impatience. If you try to send the _exact same_ payment transaction for each tap, naturally only one will succeed. The others will fail with an invalid sequence number (`tx_bad_seq`), and if you resubmit blindly with an updated sequence number (as we do above), these payments will **also succeed**, ultimately resulting in more than one payment being made when only one was intended.
+
+In essence, **be very careful with resubmitting transactions that have been modified** to work around an error.
+
+## Managing Specific Errors
+
+This section covers a smattering of specific error cases commonly encountered during transaction submission. Obviously it's impossible to be exhaustive in this list, but we try to explain why certain situations occur and direct you to the appropriate resolution strategy.
+
+### Timeouts
+
+If you receive a `504 Timeout` from Horizon after a transaction submission, you've encountered something a little nebulous and non-traditional in the Stellar universe: timeouts are more of a _warning_ that your request hasn't been fulfilled within a reasonable amount of time _yet_ rather than an error. This subtlety arises because of the nature of the relationship between Horizon and Stellar Core: the network might take some time to accept a transaction—especially one with a low fee, see the discussion of [Surge Pricing](#insufficient-fees-and-surge-pricing) later—on the order of 5-10 minutes during congestion, whereas Horizon needs to provide developers with a response within a reasonable 30 seconds or so.
+
+This leads to a very important point: **receiving a 504 for your transaction submission does not mean the transaction did not make it to the network**. You should continue with [retries](#retrying-until-success) until getting a more definitive response.
+
+If you _continue_ to face timeouts on retries, you may want to consider using a [fee-bump transaction](#bumping-fees-on-past-transactions) to get into the ledger (after timebounds expire, of course) or increasing the maximum fee you're willing to pay. Read on about [surge pricing](#insufficient-fees-and-surge-pricing) for more details.
+
+### Insufficient Fees and Surge Pricing
+
+When the Stellar network undergoes bursts of activity, [surge pricing](https://developers.stellar.org/docs/glossary/fees/#surge-pricing) might kick in. This and other fee fluctuations can cause unexpected errors during transaction submission in applications that don't plan ahead for its dynamic nature. A recent [blog post](https://www.stellar.org/developers-blog/transaction-submission-timeouts-and-dynamic-fees-faq) by the SDF discusses fee surges and other frequently asked questions in much greater detail.
+
+There are two main approaches for dealing with this variance:
+
+1. **Track fee fluctuations** via the [`fee_stats` endpoint](https://developers.stellar.org/api/aggregations/fee-stats/). This can let you make informed, specific choices about the fee you're comfortable paying. Alternatively, simply...
+
+1. **Set the highest fee** you are comfortable with. Crucially, you should remember that _this doesn't mean you'll **pay** that on every transaction_. You will only pay whatever is necessary to get you into the ledger: under normal (non-surge) circumstances, even with a higher _maximum_ fee set, you will pay the _standard_ fee (100 stroops as of this writing).
+
+The latter strategy balances simplicity, efficacy, and convenience, but unless you set your maximum high enough so that it's _never_ exceeded, it can still lead to failures. The former strategy can provide more reliable submissions by allowing tighter guarantees about whether or not a transaction will be accepted. In general, though, it's important to track fee costs: if the network saturates beyond your maximum willingness to pay, perhaps waiting for activity to die down or periodically retrying with the same fee is the best approach for your use case.
+
+If you want to match a fee error **exactly**, you might write something like this:
+
+<CodeExample>
+
+```js
+function isFeeError(error) {
+  return
+    error.response !== undefined && 
+    error.status == 400 &&
+    error.extras &&
+    error.extras.result_codes.transaction == sdk.TX_INSUFFICIENT_FEE;
+}
+```
+
+</CodeExample>
+
+Of course, there are much more streamlined ways to _combine_ errors together, but this will be used below to demonstrate the (very) specific check.
+
+#### Example: Paying 10% above average
+
+Suppose we want a fairly conservative fee-paying strategy: we're only willing to pay a 10% higher fee than the average transaction paid.
+
+<CodeExample>
+
+```js
+// when submitting any transaction, first query fee stats
+server.feeStats().then(function (response) {
+  let avgFee = parseFloat(response.fee_charged.p50);
+  let tx = base.TransactionBuilder(someAccount, {
+    fee: (avgFee * 1.10).toFixed(0),  // bump & convert to int
+    networkPassphrase: // ...
+  });
+  // ...build the rest of the tx... 
+  tx.sign(someAccount);
+  return server.submitTransaction(tx);
+});
+```
+
+</CodeExample>
+
+#### Bumping fees on past transactions
+
+It's possible that even with a liberal fee-paying policy, your transaction fails to make it into the ledger due to insufficient funds or untimely surges. Resolving this problem is exactly the goal of a [fee-bump transaction](/docs/glossary/fee-bumps/). The following snippet shows how you can resubmit a transaction with a higher fee given that you have the original [transaction envelope](../glossary/transactions/#transaction-envelopes):
+
+<CodeExample>
+
+```js
+// Let `lastTx` be some transaction that fails submission due to high fees, and
+// `lastFee` be the maximum fee (expressed as an int) willing to be paid by 
+// `account` for `lastTx`.
+server.submitTransaction(lastTx).catch(function (error) {
+  if (isFeeError(error)) {
+    let bump = sdk.TransactionBuilder.buildFeeBumpTransaction(
+      account,      // account that will PAY the new fee
+      lastFee * 10, // new fee
+      lastTx,       // the (entire) failing transaction
+      server.networkPassphrase
+    );
+    bump.sign(someAccount);
+    return server.submitTransaction(bump);
+  }
+  // ...other error conditions...
+}).then(...);
+```
+
+</CodeExample>
+
+Note an [important stipulation](https://developers.stellar.org/docs/glossary/fee-bumps/#replace-by-fee) of fee bumping that's fulfilled above:
+
+> If you submit two distinct transactions with the same source account and sequence number, and the second transaction is a fee-bump transaction, the second transaction will be included in the transaction queue in place of the first transaction if and only if **the fee bid of the second transaction is at least 10x the fee bid of the first transaction**.
+
+This value can typically be found in the `fee_charged` field of the [transaction response](/api/resources/transactions/object/) under the `tx_insufficient_fee` error case.
+
+### Rate Limiting
+
+If you're using the SDF's public Horizon instance, you may get a `429 Too Many Requests` error when exceeding the [rate limits](/api/introduction/rate-limiting/). If you're encountering this frequently, it may be time to [deploy your own](../run-api-server/) Horizon instance!

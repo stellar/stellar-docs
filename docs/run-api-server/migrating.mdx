@@ -1,0 +1,173 @@
+---
+title: Migrating From 1.x
+order: 15
+---
+
+import { Alert } from "@site/src/components/Alert";
+import { CodeExample } from "@site/src/components/CodeExample";
+
+<Alert>
+
+If you aren't coming from an existing deployment of Horizon, feel free to skip this section and move on to [installing Horizon](./installing.mdx)!
+
+</Alert>
+
+## Introduction
+
+Starting with version v1.6.0, Horizon allows using Stellar Core in "captive" mode for ingestion. This mode has been enabled by default since Horizon 2.0, so even though you can enable captive mode on 1.6+, this migration guide is catered towards upgrading to 2.x due to the stability and configuration improvements introduced in the later versions.
+
+<Alert>
+
+Please note that Horizon team will support the previous non-captive mode for the time being. To use the previous method, set `ENABLE_CAPTIVE_CORE_INGESTION=false` in your ingesting instances. After 6 months, this compatibility flag will be removed.
+
+</Alert>
+
+Please start with the [blog post](https://www.stellar.org/developers-blog/a-new-sun-on-the-horizon) to understand the major changes that Horizon 2.0 introduces with the Captive Core architecture. In summary, Captive Core is a specialized, narrowed-down Stellar-Core instance with the sole aim of emitting transaction metadata to Horizon. It means:
+
+- no separate Stellar Core instance
+- no Core database: everything done in-memory
+- _much_ faster ingestion
+
+Captive Stellar Core completely eliminates all Horizon issues caused by connecting to Stellar Core's database, but it requires extra time to initialize and manage its Stellar Core subprocess. Captive Core can be used in both reingestion (`horizon db reingest range`) and normal Horizon operation (`horizon serve`). In fact, using Captive Core to reingest historical data is considerably faster than without it.
+
+### How It Works
+
+The blog post linked [above](#introduction) gives a high-level overview, while this section dives a little deeper into the technical differences relative to Horizon's relationship with standalone, "Watcher" Core.
+
+When using Captive Core, Horizon runs the `stellar-core` binary as a subprocess. Then, both processes communicate over filesystem pipe: Core sends `xdr.LedgerCloseMeta` structs with information about each ledger and Horizon reads it.
+
+The behaviour is slightly different when reingesting old ledgers and when reading recently closed ledgers:
+
+- **When reingesting**, Stellar Core is started in a special `catchup` mode that simply replays the requested range of ledgers. This mode requires an additional 3GiB of RAM because all ledger entries are stored in memory, making it extremely fast. This mode only depends on the history archives, so a Captive Core configuration (see [below](#configuration)) **is not** required.
+
+- **When reading recently closed ledgers**, Core is started with a normal `run` command. This mode _also_ requires an additional 3GiB of RAM for in-memory ledger entries. In this case, a configuration file (again, read on [below](#configuration)) **is** required in order to configure a quorum set so that it can connect to the Stellar network.
+
+### Known Limitations
+
+As discussed earlier, Captive Core provides much better decoupling for Horizon at the expense of persistence. You should be aware of the following consequences:
+
+- Captive Core requires a couple of minutes to complete the "apply buckets" stage _first_ time Horizon is started, but it should reuse the cached buckets on subsequent restarts (as of Horizon 2.5 and Core 17.1).
+- If the Horizon process terminates, Stellar Core is also terminated (unless you are using [Remote Captive Core](./remote-core.mdx)).
+- Running Horizon now requires more RAM and less disk space. You can refer to the earlier [Prerequisites](./prerequisites.mdx) page for details.
+
+To hedge against these limitations, we recommend running multiple ingesting Horizon servers in a single cluster. This allows other ingesting instances to maintain service without interruptions if a Captive Core instance is restarted.
+
+## Migration
+
+Now, we'll discuss migrating existing systems running the pre-2.0 versions of Horizon to the new Captive Core world.
+
+### Configuration
+
+The first major change from 1.x is how you will configure Horizon. You will no longer need your Stellar Core configuration, but will rather need to craft a configuration file describing Captive Core's behavior. Read [this section](./configuring.mdx#configuring-captive-core) to understand what the stub should contain.
+
+**Your old configuration cannot be used directly**: Horizon needs special settings for Captive Core. Otherwise, running Horizon may fail with the following error, or errors like it:
+
+<CodeExample>
+
+```
+Invalid captive core toml file: LOG_FILE_PATH in captive core config file does not match Horizon captive-core-log-path flag
+```
+
+</CodeExample>
+
+Again, while the Captive Core configuration file may appear to just be a subset of Stellar Core's configuration, you shouldn't think about it that way and treat it as its own format. It may diverge in the future, and not all of Core's options are available to Captive Core.
+
+You should pass the location of this new TOML configuration to the `--captive-core-config-path`/`CAPTIVE_CORE_CONFIG_PATH` command-line flag / environmental variable.
+
+If you want to continue to have access to the underlying Stellar Core subprocess (like you did previously with a standalone Watcher Core), you should set the `HTTP_PORT` field in your configuration file accordingly.
+
+### Installation
+
+Once you have a configuration file ready, you should also modify your Horizon configuration to include Captive Core parameters. Within `/etc/default/stellar-horizon`, you should add:
+
+<CodeExample>
+
+```bash
+# Captive Core Ingestion Config
+ENABLE_CAPTIVE_CORE_INGESTION=true
+STELLAR_CORE_BINARY_PATH=/usr/bin/stellar-core
+CAPTIVE_CORE_CONFIG_PATH=/etc/default/stellar-captive-core.toml
+CAPTIVE_CORE_STORAGE_PATH=/var/lib/stellar
+# end Captive Core
+```
+
+</CodeExample>
+
+You may need to adjust these accordingly, for example by pointing `CAPTIVE_CORE_CONFIG_PATH` to your configuration file and possibly `CAPTIVE_CORE_STORAGE_PATH` to where you'd like Captive Core to store its bucket files (but keep in mind the [disk space](./prerequisites.mdx) and [permissions](./configuring.mdx#package-manager-installation) requirements).
+
+Finally, the process for upgrading both Stellar Core and Horizon is covered [here](https://github.com/stellar/packages/blob/master/docs/upgrading.md#upgrading).
+
+<Alert>
+
+Depending on the version you're migrating from, you may need to include an additional step here: **manual reingestion**. This can still be accomplished with Captive Core; see [below](#reingestion).
+
+</Alert>
+
+### Restarting Services
+
+Now, we can stop Core and restart Horizon:
+
+<CodeExample>
+
+```bash
+sudo systemctl stop stellar-core
+sudo systemctl restart stellar-horizon
+```
+
+</CodeExample>
+
+After a few moments, the logs should show Captive Core running successfully as a subprocess, and eventually Horizon will be running as usual except with Captive Core rapidly generating transaction metadata in-memory!
+
+### A Multi-Machine Setup
+
+If you plan on running Horizon and Captive Core on separate machines, you'll need to read the page on [Remote Captive Core](./remote-core.mdx) for setting that up.
+
+The most important change is that you will need to point Horizon at Captive Core via the `REMOTE_CAPTIVE_CORE_URL` (for the wrapper API) and `STELLAR_CORE_URL` (for the raw Core API, if enabled). For example, via:
+
+<CodeExample>
+
+```bash
+echo "STELLAR_CORE_URL='http://captivecore.local:11626'
+REMOTE_CAPTIVE_CORE_URL='http://captivecore.local:8000'
+" | sudo tee -a /etc/default/stellar-horizon
+```
+
+</CodeExample>
+
+Where `captivecore.local` is the machine on which the Remote Captive Core API wrapper is running.
+
+## Private Networks
+
+If you want your Captive Core instance to connect to a private Stellar network, you will need to specify the validator(s) of the private network in the Captive Core configuration file.
+
+Assuming the validator of your private network has a public key of `GD5KD2KEZJIGTC63IGW6UMUSMVUVG5IHG64HUTFWCHVZH2N2IBOQN7PS` and can be accessed at `private1.validator.com`, then the Captive Core config would consist of the following:
+
+<CodeExample>
+
+```toml
+UNSAFE_QUORUM=true
+FAILURE_SAFETY=0
+
+[[VALIDATORS]]
+NAME="private"
+HOME_DOMAIN="validator.com"
+PUBLIC_KEY="GD5KD2KEZJIGTC63IGW6UMUSMVUVG5IHG64HUTFWCHVZH2N2IBOQN7PS"
+ADDRESS="private1.validator.com"
+QUALITY="MEDIUM"
+```
+
+</CodeExample>
+
+`UNSAFE_QUORUM=true` and `FAILURE_SAFETY=0` are required when there are too few validators in the private network to form a quorum.
+
+You will also need to set `RUN_STANDALONE=false` in the Stellar Core configuration _for the validator_. Otherwise, the validator will not accept connections on its peer port, which means Captive Core will not be able to connect to the validator.
+
+On a new Stellar network, the first history archive snapshot is published after ledger 63 is closed. Captive Core depends on the history archives, which means that Horizon ingestion via Captive Core will not begin until after ledger 63 is closed. Assuming the standard 5 second delay in between ledgers, it will take ~5 minutes for the network to progress from the genesis ledger to ledger 63.
+
+There are cases where you may need to repeatedly create new private networks (e.g. spawning a private network during integration tests) and this 5 minute delay is too costly. In that case, you can consider including `ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING=true` in both the validator configuration and the Captive Core configuration. When this parameter is set, Stellar Core will publish a new ledger every _second_. It will also publish history archive snapshots every 8 ledgers, so you will need to set Horizon's checkpoint frequency parameter (`--checkpoint-frequency`/`CHECKPOINT_FREQUENCY`) to 8.
+
+## Reingestion
+
+After migrating to the Captive Core world, you will assuredly need to reingest your history again.
+
+The [Ingestion guide](./ingestion.mdx#reingestion) should refresh your memory on this: nothing has really changed aside from how quickly reingestion gets done. For example, a [full reingestion](#using-captive-core-to-reingest-the-full-public-network-history) of the entire network only takes ~1.5 days (as opposed to weeks previously) on an [m5.8xlarge](https://aws.amazon.com/ec2/pricing/on-demand/) instance.
