@@ -85,11 +85,6 @@ const config = {
           label: 'API',
           position: 'left'
         },
-        // {
-        //   href: "https://developers.stellar.org/api",
-        //   label: "API",
-        //   position: "right",
-        // },
         {
           href: "https://github.com/stellar/stellar-docs",
           label: "GitHub",
@@ -175,11 +170,11 @@ const config = {
         },
       ],
     },
-    prism: {
+    // prism: {
     //   theme: lightCodeTheme,
     //   darkTheme: darkCodeTheme,
-      // additionalLanguages: ["java"],
-    },
+    //   additionalLanguages: ["java"],
+    // },
   }),
 };
 
