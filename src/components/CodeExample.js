@@ -30,7 +30,7 @@ export const CodeExample = ({ children }) => (
 
         return (
           <TabItem
-            key={index}
+            key={language || index}
             value={language || index}
             label={CODE_LANGS[language] || 'Example'}
           >
