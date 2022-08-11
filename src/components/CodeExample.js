@@ -20,14 +20,13 @@ const CODE_LANGS = {
   yaml: 'YAML',
 };
 
-export const CodeExample = ({ children }) => {
-  return (
+export const CodeExample = ({ children }) => (
     <Tabs groupId="programming-language">
       {React.Children.map(children, (child, index) => {
         const codeProps = child.props.children.props;
         const { className = '' } = codeProps;
 
-        const [_, language] = className.split('-');
+        const [, language] = className.split('-');
 
         return (
           <TabItem
@@ -43,4 +42,3 @@ export const CodeExample = ({ children }) => {
       })}
     </Tabs>
   );
-};
