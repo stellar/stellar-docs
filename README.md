@@ -1,2 +1,2 @@
 # stellar-docs
-Documentation for Stellar
+Documentation for Stellar.
