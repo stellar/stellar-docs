@@ -18,7 +18,23 @@ const config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
-  plugins: ["docusaurus-plugin-sass"],
+  plugins: [
+    "docusaurus-plugin-sass",
+    [
+      'docusaurus-plugin-sentry',
+      {
+        DSN: 'efc31f19f9c54082b8d993bfb62eee57',
+      },
+    ],
+    [
+      '@docusaurus/plugin-google-analytics',
+      {
+        trackingID: 'UA-53373928-1',
+        anonymizeIP: true,
+      },
+    ],
+    require('./src/analytics-module')
+  ],
   presets: [
     [
       "classic",
