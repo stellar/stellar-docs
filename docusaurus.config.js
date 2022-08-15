@@ -1,7 +1,6 @@
 // @ts-check
 
-const lightCodeTheme = require("prism-react-renderer/themes/nightOwl");
-const darkCodeTheme = require("prism-react-renderer/themes/dracula");
+// https://github.com/PrismJS/prism-themes
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -167,8 +166,8 @@ const config = {
       ],
     },
     prism: {
-      theme: lightCodeTheme,
-      darkTheme: darkCodeTheme,
+      theme: require('prism-react-renderer/themes/vsLight'),
+      darkTheme: require('prism-react-renderer/themes/vsDark'),
       additionalLanguages: ["rust", "toml"],
     },
   }),
