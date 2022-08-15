@@ -9,7 +9,7 @@ module.exports = function (context, options) {
             tagName: 'script',
             attributes: {
               charset: 'utf-8',
-              src: 'assets/ga.js',
+              src: '/docs/assets/ga.js',
             },
           },
         ],
