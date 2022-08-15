@@ -7,10 +7,16 @@ module.exports = function (context, options) {
         preBodyTags: [
           {
             tagName: 'script',
-            attributes: {
-              charset: 'utf-8',
-              src: '/docs/assets/ga.js',
-            },
+            innerHTML: `
+              console.log('hello world');
+
+              if (typeof window.ga === "function") {
+                console.log('it worked')
+
+                window.ga("require", "linker");
+                window.ga("linker:autolink", ["www.stellar.org", "stellar.org"]);
+              }
+            `,
           },
         ],
       };
