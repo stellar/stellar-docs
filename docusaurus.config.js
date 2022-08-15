@@ -1,7 +1,7 @@
 // @ts-check
 
-// const lightCodeTheme = require("prism-react-renderer/themes/nightOwl");
-// const darkCodeTheme = require("prism-react-renderer/themes/dracula");
+const lightCodeTheme = require("prism-react-renderer/themes/nightOwl");
+const darkCodeTheme = require("prism-react-renderer/themes/dracula");
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -167,9 +167,9 @@ const config = {
       ],
     },
     prism: {
-      // theme: lightCodeTheme,
-      // darkTheme: darkCodeTheme,
-      // additionalLanguages: ["java"],
+      theme: lightCodeTheme,
+      darkTheme: darkCodeTheme,
+      additionalLanguages: ["rust", "toml"],
     },
   }),
 };
