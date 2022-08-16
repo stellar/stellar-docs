@@ -1,7 +1,5 @@
 // @ts-check
 
-// https://github.com/PrismJS/prism-themes
-
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: "Stellar Documentation",
@@ -166,7 +164,7 @@ const config = {
       ],
     },
     prism: {
-      theme: require('prism-react-renderer/themes/vsLight'),
+      theme: require('prism-react-renderer/themes/github'),
       darkTheme: require('prism-react-renderer/themes/vsDark'),
       additionalLanguages: ["java", "rust", "toml"],
     },
