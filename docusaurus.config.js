@@ -168,7 +168,7 @@ const config = {
     prism: {
       theme: require('prism-react-renderer/themes/vsLight'),
       darkTheme: require('prism-react-renderer/themes/vsDark'),
-      additionalLanguages: ["rust", "toml"],
+      additionalLanguages: ["java", "rust", "toml"],
     },
   }),
 };
