@@ -89,10 +89,9 @@ const config = {
         },
       ],
     },
-    // TODO: update after site is deployed to production
     algolia: {
       appId: "VNSJF5AWIZ",
-      apiKey: "74794f64fb04f6af132c98bea36c985e",
+      apiKey: "c932e7670879e29070e269d202fb6740",
       indexName: "crawler_Stellar Docs - Docusaurus",
     },
     footer: {
