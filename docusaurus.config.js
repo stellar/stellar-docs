@@ -5,7 +5,7 @@ const config = {
   title: "Stellar Documentation",
   tagline: "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
-  baseUrl: "/",
+  baseUrl: "/docs/",
   onBrokenLinks: "warn",
   onBrokenMarkdownLinks: "warn",
   favicon: "img/favicon-96x96.png",
@@ -41,6 +41,7 @@ const config = {
         docs: {
           showLastUpdateTime: true,
           breadcrumbs: true,
+          routeBasePath: "/",
           remarkPlugins: [require("mdx-mermaid")],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main/",
@@ -88,9 +89,10 @@ const config = {
         },
       ],
     },
+    // TODO: update after site is deployed to production
     algolia: {
       appId: "VNSJF5AWIZ",
-      apiKey: "c932e7670879e29070e269d202fb6740",
+      apiKey: "74794f64fb04f6af132c98bea36c985e",
       indexName: "crawler_Stellar Docs - Docusaurus",
     },
     footer: {
