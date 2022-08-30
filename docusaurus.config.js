@@ -1,14 +1,11 @@
 // @ts-check
 
-// const lightCodeTheme = require("prism-react-renderer/themes/nightOwl");
-// const darkCodeTheme = require("prism-react-renderer/themes/dracula");
-
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: "Stellar Documentation",
   tagline: "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
-  baseUrl: "/",
+  baseUrl: "/docs/",
   onBrokenLinks: "warn",
   onBrokenMarkdownLinks: "warn",
   favicon: "img/favicon-96x96.png",
@@ -18,7 +15,23 @@ const config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
-  plugins: ["docusaurus-plugin-sass"],
+  plugins: [
+    "docusaurus-plugin-sass",
+    [
+      'docusaurus-plugin-sentry',
+      {
+        DSN: 'efc31f19f9c54082b8d993bfb62eee57',
+      },
+    ],
+    [
+      '@docusaurus/plugin-google-analytics',
+      {
+        trackingID: 'UA-53373928-1',
+        anonymizeIP: true,
+      },
+    ],
+    require('./src/analytics-module')
+  ],
   presets: [
     [
       "classic",
@@ -28,8 +41,8 @@ const config = {
         docs: {
           showLastUpdateTime: true,
           breadcrumbs: true,
-          routeBasePath: "/docs",
-          // remarkPlugins: [require("mdx-mermaid")],
+          routeBasePath: "/",
+          remarkPlugins: [require("mdx-mermaid")],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main/",
         },
@@ -98,11 +111,10 @@ const config = {
         },
       ],
     },
-    // TODO: update after site is deployed to production
     algolia: {
-      appId: "testingPJZPDNR7VG",
-      apiKey: "1f36375ebbc70d65c5b8165ecf52a1f2",
-      indexName: "crawler_Docusaurus",
+      appId: "VNSJF5AWIZ",
+      apiKey: "c932e7670879e29070e269d202fb6740",
+      indexName: "crawler_Stellar Docs - Docusaurus",
     },
     footer: {
       links: [
@@ -172,11 +184,11 @@ const config = {
         },
       ],
     },
-    // prism: {
-    //   theme: lightCodeTheme,
-    //   darkTheme: darkCodeTheme,
-    //   additionalLanguages: ["java"],
-    // },
+    prism: {
+      theme: require('prism-react-renderer/themes/github'),
+      darkTheme: require('prism-react-renderer/themes/vsDark'),
+      additionalLanguages: ["java", "rust", "toml"],
+    },
   }),
 };
 
