@@ -21,6 +21,8 @@ const CODE_LANGS = {
 };
 
 export const CodeExample = ({ children }) => (
+    // console.log(children),
+
     <Tabs groupId="programming-language">
       {React.Children.map(children, (child, index) => {
         const codeProps = child.props.children.props;
