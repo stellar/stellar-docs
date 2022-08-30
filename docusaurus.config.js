@@ -96,9 +96,9 @@ const config = {
           position: 'left'
         },
         {
-          to: '/api',
-          label: 'API',
-          position: 'left'
+          to: "/api",
+          label: "API",
+          position: "left",
         },
         {
           href: "https://github.com/stellar/stellar-docs",
