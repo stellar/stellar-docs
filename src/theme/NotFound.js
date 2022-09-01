@@ -20,10 +20,10 @@ export default () => {
     const parsedPath = pathname
       .split("/")
       .filter((item) => item && item !== "docs")
-      .map((item) => item.replace("-", " "))
+      .map((item) => item.replace(/-/g, " "))
       .join(" ");
 
-    const parsedHash = hash.substring(1).replace("-", " ");
+    const parsedHash = hash.substring(1).replace(/-/g, " ");
 
     const search = [parsedPath, parsedHash].filter((item) => item).join(" ");
 
