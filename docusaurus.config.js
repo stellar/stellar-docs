@@ -100,11 +100,7 @@ const config = {
           title: "Resources",
           items: [
             {
-              label: "Get Started",
-              href: "https://www.stellar.org/start",
-            },
-            {
-              label: "Learn",
+              label: "Stellar Learn",
               href: "https://www.stellar.org/learn/intro-to-stellar",
             },
             {
@@ -121,10 +117,6 @@ const config = {
           title: "Tools",
           items: [
             {
-              label: "Account Viewer",
-              href: "https://accountviewer.stellar.org/",
-            },
-            {
               label: "Laboratory",
               href: "https://laboratory.stellar.org/",
             },
@@ -136,23 +128,24 @@ const config = {
               label: "Ledger Explorer",
               href: "https://stellar.expert/explorer/public",
             },
-            { label: "All Tools", href: "https://www.stellar.org/tools" },
+            { label: "All Tools", 
+              href: "https://developers.stellar.org/docs/tools-and-sdks/" },
           ],
         },
         {
-          title: "Developers",
+          title: "Community",
           items: [
             {
-              label: "Developer Resources",
-              href: "https://www.stellar.org/developers-legacy",
+              label: "Stellar Developer Discord",
+              href: "https://discord.com/invite/zVYdY3ktTn",
             },
             {
-              label: "Status",
-              href: "https://status.stellar.org/",
+              label: "Stellar Developers Google Group",
+              href: "https://groups.google.com/g/stellar-dev",
             },
             {
-              label: "Technical Papers",
-              to: "https://www.stellar.org/developers/guides/concepts/scp.html",
+              label: "Stellar Stack Exchange",
+              to: "https://stellar.stackexchange.com/",
             },
             {
               label: "Developer Blog",
