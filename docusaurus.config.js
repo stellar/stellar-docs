@@ -42,9 +42,13 @@ const config = {
           showLastUpdateTime: true,
           breadcrumbs: true,
           routeBasePath: "/",
-          remarkPlugins: [require("mdx-mermaid")],
+          remarkPlugins: [
+            require("mdx-mermaid"),
+            require('remark-math')
+          ],
+          rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
-          editUrl: "https://github.com/stellar/stellar-docs/tree/main/",
+          editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         },
         theme: {
           customCss: [require.resolve("./src/css/custom.scss")],
@@ -52,13 +56,21 @@ const config = {
       }),
     ],
   ],
+  stylesheets: [
+    {
+      href: 'https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/katex.min.css',
+      type: 'text/css',
+      integrity: 'sha256-oWCabCfPd4Oi21wqZezBSz/anto4VYcJqc9sM9IzQTk=',
+      crossorigin: 'anonymous',
+    },
+  ],
   themeConfig:
   /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
   ({
     docs: { 
       sidebar: { 
         autoCollapseCategories: false 
-      } 
+      },
     },
     navbar: {
       logo: {
