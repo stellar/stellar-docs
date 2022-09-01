@@ -5,7 +5,7 @@ const config = {
   title: "Stellar Documentation",
   tagline: "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
-  baseUrl: "/docs/",
+  baseUrl: "/",
   onBrokenLinks: "warn",
   onBrokenMarkdownLinks: "warn",
   favicon: "img/favicon-96x96.png",
@@ -41,7 +41,7 @@ const config = {
         docs: {
           showLastUpdateTime: true,
           breadcrumbs: true,
-          routeBasePath: "/",
+          routeBasePath: "/docs",
           remarkPlugins: [require("mdx-mermaid")],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main/",
@@ -187,7 +187,7 @@ const config = {
     prism: {
       theme: require('prism-react-renderer/themes/github'),
       darkTheme: require('prism-react-renderer/themes/vsDark'),
-      additionalLanguages: ["java", "rust", "toml", "json5", "python"],
+      additionalLanguages: ["java", "scala", "rust", "toml", "json5", "python"],
     },
   }),
 };
