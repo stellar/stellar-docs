@@ -79,7 +79,7 @@ const config = {
           position: "right",
         },
         {
-          href: "https://github.com/stellar/stellar-docs",
+          href: "https://github.com/stellar",
           label: "GitHub",
           position: "right",
         },
@@ -100,20 +100,16 @@ const config = {
           title: "Resources",
           items: [
             {
-              label: "Get Started",
-              href: "https://www.stellar.org/start",
-            },
-            {
-              label: "Learn",
-              href: "https://www.stellar.org/learn/intro-to-stellar",
-            },
-            {
-              label: "Case Studies",
-              href: "https://www.stellar.org/case-studies",
+              label: "Developers Blog",
+              href: "https://www.stellar.org/developers-blog",
             },
             {
               label: "Stellar Quest",
               href: "https://quest.stellar.org/",
+            },
+            {
+              label: "Stellar Community Fund",
+              href: "https://communityfund.stellar.org/"
             },
           ],
         },
@@ -121,42 +117,41 @@ const config = {
           title: "Tools",
           items: [
             {
-              label: "Account Viewer",
-              href: "https://accountviewer.stellar.org/",
+              label: "Explorer",
+              href: "https://stellar.expert",
             },
             {
               label: "Laboratory",
-              href: "https://laboratory.stellar.org/",
+              href: "https://laboratory.stellar.org",
+            },
+            {
+              label: "Status",
+              href: "https://status.stellar.org/"
             },
             {
               label: "Dashboard",
               href: "https://dashboard.stellar.org/",
             },
-            {
-              label: "Ledger Explorer",
-              href: "https://stellar.expert/explorer/public",
+            { 
+              label: "All Tools", 
+              href: "https://developers.stellar.org/docs/tools-and-sdks/" 
             },
-            { label: "All Tools", href: "https://www.stellar.org/tools" },
           ],
         },
         {
-          title: "Developers",
+          title: "Community",
           items: [
             {
-              label: "Developer Resources",
-              href: "https://www.stellar.org/developers-legacy",
+              label: "Developers Discord",
+              href: "https://discord.gg/stellardev",
             },
             {
-              label: "Status",
-              href: "https://status.stellar.org/",
+              label: "Developers Google Group",
+              href: "https://groups.google.com/g/stellar-dev",
             },
             {
-              label: "Technical Papers",
-              to: "https://www.stellar.org/developers/guides/concepts/scp.html",
-            },
-            {
-              label: "Developer Blog",
-              href: "https://www.stellar.org/developers-blog",
+              label: "Stack Exchange",
+              href: "https://stellar.stackexchange.com/",
             },
           ],
         },
