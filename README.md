@@ -133,7 +133,7 @@ than one language. See an example including a snippet for `JavaScript` and
 `Python` below. It is using [Prism React Renderer][prism] for syntax
 highlighting.
 
-```markdown
+````markdown
 import { CodeExample } from "@site/src/components/CodeExample";
 
 <CodeExample>
@@ -163,6 +163,30 @@ print(f"Public Key: {pair.public_key}")
 ```
 
 </CodeExample>
+````
+
+Languages that are currently being used in Documentation and API Reference are
+below:
+
+```js
+// https://github.com/stellar/stellar-docs/blob/main/src/components/CodeExample.js
+
+const CODE_LANGS = {
+  bash: 'bash',
+  cpp: 'C++',
+  curl: 'cURL',
+  go: 'Go',
+  html: 'html',
+  java: 'Java',
+  js: 'JavaScript',
+  json: 'JSON',
+  python: 'Python',
+  scss: 'SCSS',
+  toml: 'TOML',
+  ts: 'TypeScript',
+  tsx: 'TSX',
+  yaml: 'YAML',
+};
 ```
 
 [docs]: https://developers.stellar.org/docs
