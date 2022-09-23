@@ -22,12 +22,14 @@ Contributions are more than welcome! Thank you! 🎉
 
 Before diving in, please read our [Stellar Contribution Guide][contrib] for
 details on contributing to Stellar's various repositories. Please take special
-note of the code of conduct and contributor license agreement.
+note of the [code of conduct][coc].
 
 Our documentation site is built using [Docusaurus][docusaurus]. The content is
 written in [MDX][mdx], which adds a lot of cool possibilities. Even if you're
 unfamiliar with plain markdown, do not fear! You can still contribute in a
-helpful and meaningful way.
+helpful and meaningful way. Markdown is super easy to learn, and will come quite
+naturally after only a bit of practice. You can always help fix typos, spelling,
+and broken links, too.
 
 # Quick Start
 
@@ -41,9 +43,9 @@ yarn install
 npx docusaurus start
 ```
 
-This will begin the devlopment server, and open a browser window/tab pointing to
-`http://localhost:3000/docs/`. This development server will auto-reload when it
-detects changes to the repository.
+This will begin the development server, and open a browser window/tab pointing
+to `http://localhost:3000/docs/`. This development server will auto-reload when
+it detects changes to the repository.
 
 # Repository Structure
 
@@ -52,13 +54,13 @@ detects changes to the repository.
   will want to be.
   - `/docs/<subdirectory>/` Each subdirectory inside the `docs` directory
     contains content documents relating to a common idea (asset issuance, or
-    core node administration, for example). There can also be subdirectories
-    nested even further, which will folllow the same rules. The location of a
+    running a validator node, for example). There can also be subdirectories
+    nested even further, which will follow the same rules. The location of a
     document within this directory structure will have a direct impact on the
     URL given to the document on the site (unless there is metadata or front
     matter that overrides these defaults.)
   - `/docs/<subdirectory>/_category_.json` This file contains information that
-    determines the directories location and position within the site's sidebar.
+    determines the directory's location and position within the site's sidebar.
   - `/docs/<subdirectory>/<filename>.mdx` The actual documents live in these
     files (written in Markdown), and also contains "front matter" which can
     specify configuration parameter for the document's display, URL, etc. **All
@@ -72,7 +74,7 @@ detects changes to the repository.
   with this. *Exception*:
   - `/nginx/includes/redirects.conf` Contains redirect rules to avoid broken
     links. If you find a broken link somewhere out in the wilds of the internet,
-    and there's no way for it to be changed, a recirect could be a useful tool.
+    and there's no way for it to be changed, a redirect could be a useful tool.
     (Note our aim isn't to *completely* avoid 404 pages for a user. That would
     be impossible and impractical. These redirects are evaluated on a
     case-by-case basis, and it may be determined that a redirect isn't the right
@@ -83,17 +85,17 @@ detects changes to the repository.
 ## Markdown Basics
 
 If you're unfamiliar with Markdown, there are **loads** of good tutorials and
-cheat-sheets out there. Check out some of these resources to get a handle on the
+cheat sheets out there. Check out some of these resources to get a handle on the
 basics:
 
-- [CommonMark cheatsheet and tutorial][commonmark]
+- [CommonMark cheat sheet and tutorial][commonmark]
 - [Interactive markdown tutorial][tutorial]
 - [The markdown guide][guide]
 
 ## Custom Markdown
 
-Our repository makes use of some custom React components that can be used inside
-the `MDX` documents. Use them as follows:
+Our repository uses some custom React components that can be used inside the
+`MDX` documents. Use them as follows:
 
 **Make sure that there is an empty line within the wrapper.** For example,
 
@@ -193,6 +195,7 @@ const CODE_LANGS = {
 [api]: https://developers.stellar.org/api
 [stellar]: https://stellar.org
 [contrib]: https://github.com/stellar/.github/blob/master/CONTRIBUTING.md
+[coc]: https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md
 [docusaurus]: https://docusaurus.io
 [mdx]: https://mdxjs.com
 [yarn]: https://yarnpkg.com/
