@@ -1,12 +1,10 @@
-# Stellar Documentation and API Reference
+# Stellar Documentation and API Reference <!-- omit in toc -->
 
 Welcome to the official home repository for [Documentation][docs] and
 [API Reference][api] for the [Stellar Network][stellar].
 
-# Table of Contents
+# Table of Contents <!-- omit in toc -->
 
-- [Stellar Documentation and API Reference](#stellar-documentation-and-api-reference)
-- [Table of Contents](#table-of-contents)
 - [Contributing](#contributing)
 - [Quick Start](#quick-start)
 - [Repository Structure](#repository-structure)
