@@ -167,6 +167,27 @@ const config = {
             },
           ],
         },
+        {
+          title: "About",
+          items: [
+            {
+              label: "About SDF",
+              href: "https://stellar.org/foundation",
+            },
+            {
+              label: "Careers",
+              href: "https://stellar.org/foundation/careers",
+            },
+            {
+              label: "Events",
+              href: "https://stellar.org/events",
+            },
+            {
+              label: "Grants & Funding",
+              href: "https://stellar.org/foundation/grants-and-funding",
+            },
+          ],
+        },
       ],
     },
     prism: {
