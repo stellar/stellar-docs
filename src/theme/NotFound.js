@@ -11,19 +11,26 @@ import style from "./NotFound.module.scss";
 
 export default () => {
   const history = useHistory();
-  const { current: pathname } = useRef(history.location.pathname);
+
+  const {
+    current: { pathname, hash },
+  } = useRef({ ...history.location });
 
   useEffect(() => {
-    const searchArray = pathname
+    const parsedPath = pathname
       .split("/")
-      .filter((item) => item !== "" && item !== "docs");
+      .filter((item) => item && item !== "docs")
+      .map((item) => item.replace(/-/g, " "))
+      .join(" ");
 
-    const search = searchArray.join(" ");
+    const parsedHash = hash.substring(1).replace(/-/g, " ");
+
+    const search = [parsedPath, parsedHash].filter((item) => item).join(" ");
 
     const searchInput = document.querySelector('input[type="search"]');
 
     ReactTestUtils.Simulate.change(searchInput, { target: { value: search } });
-  }, [pathname]);
+  }, [pathname, hash]);
 
   return (
     <>
