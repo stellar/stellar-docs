@@ -45,6 +45,14 @@ This will begin the development server, and open a browser window/tab pointing
 to `http://localhost:3000/docs/`. This development server will auto-reload when
 it detects changes to the repository.
 
+After you've made your changes, please use `prettier` to ensure consistent
+formatting throughout the repository:
+
+```bash
+npm run check:mdx # this will search for problems in the MDX files
+npm run format:mdx # this will fix any problems that were found
+```
+
 # Repository Structure
 
 - `/docs/` Contains all the documentation content. If you're contributing to the
