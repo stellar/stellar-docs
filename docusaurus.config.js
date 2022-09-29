@@ -5,7 +5,7 @@ const config = {
   title: "Stellar Documentation",
   tagline: "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
-  baseUrl: "/",
+  baseUrl: "/docs",
   onBrokenLinks: "warn",
   onBrokenMarkdownLinks: "warn",
   favicon: "img/favicon-96x96.png",
