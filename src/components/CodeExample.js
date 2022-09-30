@@ -10,13 +10,16 @@ const CODE_LANGS = {
   go: 'Go',
   html: 'html',
   java: 'Java',
+  javascript: 'JavaScript',
   js: 'JavaScript',
   json: 'JSON',
+  json5: 'JSON5',
   python: 'Python',
   scss: 'SCSS',
   toml: 'TOML',
   ts: 'TypeScript',
   tsx: 'TSX',
+  typescript: 'TypeScript',
   yaml: 'YAML',
 };
 
