@@ -59,7 +59,7 @@ const config = {
         specs: [
           {
             // spec: 'openapi/multi-file/openapi.yaml',
-            spec: 'openapi/main.yml',
+            spec: 'openapi/bundled.yml',
             route: '/api/',
           },
         ],
