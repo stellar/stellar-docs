@@ -5,7 +5,7 @@ const config = {
   title: "Stellar Documentation",
   tagline: "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
-  baseUrl: "/docs/",
+  baseUrl: "/",
   onBrokenLinks: "warn",
   onBrokenMarkdownLinks: "warn",
   favicon: "img/favicon-96x96.png",
@@ -41,12 +41,8 @@ const config = {
         docs: {
           showLastUpdateTime: true,
           breadcrumbs: true,
-          routeBasePath: "/",
-          remarkPlugins: [
-            require("mdx-mermaid"),
-            require('remark-math')
-          ],
-          rehypePlugins: [require('rehype-katex')],
+          routeBasePath: "/docs",
+          remarkPlugins: [require("mdx-mermaid")],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         },
@@ -54,6 +50,28 @@ const config = {
           customCss: [require.resolve("./src/css/custom.scss")],
         },
       }),
+    ],
+
+    [
+      'redocusaurus',
+      {
+        // Plugin Options for loading OpenAPI files
+        specs: [
+          {
+            // spec: 'openapi/multi-file/openapi.yaml',
+            spec: 'openapi/bundled.yml',
+            route: '/api/',
+          },
+        ],
+        // Theme Options for modifying how redoc renders them
+        theme: {
+          // Change with your site colors
+          // primaryColor: '#1890ff',
+          options: { 
+            disableSearch: true 
+          },
+        },
+      },
     ],
   ],
   stylesheets: [
@@ -77,18 +95,18 @@ const config = {
         width: 100,
         src: "img/stellar-logo.svg",
         srcDark: "img/stellar-logo-dark.svg",
-        href: "/",
+        href: "/docs",
       },
       items: [
         {
-          to: '/',
+          to: '/docs',
           label: 'Docs',
           position: 'left'
         },
         {
-          href: "https://developers.stellar.org/api",
+          to: "/api",
           label: "API",
-          position: "right",
+          position: "left",
         },
         {
           href: "https://github.com/stellar",
@@ -193,7 +211,7 @@ const config = {
     prism: {
       theme: require('prism-react-renderer/themes/github'),
       darkTheme: require('prism-react-renderer/themes/vsDark'),
-      additionalLanguages: ["java", "rust", "toml", "json5", "python"],
+      additionalLanguages: ["java", "scala", "rust", "toml", "json5", "python"],
     },
   }),
 };
