@@ -30,6 +30,7 @@ const config = {
         anonymizeIP: true,
       },
     ],
+    require('./src/dev-server-plugin'),
     require('./src/analytics-module')
   ],
   presets: [
