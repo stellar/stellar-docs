@@ -30,16 +30,8 @@ naturally after only a bit of practice. You can always help fix typos, spelling,
 and broken links, too.
 
 # Quick Start
-
-## Codespaces
-
-[![Open in Codespaces](https://github.com/codespaces/badge.svg)][codespaces]
-
-## Gitpod
-
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]  
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][gitpod]
-
-## Locally
 
 To begin development on the documentation, you will first need [yarn][yarn]
 installed on your system. Once it is, you can run the following commands:
