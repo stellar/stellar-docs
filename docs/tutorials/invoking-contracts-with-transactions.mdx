@@ -1,81 +1,112 @@
 ---
 sidebar_position: 11
-title: Invoking Contracts with Stellar Transactions
+title: Invoking and Creating Contracts with Stellar Transactions
 ---
 
 Stellar supports invoking and deploying contracts with a new Operation named `InvokeHostFunctionOp`. The [`soroban-cli`] abstracts these details away from the
-user, but SDKs do not yet and if you're building a dapp you'll probably find yourself building the XDR transaction to submit to
-the network.
+user, but SDKs do not yet and if you're building a dapp you'll probably find yourself building the XDR transaction to submit to the network.
 
-The `InvokeHostFunctionOp` can be used to invoke host functions. Host functions are built-in to Soroban and give the invoker access to:
-- Invoking contract functions.
-- Deploying new contracts.
-- Deploying token contracts for Stellar Assets.
+The `InvokeHostFunctionOp` can be used to perform the following Soroban 
+operations:
+- Invoke contract functions.
+- Install WASM of the new contracts.
+- Deploy new contracts using the installed WASM or built-in implementations (
+  this currently includes only the [token contract](../built-in-contracts/token.mdx)).
 
 [`soroban-cli`]: ../getting-started/setup#install-the-soroban-cli
 
 ## InvokeHostFunctionOp
 
 The XDR of `HostFunction` and `InvokeHostFunctionOp` below can be found
-[here](https://github.com/stellar/stellar-xdr-next/blob/161e2e5b64425a49f9ccfef7f732ae742ed5eec4/Stellar-transaction.x#L477-L496)
+[here](https://github.com/stellar/stellar-xdr/blob/026c9cd074bdb28ddde8ee52f2a4502d9e518a09/Stellar-transaction.x#L523-L539)
 ```c++
-enum HostFunction
+union HostFunction switch (HostFunctionType type)
 {
-    HOST_FN_INVOKE_CONTRACT = 0,
-    HOST_FN_CREATE_CONTRACT_WITH_ED25519 = 1,
-    HOST_FN_CREATE_CONTRACT_WITH_SOURCE_ACCOUNT = 2,
-    HOST_FN_CREATE_TOKEN_CONTRACT_WITH_SOURCE_ACCOUNT = 3,
-    HOST_FN_CREATE_TOKEN_CONTRACT_WITH_ASSET = 4
+case HOST_FUNCTION_TYPE_INVOKE_CONTRACT:
+    SCVec invokeArgs;
+case HOST_FUNCTION_TYPE_CREATE_CONTRACT:
+    CreateContractArgs createContractArgs;
+case HOST_FUNCTION_TYPE_INSTALL_CONTRACT_CODE:
+    InstallContractCodeArgs installContractCodeArgs;
 };
 
 struct InvokeHostFunctionOp
 {
     // The host function to invoke
     HostFunction function;
-
-    // Parameters to the host function
-    SCVec parameters;
-
     // The footprint for this invocation
     LedgerFootprint footprint;
 };
 ```
 
 ### Function
-The `parameters` in `InvokeHostFunctionOp` will be forwarded to the
-`HostFunction` specifed in `function`. The options are - 
-1. `HOST_FN_INVOKE_CONTRACT`
+The `function` in `InvokeHostFunctionOp` will be executed by the Soroban host 
+environment. The function arguments are passed as function-dependent XDR. The
+options are:
+1. `HOST_FUNCTION_TYPE_INVOKE_CONTRACT`
    - This will call the `call_n` host function, invoking a contract function.
-   - `parameters` is
-     expected to contain the contract id, contract function name, and the
-     parameters to the contract function being invoked. 
-2. `HOST_FN_CREATE_CONTRACT_WITH_ED25519`
-   - This is disabled for now. Calling it will result in an error.
-3. `HOST_FN_CREATE_CONTRACT_WITH_SOURCE_ACCOUNT`
-   - This will call the `create_contract_from_source_account` host function,
-     creating a contract using the stellar source account that submitted the
-     transaction. The contract id will be the SHA256 hash of
-     [this](https://github.com/stellar/stellar-xdr-next/blob/161e2e5b64425a49f9ccfef7f732ae742ed5eec4/Stellar-transaction.x#L594) `HashIDPreimage`.
-   - `parameters` is expected to contain two elements: the WASM contract code and a
-     salt. 
-4. `HOST_FN_CREATE_TOKEN_CONTRACT_WITH_SOURCE_ACCOUNT`
-    - This will call the `create_token_from_source_account` host function,
-     creating a [built-in token contract] using the stellar source account that submitted the
-     transaction. The contract id will be the SHA256 hash of
-     [this](https://github.com/stellar/stellar-xdr-next/blob/161e2e5b64425a49f9ccfef7f732ae742ed5eec4/Stellar-transaction.x#L594) `HashIDPreimage`.
-   - `parameters` is expected to contain a salt.
-5. `HOST_FN_CREATE_TOKEN_CONTRACT_WITH_ASSET`
-   - This will call the `create_token_from_asset` host function, creating a
-     [built-in token contract] that wraps a classic Stellar asset.
-     The contract id will be the SHA256 hash of
-     [this](https://github.com/stellar/stellar-xdr-next/blob/161e2e5b64425a49f9ccfef7f732ae742ed5eec4/Stellar-transaction.x#L592) `HashIDPreimage`. `create_token_from_asset` will also initialize the token
-     contract, so the user is not expected to call any intialize functions.
-   - `parameters` is expected to contain a xdr `Asset`.
-
-[built-in token contract]: ../built-in-contracts/token
-
-### Parameters
-This `SCVec` contains the parameters that will be passed to the host function that is being invoked.
+   - `invokeArgs` is expected to contain the contract id, contract function 
+     name, and the parameters to the contract function being invoked. 
+2. `HOST_FUNCTION_TYPE_INSTALL_CONTRACT_CODE`
+   - This will install the contract WASM using the provided `code` blob:
+    ```c++
+    struct InstallContractCodeArgs
+    {
+        opaque code<SCVAL_LIMIT>;
+    };
+    ```
+3. `HOST_FUNCTION_TYPE_CREATE_CONTRACT`
+   - This will create a contract instance in the network using the specified
+     `source` and build a 32-byte contract identifer based on `contractID` value.
+    ```c++
+     struct CreateContractArgs
+     {
+        ContractID contractID;
+        SCContractCode source;
+     };
+     ```
+   - `source` can be either a reference to the hash of the installed WASM (to 
+     be more precise, a SHA-256 hash of the `InstallContractCodeArgs` from the operation above) or just specify that a built-in contract has to be used:
+     ```c++
+     union SCContractCode switch (SCContractCodeType type)
+     {
+     case SCCONTRACT_CODE_WASM_REF:
+         Hash wasm_id;
+     case SCCONTRACT_CODE_TOKEN:
+         void;
+     };
+     ```
+  - `contractID` is defined as following:
+    ```c++
+    union ContractID switch (ContractIDType type)
+    {
+    case CONTRACT_ID_FROM_SOURCE_ACCOUNT:
+        uint256 salt;
+    case CONTRACT_ID_FROM_ED25519_PUBLIC_KEY:
+        struct 
+        {
+            uint256 key;
+            Signature signature;
+            uint256 salt;
+        } fromEd25519PublicKey;
+    case CONTRACT_ID_FROM_ASSET:
+        Asset asset;
+    };
+    ```
+  - The parameters of this value define which the hash preimage that is then hashed
+  with SHA-256 to get the ID of the created contract.  
+  - `CONTRACT_ID_FROM_SOURCE_ACCOUNT` specifies that the contract ID will be created
+  using the Stellar source account and the provided salt. The contract ID 
+  preimage used is [`ENVELOPE_TYPE_CONTRACT_ID_FROM_SOURCE_ACCOUNT`](https://github.com/stellar/stellar-xdr/blob/026c9cd074bdb28ddde8ee52f2a4502d9e518a09/Stellar-transaction.x#L643-L649).
+  - `CONTRACT_ID_FROM_ASSET` specifies that the contract will be created using
+    the Stellar asset. This is only suported when 
+    `source == SCCONTRACT_CODE_TOKEN`. Note, that the asset doesn't need to exist
+    when this is applied, however the issuer of the asset will be the initial
+    token administrator. The contract ID preimage used is [`ENVELOPE_TYPE_CONTRACT_ID_FROM_ASSET`](https://github.com/stellar/stellar-xdr/blob/026c9cd074bdb28ddde8ee52f2a4502d9e518a09/Stellar-transaction.x#L637-L642).
+  - `CONTRACT_ID_FROM_ED25519_PUBLIC_KEY` specified that the contract will be
+  created using a public ED25519 key. Since this operation is not tied to any
+  on-chain entity, this also has to contain an ED25519 signature of SHA256 hash of [`ENVELOPE_TYPE_CREATE_CONTRACT_ARGS`](https://github.com/stellar/stellar-xdr/blob/026c9cd074bdb28ddde8ee52f2a4502d9e518a09/Stellar-transaction.x#L650-L656) XDR 
+  preimage. The contract ID preimage used is [`ENVELOPE_TYPE_CONTRACT_ID_FROM_ED25519`](https://github.com/stellar/stellar-xdr/blob/026c9cd074bdb28ddde8ee52f2a4502d9e518a09/Stellar-transaction.x#L623-L629).
 
 ### Footprint
 The footprint must contain the `LedgerKeys` that will be read and/or written. More
