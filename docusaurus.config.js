@@ -30,8 +30,37 @@ const config = {
         anonymizeIP: true,
       },
     ],
+    [
+      "docusaurus-plugin-openapi-docs",
+      {
+        id: "openapi",
+        docsPluginId: "api",
+        config: {
+          api: {
+            specPath: "openapi/bundled.yml", // Path to designated spec file
+            outputDir: "api/resources", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+              categoryLinkSource: "tag",
+            },
+          },
+        },
+      },
+    ],
+    [
+      "@docusaurus/plugin-content-docs",
+      {
+        id: "api",
+        path: "api",
+        routeBasePath: "api",
+        docLayoutComponent: "@theme/DocPage",
+        docItemComponent: "@theme/ApiItem",
+        sidebarPath: require.resolve("./sidebarsApi.js"),
+      },
+    ],
     require('./src/analytics-module')
   ],
+  themes: ["docusaurus-theme-openapi-docs"],
   presets: [
     [
       "classic",
@@ -50,28 +79,6 @@ const config = {
           customCss: [require.resolve("./src/css/custom.scss")],
         },
       }),
-    ],
-
-    [
-      'redocusaurus',
-      {
-        // Plugin Options for loading OpenAPI files
-        specs: [
-          {
-            // spec: 'openapi/multi-file/openapi.yaml',
-            spec: 'openapi/bundled.yml',
-            route: '/api/',
-          },
-        ],
-        // Theme Options for modifying how redoc renders them
-        theme: {
-          // Change with your site colors
-          // primaryColor: '#1890ff',
-          options: { 
-            disableSearch: true 
-          },
-        },
-      },
     ],
   ],
   stylesheets: [
