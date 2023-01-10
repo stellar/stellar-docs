@@ -30,12 +30,8 @@ naturally after only a bit of practice. You can always help fix typos, spelling,
 and broken links, too.
 
 # Quick Start
-
-## Gitpod
-
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]  
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][gitpod]
-
-## Locally
 
 To begin development on the documentation, you will first need [yarn][yarn]
 installed on your system. Once it is, you can run the following commands:
@@ -219,4 +215,5 @@ const CODE_LANGS = {
 [guide]: https://www.markdownguide.org/
 [alert-example]: https://developers.stellar.org/docs/anchoring-assets/enabling-cross-border-payments/setting-up-test-server
 [prism]: https://github.com/FormidableLabs/prism-react-renderer
+[codespaces]: https://github.com/codespaces/new?hide_repo_select=true&ref=main&repo=521307729&machine=basicLinux32gb&devcontainer_path=.devcontainer%2Fdevcontainer.json&location=EastUs
 [gitpod]: https://gitpod.io/#https://github.com/stellar/stellar-docs
