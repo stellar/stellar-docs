@@ -16,12 +16,11 @@ export const ListItem = (props) => {
     sublist.props.children,
   );
 
-  const type = typeElement.props.children;
-
-  const temp = React.Children.toArray(descriptionElement.props.children);
+  const type =
+    typeElement.props.children === "skip" ? null : typeElement.props.children;
 
   const [description, collapsedChildren] = partition(
-    temp,
+    React.Children.toArray(descriptionElement.props.children),
     (child) => child?.props?.mdxType !== "ul",
   );
 
