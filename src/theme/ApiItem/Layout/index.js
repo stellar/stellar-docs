@@ -12,7 +12,11 @@ const LayoutWrapper = (props) => {
     frontMatter: { api },
   } = useDoc();
 
-  const layout = <Layout {...props} />;
+  const layout = (
+    <div className={styles.LayoutWrapper}>
+      <Layout {...props} />
+    </div>
+  );
 
   if (api) {
     return layout;
@@ -20,7 +24,7 @@ const LayoutWrapper = (props) => {
 
   return (
     <MDXProvider components={{ wrapper: WrapperApiReference }}>
-      <div className={styles.LayoutWrapper}>{layout}</div>
+      {layout}
     </MDXProvider>
   );
 };
