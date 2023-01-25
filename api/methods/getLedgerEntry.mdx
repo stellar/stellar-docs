@@ -100,4 +100,117 @@ console.log(getLedgerKeySymbol(
 ))
 ```
 
+### Requesting a Contract's WASM Code
+
+This can be a bit tricky to wrap your head around, but the conventions do make sense once you let it sink in.
+
+In the previous examples, the `COUNTER` _key_ was used as a `LedgerKey` while the incremented _value_ was stored in a **`LedgerEntry`**. "Ledger Entry" is the relevant term to keep in mind during this discussion. That `LedgerEntry` was stored on the Stellar ledger, and was associated with a corresponding `LedgerKey`. `LedgerKey: LedgerEntry` works the same way you would think of almost any `key: value` storage system.
+
+#### How Soroban Contract Deployment Works
+
+When you deploy a contract, first the code is "installed" (i.e. it is uploaded onto the blockchain). This creates a `LedgerEntry` containing the WASM byte-code, which is uniquely identified by its hash (that is, the hash of the uploaded code itself). Then, when the contract is "deployed," we create a `LedgerEntry` with a reference to that code's hash. So fetching the contract code is a two-step process:
+
+1. First, we look up the contract itself, to see which code hash it is referencing.
+2. Then, we can look up the raw WASM byte-code using that hash.
+
+#### Request the `LedgerKey` for the Contract Code
+
+```python
+def get_ledger_key_contract_code(contract_id):
+    ledger_key = xdr.ledger_key.LedgerKey(
+        type=xdr.ledger_entry_type.LedgerEntryType.CONTRACT_DATA,
+        contract_data=xdr.ledger_key_contract_data.LedgerKeyContractData(
+            contract_id=xdr.hash.Hash(bytes.fromhex(contract_id)),
+            key=xdr.sc_val.SCVal(
+                type=xdr.sc_val_type.SCValType.SCV_STATIC,
+                ic=xdr.sc_static.SCStatic.SCS_LEDGER_KEY_CONTRACT_CODE
+            )
+        )
+    )
+    return ledger_key.to_xdr()
+print(get_ledger_key_contract_code(
+    "1bface23a759c5517463198ed14a4969cb4a774ca7d24f54b2d7c50a80bcaa89"
+))
+# OUTPUT: AAAABhv6ziOnWcVRdGMZjtFKSWnLSndMp9JPVLLXxQqAvKqJAAAAAwAAAAM=
+```
+
+We then take our output from this function, and use it as the `key` parameter in our call to the `getLedgerEntry` method.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8675309,
+  "method": "getLedgerEntry",
+  "params": {
+    "key": "AAAABhv6ziOnWcVRdGMZjtFKSWnLSndMp9JPVLLXxQqAvKqJAAAAAwAAAAM="
+  }
+}
+```
+
+And the response we get contains the `LedgerEntryData` that can be used to find the `hash` we must use to request the WASM byte-code. This hash is the `LedgerKey` that's been associated with the deployed contract code.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8675309,
+  "result": {
+    "xdr": "AAAABhv6ziOnWcVRdGMZjtFKSWnLSndMp9JPVLLXxQqAvKqJAAAAAwAAAAMAAAAEAAAAAQAAAAcAAAAA1CpZRz0BSN27PmqtsmBhv+AAJJwHgmrvJNPrHRAl9l8=",
+    "lastModifiedLedgerSeq": "164303",
+    "latestLedger": "246819"
+  }
+}
+```
+
+#### Request the `ContractCode` Using the Retrieved `LedgerKey`
+
+Now take the `xdr` field from the previous response's `result` object, and create a `LedgerKey` from the hash contained inside.
+
+```python
+def get_ledger_key_wasm_id(contract_code_ledger_entry_data):
+    # First, we dig the wasm_id hash out of the xdr we received from RPC
+    contract_code_wasm_hash = xdr.ledger_entry_data.LedgerEntryData.from_xdr(
+        contract_code_ledger_entry_data
+    ).contract_data.val.obj.contract_code.wasm_id.hash
+    # Now, we can create the `LedgerKey` as we've done in previous examples
+    ledger_key = xdr.ledger_key.LedgerKey(
+        type=xdr.ledger_entry_type.LedgerEntryType.CONTRACT_CODE,
+        contract_code=xdr.ledger_key_contract_code.LedgerKeyContractCode(
+            hash=xdr.hash.Hash(contract_code_wasm_hash)
+        )
+    )
+    return ledger_key.to_xdr()
+print(get_ledger_key_wasm_id(
+    "AAAABhv6ziOnWcVRdGMZjtFKSWnLSndMp9JPVLLXxQqAvKqJAAAAAwAAAAMAAAAEAAAAAQAAAAcAAAAA1CpZRz0BSN27PmqtsmBhv+AAJJwHgmrvJNPrHRAl9l8="
+))
+# OUTPUT: AAAAB9QqWUc9AUjduz5qrbJgYb/gACScB4Jq7yTT6x0QJfZf
+```
+
+Now, finally we have a `LedgerKey` that correspond to the WASM byte-code that has been deployed under the `ContractId` we started out with so very long ago. This `LedgerKey` can be used in a final request to the Soroban-RPC endpoint.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8675309,
+  "method": "getLedgerEntry",
+  "params": {
+    "key": "AAAAB9QqWUc9AUjduz5qrbJgYb/gACScB4Jq7yTT6x0QJfZf"
+  }
+}
+```
+
+And the response we get contains (even more) `LedgerEntryData` that we can decode and parse to get the actual, deployed, real-life contract byte-code. We'll leave that exercise up to you. You can check out what is contained using the ["View XDR" page of the Stellar Laboratory].
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8675309,
+  "result": {
+    "xdr": "AAAABwAAAADUKllHPQFI3bs+aq2yYGG/4AAknAeCau8k0+sdECX2XwAAAakAYXNtAQAAAAEXBWABfgF+YAJ+fgF+YAABfmABfwBgAAACEwMBbAEwAAABbAExAAABbAFfAAEDBgUCAwQEBAUDAQAQBhkDfwFBgIDAAAt/AEGAgMAAC38AQYCAwAALBzUFBm1lbW9yeQIACWluY3JlbWVudAADAV8ABwpfX2RhdGFfZW5kAwELX19oZWFwX2Jhc2UDAgrAAQWhAQMBfwF+AX8jgICAgABBEGsiACSAgICAAAJAAkBC2YP9sqDNAxCAgICAAEIVUg0AAkBC2YP9sqDNAxCBgICAACIBQg+DQgFSDQAgAUIEiKchAgwCCyAAQQhqEISAgIAAAAtBACECCwJAIAJBAWoiAg0AEIWAgIAAAAtC2YP9sqDNAyACrUIEhkIBhCIBEIKAgIAAGiAAQRBqJICAgIAAIAELCQAQhoCAgAAACwkAEIaAgIAAAAsEAAAACwIACwAeEWNvbnRyYWN0ZW52bWV0YXYwAAAAAAAAAAAAAAAbAC8OY29udHJhY3RzcGVjdjAAAAAAAAAACWluY3JlbWVudAAAAAAAAAAAAAABAAAAAQAAAA==",
+    "lastModifiedLedgerSeq": "164302",
+    "latestLedger": "246883"
+  }
+}
+```
+
 [`increment` example contract]: </docs/examples/storing-data>
+["View XDR" page of the Stellar Laboratory]: <https://laboratory.stellar.org/#xdr-viewer?type=LedgerEntryData&network=futurenet>
