@@ -16,6 +16,7 @@ const CODE_LANGS = {
   json5: 'JSON5',
   python: 'Python',
   scss: 'SCSS',
+  sql: 'SQL',
   toml: 'TOML',
   ts: 'TypeScript',
   tsx: 'TSX',
@@ -24,26 +25,26 @@ const CODE_LANGS = {
 };
 
 export const CodeExample = ({ children }) => (
-    // console.log(children),
+  // console.log(children),
 
-    <Tabs groupId="programming-language">
-      {React.Children.map(children, (child, index) => {
-        const codeProps = child.props.children.props;
-        const { className = '' } = codeProps;
+  <Tabs groupId="programming-language">
+    {React.Children.map(children, (child, index) => {
+      const codeProps = child.props.children.props;
+      const { className = '' } = codeProps;
 
-        const [, language] = className.split('-');
+      const [, language] = className.split('-');
 
-        return (
-          <TabItem
-            key={language || index}
-            value={language || index}
-            label={CODE_LANGS[language] || 'Example'}
-          >
-            <CodeBlock language={language} showLineNumbers>
-              {codeProps.children}
-            </CodeBlock>
-          </TabItem>
-        );
-      })}
-    </Tabs>
-  );
+      return (
+        <TabItem
+          key={language || index}
+          value={language || index}
+          label={CODE_LANGS[language] || 'Example'}
+        >
+          <CodeBlock language={language} showLineNumbers>
+            {codeProps.children}
+          </CodeBlock>
+        </TabItem>
+      );
+    })}
+  </Tabs>
+);

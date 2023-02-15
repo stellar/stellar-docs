@@ -1,5 +1,5 @@
 ---
-title: Build a SEP-24 Anchor
+title: SEP-24 User Guide
 sidebar_position: 10
 ---
 
@@ -175,6 +175,7 @@ In your `dev.env` file, specify the following.
 <CodeExample>
 
 ```bash
+# dev.env
 SEP1_ENABLED=true
 SEP1_TYPE=file
 SEP1_VALUE=/home/dev.stellar.toml
@@ -195,6 +196,7 @@ The Anchor Platform supports this form of authentication with minimal configurat
 <CodeExample>
 
 ```bash
+# dev.env
 SEP10_ENABLED=true
 SECRET_SEP10_SIGNING_SEED="a Stellar private key"
 SECRET_SEP10_JWT_SECRET="a secret encryption key"
@@ -211,6 +213,7 @@ By default, the Anchor Platform allows anyone with a Stellar account to authenti
 <CodeExample>
 
 ```bash
+# dev.env
 SEP10_CLIENT_ATTRIBUTION_REQUIRED=true
 SEP10_CLIENT_ATTTRIBUTION_ALLOWLIST=lobstr.co,api.vibrantapp.com,decaf.so,api.beansapp.com
 
@@ -373,7 +376,7 @@ Now that you're in the PostgreSQL console, create the database.
 
 <CodeExample>
 
-```bash
+```sql
 CREATE DATABASE platform;
 ```
 
@@ -393,7 +396,284 @@ You should see the logs reporting a successful connection to the postgres databa
 
 ## Integration
 
+Integrating with the Anchor Platform involves three key areas.
 
+* Building a web-based user experience that can be opened in a mobile web view
+* Providing transaction status updates to the Anchor Platform
+* Fetching transaction status updates from the Anchor Platform
+
+### Building a Web-Based User Experience
+
+The Anchor Platform does not offer a whitelabel UI that your business can utilize, and instead expects the business to build their own UI and backend system. We won't build an entire on & off ramp user experience in this guide, but will cover the ways in which your existing product should be updated to be compatible with the Anchor Platform.
+
+#### Authentication
+
+If your business has an existing on & off ramp product, you likely have an existing system for user authentication. However, because the Anchor Platform authenticates the user prior to providing the business' URL, requiring the user to go through another form of communication is actually unnecessary. In this way, the Anchor Platform can be thought of as providing an alternative form of authentication.
+
+The business is free to continue requiring users to authenticate using their existing system, but the ideal user experience would skip this step and create an authenticated session for the user if they have already authenticated using the Stellar account.
+
+The Anchor Platform adds a JWT `token` query parameter to the business' URL given to the wallet application. This token is signed by the previously-configured `SECRET_SEP24_INTERACTIVE_URL_JWT_SECRET` value, and includes the information you need to identify the user. The process should look something like this:
+
+1. Pass the `token` added to the URL your backend system
+2. Verify the signature on the `token` and check its expiration
+3. Fetch the transaction data using the token's `jti` from the Anchor Platform
+4. Create an authenticated session for the user identified in the transaction
+
+The decoded contents of the `token` will look something like this:
+
+<CodeExample>
+
+```json
+{
+  "jti": "e26cf292-814f-4918-9b40-b4f76a300f98",
+  "sub": "GB244654NC6YPEFU3AY7L25COGES445P3Q63W6Q76JHR3UBJMLT2XBOB:1234567",
+  "exp": 1516239022,
+  "data": {
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "johndoe@example.com",
+  }
+}
+```
+
+</CodeExample>
+
+Note that the `sub` value identifies the user using a Stellar account and integer. This is what the value will be when custodial applications that use an omnibus account authenticate with your service. When non-custodial wallets authenticate, the token may look slightly different.
+
+<CodeExample>
+
+```json
+{
+  "jti": "e26cf292-814f-4918-9b40-b4f76a300f98",
+  "sub": "GB244654NC6YPEFU3AY7L25COGES445P3Q63W6Q76JHR3UBJMLT2XBOB",
+  "exp": 1516239022,
+  "data": {
+    "client_domain": "api.vibrantapp.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "johndoe@example.com",
+  }
+}
+```
+
+</CodeExample>
+
+The `sub` value here only contains a public key to identify the user, and the `data.client_domain` field identifies the wallet application used to authenticate.
+
+In both cases, all information in the `data` object is optional, and will only be present if the wallet provides that information.
+
+Below is an example of a backend server authenticating a user in using NodeJS.
+
+<CodeExample>
+
+```js
+# server.js
+const express = require("express");
+const jwt = require("jsonwebtoken");
+const app = express();
+const port = process.env.PORT;
+
+app.use(express.json());
+
+/*
+ * We'll store user session data in memory, but production systems 
+ * should store this data somewhere more persistent.
+ */
+const sessions = new Set();
+
+/*
+ * Create an authenticated session for the user.
+ *
+ * Return a session token to be used in future requests as well as the
+ * transaction and user data. Note that you may not have a user for the
+ * stellar account provided, in which case the user should go through
+ * your onboarding process.
+ */
+app.post("/session", async (req, res) => {
+  let decodedPlatformToken;
+  try {
+    decodedPlatformToken = validatePlatformToken(req.body.platformToken);
+  } catch (err) {
+    res.status = 400;
+    res.send({ "error": err });
+    return;
+  }
+  let platformTransaction;
+  try {
+    platformTransaction = await getPlatformTransaction(decodedPlatformToken.jti);
+  } catch (err) {
+    res.status = 500;
+    res.send({ "error": err })
+    return;
+  }
+  let sessionToken = jwt.sign(
+    { "jti": platformTransaction.id },
+    process.env.SESSION_JWT_SECRET
+  );
+  sessions.add(sessionToken)
+  res.send({
+    "token": sessionToken,
+    "transaction": platformTransaction,
+    "user": getUser(decodedPlatformToken.sub)
+  });
+});
+
+/*
+ * Validate the signature and contents of the platform's token
+ */
+function validatePlatformToken(token) {
+  if (!token) {
+    throw "missing 'platformToken'";
+  }
+  let decodedToken;
+  try {
+    decodedToken = jwt.verify(token, process.env.SECRET_SEP10_JWT_SECRET);
+  } catch {
+    throw "invalid 'platformToken'";
+  }
+  if (!decodedToken.jti) {
+    throw "invalid 'platformToken': missing 'jti'";
+  }
+  return decodedToken;
+}
+
+/*
+ * Fetch the transaction data from the Platform API
+ *
+ * Production systems should have proper retry mechanisms.
+ */
+async function getPlatformTransaction(transactionId) {
+  let response = await fetch(`${process.env.PLATFORM_SERVER}/transactions/${transactionId}`)
+  if (response.status != 200) {
+    throw `unexpected status code: ${response.status}`;
+  }
+  return await response.json();
+}
+
+/*
+ * Query your own database for the user based on account:memo string parameter
+ */
+function getUser(sub) {
+  return null;
+}
+
+app.listen(port, () => {
+    console.log(`business server listening on port ${port}`);
+});
+```
+
+</CodeExample>
+
+### Providing Updates to the Platform
+
+When the user has provided you the information necessary to facilitate the transaction, you need to update the transaction's status and provide some of the information you collected to the Anchor Platform.
+
+In general, you'll want to provide updates for the following events:
+
+* Your business is ready to receive funds from the user
+* Your business has received funds from the user
+* Your business has sent funds to the user
+* Your business processes a refund for the user's transaction
+* Your business experiences an unexpected error
+
+This is done using the Platform API's `PATCH /transactions` request. This endpoint allows you to update the data returned from the Platform API's `GET /transaction/:id` endpoint as well as the data provided to wallet applications through the applicable SEP endpoints.
+
+:::note
+
+In the next major release (version 3.0) of the Anchor Platform, we'll be replacing the `PATCH /transactions` Platform API endpoint with a JSON RPC endpoint that will simplify the request schema, provide better validiation of data, and make the interface easier to understand in general.
+
+:::
+
+<CodeExample>
+
+```js
+# server.js
+
+app.post("/transaction", async (req, res) => {
+  let sessionToken;
+  try {
+    sessionToken = validateSessionToken(req.headers.get("authorization"));
+  } catch (err) {
+    res.status = 400;
+    res.send({ "error": err })
+    return;
+  }
+  let patchTransactionBody = {
+    "id": "e26cf292-814f-4918-9b40-b4f76a300f98",
+    "status": "pending_user_transfer_start",
+    "amount_in": {
+      "asset": "iso4217:USD",
+      "amount": "103"
+    },
+    "amount_fee": {
+      "asset": "iso4217:USD",
+      "amount": "3"
+    },
+    "amount_out": {
+      "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "amount": "100"
+    },
+    "message": "waiting for the user to provide off-chain funds."
+  };
+  let platformResponse;
+  try {
+    platformResponse = await updatePlatformTransaction(patchTransactionBody);
+  } catch (err) {
+    res.status = 500;
+    res.send({ "error": err })
+    return;
+  }
+  res.send({
+    "transaction": platformResponse.records[0]
+  });
+});
+
+function validateSessionToken(authorizationHeader) {
+    let parts = authorizationHeader.split(" ");
+    if (parts.length != 2 || parts[0] != "Bearer") {
+        throw "invalid authorization header format";
+    }
+    let sessionToken = parts[1];
+    try {
+        jwt.verify(sessionToken, process.env.SESSION_JWT_SECRET);
+    } catch {
+        throw "invalid session token";
+    }
+    if (!sessions.has(sessionToken)) {
+        throw "expired session";
+    }
+    return sessionToken;
+}
+
+async function updatePlatformTransaction(requestBody) {
+  let response = await fetch(
+    `${process.env.PLATFORM_SERVER}/transactions`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    }
+  );
+  if (response.status != 200) {
+    throw `unexpected status code: ${response.status}`;
+  }
+  return await response.json();
+}
+```
+
+</CodeExample>
+
+This will update the Anchor Platform's database with the information provided and enable wallet applications to fetch this updated information to relay it back to the user. The user should already be aware of the transaction amounts and that your business is waiting for the fiat deposit to arrive, but providing these updates allows wallets to display the current status of all transactions the user has with your business.
+
+:::note
+
+At this time, the Anchor Platform does not send notifications to the wallet application when transaction statuses change, however, it is on our roadmap to add these notifications or "callback requests" so that wallet applications do not have to poll the Anchor Platform for updates.
+
+:::
+
+### Fetching Updates from the Platform
 
 [sep-1]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
 [sep-24]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md
