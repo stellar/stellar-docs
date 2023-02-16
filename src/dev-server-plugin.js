@@ -7,10 +7,10 @@ module.exports = () => ({
         host: '0.0.0.0',
         client: {
           webSocketURL: {
-            port: 0
-          }
-        }
-      }
-    }
-  }
-})
+            port: 0,
+          },
+        },
+      },
+    };
+  },
+});
