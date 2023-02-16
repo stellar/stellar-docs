@@ -66,137 +66,137 @@ const config = {
     },
   ],
   themeConfig:
-  /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
-  ({
-    docs: { 
-      sidebar: { 
-        autoCollapseCategories: false 
+    /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
+    ({
+      docs: {
+        sidebar: {
+          autoCollapseCategories: false
+        },
       },
-    },
-    navbar: {
-      logo: {
-        width: 100,
-        src: "img/stellar-logo.svg",
-        srcDark: "img/stellar-logo-dark.svg",
-        href: "/",
+      navbar: {
+        logo: {
+          width: 100,
+          src: "img/stellar-logo.svg",
+          srcDark: "img/stellar-logo-dark.svg",
+          href: "/",
+        },
+        items: [
+          {
+            to: '/',
+            label: 'Docs',
+            position: 'left'
+          },
+          {
+            href: "https://developers.stellar.org/api",
+            label: "API",
+            position: "right",
+          },
+          {
+            href: "https://github.com/stellar",
+            label: "GitHub",
+            position: "right",
+          },
+          {
+            type: "search",
+            position: "right",
+          },
+        ],
       },
-      items: [
-        {
-          to: '/',
-          label: 'Docs',
-          position: 'left'
-        },
-        {
-          href: "https://developers.stellar.org/api",
-          label: "API",
-          position: "right",
-        },
-        {
-          href: "https://github.com/stellar",
-          label: "GitHub",
-          position: "right",
-        },
-        {
-          type: "search",
-          position: "right",
-        },
-      ],
-    },
-    algolia: {
-      appId: "VNSJF5AWIZ",
-      apiKey: "c932e7670879e29070e269d202fb6740",
-      indexName: "crawler_Stellar Docs - Docusaurus",
-    },
-    footer: {
-      links: [
-        {
-          title: "Resources",
-          items: [
-            {
-              label: "Developers Blog",
-              href: "https://www.stellar.org/developers-blog",
-            },
-            {
-              label: "Stellar Quest",
-              href: "https://quest.stellar.org/",
-            },
-            {
-              label: "Stellar Community Fund",
-              href: "https://communityfund.stellar.org/"
-            },
-          ],
-        },
-        {
-          title: "Tools",
-          items: [
-            {
-              label: "Explorer",
-              href: "https://stellar.expert",
-            },
-            {
-              label: "Laboratory",
-              href: "https://laboratory.stellar.org",
-            },
-            {
-              label: "Status",
-              href: "https://status.stellar.org/"
-            },
-            {
-              label: "Dashboard",
-              href: "https://dashboard.stellar.org/",
-            },
-            { 
-              label: "All Tools", 
-              href: "https://developers.stellar.org/docs/tools-and-sdks/" 
-            },
-          ],
-        },
-        {
-          title: "Community",
-          items: [
-            {
-              label: "Developers Discord",
-              href: "https://discord.gg/stellardev",
-            },
-            {
-              label: "Developers Google Group",
-              href: "https://groups.google.com/g/stellar-dev",
-            },
-            {
-              label: "Stack Exchange",
-              href: "https://stellar.stackexchange.com/",
-            },
-          ],
-        },
-        {
-          title: "About",
-          items: [
-            {
-              label: "About SDF",
-              href: "https://stellar.org/foundation",
-            },
-            {
-              label: "Careers",
-              href: "https://stellar.org/foundation/careers",
-            },
-            {
-              label: "Events",
-              href: "https://stellar.org/events",
-            },
-            {
-              label: "Grants & Funding",
-              href: "https://stellar.org/foundation/grants-and-funding",
-            },
-          ],
-        },
-      ],
-    },
-    prism: {
-      theme: require('prism-react-renderer/themes/github'),
-      darkTheme: require('prism-react-renderer/themes/vsDark'),
-      additionalLanguages: ["java", "rust", "toml", "json5", "python"],
-    },
-  }),
+      algolia: {
+        appId: "VNSJF5AWIZ",
+        apiKey: "c932e7670879e29070e269d202fb6740",
+        indexName: "crawler_Stellar Docs - Docusaurus",
+      },
+      footer: {
+        links: [
+          {
+            title: "Resources",
+            items: [
+              {
+                label: "Developers Blog",
+                href: "https://www.stellar.org/developers-blog",
+              },
+              {
+                label: "Stellar Quest",
+                href: "https://quest.stellar.org/",
+              },
+              {
+                label: "Stellar Community Fund",
+                href: "https://communityfund.stellar.org/"
+              },
+            ],
+          },
+          {
+            title: "Tools",
+            items: [
+              {
+                label: "Explorer",
+                href: "https://stellar.expert",
+              },
+              {
+                label: "Laboratory",
+                href: "https://laboratory.stellar.org",
+              },
+              {
+                label: "Status",
+                href: "https://status.stellar.org/"
+              },
+              {
+                label: "Dashboard",
+                href: "https://dashboard.stellar.org/",
+              },
+              {
+                label: "All Tools",
+                href: "https://developers.stellar.org/docs/tools-and-sdks/"
+              },
+            ],
+          },
+          {
+            title: "Community",
+            items: [
+              {
+                label: "Developers Discord",
+                href: "https://discord.gg/stellardev",
+              },
+              {
+                label: "Developers Google Group",
+                href: "https://groups.google.com/g/stellar-dev",
+              },
+              {
+                label: "Stack Exchange",
+                href: "https://stellar.stackexchange.com/",
+              },
+            ],
+          },
+          {
+            title: "About",
+            items: [
+              {
+                label: "About SDF",
+                href: "https://stellar.org/foundation",
+              },
+              {
+                label: "Careers",
+                href: "https://stellar.org/foundation/careers",
+              },
+              {
+                label: "Events",
+                href: "https://stellar.org/events",
+              },
+              {
+                label: "Grants & Funding",
+                href: "https://stellar.org/foundation/grants-and-funding",
+              },
+            ],
+          },
+        ],
+      },
+      prism: {
+        theme: require('prism-react-renderer/themes/github'),
+        darkTheme: require('prism-react-renderer/themes/vsDark'),
+        additionalLanguages: ["java", "rust", "toml", "json5", "python", "docker"],
+      },
+    }),
 };
 
 module.exports = config;
