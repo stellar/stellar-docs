@@ -462,6 +462,53 @@ The `sub` value here only contains a public key to identify the user, and the `d
 
 In both cases, all information in the `data` object is optional, and will only be present if the wallet provides that information.
 
+Lets add a backend server to our compose file that will be used to verify the token and create authenticated web sessions for users initiating transactions.
+
+<CodeExample> 
+
+```yaml
+# docker-compose.yaml
+...
+  business-server:
+    build: .
+    ports:
+      - "8081:8081"
+    env_file:
+      - ./dev.env
+    depends_on:
+      - platform-server
+```
+
+</CodeExample>
+
+Lets create a simple Docker container for our application.
+
+<CodeExample>
+
+```docker
+FROM node:19
+
+WORKDIR /home
+COPY . .
+RUN npm install
+
+CMD ["node", "server.js"]
+```
+
+</CodeExample>
+
+Now lets create a minimal NodeJS application.
+
+<CodeExample>
+
+```bash
+yarn init -y
+yarn add express jsonwebtoken
+touch server.js
+```
+
+</CodeExample>
+
 Below is an example of a backend server authenticating a user in using NodeJS.
 
 <CodeExample>
@@ -471,7 +518,7 @@ Below is an example of a backend server authenticating a user in using NodeJS.
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const app = express();
-const port = process.env.PORT;
+const port = process.env.BUSINESS_SERVER_PORT;
 
 app.use(express.json());
 
@@ -564,6 +611,20 @@ app.listen(port, () => {
 
 </CodeExample>
 
+Run this with the platform server and database and initiate a new transaction with the [demo wallet][stellar-demo-wallet]. Then, we'll send the token to our server.
+
+<CodeExample>
+
+```bash
+curl \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"platformToken": "<paste the token from the URL here>"}' \
+  http://localhost:8081/session | jq
+```
+
+</CodeExample>
+
 ### Providing Updates to the Platform
 
 When the user has provided you the information necessary to facilitate the transaction, you need to update the transaction's status and provide some of the information you collected to the Anchor Platform.
@@ -580,14 +641,20 @@ This is done using the Platform API's `PATCH /transactions` request. This endpoi
 
 :::note
 
-In the next major release (version 3.0) of the Anchor Platform, we'll be replacing the `PATCH /transactions` Platform API endpoint with a JSON RPC endpoint that will simplify the request schema, provide better validiation of data, and make the interface easier to understand in general.
+In the next major version release of the Anchor Platform, we'll be replacing the `PATCH /transactions` Platform API endpoint with a JSON RPC endpoint that will simplify the request schema, provide better validiation of data, and make the API easier to understand in general.
 
 :::
+
+Lets write endpoint for our business server that accepts the information collected in our UI.
 
 <CodeExample>
 
 ```js
 # server.js
+
+// Production systems should either let the Anchor Platform generate its own memos
+// or have your custodial service generate a memo for each transaction.
+const transactionMemos = {};
 
 app.post("/transaction", async (req, res) => {
   let sessionToken;
@@ -598,20 +665,26 @@ app.post("/transaction", async (req, res) => {
     res.send({ "error": err })
     return;
   }
+  // assuming this is a withdrawal transaction, we'll provide our distribution account as
+  // our destination account, and a memo so we can match the on-chain payment with the
+  // transaction in the Anchor Platform's database.
+  transactionMemos[req.body.transaction.id] = parseInt(Math.random() * 100000);
   let patchTransactionBody = {
-    "id": "e26cf292-814f-4918-9b40-b4f76a300f98",
+    "id": req.body.transaction.id,
     "status": "pending_user_transfer_start",
+    "destination_account": "GBLSAHONJRODSFTLOV225NZR4LHICH63RIFQTQN37L5CRTR2IMQ5UEK7",
+    "memo": transactionMemos[req.body.transaction.id],
     "amount_in": {
-      "asset": "iso4217:USD",
-      "amount": "103"
+      "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "amount": req.body.amount_in.amount,
     },
     "amount_fee": {
-      "asset": "iso4217:USD",
-      "amount": "3"
+      "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "amount": req.body.amount_fee.amount,
     },
     "amount_out": {
-      "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-      "amount": "100"
+      "asset": "iso4217:USD",
+      "amount": req.body.amount_out.amount,
     },
     "message": "waiting for the user to provide off-chain funds."
   };
@@ -674,6 +747,75 @@ At this time, the Anchor Platform does not send notifications to the wallet appl
 :::
 
 ### Fetching Updates from the Platform
+
+If you only use the Anchor Platform to expose the SEP APIs to wallet applications, then you won't have a strong reason for fetching transaction status updates from the Anchor Platform, mostly because it won't update the transaction status until you make requests to `PATCH /transactions`.
+
+However, if you use the Anchor Platform to monitor the Stellar network for incoming payments (associated with withdrawal transactions), the Anchor Platform will update transaction statuses when a payments are received.
+
+There are two ways to fetch updates from the Anchor Platform,
+
+* Polling the Platform API's `GET /transactions/:id` endpoint for the transactions you're expecting a payment for
+* Streaming transaction status change events from a Kafka cluster
+
+While streaming transaction status changes from a Kafka cluster may be a more robust and scalable approach, we're going to use the polling method in this guide. Setting up and using a Kafka cluster will be the subject of a different section of the docs.
+
+:::note
+
+In the future, the Anchor Platform will also support making payments associated with deposit transactions to users on behalf of the business. This is another reason why you may want to use the Anchor Platform's event system.
+
+:::
+
+First, lets configure the Anchor Platform to observe the Stellar network for incoming payments.
+
+<CodeExample>
+
+```yaml
+# docker-compose.yml
+...
+  stellar-observer:
+    image: stellar/anchor-platform:edge
+    command: --stellar-observer
+    env_file:
+      - ./dev.env
+    volumes:
+      - ./config:/home
+    depends_on:
+      - db
+```
+
+</CodeExample>
+
+The `--stellar-observer` command starts a process that monitors the distribution accounts configured in your `config.yaml` file as well as those provided as the `destination_account` in `PATCH /transactions` requests for withdrawals.
+
+If a payment is sent to one of these accounts and the memo attached to the transaction matches a `memo` value provided or generated by the Anchor Platform, the Anchor Platform will consider the transaction that memo is associated with as received and update the transaction's status to `pending_anchor`.
+
+Lets make some additions to the `server.js` file so we can poll the Anchor Platform for our expected payments.
+
+<CodeExample>
+
+```js
+# server.js
+...
+(async () => {
+  while (true) {
+    await new Promise(r => setTimeout(r, 2000));
+    let requestPromises;
+    for (const transactionId in transactionMemos) {
+      requestPromises.push(getPlatformTransaction(transactionId))
+    }
+    let transactions = await new Promise.all(requestPromises);
+    for (const transaction in transactions) {
+      // assuming all requests were successful
+      if (transaction.status == "pending_anchor") {
+        // initiate off-chain delivery of funds
+        console.log(`received payment for transaction ${transaction.id}`);
+      }
+    }
+  }
+})()
+```
+
+</CodeExample>
 
 [sep-1]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
 [sep-24]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md

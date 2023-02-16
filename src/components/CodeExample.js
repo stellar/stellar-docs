@@ -7,6 +7,7 @@ const CODE_LANGS = {
   bash: 'bash',
   cpp: 'C++',
   curl: 'cURL',
+  docker: 'Dockerfile',
   go: 'Go',
   html: 'html',
   java: 'Java',
