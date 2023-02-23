@@ -60,7 +60,7 @@ const config = {
       },
     ],
     require("./src/analytics-module"),
-    require('./src/dev-server-plugin'),
+    // require("./src/dev-server-plugin"),
   ],
   themes: ["docusaurus-theme-openapi-docs"],
   presets: [
