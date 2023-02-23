@@ -182,7 +182,7 @@ const config = {
             items: [
               {
                 label: "Developers Discord",
-                href: "https://discord.gg/stellardev",
+                href: "https://discord.gg/st7Mxd58BV",
               },
               {
                 label: "Developers Google Group",
