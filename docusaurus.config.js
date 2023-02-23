@@ -60,6 +60,7 @@ const config = {
       },
     ],
     require("./src/analytics-module"),
+    require('./src/dev-server-plugin'),
   ],
   themes: ["docusaurus-theme-openapi-docs"],
   presets: [
@@ -226,6 +227,7 @@ const config = {
           "toml",
           "json5",
           "python",
+          "docker"
         ],
       },
     }),
