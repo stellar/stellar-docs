@@ -181,7 +181,7 @@ const config = {
             title: "Community",
             items: [
               {
-                label: "Developers Discord",
+                label: "Developer Discord",
                 href: "https://discord.gg/st7Mxd58BV",
               },
               {
