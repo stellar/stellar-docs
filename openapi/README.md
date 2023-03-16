@@ -65,6 +65,13 @@ yarn api:clean
 yarn api:bundle
 ```
 
+If you don't have `redocly` installed, you can use `npx` to accomplish the same
+thing:
+
+```bash
+npx @redocly/cli@latest bundle openapi/main.yml --output openapi/bundled.yml
+```
+
 3. Generate the new `.mdx` files that will be read and parsed for people to use.
 
 ```bash
