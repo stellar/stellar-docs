@@ -430,7 +430,11 @@ In general, you'll want to provide updates for the following events:
 - Your business has processed a refund for the user's transaction
 - Your business experienced an unexpected error
 
-This is done using the Platform API's `PATCH /transactions` request. This endpoint allows you to update the data returned from the Platform API's `GET /transaction/:id` endpoint as well as the data provided to wallet applications through the applicable SEP endpoints.
+This is done by making a request to the Platform API's `PATCH /transactions` endpoint. This endpoint allows you to update the data returned from the Platform API's `GET /transaction/:id` endpoint as well as the data provided to wallet applications through the applicable SEP endpoints.
+
+Anchor Platform `PATCH /transactions` endpoint is designed to notify platform about changes of the transaction state. Given that, it will be called every time user or you (the anchor) take some action that progresses the transaction state in the flow.
+
+You can find more about transaction flow and statuses in the [SEP-24 protocol document][sep-24]
 
 :::info
 
@@ -442,7 +446,7 @@ In the next major version release of the Anchor Platform, we'll be replacing the
 
 :::caution
 
-By default, platform API such as `PATCH /transactions` and `GET /transaction` endpoints are not protected, and accessible by anyone who has access to the Anchor Platform.
+By default, the Platform API's endpoints such as `PATCH /transactions` and `GET /transaction/:id` are not protected, and accessible by anyone who has access to the server, including wallet applications.
 
 :::
 
@@ -456,7 +460,7 @@ To enable API key authentication, modify your `dev.env` file:
 # dev.env
 PLATFORM_API_AUTH_TYPE=api_key
 # Will be used as API key
-SECRET_PLATFORM_API_AUTH_SECRET="your encryption key shared with your business server"
+SECRET_PLATFORM_API_AUTH_SECRET="your API key that business server will use"
 ```
 
 </CodeExample>
@@ -477,13 +481,9 @@ SECRET_PLATFORM_API_AUTH_SECRET="your encryption key shared with your business s
 
 </CodeExample>
 
-After it's enabled, all requests must contain valid `Authorization` header. JWT token must have at least `jti` (matching transaction id) and `exp` (expiration time) fields.
+After it's enabled, all requests must contain valid `Authorization` header. The JWT provided must have the `jti` and `exp` fields representing a valid transaction and token expiration time, respectively.
 
-#### Transaction Flow
-
-Anchor Platform `PATCH /transactions` endpoint is designed to notify platform about changes of the transaction state. Given that, it will be called every time user or you (the anchor) take some action that progresses the transaction state in the flow.
-
-You can find more about transaction flow and statuses in the [SEP-24 protocol document][sep-24]
+#### Making Patch Requests
 
 Before diving into making PATCH requests, let's establish a template for making a request to the Anchor Platform.
 
@@ -522,7 +522,7 @@ When KYC process is long (for example, ID verification), it's advised to first s
 
 :::
 
-##### KYC Being Collected/Verified
+##### Processing KYC Information
 
 Update for this action is simply changing transaction status. It's a good idea to modify message too, reflecting details of the process:
 
@@ -549,7 +549,7 @@ curl localhost:8080/transactions \
 
 ##### Ready to Receive Funds
 
-After KYC is being collected, deposit is ready to be fulfilled by user (creating a transfer). Therefore, except status, a couple more fields should be updated.
+After KYC is collected, you should be ready to receive the off-chain deposit. While you're waiting for the user to deliver funds, you'll want to provide an updated transaction status as well as basic transaction information.
 
 <CodeExample>
 
@@ -560,7 +560,6 @@ transaction='
     "id": '"$transaction_id"',
     "status": "pending_user_transfer_start",
     "message": "waiting on the user to transfer funds",
-    "kyc_verified": "true",
     "amount_in": {
       "asset": "iso4217:USD",
       "amount": "10"
@@ -585,48 +584,18 @@ curl localhost:8080/transactions \
 
 </CodeExample>
 
-- `kyc_verified` flag set to true, to indicate that KYC process has been completed.
-- `amount` fields are set to final values. Amount should be collected in the interactive flow. However, it can also be specified by wallet as part of the request (see `amount_expected` of `GET /transaction/:id`)
-- `asset` is an asset of the amount. In this example, it's set to USD, assuming user made a bank transfer to the system using USD.
-- `fee` is total fees collected by the application.
+Amount should be collected in the interactive flow. However, it can also be specified by wallet as part of the request (see `amount_expected` of `GET /transaction/:id`). Please note, that you **must** specify amount fields, as wallet do not provide this information.
+
+- `amount_in` is amount user requested. If `amount_expected` is not null, `amount_in` should be equal to `amount_expected`. In that case, amount should not be collected in the interactive flow.
+- `amount_out` is amount user will receive
+- `amount_fee` is total fees collected by the application.
+- `asset` part of amount fields is an [SEP-38][sep-38] formatted asset of the amount. In this example, it's set to USD, assuming user made a bank transfer to the system using USD.
 
 :::tip
 
 Asset field is optional. When not set, it defaults to the asset user requested.
 
 :::
-
-##### Waiting For User Funds
-
-:::tip
-
-This step is optional. Most business don't use it: you can skip it and go to the [next one](#sending-stellar-transaction)
-
-:::
-
-After update in the previous chapter has been made, user will be notified that your service is ready to receive funds. In real world, transfer confirmation may take time. In such cases, transaction should be set to a new status, after funds have been received, but not confirmed yet.
-
-<CodeExample>
-
-```bash
-transaction='
-{
-  "transaction": {
-    "id": '"$transaction_id"',
-    "status": "pending_external",
-    "external_transaction_id": "<id_of_external_transaction>",
-    "message": "Transfer is being verified"
-  }
-}
-'
-
-curl localhost:8080/transactions \
-    -X PATCH \
-    -H 'Content-Type: application/json' \
-    -d '{"records":['"$transaction"']}'
-```
-
-</CodeExample>
 
 ##### Sending Stellar Transaction
 
@@ -718,7 +687,7 @@ It's possible to send multiple transactions to fulfill user request, but due to 
 
 ##### Handling Errors
 
-When unrecoverable error happens, it's required to set transaction status to `error`. Message field can be used to describe error details.
+If you encounter an unrecoverable error when processing the transaction, it's required to set transaction status to `error`. Message field can be used to describe error details.
 
 <CodeExample>
 
@@ -764,7 +733,6 @@ transaction='
     "id": '"$transaction_id"',
     "status": "pending_user_transfer_start",
     "message": "waiting on the user to transfer funds",
-    "kyc_verified": "true",
     "amount_in": {
       "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
       "amount": "10"
@@ -1315,6 +1283,7 @@ Code for backend part is a part of the Anchor platform, and is available as a [s
 
 [sep-1]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
 [sep-24]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md
+[sep-38]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0038.md
 [sep24-get-info]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md#info
 [anchor-platform-image]: https://hub.docker.com/r/stellar/anchor-platform
 [docker-compose]: https://docs.docker.com/compose/
