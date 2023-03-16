@@ -118,7 +118,7 @@ const config = {
             position: "left",
           },
           {
-            href: "https://github.com/stellar",
+            href: "https://github.com/stellar/stellar-docs",
             label: "GitHub",
             position: "right",
           },
