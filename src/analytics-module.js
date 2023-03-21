@@ -13,6 +13,13 @@ module.exports = () => ({
             'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
             })(window,document,'script','dataLayer','GTM-NDKZ834');
           `
+        },
+        {
+          tagName: 'meta',
+          attributes: {
+            name: 'facebook-domain-verification',
+            content: 'd0o7hha86jfxvtqyxz3d9i5wtfanmy',
+          },
         }
       ],
       preBodyTags: [
