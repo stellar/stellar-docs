@@ -134,7 +134,7 @@ const config = {
           },
           {
             to: "/api",
-            label: "API",
+            label: "Horizon API",
             position: "left",
           },
           {
