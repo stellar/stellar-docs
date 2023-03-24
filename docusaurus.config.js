@@ -44,6 +44,13 @@ const config = {
               groupPathsBy: "tag",
             },
           },
+          ap_api: {
+            specPath: "openapi/ap/bundled.yml", // Path to designated spec file
+            outputDir: "ap_api/resources", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+            },
+          },
         },
       },
     ],
@@ -53,6 +60,18 @@ const config = {
         id: "api",
         path: "api",
         routeBasePath: "api",
+        docLayoutComponent: "@theme/DocPage",
+        docItemComponent: "@theme/ApiItem",
+        sidebarPath: require.resolve("./sidebarsApi.js"),
+        sidebarItemsGenerator: require("./src/sidebar-api-generator"),
+      },
+    ],
+    [
+      "@docusaurus/plugin-content-docs",
+      {
+        id: "ap_api",
+        path: "ap_api",
+        routeBasePath: "ap_api",
         docLayoutComponent: "@theme/DocPage",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsApi.js"),
@@ -115,7 +134,12 @@ const config = {
           },
           {
             to: "/api",
-            label: "API",
+            label: "Horizon API",
+            position: "left",
+          },
+          {
+            to: "/ap_api",
+            label: "Anchor Platform API",
             position: "left",
           },
           {
