@@ -4,7 +4,9 @@ const path = require("path");
 module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
   const docs = args.docs.filter(
     (item) =>
-      !item.source.includes(".api.mdx") && !item.source.includes(".tag.mdx"),
+      !item.source.includes(".api.mdx") &&
+      !item.source.includes(".tag.mdx") &&
+      item.source !== '@site/api/READ_FIRST.md',
   );
 
   const sidebarItems = await defaultSidebarItemsGenerator({ ...args, docs });
