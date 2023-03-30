@@ -44,6 +44,13 @@ const config = {
               groupPathsBy: "tag",
             },
           },
+          ap_api: {
+            specPath: "openapi/ap/bundled.yml", // Path to designated spec file
+            outputDir: "ap_api/resources", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+            },
+          },
         },
       },
     ],
@@ -53,6 +60,18 @@ const config = {
         id: "api",
         path: "api",
         routeBasePath: "api",
+        docLayoutComponent: "@theme/DocPage",
+        docItemComponent: "@theme/ApiItem",
+        sidebarPath: require.resolve("./sidebarsApi.js"),
+        sidebarItemsGenerator: require("./src/sidebar-api-generator"),
+      },
+    ],
+    [
+      "@docusaurus/plugin-content-docs",
+      {
+        id: "ap_api",
+        path: "ap_api",
+        routeBasePath: "ap_api",
         docLayoutComponent: "@theme/DocPage",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsApi.js"),
@@ -73,7 +92,8 @@ const config = {
           showLastUpdateTime: true,
           breadcrumbs: true,
           routeBasePath: "/docs",
-          remarkPlugins: [require("mdx-mermaid")],
+          remarkPlugins: [require("mdx-mermaid"), require('remark-math')],
+          rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         },
@@ -85,10 +105,10 @@ const config = {
   ],
   stylesheets: [
     {
-      href: "https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/katex.min.css",
-      type: "text/css",
-      integrity: "sha256-oWCabCfPd4Oi21wqZezBSz/anto4VYcJqc9sM9IzQTk=",
-      crossorigin: "anonymous",
+      href: 'https://cdn.jsdelivr.net/npm/katex@0.13.24/dist/katex.min.css',
+      type: 'text/css',
+      integrity: 'sha384-odtC+0UGzzFL/6PNoE8rX/SPcQDXBJ+uRepguP4QkPCm2LBxH3FA3y+fKSiJ+AmM',
+      crossorigin: 'anonymous',
     },
   ],
   themeConfig:
@@ -114,11 +134,16 @@ const config = {
           },
           {
             to: "/api",
-            label: "API",
+            label: "Horizon API",
             position: "left",
           },
           {
-            href: "https://github.com/stellar",
+            to: "/ap_api",
+            label: "Anchor Platform API",
+            position: "left",
+          },
+          {
+            href: "https://github.com/stellar/stellar-docs",
             label: "GitHub",
             position: "right",
           },

@@ -9,7 +9,7 @@ This guide will walk you through installing, configuring, and integrating with t
 
 By leveraging the Anchor Platform's support for SEP-24, businesses make their on & off-ramp service available as an in-app experience through Stellar-based applications such as wallets and exchanges, extending their reach and connecting with users through the applications they already use.
 
-:::note
+:::info
 
 As we improve the documentation, parts of this guide that are relevant to other use cases may be moved into their own sections.
 
@@ -54,7 +54,7 @@ platform-server:
 
 The `--sep-server` option tells the Anchor Platform to make the API endpoints defined by the SEPs you've enabled via configuration available on port 8080. This option also makes the Platform API available, which is the backend API your service(s) will use to communicate with the Anchor Platform.
 
-:::note
+:::info
 
 A future release of the Anchor Platform will add an additional command line option for the Platform API, and update the `--sep-server` option to only make the SEP APIs available.
 
@@ -62,17 +62,27 @@ A future release of the Anchor Platform will add an additional command line opti
 
 The Anchor Platform supports two approaches for configuration: using environment variables or a YAML configuration file. For example, enabling SEP-24 in the Anchor Platform using an environment variable would look like the following:
 
+<CodeExample>
+
 ```bash
 # dev.env
 SEP24_ENABLED=true
 ```
 
-Alternatively, enabling SEP-24 using a yaml configuration file would look like the following:
+</CodeExample>
+
+Alternatively, enabling SEP-24 using a YAML configuration file would look like the following:
+
+<CodeExample>
 
 ```bash
 # dev.env
 ANCHOR_CONFIG_FILE=/home/dev.config.yaml
 ```
+
+</CodeExample>
+
+<CodeExample>
 
 ```yaml
 # dev.config.yaml
@@ -80,7 +90,11 @@ sep24:
   enabled: true
 ```
 
-Businesses are able to use one approach exclusively or a combination of both approaches. Nested variables in the YAML file are expressed using underscores or dots (`_`, `.`) when using environment variables. We'll use environment variables for our configuration in this guide.
+</CodeExample>
+
+Businesses are able to use one approach exclusively or a combination of both approaches. Nested variables in the YAML file are expressed using underscores or dots (`_`, `.`) when using environment variables.
+
+We'll use environment variables for our configuration in this guide.
 
 See the full set of configuration options in the Anchor Platform's [default values file][ap-default-values].
 
@@ -137,7 +151,9 @@ assets:
 
 Update the above values based on the assets you'll be issuing. Make sure to specify the testnet `issuer` in your development file, and create your own `distribution_account` using a tool like [Stellar Lab][stellar-lab].
 
-The information provided for the `assets` value closely maps to the information that will be expsosed to the wallet application using the [`GET /info`][sep24-get-info] SEP-24 endpoint. The Anchor Platform also uses this information to validate requests made to your service.
+Note that the `distribution_account` will be used as the destination of your user's payments on Stellar when facilitating withdrawals.
+
+The information provided for the `assets` value closely maps to the information that will be exposed to the wallet application using the [`GET /info`][sep24-get-info] SEP-24 endpoint. The Anchor Platform also uses this information to validate requests made to your service.
 
 ### Publish a Stellar Info File
 
@@ -293,7 +309,7 @@ SECRET_SEP24_MORE_INFO_URL_JWT_SECRET="your encryption key shared with your busi
 
 To test this out, go to the [Stellar Demo Wallet][stellar-demo-wallet].
 
-![demo wallet connected to the anchor platform](/assets/anchor-platform-sep24-demo-wallet.png)
+[![demo wallet connected to the anchor platform](/assets/anchor-platform-sep24-demo-wallet.png)](/assets/anchor-platform-sep24-demo-wallet.png)
 
 Initiate a transaction by doing the following:
 
@@ -305,7 +321,7 @@ Initiate a transaction by doing the following:
 
 The demo wallet should be able to find your `stellar.toml` file, authenticate using the Stellar keypair you just created, and initiate a transaction. However, when the demo wallet attempts to open the URL provided by the Anchor Platform, you'll get a not found page.
 
-![demo wallet after initiating a transaction](/assets/anchor-platform-sep24-demo-wallet-widget.png)
+[![demo wallet after initiating a transaction](/assets/anchor-platform-sep24-demo-wallet-widget.png)](/assets/anchor-platform-sep24-demo-wallet-widget.png)
 
 ### Add Data Persistence
 
@@ -403,17 +419,471 @@ You should see the logs reporting a successful connection to the postgres databa
 
 ## Integration
 
-Integrating with the Anchor Platform involves three key areas.
+### Providing Updates To the Anchor Platform
+
+One of the main points of interaction with the Anchor Platform is notifying the Platform about events related to the transaction.
+
+In general, you'll want to provide updates for the following events:
+
+- Your business is processing the KYC information provided by the user
+- Your business is ready to receive funds from the user
+- Your business has received funds from the user
+- Your business has sent funds to the user
+- Your business has processed a refund for the user's transaction
+- Your business experienced an unexpected error
+
+This is done by making a request to the Platform API's `PATCH /transactions` endpoint. This endpoint allows you to update the data returned from the Platform API's `GET /transaction/:id` endpoint as well as the data provided to wallet applications through the applicable SEP endpoints.
+
+Anchor Platform `PATCH /transactions` endpoint is designed to notify platform about changes of the transaction state. Given that, it will be called every time user or you (the anchor) take some action that progresses the transaction state in the flow.
+
+You can find more about transaction flow and statuses in the [SEP-24 protocol document][sep-24]
+
+:::info
+
+In the next major version release of the Anchor Platform, we'll be replacing the `PATCH /transactions` Platform API endpoint with a JSON RPC endpoint that will simplify the request schema, provide better validation of data, and make the API easier to understand in general.
+
+:::
+
+#### Securing Platform API
+
+:::caution
+
+By default, the Platform API's endpoints such as `PATCH /transactions` and `GET /transaction/:id` are not protected, and are accessible by anyone who has access to the server, including wallet applications.
+
+:::
+
+##### Using API Key
+
+To enable API key authentication, modify your `dev.env` file:
+
+<CodeExample>
+
+```bash
+# dev.env
+PLATFORM_API_AUTH_TYPE=api_key
+# Will be used as API key
+SECRET_PLATFORM_API_AUTH_SECRET="your API key that business server will use"
+```
+
+</CodeExample>
+
+After it's enabled, all requests must contain a valid `X-Api-Key` header, set to the configured API key.
+
+##### Using JWT
+
+To enable JWT authentication, modify your `dev.env` file:
+
+<CodeExample>
+
+```bash
+# dev.env
+PLATFORM_API_AUTH_TYPE=jwt
+SECRET_PLATFORM_API_AUTH_SECRET="your encryption key shared with your business server"
+```
+
+</CodeExample>
+
+After it's enabled, all requests must contain a valid `Authorization` header. The JWT provided must have the `jti` and `exp` fields representing a valid transaction and token expiration time, respectively.
+
+#### Making Patch Requests
+
+Before diving into making PATCH requests, let's create a template for making a request to the Anchor Platform.
+
+<CodeExample>
+
+```bash
+# call-patch.sh
+#!/usr/bin/env bash
+
+transaction=`cat $1`
+
+curl localhost:8080/transactions \
+    -X PATCH \
+    -H 'Content-Type: application/json' \
+    -d '{"records":['"$transaction"']}'
+```
+
+</CodeExample>
+
+This small script will make a `PATCH /transactions` request to the Anchor Platform hosted on the default port (8080). JSON transaction data stored in provided file will be used as body (wrapped into records singleton array).
+
+:::tip
+
+It's possible to provide multiple updates in a single `PATCH /transactions` call (by placing multiple transaction objects in the records array). When an update is done in such manner, all updates will be done sequentially.
+
+Importantly, this operation is NOT atomic. If one update fails, all previous updates would be applied, all subsequent updates would be discarded, and an error would be raised.
+
+:::
+
+We will also be making a reference to the `$transaction_id` variable. It's an identification of transaction, that's being returned from the Anchor Platform on an interactive withdrawal or deposit start request. You can obtain the transaction ID by connecting the test wallet to your local Anchor Platform instance. Set this variable in your terminal to be able to execute scripts below.
+
+#### Updating Deposit Transaction Via `PATCH`
+
+When the user has provided you the information necessary to facilitate the transaction, you need to update the status of the transaction and provide some of the information you collected to the Anchor Platform.
+
+The first step of the deposit flow after starting the deposit itself is collecting KYC. It's usually done in the web-app, but can also be optionally provided by the wallet application, using [SEP-9]. After necessary KYC is collected, a `PATCH /transactions` request should be made.
+
+:::tip
+
+When the KYC process is long (for example, ID verification), it's advised to first set the transaction status to `pending_anchor`, indicating to the user that KYC is being processed.
+
+:::
+
+##### Processing KYC Information
+
+:::tip
+
+This step is optional. Most businesses don't use it: you can skip it and go to the [next step](#ready-to-receive-funds)
+
+Using this status is encouraged when KYC verification may need to be performed asynchronously.
+
+:::
+
+The update for this action is simply changing the transaction status. It's a good idea to modify the message too, reflecting details of the process:
+
+<CodeExample>
+
+```json
+// kyc-in-process.json
+{
+  "transaction": {
+    "id": "<transaction_id>",
+    "status": "pending_anchor",
+    "message": "KYC is being verified"
+  }
+}
+```
+
+</CodeExample>
+
+To execute this update, simply run
+
+```bash
+./call-path.sh kyc-in-process.json
+```
+
+##### Ready to Receive Funds
+
+After KYC is collected, you should be ready to receive the off-chain deposit. While you're waiting for the user to deliver funds, you'll want to provide an updated transaction status and basic transaction information.
+
+<CodeExample>
+
+```json
+{
+  "transaction": {
+    "id": "<transaction_id>",
+    "status": "pending_user_transfer_start",
+    "message": "waiting on the user to transfer funds",
+    "amount_in": {
+      "asset": "iso4217:USD",
+      "amount": "10"
+    },
+    "amount_out": {
+      "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "amount": "9.0"
+    },
+    "amount_fee": {
+      "asset": "iso4217:USD",
+      "amount": "1.0"
+    }
+  }
+}
+```
+
+</CodeExample>
+
+The amount should be collected in the interactive flow. However, it can also be specified by the wallet as part of the request (see `amount_expected` of `GET /transaction/:id`).
+
+Please note that you **must** specify amount fields, as wallets do not provide this information.
+
+- `amount_in` is the amount the user requested. If `amount_expected` is not null, `amount_in` should be equal to `amount_expected`. In that case, the amount should not be collected in the interactive flow.
+- `amount_out` is the amount the user will receive.
+- `amount_fee` is the total fees collected by the application.
+- `asset` is part of the `amount_x` field and is in a SEP-38 format. In this example, it's set to USD, assuming the user made a bank transfer to the system using USD.
+
+:::tip
+
+The Asset field is optional. When not set, it defaults to the asset the user requested.
+
+:::
+
+##### Waiting For User Funds
+
+:::tip
+
+This step is optional. Most businesses don't use it: you can skip it and go to the [next step](#sending-stellar-transaction)
+
+You should only use this status if the off-chain payment method being used notifies you of a pending inbound payment.
+
+:::
+
+After the update in the previous chapter has been made, the user will be notified that your service is ready to receive funds. In the real world, the transfer confirmation process may take time. In such cases, transactions should be set to a new status indicating that the confirmation of the transfer has been received but the funds themselves have not yet been received.
+
+<CodeExample>
+
+```json
+{
+  "transaction": {
+    "id": "<transaction_id>",
+    "status": "pending_external",
+    "external_transaction_id": "<id_of_external_transaction>",
+    "message": "Transfer is being verified"
+  }
+}
+```
+
+</CodeExample>
+
+##### Sending Stellar Transaction
+
+The next step is to send a Stellar transaction. First, let's change the status to reflect the latest transaction state:
+
+<CodeExample>
+
+```json
+{
+  "transaction": {
+    "id": "<transaction_id>",
+    "status": "pending_anchor",
+    "message": "Transaction is ready to be fulfilled by the anchor"
+  }
+}
+```
+
+</CodeExample>
+
+Next, send a transaction on the Stellar network to fulfill a user request. Currently, the Anchor Platform doesn't offer such functionality. You may use a custodial service, or manage the distribution account yourself. In the latter case, you may want to use the [Stellar SDK](/docs/tools-and-sdks#sdk-library) on your server side to create, sign, and submit the transaction.
+
+:::info
+
+In the future, the Anchor Platform will also support making payments associated with deposit transactions to users on behalf of the business. This is another reason why you may want to use the Anchor Platform's event system.
+
+:::
+
+:::caution
+
+A user account may not be ready to receive funds. You should check that the account has established a [trustline](/docs/glossary#trustline). Otherwise, set the transaction to `pending_trust` status to indicate that the anchor is waiting for the user to establish the trustline.
+
+:::
+
+:::tip
+
+**Optional** You may set the transaction status to `pending_stellar`, when it has been submitted to the network, but not yet included in the ledger. Due to the nature of the Stellar network, transaction confirmation is almost instant. Some SDKs, like Java, have a blocking transaction submission method. After receiving a successful result from the submission method, the transaction will already be completed.
+
+:::
+
+##### Completing Transaction
+
+Finally, after the transaction has been sent and successfully submitted to the network, it's time to complete the transaction:
+
+<CodeExample>
+
+```json
+{
+  "id": "<transaction_id>",
+  "status": "completed",
+  "message": "completed",
+  "stellar_transactions": [
+    {
+      "id": "<stellar_transaction_id>",
+      "payments": [
+        {
+          "id": "<payment_operation_id>",
+          "amount": {
+            "amount": "10",
+            "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+</CodeExample>
+
+:::caution
+
+It's possible to send multiple transactions to fulfill a user request, but due to current protocol restrictions, only the latest one will be visible for a user via the `stellar_transaction_id` field.
+
+:::
+
+##### Handling Errors
+
+If you encounter an unrecoverable error when processing the transaction, it's required to set the transaction status to `error`. The message field can be used to describe error details.
+
+<CodeExample>
+
+```json
+{
+  "id": "<transaction_d>",
+  "status": "error",
+  "message": "Example error"
+}
+```
+
+</CodeExample>
+
+:::tip
+
+This status should not be used after the user has made a transfer (if there are some external factors that prevent completing the transaction). Instead, a refund should be initiated. It can be done either by the user's request (in your web view), or automatically.
+
+:::
+
+#### Updating Withdrawal Transaction Via `PATCH`
+
+Once the deposit flow is finished, implementing withdrawal becomes quite easy. Some parts of the flow are similar and can be reused.
+
+The starting point for withdrawal and deposit is the same, i.e., [collecting and verifying KYC](#kyc-being-collectedverified).
+
+##### Ready to Receive Funds
+
+Similar to a deposit, the next step would be to notify the user that the Anchor is ready to receive funds. However, as your service will be receiving transactions over the Stellar network, the update would look a bit different.
+
+<CodeExample>
+
+```json
+{
+  "transaction": {
+    "id": "<transaction_id>",
+    "status": "pending_user_transfer_start",
+    "message": "waiting on the user to transfer funds",
+    "amount_in": {
+      "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "amount": "10"
+    },
+    "amount_out": {
+      "asset": "iso4217:USD",
+      "amount": "9.0"
+    },
+    "amount_fee": {
+      "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "amount": "1.0"
+    },
+    "memo": "466857256912784999",
+    "memo_type": "id"
+  }
+}
+```
+
+</CodeExample>
+
+:::tip
+
+Setting `memo` and `memo_type` is optional if you don't use a custodial service.
+
+If your business uses a third-party custodian, you would need to generate a memo with your custodian that can be used to receive the user's payment. These memos should be generated per transaction. You should provide `memo` and `memo_type` to the request as shown above. Note that the memo must be unique, this is what helps to associate Stellar transactions with SEP transactions.
+
+If your business manages the assets, the Anchor Platform can generate memos for you. When the status is changed to `pending_user_transfer_start`, the Anchor Platform sets the `memo` and `memo_type` automatically (only if it's not included in the request).
+
+:::
+
+:::note
+
+The Stellar account that will be used to receive funds should be configured in [assets](#specify-your-services-assets).
+
+:::
+
+##### Tracking Stellar Transactions
+
+Using the Payment Observer allows you to delegate this step to the Anchor Platform. To enable the Payment Observer use the `--stellar-observer` flag in the command section of the [compose file](#configuration).
+
+The Payment Observer will track all transactions sent to the distribution account. When the transaction with the correct memo is detected in the network, the status will automatically change to `pending_anchor` and event will be the emitted (if Kafka is used).
+
+:::caution
+
+The Payment Observer won't validate amounts, it's your responsibility to verify that the amount sent by the user is correct.
+
+:::
+
+:::info
+
+If you already have a system that monitors payments, make sure that the logic of the system matches the description below:
+
+First, wait for the transaction to be included in the ledger (using an SDK). This transaction must have the correct memo and destination address (distribution account). Once this transaction has been detected and verified, notify the user that the funds have been received:
+
+:::
+
+<CodeExample>
+
+```json
+{
+  "id": "<transaction_id>",
+  "status": "pending_anchor",
+  "message": "Stellar transaction has been received",
+  "stellar_transactions": [
+    {
+      "id": "<stellar_transaction_id>",
+      "payments": [
+        {
+          "id": "<payment_operation_id>",
+          "amount": {
+            "amount": "10",
+            "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+</CodeExample>
+
+##### Sending External Transfer
+
+The next step is to send an external transfer, such as a bank transfer, to the user. When done, change the status to notify the user that the transfer has been sent, but has not been confirmed yet.
+
+:::info
+
+If your off-chain rails don't provide enough information on whether the payment is pending instead of delivered, you should skip this step and mark payments as `completed` after initiating the payment.
+
+:::
+
+<CodeExample>
+
+```json
+{
+  "transaction": {
+    "id": "<transaction_id>",
+    "status": "pending_external",
+    "externaltransactionid": "<id_of_external_transaction>",
+    "message": "Transfer is being verified"
+  }
+}
+```
+
+</CodeExample>
+
+##### Completing the Transaction
+
+Finally, after the transaction has been successfully sent and submitted to the network, it's time to complete the transaction:
+
+<CodeExample>
+
+```json
+{
+  "id": "<transaction_id>",
+  "status": "completed",
+  "message": "completed"
+}
+```
+
+</CodeExample>
+
+### Example Using Javascript
+
+Integrating with the Anchor Platform involves three key areas:
 
 - Building a web-based user experience that can be opened in a mobile web view
 - Providing transaction status updates to the Anchor Platform
 - Fetching transaction status updates from the Anchor Platform
 
-### Building a Web-Based User Experience
+#### Building a Web-Based User Experience
 
-The Anchor Platform does not offer a whitelabel UI that your business can utilize, and instead expects the business to build their own UI and backend system. We won't build an entire on & off-ramp user experience in this guide, but will cover the ways in which your existing product should be updated to be compatible with the Anchor Platform.
+The Anchor Platform does not offer a white-label UI that your business can utilize, and instead expects the business to build their own UI and backend system. We won't build an entire on & off-ramp user experience in this guide, but will cover the ways in which your existing product should be updated to be compatible with the Anchor Platform.
 
-#### Authentication
+##### Authentication
 
 If your business has an existing on & off-ramp product, you likely have an existing system for user authentication. However, because the Anchor Platform authenticates the user prior to providing the business' URL, requiring the user to go through another form of authentication is actually unnecessary. In this way, the Anchor Platform can be thought of as providing an alternative form of authentication.
 
@@ -610,25 +1080,7 @@ curl \
 
 </CodeExample>
 
-### Providing Updates to the Platform
-
-When the user has provided you the information necessary to facilitate the transaction, you need to update the transaction's status and provide some of the information you collected to the Anchor Platform.
-
-In general, you'll want to provide updates for the following events:
-
-- Your business is ready to receive funds from the user
-- Your business has received funds from the user
-- Your business has sent funds to the user
-- Your business has processed a refund for the user's transaction
-- Your business experienced an unexpected error
-
-This is done using the Platform API's `PATCH /transactions` request. This endpoint allows you to update the data returned from the Platform API's `GET /transaction/:id` endpoint as well as the data provided to wallet applications through the applicable SEP endpoints.
-
-:::note
-
-In the next major version release of the Anchor Platform, we'll be replacing the `PATCH /transactions` Platform API endpoint with a JSON RPC endpoint that will simplify the request schema, provide better validation of data, and make the API easier to understand in general.
-
-:::
+#### Providing Updates to the Platform
 
 Let's create an endpoint for our business server that accepts the information collected in our UI.
 
@@ -723,7 +1175,7 @@ async function updatePlatformTransaction(requestBody) {
 
 </CodeExample>
 
-This will update the Anchor Platform's database with the information provided and enable wallet applications to fetch this updated information so it can relay it back to the user. You should have already informted the user of the transaction's amounts and that your business is waiting for on-chain payment to arrive, but providing these updates allows users to view their transactions' statuses through their mobile application without opening the business' UI again.
+This will update the Anchor Platform's database with the information provided and enable wallet applications to fetch this updated information so it can relay it back to the user. You should have already informed the user of the transaction's amounts and that your business is waiting for the on-chain payment to arrive, but providing these updates allows users to view their transactions' statuses through their mobile application without opening the business' UI again.
 
 :::note
 
@@ -731,7 +1183,7 @@ At this time, the Anchor Platform does not send notifications to the wallet appl
 
 :::
 
-### Fetching Updates from the Platform
+#### Fetching Updates from the Platform
 
 If you only use the Anchor Platform to expose the SEP APIs to wallet applications, then you won't have a strong reason for fetching transaction status updates from the Anchor Platform, mostly because it won't update the transaction status until you make requests to `PATCH /transactions`.
 
@@ -743,12 +1195,6 @@ There are two ways to fetch updates from the Anchor Platform,
 - Streaming transaction status change events from a Kafka cluster
 
 While streaming transaction status changes from a Kafka cluster may be a more robust and scalable approach, we're going to use the polling method in this guide. Setting up and using a Kafka cluster will be the subject of a different section of the docs.
-
-:::note
-
-In the future, the Anchor Platform will also support making payments associated with deposit transactions to users on behalf of the business. This is another reason why you may want to use the Anchor Platform's event system.
-
-:::
 
 First, let's configure the Anchor Platform to observe the Stellar network for incoming payments.
 
@@ -779,7 +1225,7 @@ Let's make some additions to the `server.js` file so we can poll the Anchor Plat
 <CodeExample>
 
 ```js
-# server.js
+// server.js
 ...
 /*
  * Fetch the transaction data from the Platform API
@@ -815,8 +1261,18 @@ async function getPlatformTransaction(transactionId) {
 
 </CodeExample>
 
+### Full Example Implementation
+
+Stellar provides an example business server implementation for SEP-24. It's split into two parts: 1) a web UI, accessible for the end user; and 2) a back-end implementation, used to get and push updates from/to the Anchor Platform.
+
+The code for web UI can be found [here][sep-24-ref-ui]
+
+The code for the backend is a part of the Anchor Platform, and is available as a [submodule][sep-24-ref].
+
 [sep-1]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
+[sep-9]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0009.md
 [sep-24]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md
+[sep-38]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0038.md
 [sep24-get-info]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md#info
 [anchor-platform-image]: https://hub.docker.com/r/stellar/anchor-platform
 [docker-compose]: https://docs.docker.com/compose/
@@ -831,3 +1287,5 @@ async function getPlatformTransaction(transactionId) {
 [h2]: https://www.h2database.com/html/main.html
 [sqlite]: https://www.sqlite.org/index.html
 [flyway]: https://documentation.red-gate.com/fd/welcome-to-flyway-184127914.html
+[sep-24-ref-ui]: https://github.com/stellar/sep24-reference-ui
+[sep-24-ref]: https://github.com/stellar/java-stellar-anchor-sdk/tree/develop/kotlin-reference-server
