@@ -58,7 +58,7 @@ yarn api:clean
 ```
 
 2. Bundle your changes into the `bundled.yml` file. We've gone over this a bit,
-   so I wont' repeat myself. Bring any changes you've made in the other
+   so I won't repeat myself. Bring any changes you've made in the other
    components into the bundled file.
 
 ```bash
