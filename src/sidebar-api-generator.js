@@ -6,7 +6,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     (item) =>
       !item.source.includes(".api.mdx") &&
       !item.source.includes(".tag.mdx") &&
-      item.source !== '@site/api/READ_FIRST.md',
+      item.source !== "@site/api/READ_FIRST.md",
   );
 
   const sidebarItems = await defaultSidebarItemsGenerator({ ...args, docs });
