@@ -39,5 +39,33 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     });
   }
 
+  const resources2 = sidebarItems.find(
+      (item) =>
+          item.type === "category" && item.label.toLowerCase() === "callbacks",
+  );
+
+  const sidebarPath2 = path.join(
+      args.version.contentPath,
+      "./callbacks/sidebar.js",
+  );
+
+  if (resources2 && fs.existsSync(sidebarPath2)) {
+    const generatedApiSidebar = require(sidebarPath2);
+
+    const categories = resources2.items.filter(
+        (item) => item.type === "category",
+    );
+
+    categories.forEach((category) => {
+      const generatedCategory = generatedApiSidebar.find(
+          (item) => item.type === "category" && item.label === category.label,
+      );
+
+      if (generatedCategory) {
+        category.items = [...category.items, ...generatedCategory.items];
+      }
+    });
+  }
+
   return sidebarItems;
 };

@@ -51,6 +51,13 @@ const config = {
               groupPathsBy: "tag",
             },
           },
+          ap_callbacks: {
+            specPath: "openapi/ap/bundled_callback.yml", // Path to designated spec file
+            outputDir: "ap_api/callbacks", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+            },
+          },
         },
       },
     ],
