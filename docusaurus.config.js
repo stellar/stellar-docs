@@ -50,6 +50,7 @@ const config = {
             sidebarOptions: {
               groupPathsBy: "tag",
             },
+            template: "src/template.mustache", // Customize API MDX with mustache template
           },
           ap_callbacks: {
             specPath: "openapi/ap/bundled_callback.yml", // Path to designated spec file
@@ -57,6 +58,7 @@ const config = {
             sidebarOptions: {
               groupPathsBy: "tag",
             },
+            template: "src/template.mustache", // Customize API MDX with mustache template
           },
         },
       },
