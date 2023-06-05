@@ -29,6 +29,8 @@ helpful and meaningful way. Markdown is super easy to learn, and will come quite
 naturally after only a bit of practice. You can always help fix typos, spelling,
 and broken links, too.
 
+All static images are stored in the git via [git lfs](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-git-large-file-storage). If you haven't installed it yet, please follow this [link](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage)
+
 # Quick Start
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]  
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][gitpod]
