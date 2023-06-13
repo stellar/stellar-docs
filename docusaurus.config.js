@@ -261,7 +261,8 @@ const config = {
           "toml",
           "json5",
           "python",
-          "docker"
+          "docker",
+          "kotlin"
         ],
       },
     }),
