@@ -18,6 +18,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
 
   const sidebarPath = path.join(
     args.version.contentPath,
+    args.item.dirName,
     "./resources/sidebar.js",
   );
 
@@ -46,6 +47,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
 
   const sidebarPath2 = path.join(
       args.version.contentPath,
+      args.item.dirName,
       "./callbacks/sidebar.js",
   );
 

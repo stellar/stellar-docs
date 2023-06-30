@@ -37,24 +37,24 @@ const config = {
         id: "openapi",
         docsPluginId: "api",
         config: {
-          api: {
-            specPath: "openapi/bundled.yml", // Path to designated spec file
-            outputDir: "api/resources", // Output directory for generated .mdx docs
+          horizon: {
+            specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
+            outputDir: "api/horizon/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
           },
-          ap_api: {
-            specPath: "openapi/ap/bundled.yml", // Path to designated spec file
-            outputDir: "ap_api/resources", // Output directory for generated .mdx docs
+          anchor_platform_api: {
+            specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
+            outputDir: "api/anchor-platform/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
           },
-          ap_callbacks: {
-            specPath: "openapi/ap/bundled_callback.yml", // Path to designated spec file
-            outputDir: "ap_api/callbacks", // Output directory for generated .mdx docs
+          anchor_platform_callbacks: {
+            specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
+            outputDir: "api/anchor-platform/callbacks", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -68,19 +68,7 @@ const config = {
       {
         id: "api",
         path: "api",
-        routeBasePath: "api",
-        docLayoutComponent: "@theme/DocPage",
-        docItemComponent: "@theme/ApiItem",
-        sidebarPath: require.resolve("./sidebarsApi.js"),
-        sidebarItemsGenerator: require("./src/sidebar-api-generator"),
-      },
-    ],
-    [
-      "@docusaurus/plugin-content-docs",
-      {
-        id: "ap_api",
-        path: "ap_api",
-        routeBasePath: "ap_api",
+        routeBasePath: "/api",
         docLayoutComponent: "@theme/DocPage",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsApi.js"),
@@ -142,14 +130,19 @@ const config = {
             position: "left",
           },
           {
-            to: "/api",
-            label: "Horizon API",
+            type: "dropdown",
+            label: "API",
             position: "left",
-          },
-          {
-            to: "/ap_api",
-            label: "Anchor Platform API",
-            position: "left",
+            items: [
+              {
+                to: "/api/horizon",
+                label: "Horizon",
+              },
+              {
+                to: "/api/anchor-platform",
+                label: "Anchor Platform",
+              },
+            ]
           },
           {
             href: "https://github.com/stellar/stellar-docs",
