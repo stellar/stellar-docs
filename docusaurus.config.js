@@ -131,7 +131,7 @@ const config = {
           },
           {
             type: "dropdown",
-            label: "API",
+            label: "APIs",
             position: "left",
             items: [
               {
