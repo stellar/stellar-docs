@@ -97,6 +97,9 @@ const config = {
         theme: {
           customCss: [require.resolve("./src/css/custom.scss")],
         },
+        sitemap: {
+          ignorePatterns: ['/api/READ_FIRST']
+        },
       }),
     ],
   ],
