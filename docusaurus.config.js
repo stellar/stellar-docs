@@ -93,6 +93,7 @@ const config = {
           rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+          exclude: ['**/component/**'],
         },
         theme: {
           customCss: [require.resolve("./src/css/custom.scss")],
