@@ -10,6 +10,8 @@ const CODE_LANGS = {
   docker: 'Dockerfile',
   go: 'Go',
   html: 'html',
+  kotlin: 'Kotlin',
+  kt: 'Kotlin',
   java: 'Java',
   javascript: 'JavaScript',
   js: 'JavaScript',
