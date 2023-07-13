@@ -1,7 +1,3 @@
----
-draft: true
----
-
 ## Contributing guide
 
 Thank you for contributing to the Stellar Wallet documentation! To get started,
