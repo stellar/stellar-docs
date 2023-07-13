@@ -2,15 +2,17 @@ import React from "react";
 import BrowserOnly from '@docusaurus/BrowserOnly';
 
 type LanguageProps = {
-    kt: JSX.Element;
-    ts: JSX.Element;
+    kt?: JSX.Element;
+    ts?: JSX.Element;
+    flutter?: JSX.Element;
+    fallback?: JSX.Element;
 };
 
 export const walletDefaultLang = "ts"
 
 export const LanguageSpecific: React.FC<LanguageProps> = (props) => {
     return (
-        <BrowserOnly fallback={getToShow(props, null)}>
+        <BrowserOnly fallback={props.fallback || getToShow(props, null)}>
             {() => getToShow(props, getCookie())}
         </BrowserOnly>
     );
@@ -24,9 +26,11 @@ const getToShow = (props: LanguageProps, cookie: String) => {
     }
 
     if (cookie == "kt") {
-        toShow = props.kt
+        toShow = props.kt || <></>
     } else if (cookie == "ts") {
-        toShow = props.ts
+        toShow = props.ts || <></>
+    } else if (cookie == "dart") {
+        toShow = props.flutter || <></>
     }
 
     return toShow

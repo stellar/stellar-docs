@@ -9,8 +9,10 @@ import {Exception} from "sass";
 
 // TODO: when TS docs are ready set to false
 const ALLOW_EMPTY_DOCS = true
+// Set to true for local debugging
+const SHOW_ALL = false
 
-const WALLET_LANGS = ["kt", "ts"]
+const WALLET_LANGS = ["kt", "ts", "dart"]
 
 type WalletCodeExampleProps = {
     children: React.ReactElement
@@ -22,14 +24,18 @@ export const WalletCodeExample: React.FC<WalletCodeExampleProps> = ({children}) 
     </BrowserOnly>
 }
 
-const getTabs = (children: React.ReactElement, lang: String) => {
-    const defaultVal = CODE_LANGS[lang]
+const getTabs = (children: React.ReactElement, targetLanguage: String) => {
+    const defaultVal = CODE_LANGS[targetLanguage]
 
     const tabs = React.Children.map(children, (child, index) => {
         const codeProps = child.props.children.props;
         const {className = ''} = codeProps;
 
-        const [, language] = className.split('-');
+        let [, language] = className.split('-');
+
+        if (language === "flutter") {
+            language = "dart"
+        }
 
         return (
             <TabItem
@@ -50,7 +56,6 @@ const getTabs = (children: React.ReactElement, lang: String) => {
 
         if (tabs.filter((x) => x.props.value === language).length === 0) {
             if (ALLOW_EMPTY_DOCS) {
-
                 tabs.push(<TabItem
                     key={language}
                     value={language}
@@ -67,10 +72,21 @@ const getTabs = (children: React.ReactElement, lang: String) => {
         }
     }
 
+   let toShowTabs = tabs
+
+   if (!SHOW_ALL) {
+       for (let i = 0; i < tabs.length; i++) {
+           const language = CODE_LANGS[targetLanguage]
+           if (tabs[i].props.value === language) {
+                toShowTabs = [tabs[i]]
+           }
+       }
+   }
+
     const gid = "wallet-lang" + defaultVal
     // const gid = "p-wallet" + defaultVal + Math.random()
 
     return (<Tabs groupId={gid}>
-        {tabs}
+        {toShowTabs}
     </Tabs>)
 }
