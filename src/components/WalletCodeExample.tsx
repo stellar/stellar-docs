@@ -10,7 +10,7 @@ import {Exception} from "sass";
 // TODO: when TS docs are ready set to false
 const ALLOW_EMPTY_DOCS = true
 
-const WALLET_LANGS = ["kt", "ts"]
+const WALLET_LANGS = ["kt", "ts", "dart"]
 
 type WalletCodeExampleProps = {
     children: React.ReactElement
@@ -29,7 +29,11 @@ const getTabs = (children: React.ReactElement, lang: String) => {
         const codeProps = child.props.children.props;
         const {className = ''} = codeProps;
 
-        const [, language] = className.split('-');
+        let [, language] = className.split('-');
+
+        if (language === "flutter") {
+            language = "dart"
+        }
 
         return (
             <TabItem

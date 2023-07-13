@@ -7,6 +7,8 @@ export const CODE_LANGS = {
   bash: 'bash',
   cpp: 'C++',
   curl: 'cURL',
+  dart: 'Flutter',
+  flutter: 'Flutter',
   docker: 'Dockerfile',
   go: 'Go',
   html: 'html',

@@ -256,7 +256,8 @@ const config = {
           "json5",
           "python",
           "docker",
-          "kotlin"
+          "kotlin",
+            "dart"
         ],
       },
     }),

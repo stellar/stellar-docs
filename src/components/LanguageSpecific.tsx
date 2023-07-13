@@ -2,8 +2,9 @@ import React from "react";
 import BrowserOnly from '@docusaurus/BrowserOnly';
 
 type LanguageProps = {
-    kt: JSX.Element;
-    ts: JSX.Element;
+    kt?: JSX.Element;
+    ts?: JSX.Element;
+    flutter?: JSX.Element;
 };
 
 export const walletDefaultLang = "ts"
@@ -24,9 +25,11 @@ const getToShow = (props: LanguageProps, cookie: String) => {
     }
 
     if (cookie == "kt") {
-        toShow = props.kt
+        toShow = props.kt || <></>
     } else if (cookie == "ts") {
-        toShow = props.ts
+        toShow = props.ts || <></>
+    } else if (cookie == "dart") {
+        toShow = props.flutter || <></>
     }
 
     return toShow
