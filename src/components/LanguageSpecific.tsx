@@ -5,13 +5,14 @@ type LanguageProps = {
     kt?: JSX.Element;
     ts?: JSX.Element;
     flutter?: JSX.Element;
+    fallback?: JSX.Element;
 };
 
 export const walletDefaultLang = "ts"
 
 export const LanguageSpecific: React.FC<LanguageProps> = (props) => {
     return (
-        <BrowserOnly fallback={getToShow(props, null)}>
+        <BrowserOnly fallback={props.fallback || getToShow(props, null)}>
             {() => getToShow(props, getCookie())}
         </BrowserOnly>
     );
