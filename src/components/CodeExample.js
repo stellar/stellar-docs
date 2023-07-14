@@ -2,32 +2,7 @@ import React from 'react';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeBlock from '@theme/CodeBlock';
-
-export const CODE_LANGS = {
-  bash: 'bash',
-  cpp: 'C++',
-  curl: 'cURL',
-  dart: 'Flutter',
-  flutter: 'Flutter',
-  docker: 'Dockerfile',
-  go: 'Go',
-  html: 'html',
-  kotlin: 'Kotlin',
-  kt: 'Kotlin',
-  java: 'Java',
-  javascript: 'JavaScript',
-  js: 'JavaScript',
-  json: 'JSON',
-  json5: 'JSON5',
-  python: 'Python',
-  scss: 'SCSS',
-  sql: 'SQL',
-  toml: 'TOML',
-  ts: 'TypeScript',
-  tsx: 'TSX',
-  typescript: 'TypeScript',
-  yaml: 'YAML',
-};
+import {CODE_LANGS, PLATFORM_VERSION} from "../constants";
 
 export const CodeExample = ({ children }) => (
   // console.log(children),
@@ -39,6 +14,8 @@ export const CodeExample = ({ children }) => (
 
       const [, language] = className.split('-');
 
+      const platformReplace = codeProps.children.replaceAll('[platform_version]', PLATFORM_VERSION)
+
       return (
         <TabItem
           key={language || index}
@@ -46,7 +23,7 @@ export const CodeExample = ({ children }) => (
           label={CODE_LANGS[language] || 'Example'}
         >
           <CodeBlock language={language} showLineNumbers>
-            {codeProps.children}
+            {typeof (codeProps.children) === 'string' ? platformReplace : codeProps.children}
           </CodeBlock>
         </TabItem>
       );
