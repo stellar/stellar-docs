@@ -1,8 +1,8 @@
 import React from "react";
 import Admonition from '@theme/Admonition';
 import {LanguageButtons} from "./LanguageButtons";
-import {CODE_LANGS} from "./CodeExample";
 import {LanguageSpecific} from "./LanguageSpecific";
+import {CODE_LANGS} from "../constants";
 
 type WalletGuideWarnProps = {
     WIPLangs?: String[]

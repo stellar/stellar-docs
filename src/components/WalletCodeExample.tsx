@@ -4,8 +4,7 @@ import TabItem from '@theme/TabItem';
 import CodeBlock from '@theme/CodeBlock';
 import {getCookie, walletDefaultLang} from "./LanguageSpecific";
 import BrowserOnly from '@docusaurus/BrowserOnly';
-import {CODE_LANGS} from "./CodeExample";
-import {Exception} from "sass";
+import {CODE_LANGS} from "../constants";
 
 // TODO: when TS docs are ready set to false
 const ALLOW_EMPTY_DOCS = true
