@@ -89,7 +89,9 @@ const config = {
           showLastUpdateTime: true,
           breadcrumbs: true,
           routeBasePath: "/docs",
-          remarkPlugins: [require("mdx-mermaid"), require('remark-math')],
+          remarkPlugins: [require("mdx-mermaid"), require('remark-math'), [
+            require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
+          ]],
           rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
