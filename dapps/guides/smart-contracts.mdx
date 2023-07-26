@@ -1,0 +1,464 @@
+---
+sidebar_position: 2
+title: Smart Contracts
+description: Learn about the smart contracts from the Soroban Dapps Challenge.
+---
+
+## Crowdfund Example
+
+The [example crowdfunding smart contract](https://github.com/stellar/soroban-example-dapp/blob/main/contracts/crowdfund/src/lib.rs), written in Rust and using the Soroban SDK, is a template for creating a crowdfunding dapp. Users can deposit tokens into the contract until a target amount is reached or a deadline expires. If the target is met, the recipient can withdraw the tokens. If the deadline passes without the target being met, donors can reclaim their tokens.
+
+Here's a breakdown of the contract's key functions:
+
+### Initialize Function
+
+The `initialize` function sets up a crowdfunding campaign. It takes in the following parameters:
+
+- `recipient`: The address that will receive the funds if the campaign is successful.
+- `deadline`: The timestamp at which the campaign ends.
+- `target_amount`: The amount of tokens the campaign aims to raise.
+- `token`: The token contract id.
+
+This function can only be called once, as checked by the assert statement at the start of the function.
+
+```rust
+pub fn initialize(
+        e: Env,
+        recipient: Address,
+        deadline: u64,
+        target_amount: i128,
+        token: Address,
+    ) {
+        assert!(!e.storage().has(&DataKey::Recipient), "already initialized");
+
+        e.storage().set(&DataKey::Recipient, &recipient);
+        e.storage().set(&DataKey::RecipientClaimed, &false);
+        e.storage()
+            .set(&DataKey::Started, &get_ledger_timestamp(&e));
+        e.storage().set(&DataKey::Deadline, &deadline);
+        e.storage().set(&DataKey::Target, &target_amount);
+        e.storage().set(&DataKey::Token, &token);
+    }
+```
+
+### State Function
+
+The `state` function plays a crucial role as it keeps us updated about the current status of the crowdfunding campaign. This function uses an enumeration named `State`, which has three potential states:
+
+- `Running`: Indicates that the campaign is still ongoing. This is the initial state as long as the present time hasn't exceeded the campaign deadline.
+- `Success`: Represents a scenario where the campaign has successfully hit or surpassed its target amount. This state is determined if the balance of tokens meets or exceeds the target amount.
+- `Expired`: The campaign has surpassed its deadline without attaining the target amount. This state is declared if the current time has passed the deadline and the token balance hasn't met the target.
+
+Here's what the enumeration and the `state` function look like:
+
+```rust
+pub enum State {
+    Running = 0,
+    Success = 1,
+    Expired = 2,
+}
+```
+
+The function `get_state` identifies the current state of the campaign, relying on the existing time, the campaign's deadline, and the balance of tokens in relation to the target amount:
+
+```rust
+fn get_state(e: &Env) -> State {
+    let deadline = get_deadline(e);
+    let token_id = get_token(e);
+    let current_timestamp = get_ledger_timestamp(e);
+
+    if current_timestamp < deadline {
+        return State::Running;
+    };
+    if get_recipient_claimed(e) || target_reached(e, &token_id) {
+        return State::Success;
+    };
+    State::Expired
+}
+```
+
+### Deposit Function
+
+The `deposit` function allows a user to contribute tokens to the campaign. It verifies that the campaign is still running and that the user is not the recipient. The function then updates the user's deposited amount and transfers the tokens from the user to the contract.
+
+```rust
+pub fn deposit(e: Env, user: Address, amount: i128) {
+    user.require_auth();
+    assert!(amount > 0, "amount must be positive");
+    assert!(get_state(&e) == State::Running, "sale is not running");
+    let token_id = get_token(&e);
+    let current_target_met = target_reached(&e, &token_id);
+
+    let recipient = get_recipient(&e);
+    assert!(user != recipient, "recipient may not deposit");
+
+    let balance = get_user_deposited(&e, &user);
+    set_user_deposited(&e, &user, &(balance + amount));
+
+    let client = token::Client::new(&e, &token_id);
+    client.transfer(&user, &e.current_contract_address(), &amount);
+
+    let contract_balance = get_balance(&e, &token_id);
+
+    // emit events
+    events::pledged_amount_changed(&e, contract_balance);
+    if !current_target_met && target_reached(&e, &token_id) {
+        // only emit the target reached event once on the pledge that triggers target to be met
+        events::target_reached(&e, contract_balance, get_target_amount(&e));
+    }
+}
+```
+
+### Withdraw Function
+
+The `withdraw` function allows users to withdraw their tokens. Depending on the campaign's state, different users are allowed to withdraw:
+
+- If the campaign is `Running`, no one can withdraw tokens.
+- If the campaign is `Success`, only the recipient can withdraw tokens.
+- If the campaign is `Expired`, donors can withdraw their tokens, but the recipient cannot.
+
+```rust
+pub fn withdraw(e: Env, to: Address) {
+    let state = get_state(&e);
+    let recipient = get_recipient(&e);
+
+    match state {
+        State::Running => {
+            panic!("sale is still running")
+        }
+        State::Success => {
+            assert!(
+                to == recipient,
+                "sale was successful, only the recipient may withdraw"
+            );
+            assert!(
+                !get_recipient_claimed(&e),
+                "sale was successful, recipient has withdrawn funds already"
+            );
+
+            let token = get_token(&e);
+            transfer(&e, &recipient, &get_balance(&e, &token));
+            set_recipient_claimed(&e);
+        }
+        State::Expired => {
+            assert!(
+                to != recipient,
+                "sale expired, the recipient may not withdraw"
+            );
+
+            // Withdraw full amount
+            let balance = get_user_deposited(&e, &to);
+            set_user_deposited(&e, &to, &0);
+            transfer(&e, &to, &balance);
+
+            // emit events
+            let token_id = get_token(&e);
+            let contract_balance = get_balance(&e, &token_id);
+            events::pledged_amount_changed(&e, contract_balance);
+        }
+    };
+}
+```
+
+### Testing the Crowdfunding Smart Contract
+
+This section serves as a description of the [unit tests](https://github.com/stellar/soroban-example-dapp/blob/main/contracts/crowdfund/src/test.rs) for the crowdfunding contract's functionality. The tests examine various states and events that could occur within a crowdfunding scenario, including situations of success, expiry, and ongoing campaigns.
+
+You can test your crowdfunding smart contract using the Cargo test command. This command runs all the tests in your project. To do this, you must navigate to the `soroban-example-dapp/contracts/crowdfund/src` directory
+
+```bash
+cd contracts/crowdfund/src
+```
+
+and run the following command:
+
+```bash
+cargo test
+```
+
+This command runs all the tests in your project. The output should look like this:
+
+```bash
+running 9 tests
+test test::test_expired ... ok
+test test::sale_still_running - should panic ... ok
+test test::test_success ... ok
+test test::sale_not_running - should panic ... ok
+test test::sale_expired_recipient_not_allowed - should panic ... ok
+test test::sale_successful_only_recipient - should panic ... ok
+test test::sale_successful_non_recipient_still_denied_after_withdrawal - should panic ... ok
+test test::test_events ... ok
+test test::sale_successful_recipient_withdraws_only_once - should panic ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+```
+
+Let's take a brief look at your test file:
+
+`impl Setup`: This struct contains the setup for your tests. The function `new` within the `Setup` struct creates a new crowdfunding environment, preparing it for further tests. This is where all essential components for the crowdfunding scenario, such as the crowdfunding and token contracts, users, and relevant actions, are initialized. It's crucial for setting up the preconditions needed for each unit test scenario.
+
+```rust
+/// Sets up a crowdfund with -
+/// 1. Deadline 10 seconds from now.
+/// 2. Target amount of 15.
+/// 3. One deposit of 10 from user1.
+///
+impl Setup<'_> {
+    fn new() -> Self {
+        let e: Env = soroban_sdk::Env::default();
+        let recipient = Address::random(&e);
+        let user1 = Address::random(&e);
+        let user2 = Address::random(&e);
+
+        // the deadline is 10 seconds from now
+        let deadline = e.ledger().timestamp() + 10;
+        let target_amount: i128 = 15;
+
+        // Create the token contract
+        let token_admin = Address::random(&e);
+        let contract_token = e.register_stellar_asset_contract(token_admin);
+        let token = Token::new(&e, &contract_token);
+
+        // Create the crowdfunding contract
+        let (crowdfund_id, crowdfund) =
+            create_crowdfund_contract(&e, &recipient, deadline, &target_amount, &contract_token);
+
+        // Mint some tokens to work with
+        token.mock_all_auths().mint(&user1, &10);
+        token.mock_all_auths().mint(&user2, &8);
+
+        crowdfund.client().mock_all_auths().deposit(&user1, &10);
+
+        Self {
+            env: e,
+            recipient,
+            user1,
+            user2,
+            token,
+            crowdfund,
+            crowdfund_id,
+        }
+    }
+}
+```
+
+`test_expired`: This test examines the behavior when the crowdfunding campaign expires without reaching its target amount. In this case, the user1 is expected to withdraw his deposited amount.
+
+```rust
+#[test]
+fn test_expired() {
+    let setup = Setup::new();
+    advance_ledger(&setup.env, 11);
+
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .withdraw(&setup.user1);
+
+    assert_eq!(setup.token.balance(&setup.user1), 10);
+    assert_eq!(setup.token.balance(&setup.crowdfund_id), 0);
+}
+```
+
+`sale_still_running`: This test ensures that the recipient can't withdraw the funds while the crowdfunding campaign is still running.
+
+```rust
+#[test]
+#[should_panic(expected = "sale is still running")]
+fn sale_still_running() {
+    let setup = Setup::new();
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .withdraw(&setup.recipient);
+}
+```
+
+`test_success`: This test checks the behavior when the crowdfunding campaign successfully reaches its target amount. It ensures that the funds can be withdrawn by the recipient after the deadline.
+
+```rust
+#[test]
+fn test_success() {
+    let setup = Setup::new();
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .deposit(&setup.user2, &5);
+
+    assert_eq!(setup.token.mock_all_auths().balance(&setup.user1), 0);
+    assert_eq!(setup.token.mock_all_auths().balance(&setup.user2), 3);
+    assert_eq!(
+        setup.token.mock_all_auths().balance(&setup.crowdfund_id),
+        15
+    );
+
+    advance_ledger(&setup.env, 10);
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .withdraw(&setup.recipient);
+
+    assert_eq!(setup.token.mock_all_auths().balance(&setup.user1), 0);
+    assert_eq!(setup.token.mock_all_auths().balance(&setup.user2), 3);
+    assert_eq!(setup.token.mock_all_auths().balance(&setup.crowdfund_id), 0);
+    assert_eq!(setup.token.mock_all_auths().balance(&setup.recipient), 15);
+}
+```
+
+`sale_not_running`: This test checks the behavior when a deposit attempt is made after the crowdfunding campaign has expired.
+
+```rust
+#[test]
+#[should_panic(expected = "sale is not running")]
+fn sale_not_running() {
+    let setup = Setup::new();
+    advance_ledger(&setup.env, 10);
+
+    setup.crowdfund.client().deposit(&setup.user1, &1);
+}
+```
+
+`sale_expired_recipient_not_allowed`: This test ensures that the recipient can't withdraw the funds if the crowdfunding campaign has expired without reaching the target amount.
+
+```rust
+#[test]
+#[should_panic(expected = "sale expired, the recipient may not withdraw")]
+fn sale_expired_recipient_not_allowed() {
+    let setup = Setup::new();
+    advance_ledger(&setup.env, 10);
+
+    setup.crowdfund.client().withdraw(&setup.recipient);
+}
+```
+
+`sale_successful_only_recipient`: This test verifies that only the recipient can withdraw the funds once the campaign is successful and no other users can do so.
+
+```rust
+#[test]
+#[should_panic(expected = "sale was successful, only the recipient may withdraw")]
+fn sale_successful_only_recipient() {
+    let setup = Setup::new();
+    setup.crowdfund.client().deposit(&setup.user2, &5);
+    advance_ledger(&setup.env, 10);
+
+    setup.crowdfund.client().withdraw(&setup.user1);
+}
+```
+
+`sale_successful_non_recipient_still_denied_after_withdrawal`: This test ensures that users who aren't the recipient can't withdraw funds after the recipient has already done so.
+
+```rust
+#[test]
+#[should_panic(expected = "sale was successful, only the recipient may withdraw")]
+fn sale_successful_non_recipient_still_denied_after_withdrawal() {
+    let setup = Setup::new();
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .deposit(&setup.user2, &5);
+    advance_ledger(&setup.env, 10);
+
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .withdraw(&setup.recipient);
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .withdraw(&setup.user1);
+}
+```
+
+`test_events`: This test ensures that the events are emitted correctly. It checks that the `pledged_amount_changed` event is emitted when a user makes a deposit and that the `target_reached` event is emitted when the target amount is reached.
+
+```rust
+#[test]
+fn test_events() {
+    let setup = Setup::new();
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .deposit(&setup.user2, &5);
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .deposit(&setup.user2, &3);
+
+    let mut crowd_fund_events: Vec<(Address, soroban_sdk::Vec<RawVal>, RawVal)> = vec![&setup.env];
+
+    // there are SAC events emitted also, filter those away, not asserting that aspect
+    setup
+        .env
+        .events()
+        .all()
+        .iter()
+        .map(core::result::Result::unwrap)
+        .filter(|event| event.0 == setup.crowdfund_id)
+        .for_each(|event| crowd_fund_events.push_back(event));
+
+    assert_eq!(
+        crowd_fund_events,
+        vec![
+            &setup.env,
+            (
+                setup.crowdfund_id.clone(),
+                (Symbol::new(&setup.env, "pledged_amount_changed"),).into_val(&setup.env),
+                10_i128.into_val(&setup.env)
+            ),
+            (
+                setup.crowdfund_id.clone(),
+                (Symbol::new(&setup.env, "pledged_amount_changed"),).into_val(&setup.env),
+                15_i128.into_val(&setup.env)
+            ),
+            (
+                // validate that this event only emitted once, ensuing deposits over the
+                // target before expiration, don't trigger this one again
+                setup.crowdfund_id.clone(),
+                (Symbol::new(&setup.env, "target_reached"),).into_val(&setup.env),
+                (15_i128, 15_i128).into_val(&setup.env)
+            ),
+            (
+                setup.crowdfund_id.clone(),
+                (Symbol::new(&setup.env, "pledged_amount_changed"),).into_val(&setup.env),
+                18_i128.into_val(&setup.env)
+            ),
+        ]
+    );
+}
+```
+
+`sale_successful_recipient_withdraws_only_once`: This test ensures that the recipient can only withdraw the funds once, even if the campaign is successful.
+
+```rust
+#[test]
+#[should_panic(expected = "sale was successful, recipient has withdrawn funds already")]
+fn sale_successful_recipient_withdraws_only_once() {
+    let setup = Setup::new();
+    setup.crowdfund.client().deposit(&setup.user2, &5);
+    advance_ledger(&setup.env, 10);
+
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .withdraw(&setup.recipient);
+    setup
+        .crowdfund
+        .client()
+        .mock_all_auths()
+        .withdraw(&setup.recipient);
+}
+```
+
+## Conclusion
+
+Congratulations! You've successfully learned how to create a crowdfunding smart contract using the Soroban SDK. You can now use this knowledge to create your own crowdfunding dapp. If you have any questions, feel free to reach out to us on [Discord](https://discord.com/channels/897514728459468821/900373252420030465)!
