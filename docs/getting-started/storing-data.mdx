@@ -1,87 +1,184 @@
 ---
-sidebar_position: 4
+sidebar_position: 3
 title: 2. Storing Data
 description: Write a simple Soroban contract that stores and retrieves data.
 ---
 
-The [increment example] demonstrates how to write a simple contract that stores data, with a single function that increments an internal counter and returns the value.
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
 
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
-[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v0.9.2
+Now that we've built a basic Hello World example to see the rough structure of Soroban contracts, we'll write a simple contract that stores and retrieves data. This will help you see the basics of Soroban's storage system. We'll also organize the two contracts as one combined project using a Cargo Workspace, which is a common pattern for Soroban projects.
 
-[increment example]: https://github.com/stellar/soroban-examples/tree/v0.9.2/increment
+This is going to follow along with the [increment example](https://github.com/stellar/soroban-examples/tree/v0.9.2/increment), which has a single function that increments an internal counter and returns the value. If you want to see a working example, [try it in
+GitPod](https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v0.9.2).
 
-## Run the Example
+This tutorial assumes that you've already completed the previous steps in Getting Started: [Setup](./setup.mdx) and [Hello World](./hello-world.mdx).
 
-First go through the [Setup] process to get your development environment configured, then clone the `v0.9.2` tag of `soroban-examples` repository:
+## Setting up a multi-contract project
 
-[Setup]: setup.mdx
+Many Soroban projects need more than one contract. Cargo makes this easy with workspaces, though it doesn't yet give a way to initialize a new project as a workspace (see [#8365](https://github.com/rust-lang/cargo/issues/8365)). Let's set it up manually.
 
-```
-git clone -b v0.9.2 https://github.com/stellar/soroban-examples
-```
+Rather than just a `hello-soroban` folder, we want a new `soroban-tutorial` folder with a `contracts` folder inside, into which we'll move the existing `hello-soroban` project. As a diff, we want this:
 
-Or, skip the development environment setup and open this example in [Gitpod][oigp].
-
-To run the tests for the example, navigate to the `increment` directory, and use `cargo test`.
-
-```
-cd increment
-cargo test -- --nocapture
+```diff
+-hello-soroban
++soroban-tutorial/contracts/hello-soroban
 ```
 
-You should see the output:
+So change into the parent directory of `hello-soroban` and:
 
+```bash
+mkdir -p soroban-tutorial/contracts
+mv hello-soroban soroban-tutorial/contracts
+cd soroban-tutorial
 ```
-running 1 test
-count: U32(0)
-count: U32(1)
-count: U32(2)
-test test::test ... ok
+
+You're going to want some Rust and Cargo stuff in different spots. From the new project root, run:
+
+```bash
+rm contracts/hello-soroban/Cargo.lock
+mv contracts/hello-soroban/target .
+cp contracts/hello-soroban/Cargo.toml .
 ```
+
+Note that we copied the Cargo.toml file. That's because we're going to need some of it in the root and some of it in the subdirectory.
+
+In the root `Cargo.toml`:
+
+- remove the `[package]`, `[lib]`, `[features]`, and `[dev_dependencies]` sections
+- keep the `[release.*]` stuff
+- replace the line `[dependencies]` with `[workspace.dependencies]`
+- add a `[workspace]` section
+
+In the project-specific `Cargo.toml`, keep roughly the opposite sections, and use the dependency versions as specified in the workspace root. It all ends up looking like this:
+
+<Tabs>
+<TabItem value="soroban-tutorial/Cargo.toml" label="Cargo.toml">
+
+```toml
+[workspace]
+resolver = "2"
+members = [
+  "contracts/*",
+]
+
+[workspace.dependencies]
+soroban-sdk = "0.9.2"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true
+```
+
+</TabItem>
+<TabItem value="soroban-tutorial/contracts/hello-soroban/Cargo.toml" label="contracts/hello-soroban/Cargo.toml">
+
+```toml
+[package]
+name = "hello-soroban"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev_dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[features]
+testutils = ["soroban-sdk/testutils"]
+```
+
+</TabItem>
+</Tabs>
+
+Now make sure everything works:
+
+    soroban contract build
+
+Everything should build.
+
+    cargo test
+
+All tests should pass.
 
 ## Code
 
-```rust title="increment/src/lib.rs"
+Rather than initializing this contract with `cargo new`, let's copy the `hello-soroban` project:
+
+```bash
+cp -r contracts/hello-soroban contracts/incrementor
+```
+
+You'll need to update the `Cargo.toml` file to reflect the correct name:
+
+```diff title="contracts/incrementor/Cargo.toml"
+ [package]
+-name = "hello-soroban"
++name = "incrementor"
+ version = "0.1.0"
+ edition = "2021"
+```
+
+And now in `contracts/incrementor/src/lib.rs`, we'll replace the contents with the following:
+
+```rust title="contracts/incrementor/src/lib.rs"
 #![no_std]
-use soroban_sdk::{contract, contractimpl, symbol_short, vec, Env, Symbol, Vec, log};
+use soroban_sdk::{contract, contractimpl, log, symbol_short, Env, Symbol};
 
 const COUNTER: Symbol = symbol_short!("COUNTER");
 
 #[contract]
-pub struct IncrementContract;
+pub struct IncrementorContract;
 
 #[contractimpl]
-impl IncrementContract {
-    /// Increment increments an internal counter, and returns the value.
+impl IncrementorContract {
+    /// Increment an internal counter; return the new value.
     pub fn increment(env: Env) -> u32 {
-        // Get the current count.
-        let mut count: u32 = env.storage().instance().get(&COUNTER).unwrap_or(0); // If no value set, assume 0.
-        log!(&env, "count: {}", count);
+        let mut count: u32 = env.storage().instance().get(&COUNTER).unwrap_or(0);
 
-        // Increment the count.
         count += 1;
 
-        // Save the count.
+        log!(&env, "count: {}", count);
+
         env.storage().instance().set(&COUNTER, &count);
 
-        // The contract instance will be bumped to have a lifetime of at least 100 ledgers.
-        // If the lifetime is already more than 100 ledgers, this is a no-op. Otherwise,
-        // the lifetime is extended to 100 ledgers. This lifetime bump includes the contract
-        // instance itself and all entries in storage().instance(), i.e, COUNTER.
         env.storage().instance().bump(100);
 
-        // Return the count to the caller.
         count
     }
 }
+
+#[cfg(test)]
+mod test;
 ```
 
-Ref: https://github.com/stellar/soroban-examples/tree/v0.9.2/increment
+Make sure it builds:
+
+    soroban contract build
+
+Check that it built:
+
+    ls target/wasm32-unknown-unknown/release/*.wasm
+
+You should see both `hello_soroban.wasm` and `incrementor.wasm`.
 
 ## How it Works
 
-Open the `increment/src/lib.rs` file to follow along.
+Follow along in your `contracts/incrementor/src/lib.rs` file.
 
 ### Contract Data Keys
 
@@ -98,18 +195,9 @@ The `symbol_short!()` macro is a convenient way to pre-compute short symbols up 
 const COUNTER: Symbol = symbol_short!("COUNTER");
 ```
 
-### Types of Contract data
-
-Contract data is made up of three different types: `Persistent`, `Temporary`, and `Instance`. All contract data has a "lifetime" that must be periodically bumped. If an entry's
-lifetime is not periodically bumped, the entry will eventually reach the end of its lifetime and "expire". Each type of storage functions similarly, but have different fees and expiration behavior. Whenever a
-`Temporary` entry expires, it is deleted from the ledger and is permanently inaccessible. Whenever a `Persistent` or `Instance` entry expires, it is inaccessible, but can be
-"restored" and used again via the [`RestoreFootprintOp`]. As a general rule, `Temporary` storage should only be used for data that can be easily recreated or is only valid for a period
-of time, where `Persistent` or `Instance` storage should be used for data that can not be recreated and should kept permanently, such as a user's token balance. For more information
-about the different storage types, see [Contract Data Type Descriptions](#Contract-Data-Type-Descriptions).
-
 ### Contract Data Access
 
-The `Env.storage()` function is used to retrieve access and update a counter. The executing contract is the only contract that can query or modify contract data that it has stored. The data stored is viewable on ledger anywhere the ledger is viewable, but contracts executing within the Soroban environment are restricted to their own data.
+The `Env.storage()` function is used to access and update contract data. The executing contract is the only contract that can query or modify contract data that it has stored. The data stored is viewable on ledger anywhere the ledger is viewable, but contracts executing within the Soroban environment are restricted to their own data.
 
 The `get()` function gets the current value associated with the counter key.
 
@@ -123,54 +211,68 @@ let mut count: u32 = env
 
 If no value is currently stored, the value given to `unwrap_or(...)` is returned instead.
 
-Values stored as contract data and retrieved are transmitted from the environment and expanded into the type specified. In this case a `u32`. If the value can be expanded the type returned will be an `Ok(u32)`, otherwise the type returned will be an `Err(_)`. The final `unwrap()` in the above code snippet is assuming the value will always be a `u32`. If a developer caused it to be some other type a panic would occur at the unwrap.
+Values stored as contract data and retrieved are transmitted from [the environment](../fundamentals-and-concepts/environment-concepts.mdx) and expanded into the type specified. In this case a `u32`. If the value can be expanded, the type returned will be a `u32`. Otherwise, if a developer caused it to be some other type, a panic would occur at the unwrap.
 
 The `set()` function stores the new count value against the key, replacing the existing value.
 
-```rust
-env.storage().instance().set(&COUNTER, count);
-```
+### Managing Contract Data Lifetimes with `bump()`
 
-To access a given type of storage, use `Env.storage().persistent()`, `Env.storage().temporary()`, and `Env.storage().instance()`.
-Each storage type is in a separate key space. To demonstrate this, see the code snippet below:
+All contract data has a "lifetime" that must be periodically bumped. If an
+entry's lifetime is not periodically bumped, the entry will eventually reach the end of its lifetime and "expire". You can learn more about this in the [State Expiration](../fundamentals-and-concepts/state-expiration.mdx) document.
 
-```rust
-const EXAMPLE_KEY: Symbol = symbol_short!("KEY");
-env.storage().persistent().set(&EXAMPLE_KEY, 1);
-env.storage().temporary().set(&EXAMPLE_KEY, 2);
+For now, it's worth knowing that there are three kinds of storage:
+`Persistent`, `Temporary`, and `Instance`. This contract only uses `Instance` storage: `env.storage().instance()`. Every time the counter is incremented, this storage gets bumped by 100 [ledgers](https://developers.stellar.org/docs/fundamentals-and-concepts/stellar-data-structures/ledgers), or about 500 seconds.
 
-env.storage().persistent().get(&EXAMPLE_KEY); // Returns Ok(1)
-env.storage().temporary().get(&EXAMPLE_KEY); // Returns Ok(2)
-```
+## Run on Sandbox
 
-### Managing Contract Data Lifetimes
+Let's invoke this contract the same way we invoked the Hello World contract. We'll use `--id 2`, since we already used `--id 1` for the Hello World contract. For Sandbox, these values are stored in a `.soroban/ledger.json` file in the current directory; you can always remove this file to reset the ledger.
 
-The `Env.storage().storage_type().bump()` function is used to extend a contract data entry's lifetime inside a smart contract function. The `bump()` function is a conditional lifetime bump which
-extends an entry's lifetime up to a given length of time, measured in ledgers.
+    soroban contract invoke \
+      --wasm target/wasm32-unknown-unknown/release/incrementor.wasm \
+      --id 2 \
+      -- \
+      increment
 
-```rust
-env.storage().instance().bump(100);
-```
+You should see the following output:
 
-This call to `bump()` ensures that the current lifetime of the contract instance entry is at least 100 ledgers. If this is called and the contract instance entry has a current lifetime of 50 ledgers,
-the lifetime will be extended up to 100 ledgers. If this is called and the contract instance entry has a current lifetime of 150 ledgers, the lifetime will not be extended and the `bump()` call is a no-op.
+    1
 
-All `Instance` storage is stored in a single contract instance `LedgerEntry` and shares a single lifetime. This means that one call to `Env.storage().instance().bump()` will extend the lifetime of all `Instance`
-entries, as well as the contract instance itself. For `Temporary` and `Persistent` storage, each entry has its own lifetime and must be bumped individually. The interface is slightly different and takes the key
-of the entry being bumped as well as the new lifetime.
+Rerun the invoke with the `--footprint` option to view the [footprint](../fundamentals-and-concepts/persisting-data.mdx#footprints-and-parallel-contention) of the invocation, which is the ledger entries that the contract will read or write to.
 
-In addition to contract defined lifetime extensions using the `bump()` function, a contract data entry's lifetime can be extended via the [`BumpFootprintExpirationOp`] operation.
+    soroban contract invoke \
+      --wasm target/wasm32-unknown-unknown/release/incrementor.wasm \
+      --id 2 \
+      --footprint \
+      -- \
+      increment
+
+You should see:
+
+    Footprint: {"readOnly":[{"contractData":{"contractId":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],"key":{"static":"ledgerKeyContractCode"}}}],"readWrite":[{"contractData":{"contractId":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],"key":{"symbol":[67,79,85,78,84,69,82]}}}]}
+
+:::info Footprint formats are unstable
+Soroban is a pre-release and at this time outputs footprints in an unstable JSON format.
+:::
+
+Run it without the `--footprint` a few more times to watch the count change.
+
+Use `contract read` to inspect what the full storage looks like after a few runs.
+
+    soroban contract read --id 1 --key COUNTER
 
 ## Tests
 
-Open the `increment/src/test.rs` file to follow along.
+Open the `contracts/increment/src/test.rs` file and replace the contents with:
 
-```rust title="increment/src/test.rs"
+```rust title="contracts/incrementor/src/test.rs"
+use crate::{IncrementorContract, IncrementorContractClient};
+use soroban_sdk::Env;
+
 #[test]
-fn test() {
+fn increment() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, IncrementContract);
-    let client = IncrementContractClient::new(&env, &contract_id);
+    let contract_id = env.register_contract(None, IncrementorContract);
+    let client = IncrementorContractClient::new(&env, &contract_id);
 
     assert_eq!(client.increment(), 1);
     assert_eq!(client.increment(), 2);
@@ -178,120 +280,46 @@ fn test() {
 }
 ```
 
-In any test the first thing that is always required is an `Env`, which is the Soroban environment that the contract will run in.
+This uses the same concepts described in the Hello World example.
 
-```rust
-let env = Env::default();
-```
+Make sure it passes:
 
-The contract is registered with the environment using the contract type.
+    cargo test
 
-```rust
-let contract_id = env.register_contract(None, IncrementContract);
-```
+You'll see that this runs tests for the whole workspace; both the Hello World contract and the new Incrementor.
 
-All public functions within an `impl` block that is annotated with the `#[contractimpl]` attribute have a corresponding function generated in a generated client type. The client type will be named the same as the contract type with `Client` appended. For example, in our contract the contract type is `IncrementContract`, and the client is named `IncrementContractClient`.
-
-```rust
-let client = IncrementContractClient::new(&env, &contract_id);
-```
-
-The values returned by functions can be asserted on:
-
-```rust
-assert_eq!(client.increment(), 1);
-```
-
-## Build the Contract
-
-To build the contract, use the `soroban contract build` command.
-
-```sh
-soroban contract build
-```
-
-A `.wasm` file should be outputted in the `target` directory:
+If you want to see the output of the `log!` call, run the tests with `--nocapture`:
 
 ```
-target/wasm32-unknown-unknown/release/soroban_increment_contract.wasm
+cargo test -- --nocapture
 ```
 
-## Run the Contract
-
-If you have [`soroban-cli`] installed, you can invoke contract functions in the Wasm using it.
-
-```sh
-soroban contract invoke \
-    --wasm target/wasm32-unknown-unknown/release/soroban_increment_contract.wasm \
-    --id 1 \
-    -- \
-    increment
-```
-
-The following output should occur using the code above.
+You should see the output:
 
 ```
-1
+running 1 test
+count: U32(0)
+count: U32(1)
+count: U32(2)
+test test::incrementor ... ok
 ```
 
-Rerun the invoke with the `--footprint` option to view the [footprint] of the invocation, which is the ledger entries that the contract will have read or written to.
+## Take it further
 
-```sh
-soroban contract invoke \
-    --wasm target/wasm32-unknown-unknown/release/soroban_increment_contract.wasm \
-    --id 1 \
-    --footprint \
-    -- \
-    increment
+Can you figure out how to add `get_current_value` function to the contract? What about `decrement` or `reset` functions?
+
+## Commit your changes
+
+Looking at your git diff will be interesting now. It's probably kind of noisy if you just run `git status` or `git diff` right away, but once you `git add .`, git will understand the _renames_ (aka "moves") of all the old `hello-soroban` files better.
+
+Go ahead and commit it.
+
+```bash
+git commit -m "add incrementor contract"
 ```
 
-```
-Footprint: {"readOnly":[{"contractData":{"contractId":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],"key":{"static":"ledgerKeyContractCode"}}}],"readWrite":[{"contractData":{"contractId":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],"key":{"symbol":[67,79,85,78,84,69,82]}}}]}
-```
+## Summary
 
-### Contract Data Type Descriptions
+In this section, we added a new contract to this project, reorganizing the project as a multi-contract project using Cargo Workspaces. The new contract made use of Soroban's storage capabilities to store and retrieve data. We also learned about the different kinds of storage and how to manage their lifetimes.
 
-The general usage and interface is identical for all storage types. They differ only in fees and expiration behavior as follows:
-
-- `Temporary`
-  - Cheapest fees.
-  - Permanently deleted on expiration, cannot be restored.
-  - Suitable for time bounded data (i.e. price oracles, signatures, etc.) and easily recreateable data.
-  - Unlimited amount of storage.
-- `Instance`
-  - Most expensive fees (same price as `Persistent` storage).
-  - Recoverable after expiration, can be restored using the [`RestoreFootprintOp`] operation.
-  - Shares the same lifetime as the contract instance. If the contract instance has not expired, instance data is guaranteed to be accessible and not expired.
-  - Limited amount of storage available.
-  - Suitable for "shared" contract state that cannot be `Temporary` (i.e. admin accounts, contract metadata, etc.).
-- `Persistent`
-  - Most expensive fees (same price as `Instance` storage).
-  - Recoverable after expiration, can be restored using the [`RestoreFootprintOp`] operation.
-  - Does not share the same lifetime as the contract instance. If the contract instance is not expired, `Persistent` data may be expired and need to be restored before invoking the contract.
-  - Unlimited amount of storage.
-  - Suitable for user data that cannot be `Temporary` (i.e. balances).
-
-For more detailed guidelines on how to use contract data, see [`Contract Data Best Practices`].
-
-### Contract Data Best Practices
-
-:::info
-
-Soroban is a pre-release and at this time outputs footprints in an unstable JSON format.
-
-:::
-
-[footprint]: ../fundamentals-and-concepts/persisting-data.mdx#footprints-and-parallel-contention
-
-Run it a few more times to watch the count change.
-
-Use the `soroban` to inspect what the counter is after a few runs.
-
-```sh
-soroban contract read --id 1 --key COUNTER
-```
-
-[`soroban-cli`]: ../getting-started/setup#install-the-soroban-cli
-[`BumpFootprintExpirationOp`]: ../fundamentals-and-concepts/state-expiration#BumpFootprintExpirationOp
-[`RestoreFootprintOp`]: ../fundamentals-and-concepts/state-expiration#RestoreFootprintOp
-[`Contract Data Best Practices`]: ../fundamentals-and-concepts/persisting-data.mdx#contract-data-best-practices
+Next we'll learn to deploy contracts to Soroban's Futurenet network and interact with them over RPC using the CLI.
