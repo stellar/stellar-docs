@@ -60,6 +60,14 @@ const config = {
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
           },
+          stellar_disbursement_platform: {
+            specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
+            outputDir: "api/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+            },
+            template: "src/template.mustache", // Customize API MDX with mustache template
+          }
         },
       },
     ],
@@ -143,6 +151,10 @@ const config = {
                 to: "/api/anchor-platform",
                 label: "Anchor Platform",
               },
+              {
+                to: "/api/stellar-disbursement-platform",
+                label: "Stellar Disbursement Platform",
+              }
             ]
           },
           {
