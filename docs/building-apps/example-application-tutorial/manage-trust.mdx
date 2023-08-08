@@ -24,3 +24,201 @@ The `changeTrust` operation can also be used to modify or remove trustlines.
 Trustlines hold the balances for all of their associated assets (except XLM, which are held at the account level), and you can display the user’s various balances in your application.
 
 ![display assets](/assets/display-assets.png)
+
+See it in action here: https://basicpay.pages.dev/dashboard/assets
+
+## Code implementation
+
+The trustlines an account holds will be necessary to view in several parts of the BasicPay application. First, we'll discuss how we manage different trustlines for the account.
+
+### The `/dashboard/assets` page
+
+The `/dashboard/assets` page will allow the user to manage the Stellar assets their account carries trustlines to. On this page, they can select from several pre-suggested or highly ranked assets, or they could specify their own asset to trust using an asset code and issuer public key. They can also remove trustlines that already exist on their account.
+
+The layout of the page is quite similar to our contacts page. It's got a table displaying the existing trustlines, and a section where you can add new ones. The key difference is that the `contacts` store is held in the browser's `localStorage`, whereas an account's balances are held on the blockchain. So, we will be querying the network to get that information. For more information about how we query this information from the Stellar network, check out the [`fetchAccountBalances()` function] in the querying data section.
+
+{/* TODO: Use the actual link to the section once we have that ready. */}
+
+[`fetchaccountbalances()` function]: https://www.example.com
+
+```svelte title="/src/routes/dashboard/assets/+page.svelte"
+<script>
+  // `export let data` allows us to pull in any parent load data for use here.
+  /** @type {import('./$types').PageData} */
+  export let data
+
+  // This is where our _reactive_ array of balances is declared. The query
+  // actually takes place in `/src/routes/dashboard/+layout.js`, and is
+  // inherited here.
+  $: balances = data.balances ?? []
+
+  // We import things from external packages that will be needed
+  import { Trash2Icon } from 'svelte-feather-icons'
+
+  // We import any Svelte components we will need
+  import ConfirmationModal from '$lib/components/ConfirmationModal.svelte'
+  import TruncatedKey from '$lib/components/TruncatedKey.svelte'
+
+  // We import any stores we will need to read and/or write
+  import { walletStore } from '$lib/stores/walletStore'
+  import { invalidateAll } from '$app/navigation'
+
+  // We import some of our `$lib` functions
+  import { submit } from '$lib/stellar/horizonQueries'
+  import { createChangeTrustTransaction } from '$lib/stellar/transactions'
+  import { fetchAssets } from '$lib/utils/stellarExpert'
+
+  // The `open` Svelte context is used to open the confirmation modal
+  import { getContext } from 'svelte'
+  const { open } = getContext('simple-modal')
+
+  // Define some component variables that will be used throughout the page
+  let addAsset = ''
+  let customAssetCode = ''
+  let customAssetIssuer = ''
+  let changeTrustXDR = ''
+  let changeTrustNetwork = ''
+  $: asset = addAsset !== 'custom' ? addAsset : `${customAssetCode}:${customAssetIssuer}`
+
+  // Takes an action after the pincode has been confirmed by the user.
+  const onConfirm = async (pincode) => {
+    // Use the walletStore to sign the transaction
+    let signedTransaction = await walletStore.sign({
+      transactionXDR: changeTrustXDR,
+      network: changeTrustNetwork,
+      pincode: pincode,
+    })
+    // Submit the transaction to the Stellar network
+    await submit(signedTransaction)
+    // `invalidateAll` will tell SvelteKit that it should re-run any `load`
+    // functions. Since we have a new (or newly deleted) trustline, this
+    // results in re-querying the network to get updated account balances.
+    invalidateAll()
+  }
+
+  // Builds and presents to the user for confirmation a Stellar transaction that
+  // will add/modify/remove a trustline on their account. This function is
+  // called when the user clicks the "add" or "delete" trustline buttons.
+  const previewChangeTrustTransaction = async (addingAsset = true, removeAsset = undefined) => {
+    // Generate the transaction, expecting back the XDR string
+    let { transaction, network_passphrase } = await createChangeTrustTransaction({
+      source: data.publicKey,
+      asset: removeAsset ?? asset,
+      limit: addingAsset ? undefined : '0',
+    })
+
+    // Set the component variables to hold the transaction details
+    changeTrustXDR = transaction
+    changeTrustNetwork = network_passphrase
+
+    // Open the confirmation modal for the user to confirm or reject the
+    // transaction. We provide our customized `onConfirm` function, but we
+    // have no need to customize and pass an `onReject` function.
+    open(ConfirmationModal, {
+      transactionXDR: changeTrustXDR,
+      transactionNetwork: changeTrustNetwork,
+      onConfirm: onConfirm,
+    })
+  }
+</script>
+
+<!-- This HTML has been abbreviated for simplicity -->
+<h2>Add Trusted Assets</h2>
+
+<select class="select-bordered select my-2 w-full" bind:value={addAsset}>
+  {#await fetchAssets() then assets}
+    {#each assets as { asset }}
+      {#if asset !== 'XLM'}
+        {@const assetString = `${asset.split('-')[0]}:${asset.split('-')[1]}`}
+        <option value={assetString}>{assetString}</option>
+      {/if}
+    {/each}
+  {/await}
+  <option value="custom">Custom asset...</option>
+</select>
+{#if addAsset === 'custom'}
+  <div class="join my-2 w-full flex-wrap">
+    <input
+      type="text"
+      class="input-bordered input join-item grow"
+      placeholder="Asset Code"
+      bind:value={customAssetCode}
+    />
+    <input
+      type="text"
+      class="input-bordered input join-item grow"
+      placeholder="Asset Issuer"
+      bind:value={customAssetIssuer}
+    />
+  </div>
+{/if}
+<button class="btn-primary btn-block btn my-2" on:click={() => previewChangeTrustTransaction()}
+  >Add Asset</button
+>
+
+<!-- ... -->
+<h2>Existing Balances</h2>
+
+<table class="table table-auto">
+  <tbody>
+    {#each balances as balance}
+      <tr>
+        <th>{balance.asset_code}</th>
+        <td>{balance.balance}</td>
+        <td><TruncatedKey keyText={balance.asset_issuer} /></td>
+        <td>
+          <button
+            class="btn-error btn-square btn-sm btn"
+            on:click={() => previewChangeTrustTransaction(false, assetString)}
+            ><Trash2Icon size="16" /></button
+          >
+        </td>
+      </tr>
+    {/each}
+  </tbody>
+</table>
+```
+
+### The `createChangeTrustTransaction` function
+
+In the above page, we've made use of the `createChangeTrustTransaction` function. This function can be used to add, delete, or modify trustlines on a Stellar account.
+
+```js title="/src/utils/stellar/transactions.js"
+// Constructs and returns a Stellar transaction that will create or modify a
+// trustline on an account.
+export async function createChangeTrustTransaction({ source, asset, limit }) {
+  // We start by converting the asset provided in string format into a Stellar
+  // Asset() object
+  let trustAsset = new Asset(asset.split(":")[0], asset.split(":")[1]);
+
+  // Next, we setup our transaction by loading the source account from the
+  // network, and initializing the TransactionBuilder.
+  let server = new Server(horizonUrl);
+  let sourceAccount = await server.loadAccount(source);
+
+  // Chaning everything together from the `transaction` declaration means we
+  // don't have to assign anything to `builtTransaction` later on. Either
+  // method will have the same results.
+  let transaction = new TransactionBuilder(sourceAccount, {
+    networkPassphrase: networkPassphrase,
+    fee: maxFeePerOperation,
+  })
+    // Add a single `changeTrust` operation (this controls whether we are
+    // adding, removing, or modifying the account's trustline)
+    .addOperation(
+      Operation.changeTrust({
+        asset: trustAsset,
+        limit: limit?.toString(),
+      }),
+    )
+    // Before the transaction can be signed, it requires timebounds
+    .setTimeout(standardTimebounds)
+    // It also must be "built"
+    .build();
+
+  return {
+    transaction: transaction.toXDR(),
+    network_passphrase: networkPassphrase,
+  };
+}
+```
