@@ -15,9 +15,9 @@ export const LanguageButtons = () => {
         <BrowserOnly>
             {() =>
                 <div style={{gap: "1rem", display: "flex", marginBottom: "1rem"}}>
-                    <img src={Typescript} onClick={() => setCookie("ts")}  style={{maxHeight: "1.2rem"}}/>
-                    <img src={isDark ? KotlinDark : Kotlin} onClick={() => setCookie("kt")} style={{maxHeight: "1.1rem"}}/>
-                    <img src={isDark ? FlutterDark : Flutter} onClick={() => setCookie("dart")} style={{maxHeight: "1.2rem"}}/>
+                    <img src={Typescript} onClick={() => setCookie("ts")}  style={{maxHeight: "1.2rem", cursor: "pointer"}}/>
+                    <img src={isDark ? KotlinDark : Kotlin} onClick={() => setCookie("kt")} style={{maxHeight: "1.1rem", cursor: "pointer"}}/>
+                    <img src={isDark ? FlutterDark : Flutter} onClick={() => setCookie("dart")} style={{maxHeight: "1.2rem", cursor: "pointer"}}/>
                 </div>
             }
         </BrowserOnly>
