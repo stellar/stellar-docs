@@ -5,12 +5,12 @@ sidebar_position: 30
 
 import { CodeExample } from "@site/src/components/CodeExample";
 
-Integrating with the Anchor Platform for facilitating cross-border payments involves implementing the following, at a mimimum:
+Integrating with the Anchor Platform for facilitating cross-border payments involves implementing the following, at a minimum:
 
 - [`GET /customer`][get-customer] & [`PUT /customer`][put-customer] KYC API endpoints to request & collect customers' KYC data
 - [`GET /rate`][get-rate] RFQ API endpoint to provide FX rates between the on & off-chain assets supported
 - `GET /transactions` requests to fetch updates on the Anchor Platform's transactions' statuses (documentation coming soon)
-- [`PATCH /transactions`][patch-transactions] requests to update the Anchor Platform's transactions' statuses
+- [`JSON-RPC`][json-rpc-methods] requests to update the Anchor Platform's transactions' statuses
 
 The following may also be required depending on your use case:
 
@@ -205,7 +205,7 @@ services:
 
 ### Polling for Received Payments
 
-The Stellar Observer makes `PATCH /transactions` requests to the Platform API whenever it detects payments received for transactions initiated by sending organizations, updating the transaction's `transfer_received_at` date-time. Your business should periodically poll the `GET /transactions` Platform API endpoint to detect these updates like so.
+The Stellar Observer makes JSON-RPC requests to the Platform API whenever it detects payments received for transactions initiated by sending organizations, updating the transaction's `transfer_received_at` date-time. Your business should periodically poll the `GET /transactions` Platform API endpoint to detect these updates like so.
 
 <CodeExample>
 
@@ -217,23 +217,382 @@ curl http://localhost:8080/transactions?sep=31&order_by=transfer_received_at&ord
 
 The response will include a list of cross-border payment transactions initiated by sending organizations ordered by when a payment was received for that transaction. For each transaction returned, your business should check whether or not it has already detected the payment for that transaction. If it has, you have detected all payments made to your account(s).
 
-## Providing Transaction Status Updates
+## Updating Transaction Via JSON-RPC
 
-Once your business detects that it has received an on-chain payment for a specific transaction, it must make the off-chain payment to the recipient and update the transaction's status to `completed` via a [`PATCH /transactions`][patch-transactions] request.
+SEP-31 flow diagram defines sequence/rules of transaction's status transition and a set of JSON-RPC methods that should be called to change status. You can't define the status you want to set for a specific transaction in your requests.
+Each JSON-RPC method defines data structures that it expects in request. If request doesn't contain a required attributes, Anchor Platform will return and error and won't change status/state of the transaction.
+
+[![sep31 flow](/assets/sep31-flow.png)](/assets/sep31-flow.png)
+
+:::tip
+
+Statuses in <span style={{color: "green"}}>green</span> define the shortest way. Such way contain only mandatory statuses.
+
+Statuses in <span style={{color: "#B0BF1A"}}>yellow</span> are optional and can be skipped
+
+Statuses in <span style={{color: "red"}}>red</span> mean transaction is in error or expired state
+
+:::
+
+:::tip
+
+You can create a [template][sep24-integration-make-json-rpc-request] for making a JSON-RPC calls to the Anchor Platform.
+This chapter also contains information about format of [request][sep24-integration-rpc-request]/[response][sep24-integration-rpc-response] and [error codes][sep24-integration-error-codes] that might be returned by Anchor Platform
+
+:::
+
+### Ready to Receive Funds
+
+SEP31 Transactions should initially be in `pending_sender` status. The Receiving Anchor waits to receive the payment identified by the stellar_memo included in the POST /transactions response.
+
+Once your business detects that it has received an on-chain payment for a specific transaction, it has to update transaction state and status.
 
 <CodeExample>
 
 ```json
-{
-  "transaction": {
-    "id": "<id>",
-    "status": "completed",
-    "message": "a deposit to the recipient's bank has been initiated"
+// onchain-funds-received.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_onchain_funds_received",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Onchain funds received",
+      "stellar_transaction_id": "7...9",
+      "amount_in": {
+        "amount": 10
+      },
+      "amount_out": {
+        "amount": 9
+      },
+      "amount_fee": {
+        "amount": 1
+      }
+    }
   }
-}
+]
 ```
 
 </CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh onchain-funds-received.json
+```
+
+Status of the transaction will be changed to `pending_receiver`
+
+### Offchain Funds Sent
+
+To complete the transaction and change its status to `completed` you need to make `notify_offchain_funds_sent` RPC call
+
+<CodeExample>
+
+```json
+// offchain-funds-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds sent",
+      "funds_sent_at": "2023-07-04T12:34:56Z",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh offchain-funds-sent.json
+```
+
+### Offchain Funds Pending
+
+Another option is to move transaction status to `pending_external`. This status means that payment has been submitted to external network, but is not yet confirmed
+
+<CodeExample>
+
+```json
+// offchain-funds-pending.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_pending",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds pending",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh offchain-funds-pending.json
+```
+
+### Customer Info Needed
+
+In certain cases the Receiving Anchor might need to request updated information from the Sending Anchor. For example, if the bank tells the Receiving Anchor that the provided Receiving Client's name is incorrect or missing a middle initial.
+Since this information was sent via SEP-12, the transaction should go into the `pending_customer_info_update` state until the Sending Anchor makes another SEP-12 `PUT /customer` request to update.
+The Sending Anchor can check which fields need to be updated by making a SEP-12 `GET /customer` request including the id or account & memo parameters.
+The Receiving Anchor should respond with a `NEEDS_INFO` status and `last_name` included in the fields described.
+
+<CodeExample>
+
+```json
+// pending-customer-info-update.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "pending_customer_info_update",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Customer info needed"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh pending-customer-info-update.json
+```
+
+### Customer Info Updated
+
+After Sending Anchor has made another SEP-12 `PUT /customer` request to update customer info the Receiving Anchor should change a status of the transaction to `pending_receiver`.
+
+<CodeExample>
+
+```json
+// notify-customer-info-updated.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_customer_info_updated",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Customer info updated"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh notify-customer-info-updated.json
+```
+
+### Do Stellar Refund
+Integration with custody provider allows you to do refund via custody provider, such as Fireblocks.
+
+<CodeExample>
+
+```json
+// do-stellar-refund.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "do_stellar_refund",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Do stellar refund",
+      "refund": {
+        "amount": {
+          "amount": 9,
+          "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+        },
+        "amount_fee": {
+          "amount": 1,
+          "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+        }
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh do-stellar-refund.json
+```
+
+:::note
+
+You can't do multiple refunds in SEP31 flow. That's why, the sum of amount to refund plus amount fee should be equal to `amount_in`. Otherwise, you will get an error message.
+
+:::
+
+### Refund Sent
+
+There is a possibility to send all funds back to the user (refund). You need to refund the whole sum(full refund)
+
+<CodeExample>
+
+```json
+// refund-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_refund_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Refund sent",
+      "refund": {
+        "id": "1c186184-09ee-486c-82a6-aa7a0ab1119c",
+        "amount": {
+          "amount": 10,
+          "asset": "iso4217:USD"
+        },
+        "amount_fee": {
+          "amount": 1,
+          "asset": "iso4217:USD"
+        }
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh refund-sent.json
+```
+
+:::note
+
+You can't do multiple refunds in SEP31 flow. That's why, the sum of amount to refund plus amount fee should be equal to `amount_in`. Otherwise, you will get an error message.
+
+:::
+
+### Transaction Error
+If you encounter an unrecoverable error when processing the transaction, it's required to set the transaction status to `error`. The message field can be used to describe error details.
+
+<CodeExample>
+
+```json
+// transaction-error.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_error",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Error occurred"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh transaction-error.json
+```
+
+:::tip
+
+If user has made a transfer than you should do a transaction recovery, and then you can retry processing of transaction or initiate a refund.
+
+:::
+
+### Expired Transaction
+Your business may want to expire transactions that have been abandoned by the user after some time. It's a good practice to clean up inactive transactions in the `incomplete` status. To do so, simply change the transaction status to `expired`
+
+<CodeExample>
+
+```json
+// transaction-expired.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_expired",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction expired"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh transaction-expired.json
+```
+
+:::tip
+
+This status can't be used after the user has made a transfer
+
+:::
+
+### Transaction Recovery
+
+Transaction status can be changed from `error/expired` to `pending-anchor`. After recovery, you can refund received assets or proceed processing of transaction.
+To recover transaction, it's necessary to make the following RPC call:
+
+<CodeExample>
+
+```json
+// transaction-recovery.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_recovery",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction recovered"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this you need to run
+
+``` bash
+./call-json-rpc.sh transaction-recovery.json
+```
 
 ## Fee Callback Endpoint
 
@@ -292,3 +651,8 @@ This endpoint may be removed in future major version updates of the Anchor Platf
 [get-unique-address]: /api/anchor-platform/callbacks/gen-address
 [put-customer-callback]: /api/anchor-platform/callbacks/put-customer-callback
 [delete-customer]: /api/anchor-platform/callbacks/del-customer
+[json-rpc-methods]: /api/anchor-platform/rpc/methods
+[sep24-integration-make-json-rpc-request]: /docs/anchoring-assets/anchor-platform/sep24/integration#making-json-rpc-requests
+[sep24-integration-rpc-request]: /docs/anchoring-assets/anchor-platform/sep24/integration#json-rpc-request
+[sep24-integration-rpc-response]: /docs/anchoring-assets/anchor-platform/sep24/integration#json-rpc-response
+[sep24-integration-error-codes]: /docs/anchoring-assets/anchor-platform/sep24/integration#error-codes
