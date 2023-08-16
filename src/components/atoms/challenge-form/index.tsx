@@ -1,152 +1,135 @@
-import React, { useState, useEffect } from "react";
-import styles from "./style.module.css";
-import { useSorobanReact, SorobanReactProvider } from "@soroban-react/core";
+import React, {
+  useState,
+  useEffect,
+  useContext,
+  ChangeEvent,
+  FormEvent,
+} from "react";
+import { useSorobanReact } from "@soroban-react/core";
 import { SorobanEventsProvider } from "@soroban-react/events";
-import { futurenet, sandbox, standalone, testnet } from "@soroban-react/chains";
-import { freighter } from "@soroban-react/freighter";
-import { ChainMetadata, Connector } from "@soroban-react/types";
 import BrowserOnly from "@docusaurus/BrowserOnly";
-
-const chains: ChainMetadata[] = [sandbox, futurenet, testnet, standalone];
-const connectors: Connector[] = [freighter()];
+import styles from "./style.module.css";
+import CompleteStepButton from "../complete-step-button";
+import UserChallengesContext, {
+  UserChallengesContextProps,
+} from "../../../store/user-challenges-context";
+import { getActiveChallenge } from "../../../utils/get-active-challenge";
 
 interface ChallengeFormProps {
-  courseId: number;
+  id: number;
   address?: string;
 }
 
-function ChallengeForm2({ address, courseId }: ChallengeFormProps) {
+function ChallengeForm({ address, id }: ChallengeFormProps) {
   const [savedUrl, setSavedUrl] = useState("");
   const [url, setUrl] = useState("");
-  const [courseIdState] = useState(courseId);
-  const [isSubmittedSuccessfully, setIsSubmittedSuccessfully] = useState(false);
-
-  interface Course {
-    publickey: string;
-    course_index: number;
-    url: string;
-  }
-
-  const fetchCourseUrl = async (
-    address: string,
-    courseId: number,
-  ): Promise<string> => {
-    try {
-      const response = await fetch(
-        "https://soroban-dapps-challenge-wrangler.sdf-ecosystem.workers.dev",
-      );
-      const rawData = await response.json();
-      const data: Course[] = rawData.map(
-        ({ publickey, url }: { publickey: string; url: string }) => {
-          const [key, course_index] = publickey.split(":");
-          return { publickey: key, course_index: Number(course_index), url };
-        },
-      );
-
-      // Get the first course that matches the public key and course id
-      const course = data.find(
-        (course) =>
-          course.publickey === address && course.course_index === courseId,
-      );
-      return course ? course.url : "";
-    } catch (error) {
-      console.error(error);
-      return "";
-    }
-  };
+  const [isStarted, setIsStarted] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const { data } = useContext<UserChallengesContextProps>(
+    UserChallengesContext,
+  );
+  const isSubmitBtnDisabled = !url || savedUrl === url;
 
   useEffect(() => {
     if (address) {
-      fetchCourseUrl(address, courseId).then(setUrl);
-      fetchCourseUrl(address, courseId).then(setSavedUrl);
+      const challenge = getActiveChallenge(data, id);
+      setSavedUrl(challenge?.url || "");
+      setIsStarted(!!challenge?.startDate);
     }
-  }, [address, courseId]);
+  }, [address, savedUrl, data, id]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
+  const isValidUrl = (urlString: string): boolean => {
     try {
-      if (!url.includes(".vercel.app")) {
-        alert('URL must contain ".vercel.app" to complete the checkpoint.');
-        return;
-      }
-
-      const response = await fetch(
-        "https://soroban-dapps-challenge-wrangler.sdf-ecosystem.workers.dev",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            publickey: address,
-            url: url,
-            course_index: [courseIdState],
-          }),
-        },
-      );
-
-      if (response.ok) {
-        // Request succeeded, handle the response
-        const data = response;
-        console.log(data);
-        setIsSubmittedSuccessfully(true);
-      } else {
-        // Request failed, handle the error
-        console.error("Request failed with status:", response.status);
-      }
-    } catch (error) {
-      // Handle or log the error here
-      console.error(error);
+      return Boolean(new URL(urlString));
+    } catch (e) {
+      return false;
     }
   };
 
-  // Show the form if it's not submitted successfully
-  if (!isSubmittedSuccessfully) {
+  const changeHandler = (event: ChangeEvent<HTMLInputElement>) => {
+    const inputValue = event.target.value;
+    const isVercelApp = inputValue.includes(".vercel.app");
+
+    setFormError(null);
+
+    if (!isValidUrl(inputValue)) {
+      setFormError("Please enter a valid url");
+      return;
+    }
+
+    if (!isVercelApp) {
+      setFormError("URL should contain .vercel.app to complete the checkpoint");
+    } else {
+      setUrl(inputValue);
+    }
+  };
+
+  const blurHandler = () => {
+    if (!url) {
+      setFormError("Mandatory field");
+    }
+  };
+
+  if (!isStarted) {
     return (
-      <div>
-        <form onSubmit={handleSubmit} className={styles.challengeform}>
-          <label>
-            Public URL:
-            <input
-              className={styles.input}
-              type="url"
-              value={url}
-              onChange={(e) => {
-                const url = e.target.value;
-                setUrl(url);
-                console.log("URL:", url);
-                console.log("Public Key:", address);
-              }}
-              required
-            />
-          </label>
-          <button type="submit" className={styles.button}>
-            {savedUrl ? "Resubmit" : "Submit"}
-          </button>
-        </form>
-      </div>
+      <>
+        <strong>
+          Start the challenge to track your progress and submit the url.
+        </strong>
+        <br />
+      </>
     );
   }
 
-  // Show the clickable entry if the form is submitted successfully
   return (
     <div>
-      <p className={styles.success}>
-        Challenge Complete! Dapp deployed to: <a href={url}>{url}</a>
-      </p>
+      {savedUrl ? (
+        <p className={styles.success}>
+          Public url submitted! Your DApp is deployed to:
+          <a href={savedUrl}>{savedUrl}</a>
+        </p>
+      ) : null}
+
+      <form
+        className={styles.challengeform}
+        onSubmit={(e: FormEvent) => e.preventDefault()}
+      >
+        <input
+          className={
+            formError
+              ? `${styles.input} ${styles.inputWithError}`
+              : styles.input
+          }
+          type="url"
+          placeholder="Enter your public url"
+          onChange={changeHandler}
+          onBlur={blurHandler}
+          required
+        />
+
+        <CompleteStepButton
+          isDisabled={isSubmitBtnDisabled}
+          type="submit"
+          id={id}
+          progress={3}
+          url={url}
+        >
+          {savedUrl ? "Re-submit" : "Submit url"}
+        </CompleteStepButton>
+      </form>
+      <span className={styles.errorMessage}>{formError}</span>
     </div>
   );
 }
 
-function InnerComponent({ courseId }: { courseId: number }) {
+function InnerComponent({ id }: { id: number }) {
   const { address, connect, activeChain } = useSorobanReact();
   const addressString = address ? address.toString() : "No address";
   const [loading, setLoading] = useState(true);
 
   // Check if the user is connected and stored the status in local storage
   useEffect(() => {
-    let isConnected = localStorage.getItem(`isConnected:${addressString}`);
+    const isConnected = localStorage.getItem(`isConnected:${addressString}`);
     if (isConnected === "true") {
       setLoading(false);
       connect(); // Call connect() to establish a connection if not already connected
@@ -171,54 +154,25 @@ function InnerComponent({ courseId }: { courseId: number }) {
     }
   }, [activeChain]);
 
-  const handleConnect = async () => {
-    try {
-      await connect();
-      setLoading(false);
-      localStorage.setItem(`isConnected:${addressString}`, "true");
-      let isConnected = localStorage.getItem(`isConnected:${addressString}`);
-      console.log("isConnected:", isConnected);
-    } catch (error) {
-      console.error("Error during connection:", error);
-    }
-  };
-
   // if user is not logged in (address is undefined), render the Login button
   if (loading) {
     return (
       <div style={{ fontWeight: "bold" }}>
-        Please connect to Futurenet and click the Connect button to continue.
+        Please connect to Futurenet network.
         <br />
-        <br />
-        <button className={styles.button} onClick={handleConnect}>
-          Connect
-        </button>
       </div>
     );
   }
   // if user is logged in and connected to the right network, render the ChallengeForm
-  return <ChallengeForm2 address={address} courseId={courseId} />;
+  return <ChallengeForm address={address} id={id} />;
 }
 
-export function ParentChallengeForm({ courseId }: { courseId: number }) {
+export function ParentChallengeForm({ id }: { id: number }) {
   return (
-    <SorobanReactProvider
-      autoconnect={false}
-      chains={chains}
-      connectors={connectors}
-      appName={"course completion"}
-    >
-      <SorobanEventsProvider>
-        <BrowserOnly
-          fallback={
-            <div>
-              Please connect to Futurenet and refresh the page to continue.
-            </div>
-          }
-        >
-          {() => <InnerComponent courseId={courseId} />}
-        </BrowserOnly>
-      </SorobanEventsProvider>
-    </SorobanReactProvider>
+    <SorobanEventsProvider>
+      <BrowserOnly fallback={<div>Please connect to Futurenet network.</div>}>
+        {() => <InnerComponent id={id} />}
+      </BrowserOnly>
+    </SorobanEventsProvider>
   );
 }
