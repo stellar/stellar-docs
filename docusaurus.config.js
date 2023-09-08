@@ -165,6 +165,11 @@ const config = {
             position: "right",
           },
           {
+            href: "https://discord.gg/stellardev",
+            label: "Discord",
+            position: "right",
+          },
+          {
             type: "search",
             position: "right",
           },
