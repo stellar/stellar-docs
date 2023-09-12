@@ -60,6 +60,14 @@ const config = {
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
           },
+          stellar_disbursement_platform: {
+            specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
+            outputDir: "api/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+            },
+            template: "src/template.mustache", // Customize API MDX with mustache template
+          }
         },
       },
     ],
@@ -89,7 +97,9 @@ const config = {
           showLastUpdateTime: true,
           breadcrumbs: true,
           routeBasePath: "/docs",
-          remarkPlugins: [require("mdx-mermaid"), require('remark-math')],
+          remarkPlugins: [require("mdx-mermaid"), require('remark-math'), [
+            require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
+          ]],
           rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
@@ -143,11 +153,20 @@ const config = {
                 to: "/api/anchor-platform",
                 label: "Anchor Platform",
               },
+              {
+                to: "/api/stellar-disbursement-platform",
+                label: "Stellar Disbursement Platform",
+              }
             ]
           },
           {
             href: "https://github.com/stellar/stellar-docs",
             label: "GitHub",
+            position: "right",
+          },
+          {
+            href: "https://discord.gg/stellardev",
+            label: "Discord",
             position: "right",
           },
           {
