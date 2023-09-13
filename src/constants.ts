@@ -1,5 +1,3 @@
-export const PLATFORM_VERSION="2.1.1"
-
 export const CODE_LANGS = {
     bash: 'bash',
     cpp: 'C++',
