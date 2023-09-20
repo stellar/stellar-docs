@@ -33,6 +33,10 @@ const challengeConfig: { [key: string]: ChallengeConfig } = {
     icon: iconWallet,
     route: "/dapps/dapp-challenges/challenge-1-payment",
   },
+  2: {
+    icon: iconBulb,
+    route: "/dapps/dapp-challenges/challenge-2-liquidity-pool",
+  },
 };
 const months = [
   "Jan",
