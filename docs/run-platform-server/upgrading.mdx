@@ -1,0 +1,108 @@
+---
+title: Upgrading
+sidebar_position: 80
+---
+
+import { Alert } from "@site/src/components/Alert";
+import { CodeExample } from "@site/src/components/CodeExample";
+
+We'll describe the recommended steps for upgrading a Horizon 2.x installation.
+
+### Pre-requisites
+
+- An existing Horizon deployment consisting of one or more instances of Horizon.
+- All instances are on same 2.x version to begin.
+- If [bare metal](./installing.mdx#bare-metal) install, you have shell, or command line access to each host having a Horizon installation.
+- If [deployed direct on docker daemon](./installing.mdx#containerized), you have command line access to the host that is running the docker daemon.
+- If [deployed on Kubernetes with Helm chart](./installing.mdx#helm-chart-installation), you have kubectl and helm command line tools on your workstation and a user login with appropriate access levels to change resources in target namespace of Horizon deployment on the cluster.
+
+### Assess current installation
+
+- Identify list of all instances of Horizon that need to be upgraded.
+
+  - bare metal installations, the list of hosts is managed by you.
+  - docker daemon deployments, the list of hosts and running containers is managed by you.
+  - kubernetes deployments, get the list of pods that are deployed from your prior helm installation, they will have an annotation for `release=your_helm_horizon_installation_name`:
+
+    <CodeExample>
+
+    ```bash
+    kubectl get pods -l release=your_helm_horizon_installation_name -n <your_horizon_namespace>
+    ```
+
+    </CodeExample>
+
+- Identify your current Horizon software version:
+
+  - obtain command line access to the operating system of each horizon instance:
+    - bare metal installations, this is typically ssh on linux or powershell on windows.
+    - docker daemon deployments, use `docker exec -it <containerid> /bin/bash`
+    - For kubernetes deployments, use `kubectl exec -it <pod_name> -n <horizon_namespace> -- /bin/bash`
+  - on command line of each instance, run `stellar-horizon version`
+
+- All instances should report the same version, if not, the system may be inconsistent, use this upgrade as opportunity to establish consistency and get them all on same version.
+
+### Determine the target version for upgrade
+
+Now that you know your current horizon version, visit [Horizon Releases](https://github.com/stellar/go/releases) and choose the next greater version above your current version to upgrade. Follow steps [recommended by Github to compare releases](https://docs.github.com/en/repositories/releasing-projects-on-github/comparing-releases), click on the `Compare` dropdown of the chosen release, and then select your current release and GH will display the differences between versions, select the `Files changed` tab, and go to the `services/horizon/CHANGELOG.md`, it will highlight the new release notes for changes that have occurred between your current version and the new version you selected. Review this and look for any `Breaking Changes`, `State Rebuild` and `DB Schema Migration` sections for consideration, as the latter two will also mention expected time for the state rebuild or db migration to apply respectively.
+
+### Install the new version
+
+Now that you have indentified the new version and are aware of the potential impacts from upgrading to new version based on release notes, such as state rebuilds and db migrations, you are informed and ready to proceed with upgrade.
+
+Upgrading production deployents should leverage a secondary, hot-backup deployment, also known as a [blue/green model](./scaling/mdx#redundant-hot-backup) and perform the upgrade on the inactive deployment first. This will avoid downtime of system to your external users, as the upgrade takes place on the inactive deployment.
+
+A good strategy for upgrading horizon and applicable to single or multi-instance deployments - shut all instances down, install new horizon version on one of the ingesting instances first. The reason being horizon software will only initate `State Rebuild` and `DB Schema Migration` actions related to an upgrade on an instance that it detects ingestion has been enabled with configuration parameter, `INGEST=true`. This lowers complexity for you during the upgrade as you only need to focus on one instance and it avoids potential concurrent horizon ingestion processes attempting the same upgrade on the database.
+
+- bare metal installations, use apt package manager on linux.
+
+  <CodeExample>
+
+  ```bash
+  sudo apt update
+  sudo apt install stellar-horizon=new_horizon_debian_pkg_version
+  ```
+
+  </CodeExample>
+
+- docker daemon deployments, set the new tag for the image based on release published on dockerhub - [stellar/stellar-horizon](https://hub.docker.com/r/stellar/stellar-horizon/tags)
+- For kubernetes deployments, use your helm cli tool to upgrade the helm installation of horizon on kubernetes cluster that was created prior by following the [run steps](./running.mdx). You will set the `global.image.horizon.tag` to the release tag published on [stellar/stellar-horizon](https://hub.docker.com/r/stellar/stellar-horizon/tags)
+
+  <CodeExample>
+
+  ```bash
+  helm upgrade my-horizon \
+  --namespace my-horizon-namespace-on-cluster  \
+  --set global.image.horizon.tag=new_horizon_release_number
+  ```
+
+  </CodeExample>
+
+#### Confirming the upgrade on single ingestion instance first
+
+If you have [monitoring](./monitoring.mdx) infrastructure in place, then you have two options for assessing the upgrade status:
+
+- View metrics outputs using grafana dashboards that leverage queries on the [horizon metrics data model](./monitoring.mdx#data-model) to check key stats like ingestion and network ledgers are advancing and in step.
+
+- View the horizon web server 'status' url path on the upgraded instance:
+
+  <CodeExample>
+
+  ```bash
+  curl http://localhost:8000/
+  ```
+
+  </CodeExample>
+
+  The response will be HTTP status code 200 and body of response will be a text based json data structure with diagnostic info on current horizon software version, and ledger numbers for ingestion and network, refresh the url every 5 seconds or so, and should see the ingestion and network ledger numbers advancing and in step, indicating good connection to the network and ingestion.
+
+If metrics and/or the horizon 'status' url respones don't indicate healthy status based on advancing ledger ingestion, two steps to triage further:
+
+- A delay in horizon achieving healthy status after an upgrade is expected and legitmate for any upgrade cases where `State Rebuild` or `DB Migration` was noted in the release delta as part of prior [Determine the target version for upgrade step](#determine-the-target-version-for-upgrade). Typically the notes will also mention relative timeframe expectations for those to complete which can be factored in to how long to wait on delay.
+- Check the logs from the upgraded instance to confirm what's going on. Any `State Rebuild` or `DB Migration` initiated will be mentioned.
+
+#### Upgrade all remaining instances
+
+At this point, you have upgraded one ingesting instance to the new horizon version, it has automatically updated the database if required and the instance is running with healthy status. Now, install the same horizon software version on the remainder of instances, restarting each after the upgrade.
+
+For production deployments following the hot backup or blue/green model, this is the opportunity to confirm the inactive deployment has taken the upgrade correctly and stable, at which point, switch the load balancers now to forward traffic to the inactive deployment, making it the active deployment. Now, can take time to perform same upgrade on the other deployment which is now inactive.
