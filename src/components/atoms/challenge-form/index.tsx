@@ -140,15 +140,15 @@ function InnerComponent({ id }: { id: number }) {
 
   useEffect(() => {
     if (activeChain) {
-      if (activeChain.name?.toString() !== "Futurenet") {
-        alert("Please ensure that you are connected to Futurenet");
+      if (activeChain.name?.toString() !== "Testnet") {
+        alert("Please ensure that you are connected to Testnet");
         setLoading(true);
       }
       if (activeChain.name?.toString() === undefined) {
-        alert("Please ensure that you are connected to Futurenet");
+        alert("Please ensure that you are connected to Testnet");
         setLoading(true);
       }
-      if (activeChain.name?.toString() === "Futurenet" && address) {
+      if (activeChain.name?.toString() === "Testnet" && address) {
         setLoading(false);
       }
     }
@@ -158,7 +158,7 @@ function InnerComponent({ id }: { id: number }) {
   if (loading) {
     return (
       <div style={{ fontWeight: "bold" }}>
-        Please connect to Futurenet network.
+        Please connect to Testnet network.
         <br />
       </div>
     );
@@ -170,7 +170,7 @@ function InnerComponent({ id }: { id: number }) {
 export function ParentChallengeForm({ id }: { id: number }) {
   return (
     <SorobanEventsProvider>
-      <BrowserOnly fallback={<div>Please connect to Futurenet network.</div>}>
+      <BrowserOnly fallback={<div>Please connect to Testnet network.</div>}>
         {() => <InnerComponent id={id} />}
       </BrowserOnly>
     </SorobanEventsProvider>
