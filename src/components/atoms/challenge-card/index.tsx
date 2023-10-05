@@ -27,7 +27,7 @@ const challengeConfig: { [key: string]: ChallengeConfig } = {
     icon: iconBulb,
     route: "/dapps/dapp-challenges/challenge-0-crowdfund",
     lastCheckpointRoute:
-      "/dapps/dapp-challenges/challenge-0-crowdfund#checkpoint-8--check-your-work",
+      "/dapps/dapp-challenges/challenge-0-crowdfund#checkpoint-7--check-your-work",
   },
   1: {
     icon: iconWallet,

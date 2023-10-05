@@ -43,7 +43,7 @@ export default function StartChallengeButton({
     const fetchProgress = async () => {
       setIsLoading(true);
       try {
-        const response = await fetchUserProgress(address);
+        const response = await fetchUserProgress(address?.toString() || "");
         const challenges = response.data.challenges || [];
         const challenge = getActiveChallenge(challenges, id);
         setData(challenges);
@@ -60,7 +60,7 @@ export default function StartChallengeButton({
 
   const startChallenge = async () => {
     const updatedItem: UpdateProgressData = {
-      userId: address,
+      userId: address?.toString() || "",
       challengeId: id,
       challengeProgress: 0,
       startDate: Date.now(),
