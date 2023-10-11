@@ -1,4 +1,4 @@
-import React from "react";
+import React , { useState }from "react";
 import { toast } from "react-toastify";
 import { Ranking } from "interfaces/challenge";
 import styles from "./style.module.css";
@@ -14,6 +14,7 @@ interface Props {
 const DashboardHeader: React.FC<Props> = ({ totalCompleted, ranking }) => {
   const { address, disconnect } = useAuth();
 
+  const [showContent, setShowContent] = useState(false);
   const addressEnding = address?.substring(address.length, address.length - 4);
 
   const copyUserAddress = () => {
@@ -25,7 +26,6 @@ const DashboardHeader: React.FC<Props> = ({ totalCompleted, ranking }) => {
       autoClose: 2000,
     });
   };
-
   return (
     <div className={styles.dashboardHeader}>
       <h3 className={styles.dashboardTitle}>Your dashboard</h3>
@@ -40,7 +40,6 @@ const DashboardHeader: React.FC<Props> = ({ totalCompleted, ranking }) => {
 
           <div>
             <label>User address</label>
-
             <div className={styles.userAddress} data-truncate={addressEnding}>
               <div>{address}</div>
               <img
@@ -50,7 +49,6 @@ const DashboardHeader: React.FC<Props> = ({ totalCompleted, ranking }) => {
                 alt="Copy address to clipboard"
               />
             </div>
-
             <button className={styles.logoutButton} onClick={disconnect}>
               Log out
             </button>
@@ -63,7 +61,6 @@ const DashboardHeader: React.FC<Props> = ({ totalCompleted, ranking }) => {
             className={styles.statsIcon}
             alt="Star icon"
           />
-
           <div className={styles.completedChallenges}>
             <label>{totalCompleted}</label>
             <span>completed challenges</span>
@@ -76,12 +73,27 @@ const DashboardHeader: React.FC<Props> = ({ totalCompleted, ranking }) => {
             className={styles.statsIcon}
             alt="Ranking icon"
           />
+          <div>
+            <button className={styles.toggleButton} onClick={() => setShowContent(prevState => !prevState)}>
+              Show Rank
+            </button>
 
-          <div className={styles.completedChallenges}>
-            <label>
-              {ranking.current}/{ranking.total}
-            </label>
-            <span>ranking position</span>
+            {showContent && (
+              <div className={styles.completedChallenges}>
+                {!ranking.current || !ranking.total ? (
+                  <span style={{ paddingTop: '1px' }}>
+                    Start a challenge to get a rank
+                  </span>
+                ) : (
+                  <>
+                    <label>
+                      {ranking.current}/{ranking.total}
+                    </label>
+                    <span>leaderboard ranking</span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </li>
       </ul>

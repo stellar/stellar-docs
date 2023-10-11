@@ -142,7 +142,7 @@ function InnerComponent({ id }: { id: number }) {
 export function ParentChallengeForm({ id }: { id: number }) {
   return (
     <SorobanEventsProvider>
-      <BrowserOnly fallback={<div>Please connect to Testnet network.</div>}>
+      <BrowserOnly fallback={<div>Please connect to Testnet or Futurenet network.</div>}>
         {() => <InnerComponent id={id} />}
       </BrowserOnly>
     </SorobanEventsProvider>
