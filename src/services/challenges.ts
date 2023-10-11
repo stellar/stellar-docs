@@ -20,6 +20,12 @@ export const fetchUserProgress = async (userId: string) => {
   });
 };
 
+export const resetUserProgress = async (userId: string) => {
+  return await httpClient.delete<UserProgress>("/users", {
+    params: { userId },
+  });
+};
+
 export const updateUserProgress = async (challenge: UpdateProgressData) => {
   return await httpClient.post<
     Partial<UpdateProgressData>,

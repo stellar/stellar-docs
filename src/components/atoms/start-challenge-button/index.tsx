@@ -32,7 +32,7 @@ const startedToast = (
 export default function StartChallengeButton({
   id,
 }: StartChallengeButtonProps) {
-  const { address, isConnected, connectUser } = useAuth();
+  const { address, isConnected, connect } = useAuth();
   const [isStarted, setIsStarted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { setData, updateProgress } = useContext<UserChallengesContextProps>(
@@ -82,10 +82,10 @@ export default function StartChallengeButton({
   return (
     <button
       className={styles.button}
-      onClick={isConnected ? startChallenge : connectUser}
+      onClick={isConnected ? startChallenge : connect}
       disabled={isStarted || isLoading}
     >
-      {isConnected ? "Start challenge" : "Login to start challenge"}
+      {isConnected ? "Start Challenge" : "Connect Wallet"}
     </button>
   );
 }

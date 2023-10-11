@@ -5,9 +5,9 @@ import React, {
   useState,
 } from "react";
 import { toast } from "react-toastify";
-import { useSorobanReact } from "@soroban-react/core";
 import { useReward } from "react-rewards";
 import { AxiosResponse } from "axios";
+import useAuth from "../../../hooks/useAuth";
 import styles from "./styles.module.css";
 import UserChallengesContext, {
   UserChallengesContextProps,
@@ -19,6 +19,7 @@ import {
   UpdateProgressData,
 } from "../../../interfaces/challenge";
 import { updateUserProgress } from "../../../services/challenges";
+import { getContractBalance } from "../../../utils/get-contract-balance";
 
 interface CompleteStepButtonState {
   isCompleted: boolean;
@@ -32,6 +33,7 @@ interface CompleteStepButtonProps extends PropsWithChildren {
   id: number;
   progress: number;
   url?: string;
+  contractId?: string;
 }
 
 const milestoneToast = (
@@ -69,6 +71,7 @@ export default function CompleteStepButton({
   id,
   progress,
   url,
+  contractId,
 }: CompleteStepButtonProps) {
   const [challenge, setChallenge] = useState<ChallengeInfo | null>(null);
   const [state, setState] = useState<CompleteStepButtonState>({
@@ -79,7 +82,7 @@ export default function CompleteStepButton({
   const { data, updateProgress } = useContext<UserChallengesContextProps>(
     UserChallengesContext,
   );
-  const { address } = useSorobanReact();
+  const { address } = useAuth();
   const { reward, isAnimating } = useReward(
     `reward${id}-${progress}`,
     "confetti",
@@ -139,10 +142,12 @@ export default function CompleteStepButton({
       challengeProgress: progress,
       url,
       completedAt: Date.now(),
-      startDate: challenge.startDate,
+      startDate: challenge?.startDate,
+      contractId: challenge?.contractId,
+      totalValueLocked: challenge?.totalValueLocked,
     });
 
-    showToast(challenge.isPullRequestRequired ? passedToast : completedToast);
+    showToast(challenge?.isPullRequestRequired ? passedToast : completedToast);
     reward();
   };
 
@@ -150,6 +155,50 @@ export default function CompleteStepButton({
     if (state.isLastStep) {
       lastStepHandler();
       return;
+    }
+
+    let balance = 0;
+
+    // if funding step => get contract balance (except payment for now)
+    if (progress === 2 && id !== 1) {
+      if (challenge?.contractId) {
+        try {
+          const result = await getContractBalance(
+            challenge?.contractId,
+            address,
+          );
+          if (!result) {
+            toast("No locked balance found!", {
+              type: "error",
+              hideProgressBar: true,
+              position: "top-center",
+              autoClose: 2000,
+            });
+
+            return;
+          }
+
+          balance = result;
+        } catch (error) {
+          console.error(error);
+
+          toast("No locked balance found!", {
+            type: "error",
+            hideProgressBar: true,
+            position: "top-center",
+            autoClose: 2000,
+          });
+          return;
+        }
+      } else {
+        toast("No contract id found!", {
+          type: "error",
+          hideProgressBar: true,
+          position: "top-center",
+          autoClose: 2000,
+        });
+        return;
+      }
     }
 
     setState((prevState: CompleteStepButtonState) => {
@@ -163,7 +212,9 @@ export default function CompleteStepButton({
       userId: address,
       challengeId: id,
       challengeProgress: progress,
-      startDate: challenge.startDate,
+      startDate: challenge?.startDate,
+      contractId: contractId || challenge?.contractId,
+      totalValueLocked: challenge?.totalValueLocked || balance,
     });
 
     showToast(milestoneToast);
@@ -174,7 +225,7 @@ export default function CompleteStepButton({
       <button
         type={type || "button"}
         className={styles.completeStepButton}
-        disabled={isButtonDisabled}
+        disabled={progress === 1 ? isDisabled : isButtonDisabled}
         onClick={completeStepHandler}
       >
         <span id={`reward${id}-${progress}`} />

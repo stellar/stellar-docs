@@ -1,52 +1,76 @@
-import { useLayoutEffect, useState } from "react";
-import { useSorobanReact } from "@soroban-react/core";
+import { useContext, useState } from "react";
+import { toast } from "react-toastify";
+import UserChallengesContext, {
+  UserChallengesContextProps,
+} from "../store/user-challenges-context";
+
+// Import the Freighter library
+import { isConnected, setAllowed, getPublicKey } from "@stellar/freighter-api";
 
 const useAuth = () => {
-  const { address, connect, disconnect } = useSorobanReact();
-  const [isConnected, setIsConnected] = useState(false);
-  const addressString = address ? address.toString() : "No address";
+  const { address, setAddress } = useContext<UserChallengesContextProps>(
+    UserChallengesContext
+  );
 
-  useLayoutEffect(() => {
-    if (address) {
-      localStorage.setItem(`isConnected:${address}`, "true");
-    }
-    const isConnectedFromStorage = localStorage.getItem(
-      `isConnected:${addressString}`,
-    );
-    setIsConnected(!!isConnectedFromStorage);
+  const [loading, setLoading] = useState(false);
 
-    if (isConnectedFromStorage) {
-      try {
-        connect();
-      } catch (error) {
-        console.error("Error during connection:", error);
-      }
-    }
-  }, [connect, address, addressString]);
+  const disconnect = () => {
+    setAddress("");
+  };
 
-  const connectUser = async () => {
+  const connect = async () => {
     try {
-      await connect();
-      localStorage.setItem(`isConnected:${addressString}`, "true");
-      setIsConnected(true);
-    } catch (error) {
-      console.error("Error during connection:", error);
+      setLoading(true);
+
+      // Check if the user has Freighter installed
+      if (await isConnected()) {
+        // Prompt the user for authorization if needed
+        await setAllowed();
+
+        // Retrieve the user's public key
+        const publicKey = await getPublicKey();
+
+        // Store the user's public key in the context
+        setAddress(publicKey);
+
+        setLoading(false);
+
+        return true;
+      } else {
+        // Handle the case where Freighter is not installed
+        toast("Freighter is not installed!", {
+          type: "error",
+          hideProgressBar: true,
+          position: "top-center",
+          autoClose: 2000,
+        });
+        return false;
+      }
+    } catch (e) {
+      console.error("Connection error", e);
+
+      toast("Connection error!", {
+        type: "error",
+        hideProgressBar: true,
+        position: "top-center",
+        autoClose: 2000,
+      });
+      return false;
     }
   };
 
-  const disconnectUser = async () => {
-    // TODO: Uncomment this when disconnect feature will be fully completed from @soroban-react/core side
-    // try {
-    //   await disconnect().then(() => {
-    //     localStorage.removeItem(`isConnected:${addressString}`);
-    //     setIsConnected(false);
-    //   });
-    // } catch (error) {
-    //   console.error("Error during disconnection:", error);
-    // }
+  const onConnectFreighter = () => {
+    // Call the connect function to initiate the Freighter connection
+    connect();
   };
 
-  return { address, isConnected, connectUser, disconnectUser };
+  return {
+    address,
+    isConnected: !!address,
+    loading,
+    connect: onConnectFreighter,
+    disconnect,
+  };
 };
 
 export default useAuth;

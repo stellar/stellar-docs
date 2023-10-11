@@ -20,53 +20,33 @@ interface ChallengeFormProps {
   address?: string;
 }
 
-function ChallengeForm({ address, id }: ChallengeFormProps) {
-  const [savedUrl, setSavedUrl] = useState("");
-  const [url, setUrl] = useState("");
+function ChallengeContractForm({ address, id }: ChallengeFormProps) {
+  const [savedContractId, setSavedContractId] = useState("");
+  const [contractId, setContractId] = useState("");
   const [isStarted, setIsStarted] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const { data } = useContext<UserChallengesContextProps>(
     UserChallengesContext,
   );
-  const isSubmitBtnDisabled = !url || savedUrl === url;
+  const isSubmitBtnDisabled = !contractId || savedContractId === contractId;
 
   useEffect(() => {
     if (address) {
       const challenge = getActiveChallenge(data, id);
-      setSavedUrl(challenge?.url || "");
+      setSavedContractId(challenge?.contractId || "");
       setIsStarted(!!challenge?.startDate);
     }
-  }, [address, savedUrl, data, id]);
-
-  const isValidUrl = (urlString: string): boolean => {
-    try {
-      return Boolean(new URL(urlString));
-    } catch (e) {
-      return false;
-    }
-  };
+  }, [address, savedContractId, data, id]);
 
   const changeHandler = (event: ChangeEvent<HTMLInputElement>) => {
-    const inputValue = event.target.value;
-    const isVercelApp = inputValue.includes(".vercel.app");
-
-    setFormError(null);
-
-    if (!isValidUrl(inputValue)) {
-      setFormError("Please enter a valid url");
-      return;
-    }
-
-    if (!isVercelApp) {
-      setFormError("URL should contain .vercel.app to complete the checkpoint");
-    } else {
-      setUrl(inputValue);
-    }
+    setContractId(event.target.value);
   };
 
   const blurHandler = () => {
-    if (!url) {
+    if (!contractId) {
       setFormError("Mandatory field");
+    } else {
+      setFormError(null);
     }
   };
 
@@ -74,7 +54,7 @@ function ChallengeForm({ address, id }: ChallengeFormProps) {
     return (
       <>
         <strong>
-          Start the challenge to track your progress and submit the url.
+          Connect your wallet to track your progress and submit ContractId.
         </strong>
         <br />
       </>
@@ -83,11 +63,8 @@ function ChallengeForm({ address, id }: ChallengeFormProps) {
 
   return (
     <div>
-      {savedUrl ? (
-        <p className={styles.success}>
-          Public url submitted! Your DApp is deployed to:
-          <a href={savedUrl}>{savedUrl}</a>
-        </p>
+      {savedContractId ? (
+        <p className={styles.success}>ContractId submitted!</p>
       ) : null}
 
       <form
@@ -100,8 +77,8 @@ function ChallengeForm({ address, id }: ChallengeFormProps) {
               ? `${styles.input} ${styles.inputWithError}`
               : styles.input
           }
-          type="url"
-          placeholder="Enter your public url"
+          type="text"
+          placeholder="Enter your ContractId"
           onChange={changeHandler}
           onBlur={blurHandler}
           required
@@ -111,10 +88,10 @@ function ChallengeForm({ address, id }: ChallengeFormProps) {
           isDisabled={isSubmitBtnDisabled}
           type="submit"
           id={id}
-          progress={3}
-          url={url}
+          progress={1}
+          contractId={contractId}
         >
-          {savedUrl ? "Re-submit" : "Submit url"}
+          {savedContractId ? "Re-submit" : "Submit contractId"}
         </CompleteStepButton>
       </form>
       <span className={styles.errorMessage}>{formError}</span>
@@ -129,17 +106,17 @@ function InnerComponent({ id }: { id: number }) {
   if (loading) {
     return (
       <div style={{ fontWeight: "bold" }}>
-        Please connect to Testnet or Futurenet network.
+        Please connect to Testnet network.
         <br />
       </div>
     );
   }
   // if user is logged in and connected to the right network,
   // render the ChallengeForm
-  return <ChallengeForm address={address} id={id} />;
+  return <ChallengeContractForm address={address} id={id} />;
 }
 
-export function ParentChallengeForm({ id }: { id: number }) {
+export function ParentChallengeContractForm({ id }: { id: number }) {
   return (
     <SorobanEventsProvider>
       <BrowserOnly fallback={<div>Please connect to Testnet network.</div>}>

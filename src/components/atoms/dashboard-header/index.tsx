@@ -1,25 +1,24 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { toast } from "react-toastify";
+import { Ranking } from "interfaces/challenge";
 import styles from "./style.module.css";
 import useAuth from "../../../hooks/useAuth";
 
-interface DashboardHeaderProps {
-  challengesCompleted: number;
+const AVATAR = `/icons/icon-avatar-${Math.floor(Math.random() * 10) + 1}.svg`;
+
+interface Props {
+  totalCompleted: number;
+  ranking: Ranking;
 }
 
-export default function DashboardHeader({
-  challengesCompleted,
-}: DashboardHeaderProps) {
-  const { address, disconnectUser } = useAuth();
-  const [avatarNumber, setAvatarNumber] = useState<number>();
-  const addressEnding = address?.substring(address.length, address.length - 4);
+const DashboardHeader: React.FC<Props> = ({ totalCompleted, ranking }) => {
+  const { address, disconnect } = useAuth();
 
-  useEffect(() => {
-    setAvatarNumber(Math.floor(Math.random() * 10) + 1);
-  }, []);
+  const addressEnding = address?.substring(address.length, address.length - 4);
 
   const copyUserAddress = () => {
     navigator.clipboard.writeText(address);
+
     toast("Copied to clipboard!", {
       hideProgressBar: true,
       position: "top-center",
@@ -27,7 +26,6 @@ export default function DashboardHeader({
     });
   };
 
-  // TODO: Uncomment Logout button when disconnect feature will be fully completed from @soroban-react/core side
   return (
     <div className={styles.dashboardHeader}>
       <h3 className={styles.dashboardTitle}>Your dashboard</h3>
@@ -35,7 +33,7 @@ export default function DashboardHeader({
       <ul className={styles.userInfo}>
         <li className={styles.userInfoItem}>
           <img
-            src={`/icons/icon-avatar-${avatarNumber}.svg`}
+            src={AVATAR}
             className={styles.avatarIcon}
             alt="User avatar icon"
           />
@@ -53,27 +51,42 @@ export default function DashboardHeader({
               />
             </div>
 
-            {/* <button
-              className={styles.logoutButton}
-              onClick={disconnectUser}
-            >
+            <button className={styles.logoutButton} onClick={disconnect}>
               Log out
-            </button> */}
+            </button>
           </div>
         </li>
+
         <li className={styles.userInfoItem}>
           <img
             src="/icons/icon-star.svg"
-            className={styles.starIcon}
+            className={styles.statsIcon}
             alt="Star icon"
           />
 
           <div className={styles.completedChallenges}>
-            <label>{challengesCompleted}</label>
+            <label>{totalCompleted}</label>
             <span>completed challenges</span>
+          </div>
+        </li>
+
+        <li className={styles.userInfoItem}>
+          <img
+            src="/icons/icon-ranking.svg"
+            className={styles.statsIcon}
+            alt="Ranking icon"
+          />
+
+          <div className={styles.completedChallenges}>
+            <label>
+              {ranking.current}/{ranking.total}
+            </label>
+            <span>ranking position</span>
           </div>
         </li>
       </ul>
     </div>
   );
-}
+};
+
+export default DashboardHeader;

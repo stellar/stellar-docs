@@ -1,29 +1,36 @@
 import React, { PropsWithChildren, useReducer } from "react";
-import UserChallengesContext, { UserChallengesContextProps } from "./user-challenges-context";
+import UserChallengesContext, {
+  UserChallengesContextProps,
+} from "./user-challenges-context";
 import { ChallengeInfo } from "../interfaces/challenge";
 
 interface ChallengesState {
   data: ChallengeInfo[];
+  address: string;
 }
 
 interface Action {
   type: string;
   data?: ChallengeInfo[];
   item?: ChallengeInfo;
+  payload?: string;
 }
 
 enum ActionType {
   SET_DATA = "SET_DATA",
   UPDATE_PROGRESS = "UPDATE_PROGRESS",
+  SET_ADDRESS = "SET_ADDRESS",
 }
 
 const defaultState: ChallengesState = {
   data: [],
+  address: "",
 };
 
 const challengesReducer = (state: ChallengesState, action: Action) => {
   if (action.type === ActionType.SET_DATA && action.data) {
     return {
+      ...state,
       data: [...action.data],
     };
   }
@@ -44,7 +51,15 @@ const challengesReducer = (state: ChallengesState, action: Action) => {
     }
 
     return {
+      ...state,
       data: updatedChallenges,
+    };
+  }
+
+  if (action.type === ActionType.SET_ADDRESS && action.payload) {
+    return {
+      ...state,
+      address: action.payload,
     };
   }
 
@@ -68,8 +83,17 @@ const UserChallengesContextProvider = (props: PropsWithChildren) => {
     });
   };
 
+  const setAddress = (address: string) => {
+    dispatchAction({
+      type: ActionType.SET_ADDRESS,
+      payload: address,
+    });
+  };
+
   const challengesCtx: UserChallengesContextProps = {
     data: state.data,
+    address: state.address,
+    setAddress,
     setData: setDataHandler,
     updateProgress: updateProgressHandler,
   };

@@ -21,9 +21,7 @@ export default function Root({ children }: PropsWithChildren) {
     >
       <ToastContainer />
 
-      <UserChallengesContextProvider>
-        {children}
-      </UserChallengesContextProvider>
+      <UserChallengesContextProvider>{children}</UserChallengesContextProvider>
     </SorobanReactProvider>
   );
 }
