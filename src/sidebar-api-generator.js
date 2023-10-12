@@ -69,5 +69,34 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     });
   }
 
+  const resources3 = sidebarItems.find(
+      (item) =>
+          item.type === "category" && item.label.toLowerCase() === "custody server",
+  );
+
+  const sidebarPath3 = path.join(
+      args.version.contentPath,
+      args.item.dirName,
+      "./custody-server/sidebar.js",
+  );
+
+  if (resources3 && fs.existsSync(sidebarPath3)) {
+    const generatedApiSidebar = require(sidebarPath3);
+
+    const categories = resources3.items.filter(
+        (item) => item.type === "category",
+    );
+
+    categories.forEach((category) => {
+      const generatedCategory = generatedApiSidebar.find(
+          (item) => item.type === "category" && item.label === category.label,
+      );
+
+      if (generatedCategory) {
+        category.items = [...category.items, ...generatedCategory.items];
+      }
+    });
+  }
+
   return sidebarItems;
 };
