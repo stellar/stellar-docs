@@ -25,7 +25,7 @@ const Leaderboard: React.FC<Props> = ({ userId, list, isLoading, onLoad }) => {
   const [pageNumber, setPageNumber] = useState(1);
 
   const maxUsers = list[0]?.ranking.total;
-  const maxPage = maxUsers / PAGE_SIZE;
+  const maxPage = Math.ceil(maxUsers / PAGE_SIZE);
 
   const onSort = (val: LeaderboardColumn) => {
     // if click on current column ? change direction : set default direction
