@@ -1,0 +1,265 @@
+---
+title: Stellar Authentication
+sidebar_position: 40
+---
+
+import { LanguageSpecific } from "@site/src/components/LanguageSpecific";
+import { WalletCodeExample as CodeExample } from "@site/src/components/WalletCodeExample";
+import { CodeExample as NonWalletCodeExample } from "@site/src/components/CodeExample";
+import Header from "./component/header.mdx";
+import GlobalClientSigner from "./component/kt/global_signer.mdx";
+
+<Header WIPLangs={["dart"]} />
+
+Wallets connect to anchors using a standard way of authentication via the Stellar network defined by the [SEP-10] standard.
+
+This guide will cover all ways to use SEP-10 to authenticate with an anchor.
+
+## Creating Authentication Key
+
+:::info Custodial wallets only
+
+:::
+
+First, let's create an authentication key. While you can use the same key for authentication and sending funds, it's recommended to split the responsibilities. In your application, you will have one or more fund keypairs (keypairs for the accounts that hold funds and initiate and receive transactions) and one authentication key.
+
+The authentication key is only used for authentication purposes and doesn't need to hold any funds. Note that you don't need to create an account for this keypair either.
+
+Go to the [Stellar Lab] and generate a keypair. The secret key must be handled securely, because it will be used for authentication.
+
+## Basic Authentication
+
+Let's do a basic authentication. In this example, we will use wallet SDK to create an authentication token.
+
+First, let's create an `anchor` object to work with the anchor you are integrating with. In this example, we will be using a reference anchor implementation with the home domain `testanchor.stellar.org`
+
+<CodeExample>
+
+```kotlin
+val anchor = wallet.anchor("https://testanchor.stellar.org")
+```
+
+```typescript
+let anchor = wallet.anchor({ homeDomain: "https://testanchor.stellar.org" });
+```
+
+```dart
+final webAuth = WebAuth.fromDomain("https://testanchor.stellar.org", Network.TESTNET);
+```
+
+</CodeExample>
+
+Next, authenticate with the `authKey` created earlier:
+
+<CodeExample>
+
+```kotlin
+val authKey = SigningKeyPair.fromSecret("my secret key")
+
+suspend fun getAuthToken(): AuthToken {
+  return anchor.sep10().authenticate(authKey)
+}
+```
+
+```typescript
+const authKey = SigningKeypair.fromSecret("my secret key");
+const sep10 = await anchor.sep10();
+
+const authToken = await sep10.authenticate({ accountKp: authKey });
+```
+
+```dart
+KeyPair authKey = KeyPair.fromSecretSeed("my secret key");
+String accountId = authKey.accountId;
+String jwtToken = await webAuth.jwtToken(accountId, [authKey]);
+```
+
+</CodeExample>
+
+For non-custodial wallets, you want to use the user's private key as an `authKey`.
+
+## Home Domain (Optional)
+
+The home domain is the optional parameter for SEP-10 authentication, when a single auth server is shared between multiple domains. Some anchors may require you to provide this argument. The SDK automatically sets the `home_domain` parameter in all SEP-10 requests.
+
+## Client Domain (Optional)
+
+:::info Non-custodial wallets only
+
+:::
+
+:::caution
+
+Some anchors may require the `client_domain` to always be present as part of the request, even for non-custodial wallets.
+
+::: Client domain is used by anchors to verify the origin of user's request (which wallet this user is using?). This is particularly useful for anchors for integrating with non-custodial wallets.
+
+Supporting `client_domain` comes in two parts, the wallet's client and the wallet's server implementations. In this setup, we will have an extra authentication key. This key will be stored remotely on the server. Using the SEP-1 info file, the anchor will be able to query this key and verify the signature. As such, the anchor would be able to confirm that the request is coming from your wallet, belonging to wallet's `client_domain`.
+
+### Client Side
+
+First, let's implement the client side. In this example we will connect to a remote signer that signs transactions on the endpoint `https://demo-wallet-server.stellar.org/sign` for the client domain `demo-wallet-server.stellar.org`.
+
+<CodeExample>
+
+```kotlin
+val signer = WalletSigner.DomainSigner("https://demo-wallet-server.stellar.org/sign") {}
+
+suspend fun getAuthToken(): AuthToken {
+  return anchor
+    .sep10()
+    .authenticate(userKeyPair, signer, clientDomain = "demo-wallet-server.stellar.org")
+}
+```
+
+```typescript
+const demoWalletSigner: WalletSigner = {
+  signWithClientAccount: ({ transaction, accountKp }) => {
+    transaction.sign(accountKp);
+    return transaction;
+  },
+  signWithDomainAccount: async ({
+    transactionXDR,
+    networkPassphrase,
+    accountKp,
+  }) => {
+    return await axios.post("https://demo-wallet-server.stellar.org/sign", {
+      transactionXDR,
+      networkPassphrase,
+    });
+  },
+};
+
+const getAuthToken = async () => {
+  return anchor.sep10().authenticate({
+    accountKp,
+    walletSigner: demoWalletSigner,
+    clientDomain: "https://demo-wallet-server.stellar.org/sign",
+  });
+};
+```
+
+```dart
+// delegate client signing
+String jwtToken = await webAuth.jwtToken(
+  userAccountId,
+  [userKeyPair],
+  clientDomain: "demo-wallet-server.stellar.org",
+  clientDomainSigningDelegate: (transaction) async {
+    // delegate client signing e.g.:
+    return myWalletSigner.signTransaction(transaction, clientKeyPair);
+  }
+);
+
+// alternatively let the SDK also sign with the clientKeyPair
+String jwtToken = await webAuth.jwtToken(
+  userAccountId,
+  [userKeyPair],
+  clientDomain: "demo-wallet-server.stellar.org",
+  clientDomainAccountKeyPair: clientKeyPair
+);
+
+```
+
+</CodeExample>
+
+:::danger
+
+The demo-wallet signing endpoint is not protected for anybody to use. Your production URL must be protected, otherwise anybody could impersonate your wallet's user.
+
+:::
+
+Let's add authentication with a bearer token. Simply update the request transformer:
+
+<CodeExample>
+
+```kotlin
+val signer = WalletSigner.DomainSigner("https://demo-wallet-server.stellar.org/sign") { bearerAuth("token") }
+```
+
+```typescript
+const demoWalletSigner: WalletSigner = {
+  signWithClientAccount: ({ transaction, accountKp }) => {
+    transaction.sign(accountKp);
+    return transaction;
+  },
+  signWithDomainAccount: async ({
+    transactionXDR,
+    networkPassphrase,
+    accountKp,
+  }) => {
+    return await axios.post(
+      "https://demo-wallet-server.stellar.org/sign",
+      {
+        transactionXDR,
+        networkPassphrase,
+      },
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+  },
+};
+```
+
+</CodeExample>
+
+[//]: # "TODO: update after WAL-882 is completed"
+
+<LanguageSpecific kt={<GlobalClientSigner />} />
+
+### Server Side
+
+Next, let's implement the server side.
+
+First, generate a new authentication key that will be used as a `client_domain` authentication key.
+
+Next, create a `SEP-1` toml file placed under `<your domain>/.well-known/stellar.toml` with the following content:
+
+<NonWalletCodeExample>
+
+```toml
+ACCOUNTS = [ "Authentication public key (address)" ]
+VERSION = "0.1.0"
+SIGNING_KEY = "Authentication public key (address)"
+NETWORK_PASSPHRASE = "Test SDF Network ; September 2015"
+```
+
+</NonWalletCodeExample>
+
+Don't forget to change the network passphrase for Mainnet deployment.
+
+Finally, let's add server implementation. This sample implementation uses express framework:
+
+<NonWalletCodeExample>
+
+```javascript
+app.post("/sign", (req, res) => {
+  const envelope_xdr = req.body.transaction;
+  const network_passphrase = req.body.network_passphrase;
+  const transaction = new Transaction(envelope_xdr, network_passphrase);
+
+  if (Number.parseInt(transaction.sequence, 10) !== 0) {
+    res.status(400);
+    res.send("transaction sequence value must be '0'");
+    return;
+  }
+
+  transaction.sign(Keypair.fromSecret(SERVER_SIGNING_KEY));
+
+  res.set("Access-Control-Allow-Origin", "*");
+  res.status(200);
+  res.send({
+    transaction: transaction.toEnvelope().toXDR("base64"),
+    network_passphrase: network_passphrase,
+  });
+});
+```
+
+</NonWalletCodeExample>
+
+You can see full example [here](https://github.com/stellar/stellar-demo-wallet/blob/52071629f8d29470b61799bef9519776d9c252d2/packages/demo-wallet-server/src/index.ts). As mentioned before, this sample implementation doesn't have any protection against unauthorized requests, so you must add authorization checks as part of the request.
+
+[sep-1]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
+[sep-10]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md
+[stellar lab]: https://laboratory.stellar.org/

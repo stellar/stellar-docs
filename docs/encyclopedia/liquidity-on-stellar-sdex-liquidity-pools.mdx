@@ -140,6 +140,7 @@ The following code sets up the accounts and defines some helper functions. These
 
 ```js
 const sdk = require("stellar-sdk");
+const BigNumber = require("bignumber.js");
 
 let server = new sdk.Server("https://horizon-testnet.stellar.org");
 
@@ -148,7 +149,6 @@ function buildTx(source, signer, ...ops) {
   let tx = new sdk.TransactionBuilder(source, {
     fee: sdk.BASE_FEE,
     networkPassphrase: sdk.Networks.TESTNET,
-    withMuxing: true,
   });
   ops.forEach((op) => tx.addOperation(op));
   tx = tx.setTimeout(30).build();
@@ -172,39 +172,41 @@ const kps = [
   "SCJWYFTBDMDPAABHVJZE3DRMBRTEH4AIC5YUM54QGW57NUBM2XX6433P",
 ].map((s) => sdk.Keypair.fromSecret(s));
 
-// kp1 issues the assets
-const kp1 = kps[0];
+// kp0 issues the assets
+const kp0 = kps[0];
 const [A, B] = orderAssets(
-  ...[new sdk.Asset("A", kp1.publicKey()), new sdk.Asset("B", kp1.publicKey())],
+  ...[new sdk.Asset("A", kp0.publicKey()), new sdk.Asset("B", kp0.publicKey())],
 );
 
-/// Establishes trustlines and funds `recipientKp` for all `assets`.
-function distributeAssets(issuerKp, recipientKp, ...assets) {
+/// Establishes trustlines and funds `recipientKps` for all `assets`.
+function distributeAssets(issuerKp, recipientKps, ...assets) {
   return server.loadAccount(issuerKp.publicKey()).then((issuer) => {
-    const ops = assets
-      .map((asset) => [
-        sdk.Operation.changeTrust({
-          source: recipientKp.publicKey(),
-          limit: "100000",
-          asset: asset,
-        }),
-        sdk.Operation.payment({
-          source: issuerKp.publicKey(),
-          destination: recipientKp.publicKey(),
-          amount: "100000",
-          asset: asset,
-        }),
-      ])
-      .flat();
+    const ops = recipientKps
+      .map((recipientKp) =>
+        assets.map((asset) => [
+          sdk.Operation.changeTrust({
+            source: recipientKp.publicKey(),
+            limit: "100000",
+            asset: asset,
+          }),
+          sdk.Operation.payment({
+            source: issuerKp.publicKey(),
+            destination: recipientKp.publicKey(),
+            amount: "100000",
+            asset: asset,
+          }),
+        ]),
+      )
+      .flat(2);
 
     let tx = buildTx(issuer, issuerKp, ...ops);
-    tx.sign(recipientKp);
+    tx.sign(...recipientKps);
     return server.submitTransaction(tx);
   });
 }
 
 function preamble() {
-  return Promise.all([1, 2].map((i) => distributeAssets(kp1, kps[i], A, B)));
+  return distributeAssets(kp0, [kps[1], kps[2]], A, B);
 }
 ```
 
@@ -274,7 +276,7 @@ def preamble() -> None:
 
 </CodeExample>
 
-Here, we use `distributeAssets()` to establish trustlines and set up initial balances of two custom assets (`A` and `B`, issued by `kp1`) for two accounts (`kp2` and `kp3`). For someone to participate in the pool, they must establish trustlines to each of the asset issuers and to the pool share asset (explained below).
+Here, we use `distributeAssets()` to establish trustlines and set up initial balances of two custom assets (`A` and `B`, issued by `kp0`) for two accounts (`kp2` and `kp3`). For someone to participate in the pool, they must establish trustlines to each of the asset issuers and to the pool share asset (explained below).
 
 Note the `orderAssets()` helper here. Operations related to liquidity pools refer to the asset pair arbitrarily as `A` and `B`; however, they must be “ordered” such that `A` < `B`. This ordering is defined by the protocol, but its details should not be relevant (if you’re curious, it’s essentially lexicographically ordered by asset type, code, then issuer). We can use the comparison methods built into the SDKs (like `Asset.compare`) to ensure we pass them in the right order and avoid errors.
 
@@ -338,7 +340,7 @@ const poolId = sdk
   .toString("hex");
 
 function addLiquidity(source, signer, poolId, maxReserveA, maxReserveB) {
-  const exactPrice = reserveA / reserveB;
+  const exactPrice = maxReserveA / maxReserveB;
   const minPrice = exactPrice - exactPrice * 0.1;
   const maxPrice = exactPrice + exactPrice * 0.1;
 
@@ -399,18 +401,31 @@ If you own shares of a particular pool, you can withdraw reserves from it. The o
 <CodeExample>
 
 ```js
-function removeLiquidity(source, signer, poolId, minReserveA, minReserveB) {
-  return server.submitTransaction(
-    buildTx(
-      source,
-      signer,
-      sdk.Operation.liquidityPoolWithdraw({
-        liquidityPoolId: poolId,
-        minAmountA: minReserveA,
-        minAmountB: minReserveB,
-      }),
-    ),
-  );
+function removeLiquidity(source, signer, poolId, sharesAmount) {
+  return server
+    .liquidityPools()
+    .liquidityPoolId(poolId)
+    .call()
+    .then((poolInfo) => {
+      let totalShares = poolInfo.total_shares;
+      let minReserveA =
+        (sharesAmount / totalShares) * poolInfo.reserves[0].amount * 0.95;
+      let minReserveB =
+        (sharesAmount / totalShares) * poolInfo.reserves[1].amount * 0.95;
+
+      return server.submitTransaction(
+        buildTx(
+          source,
+          signer,
+          sdk.Operation.liquidityPoolWithdraw({
+            liquidityPoolId: poolId,
+            amount: sharesAmount,
+            minAmountA: minReserveA.toFixed(7),
+            minAmountB: minReserveB.toFixed(7),
+          }),
+        ),
+      );
+    });
 }
 ```
 
@@ -459,21 +474,44 @@ Finally, we can combine these pieces together to simulate some participation in 
 ```js
 function main() {
   return getAccounts()
-    .then((accounts) =>
-      Promise.all(
+    .then((accounts) => {
+      return Promise.all(
         kps.map((kp, i) => {
           const acc = accounts[i];
           const depositA = ((i + 1) * 1000).toString();
           const depositB = ((i + 1) * 3000).toString(); // maintain a 1:3 ratio
 
           return establishPoolTrustline(acc, kp, poolShareAsset)
-            .then((_) => addLiquidity(acc, kp, poolId, depositA, depositB))
-            .then((_) => getSpotPrice());
+            .then(() => addLiquidity(acc, kp, poolId, depositA, depositB))
+            .then(() => getSpotPrice());
         }),
-      ),
-    )
-    .then((_) => withdrawLiquidity(accounts[1], kps[1], "500", "2000"))
-    .then((_) => getSpotPrice());
+      ).then(() => accounts);
+    })
+    .then((accounts) => {
+      // kp1 takes all his/her shares out
+      return server
+        .accounts()
+        .accountId(kps[1].publicKey())
+        .call()
+        .then(({ balances }) => {
+          let balance = 0;
+          balances.every((bal) => {
+            if (
+              bal.asset_type === "liquidity_pool_shares" &&
+              bal.liquidity_pool_id === poolId
+            ) {
+              balance = bal.balance;
+              return false;
+            }
+            return true;
+          });
+          return balance;
+        })
+        .then((balance) =>
+          removeLiquidity(accounts[1], kps[1], poolId, balance),
+        );
+    })
+    .then(() => getSpotPrice());
 }
 
 function getSpotPrice() {

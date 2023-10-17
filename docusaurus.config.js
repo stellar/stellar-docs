@@ -37,29 +37,37 @@ const config = {
         id: "openapi",
         docsPluginId: "api",
         config: {
-          api: {
-            specPath: "openapi/bundled.yml", // Path to designated spec file
-            outputDir: "api/resources", // Output directory for generated .mdx docs
+          horizon: {
+            specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
+            outputDir: "api/horizon/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
           },
-          ap_api: {
-            specPath: "openapi/ap/bundled.yml", // Path to designated spec file
-            outputDir: "ap_api/resources", // Output directory for generated .mdx docs
-            sidebarOptions: {
-              groupPathsBy: "tag",
-            },
-            template: "src/template.mustache", // Customize API MDX with mustache template
-          },
-          ap_callbacks: {
-            specPath: "openapi/ap/bundled_callback.yml", // Path to designated spec file
-            outputDir: "ap_api/callbacks", // Output directory for generated .mdx docs
+          anchor_platform_api: {
+            specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
+            outputDir: "api/anchor-platform/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
           },
+          anchor_platform_callbacks: {
+            specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
+            outputDir: "api/anchor-platform/callbacks", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+            },
+            template: "src/template.mustache", // Customize API MDX with mustache template
+          },
+          stellar_disbursement_platform: {
+            specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
+            outputDir: "api/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+            },
+            template: "src/template.mustache", // Customize API MDX with mustache template
+          }
         },
       },
     ],
@@ -68,19 +76,7 @@ const config = {
       {
         id: "api",
         path: "api",
-        routeBasePath: "api",
-        docLayoutComponent: "@theme/DocPage",
-        docItemComponent: "@theme/ApiItem",
-        sidebarPath: require.resolve("./sidebarsApi.js"),
-        sidebarItemsGenerator: require("./src/sidebar-api-generator"),
-      },
-    ],
-    [
-      "@docusaurus/plugin-content-docs",
-      {
-        id: "ap_api",
-        path: "ap_api",
-        routeBasePath: "ap_api",
+        routeBasePath: "/api",
         docLayoutComponent: "@theme/DocPage",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsApi.js"),
@@ -101,10 +97,13 @@ const config = {
           showLastUpdateTime: true,
           breadcrumbs: true,
           routeBasePath: "/docs",
-          remarkPlugins: [require("mdx-mermaid"), require('remark-math')],
+          remarkPlugins: [require("mdx-mermaid"), require('remark-math'), [
+            require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
+          ]],
           rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+          exclude: ['**/component/**', '**/README.md'],
         },
         theme: {
           customCss: [require.resolve("./src/css/custom.scss")],
@@ -142,18 +141,32 @@ const config = {
             position: "left",
           },
           {
-            to: "/api",
-            label: "Horizon API",
+            type: "dropdown",
+            label: "APIs",
             position: "left",
-          },
-          {
-            to: "/ap_api",
-            label: "Anchor Platform API",
-            position: "left",
+            items: [
+              {
+                to: "/api/horizon",
+                label: "Horizon",
+              },
+              {
+                to: "/api/anchor-platform",
+                label: "Anchor Platform",
+              },
+              {
+                to: "/api/stellar-disbursement-platform",
+                label: "Stellar Disbursement Platform",
+              }
+            ]
           },
           {
             href: "https://github.com/stellar/stellar-docs",
             label: "GitHub",
+            position: "right",
+          },
+          {
+            href: "https://discord.gg/stellardev",
+            label: "Discord",
             position: "right",
           },
           {
@@ -261,7 +274,9 @@ const config = {
           "toml",
           "json5",
           "python",
-          "docker"
+          "docker",
+          "kotlin",
+          "dart"
         ],
       },
     }),

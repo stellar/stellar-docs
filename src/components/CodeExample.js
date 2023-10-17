@@ -2,32 +2,9 @@ import React from 'react';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeBlock from '@theme/CodeBlock';
-
-const CODE_LANGS = {
-  bash: 'bash',
-  cpp: 'C++',
-  curl: 'cURL',
-  docker: 'Dockerfile',
-  go: 'Go',
-  html: 'html',
-  java: 'Java',
-  javascript: 'JavaScript',
-  js: 'JavaScript',
-  json: 'JSON',
-  json5: 'JSON5',
-  python: 'Python',
-  scss: 'SCSS',
-  sql: 'SQL',
-  toml: 'TOML',
-  ts: 'TypeScript',
-  tsx: 'TSX',
-  typescript: 'TypeScript',
-  yaml: 'YAML',
-};
+import {CODE_LANGS} from "../constants";
 
 export const CodeExample = ({ children }) => (
-  // console.log(children),
-
   <Tabs groupId="programming-language">
     {React.Children.map(children, (child, index) => {
       const codeProps = child.props.children.props;

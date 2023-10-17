@@ -18,6 +18,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
 
   const sidebarPath = path.join(
     args.version.contentPath,
+    args.item.dirName,
     "./resources/sidebar.js",
   );
 
@@ -46,6 +47,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
 
   const sidebarPath2 = path.join(
       args.version.contentPath,
+      args.item.dirName,
       "./callbacks/sidebar.js",
   );
 
@@ -53,6 +55,35 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     const generatedApiSidebar = require(sidebarPath2);
 
     const categories = resources2.items.filter(
+        (item) => item.type === "category",
+    );
+
+    categories.forEach((category) => {
+      const generatedCategory = generatedApiSidebar.find(
+          (item) => item.type === "category" && item.label === category.label,
+      );
+
+      if (generatedCategory) {
+        category.items = [...category.items, ...generatedCategory.items];
+      }
+    });
+  }
+
+  const resources3 = sidebarItems.find(
+      (item) =>
+          item.type === "category" && item.label.toLowerCase() === "custody server",
+  );
+
+  const sidebarPath3 = path.join(
+      args.version.contentPath,
+      args.item.dirName,
+      "./custody-server/sidebar.js",
+  );
+
+  if (resources3 && fs.existsSync(sidebarPath3)) {
+    const generatedApiSidebar = require(sidebarPath3);
+
+    const categories = resources3.items.filter(
         (item) => item.type === "category",
     );
 
