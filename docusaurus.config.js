@@ -25,13 +25,6 @@ const config = {
       },
     ],
     [
-      "@docusaurus/plugin-google-analytics",
-      {
-        trackingID: "UA-53373928-1",
-        anonymizeIP: true,
-      },
-    ],
-    [
       "docusaurus-plugin-openapi-docs",
       {
         id: "openapi",
@@ -110,6 +103,10 @@ const config = {
         theme: {
           customCss: [require.resolve("./src/css/custom.scss")],
         },
+        gtag: {
+          trackingID: "G-ZCT4GYX8KN",
+          anonymizeIP: true,
+        }
       }),
     ],
   ],
