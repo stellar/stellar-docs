@@ -81,6 +81,8 @@ const config = {
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsApi.js"),
         sidebarItemsGenerator: require("./src/sidebar-api-generator"),
+        editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+        showLastUpdateTime: true,
       },
     ],
     require("./src/analytics-module"),
