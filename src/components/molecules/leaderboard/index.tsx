@@ -81,7 +81,7 @@ const Leaderboard: React.FC<Props> = ({ userId, list, isLoading, onLoad }) => {
               className={styles.leadTableHeadColumn}
               onClick={() => onSort(LeaderboardColumn.TotalValueLocked)}
             >
-              TVL, $ {col === LeaderboardColumn.TotalValueLocked ? arrow : null}
+              Total Value Locked {col === LeaderboardColumn.TotalValueLocked ? arrow : null}
             </th>
             <th
               className={styles.leadTableHeadColumn}
@@ -134,8 +134,20 @@ const Leaderboard: React.FC<Props> = ({ userId, list, isLoading, onLoad }) => {
                   </td>
                   <td title={item.userId}>{`${item.userId}`}</td>
                   <td>{item.totalValueLocked}</td>
-                  <td>{item.challengesCompleted}</td>
-                  <td>{item.minutesSpent}</td>
+                  <td>
+                    {item.challengesCompleted === 0 ? (
+                      "In Progress"
+                    ) : (
+                      <>{item.challengesCompleted}</>
+                    )}
+                  </td>
+                  <td>
+                    {item.minutesSpent === 0 ? (
+                      "In Progress"
+                    ) : (
+                      <>{item.minutesSpent}</>
+                    )}
+                  </td>
                 </tr>
               );
             })}
