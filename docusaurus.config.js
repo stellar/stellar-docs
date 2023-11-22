@@ -25,13 +25,6 @@ const config = {
       },
     ],
     [
-      "@docusaurus/plugin-google-analytics",
-      {
-        trackingID: "UA-53373928-1",
-        anonymizeIP: true,
-      },
-    ],
-    [
       "docusaurus-plugin-openapi-docs",
       {
         id: "openapi",
@@ -89,6 +82,8 @@ const config = {
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsApi.js"),
         sidebarItemsGenerator: require("./src/sidebar-api-generator"),
+        editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+        showLastUpdateTime: true,
       },
     ],
     require("./src/analytics-module"),
@@ -116,6 +111,10 @@ const config = {
         theme: {
           customCss: [require.resolve("./src/css/custom.scss")],
         },
+        gtag: {
+          trackingID: "G-ZCT4GYX8KN",
+          anonymizeIP: true,
+        }
       }),
     ],
   ],
