@@ -25,13 +25,6 @@ const config = {
       },
     ],
     [
-      "@docusaurus/plugin-google-analytics",
-      {
-        trackingID: "UA-53373928-1",
-        anonymizeIP: true,
-      },
-    ],
-    [
       "docusaurus-plugin-openapi-docs",
       {
         id: "openapi",
@@ -60,6 +53,14 @@ const config = {
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
           },
+          anchor_custody_api: {
+            specPath: "openapi/anchor-platform/bundled_custody.yml", // Path to designated spec file
+            outputDir: "api/anchor-platform/custody-server", // Output directory for generated .mdx docs
+            sidebarOptions: {
+              groupPathsBy: "tag",
+            },
+            template: "src/template.mustache", // Customize API MDX with mustache template
+          },
           stellar_disbursement_platform: {
             specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
             outputDir: "api/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
@@ -81,6 +82,8 @@ const config = {
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsApi.js"),
         sidebarItemsGenerator: require("./src/sidebar-api-generator"),
+        editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+        showLastUpdateTime: true,
       },
     ],
     require("./src/analytics-module"),
@@ -108,6 +111,10 @@ const config = {
         theme: {
           customCss: [require.resolve("./src/css/custom.scss")],
         },
+        gtag: {
+          trackingID: "G-ZCT4GYX8KN",
+          anonymizeIP: true,
+        }
       }),
     ],
   ],
