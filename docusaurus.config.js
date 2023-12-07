@@ -84,6 +84,7 @@ const config = {
         sidebarItemsGenerator: require("./src/sidebar-api-generator"),
         editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         showLastUpdateTime: true,
+        showLastUpdateAuthor: true,
       },
     ],
     require("./src/analytics-module"),
@@ -98,6 +99,7 @@ const config = {
         blog: false,
         docs: {
           showLastUpdateTime: true,
+          showLastUpdateAuthor: true,
           breadcrumbs: true,
           routeBasePath: "/docs",
           remarkPlugins: [require("mdx-mermaid"), require('remark-math'), [
