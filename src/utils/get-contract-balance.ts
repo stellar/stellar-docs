@@ -1,11 +1,11 @@
 import {
   Contract,
   scValToBigInt,
-  Server,
   TransactionBuilder,
   TimeoutInfinite,
   Address,
-} from "soroban-client";
+  SorobanRpc
+} from "@stellar/stellar-sdk";
 import { FUTURENET_DETAILS } from "../contants";
 
 const XLM_DECIMALS = 7;
@@ -14,7 +14,7 @@ const BASE_FEE = "100";
 const RPC_URLS: { [key: string]: string } = {
   FUTURENET: "https://rpc-futurenet.stellar.org/",
 };
-const server = new Server(RPC_URLS[FUTURENET_DETAILS.network]);
+const server = new SorobanRpc.Server(RPC_URLS[FUTURENET_DETAILS.network]);
 
 function formatAmount(
   undivided: bigint,
@@ -44,7 +44,10 @@ export const getContractBalance = async (
     .build();
 
   const response = await server.simulateTransaction(transaction);
+  if (!SorobanRpc.Api.isSimulationSuccess(response)) {
+    throw response;
+  }
 
-  const balanceStr = formatAmount(scValToBigInt(response.result.retval));
+  const balanceStr = formatAmount(scValToBigInt(response.result!.retval));
   return +balanceStr;
 };
