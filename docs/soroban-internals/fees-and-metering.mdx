@@ -1,0 +1,156 @@
+---
+sidebar_position: 110
+title: Fees and Metering
+description: Smart contract fees and metering on Soroban.
+---
+
+<head>
+  <title>Smart contract fees and metering on Soroban.</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Smart contract fees and metering on Soroban."
+  />
+  <meta
+    property="og:description"
+    content="Learn about how the smart contract resource fees, resource limits, and metering system works on Soroban and methodology behind it."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/soroban-internals/fees-and-metering"
+  />
+</head>
+
+:::caution
+
+Soroban is still under active development. While the fee model described here is unlikely to change, the exact values of the fee rates and limits remain undetermined.
+
+:::
+
+# Fee Model
+
+Executing a Soroban transaction on the Stellar network requires a fee. This measure helps prevent spam and allows multiple parties to compete for inclusion in the ledger in case of traffic surges. The fee is paid using the native Stellar token (lumens, also known as XLM).
+
+The Soroban transaction fee comprises two parts: the resource fee and the inclusion fee.
+
+The resource fee is the amount of lumens the submitter must pay for their transaction to be included in the ledger. It depends solely on the amount of resources the transaction needs for execution. There is no auction for the resource fee; it simply must be paid if the transaction is included in the ledger.
+
+The inclusion fee is the maximum fee bid the submitter is willing to pay for inclusion. It is used to prioritize transactions — the transaction with the higher inclusion fee is included in the ledger before those with lower inclusion fees. The inclusion fee can be discounted depending on the traffic. If the ledger is not at capacity, only the minimal base fee is charged (100 stroops or 10^-5 XLM). If the ledger is at capacity, then the lowest inclusion fee bid is charged. In general, the behavior of the inclusion fee and bidding strategies align with the [classic Stellar fees].
+
+[classic Stellar fees]: https://developers.stellar.org/docs/encyclopedia/fees-surge-pricing-fee-strategies
+
+The remainder of this chapter focuses on resource fees, as they are specific to Soroban.
+
+## Resource fee
+
+Soroban uses a multi-dimensional fee model that charges fees for several resource types using network-defined rates. The resource fee is calculated based on the resource consumption declared in the transaction. If the transaction attempts to exceed the declared resource limit, it will fail. If the transaction uses fewer resources than declared, there will be no refunds, with a few exceptions.
+
+The resource fee depends on the following:
+
+- Instructions: the number of CPU instructions the transaction uses, metered by the Soroban host.
+- Ledger entry accesses: Reading or writing any single ledger entry (any storage key in the contract context).
+- Ledger I/O: The number of bytes read from or written to the ledger.
+- Transaction size: The size of the transaction submitted to the network in bytes.
+- Events & return value size: The size of the events produced by the contract and the return value of the top-level contract function. Both events and return value are included in transaction metadata.
+- Ledger space rent: The payment for the ledger entry TTL extensions (i.e. rent payments) and rent payments for increasing ledger entry size. Refer to the [state archival](./state-archival.mdx) section for more information about rent in Soroban.
+
+Some parameters may contribute to multiple fee components. For example, the transaction size is charged for network propagation (as network bandwidth is limited) and for historical storage (as storing ledger history is not free).
+
+The implementation details for fee computation are provided by the following [library](https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-host/src/fees.rs). This library is used by the protocol to compute the fees and thus can be considered canonical. The resource fee rates may be updated based on network validator consensus.
+
+The best way to find the required fees for any Soroban transaction is to use the [`simulateTransaction` mechanism](contract-interactions/transaction-simulation.mdx).
+
+The fee rates are currently defined for the Testnet as follows:
+
+| Description                                           | Cost (stroops) |
+| ----------------------------------------------------- | -------------- |
+| 10000 CPU instructions                                | 100            |
+| Read 1 ledger entry                                   | 1000           |
+| Write 1 ledger entry                                  | 3000           |
+| Read 1KB from ledger                                  | 1000           |
+| 1KB of transaction (bandwidth)                        | 500            |
+| 1KB of transaction (history)                          | 5000           |
+| 1KB of Events/return value                            | 300            |
+| Write 1KB to empty ledger                             | 1000           |
+| Write 1KB to 2GB ledger                               | 4_000_000      |
+| Write 1KB to 4GB ledger                               | 4_000_000_000  |
+| Store 1KB temp entry for 1 month (empty ledger)       | 100            |
+| Store 1KB temp entry for 1 month (2GB ledger)         | 400_000        |
+| Store 1KB persistent entry for 1 month (empty ledger) | 1000           |
+| Store 1KB persistent entry for 1 month (2GB ledger)   | 4_000_000      |
+
+Note, that write fees grow linearly from empty ledger to 2 GB (ledger "target size"), and then grow linearly, but with a 1000x factor after exceeding the target. This is to bound the ledger size growth. As Testnet is a small, test network, the target size is set to just 2 GB.
+
+The ledger rent cost ('Store 1KB' entries in the table) is based on the write fee, rent period and some coefficient. For the temporary storage, the coefficient is 10 months (in ledgers), thus 1 month of temporary entry rent is 1/10 of the rent fee. For persistent storage the coefficient is 1 month (in ledgers) and thus 1 month of rent is equivalent to the write fee.
+
+### Refundable resources
+
+Fees for events and return value, as well as rent fees are refundable, which means that they are a part of transaction's `refundableFee`. Refundable fees are charged from the source account before the transaction is executed and then refunded based on the actual usage. The transaction will fail if `refundableFee` is not enough to cover the actual resource usage though.
+
+## Resource limits
+
+Ledger close time is constrained to a few seconds, thus preventing the execution of arbitrarily large transactions, regardless of the resource fees involved. All the resources referenced in the prior section are subject to a per-transaction limit. Additionally, the memory (RAM) usage by a transaction is capped, though it is not subject to any charge.
+
+These resource limits may change in the Mainnet release. They can also be updated, usually increased, based on the network validator vote and consensus.
+
+The current (Testnet) limits are as follows:
+
+| Resource                   | Limit       |
+| -------------------------- | ----------- |
+| CPU Instructions           | 100,000,000 |
+| RAM                        | 40 MB       |
+| Ledger Entry Reads         | 30          |
+| Ledger Entry Writes        | 20          |
+| Ledger Read Bytes          | 130 KB      |
+| Ledger Write Bytes         | 65 KB       |
+| Transaction Size           | 70 KB       |
+| Events & return value size | 2 KB        |
+| Ledger entry size          | 64 KB       |
+| Maximum TTL                | 6 months    |
+
+# Metering
+
+Metering is a crucial mechanism within the host environment that accounts for the resource costs, such as CPU instructions and RAM usage, incurred during the execution of a smart contract. The outcomes of metering act as the canonical truth of a smart contract's execution cost and serve as an input for fee computations.
+
+## Why Metering
+
+The Soroban smart contract execution environment comprises a host and a guest. The host encapsulates shared functionalities for all contracts, including host objects, functions, and a Wasm interpreter (VM). The guest environment is where the compiled Wasm contract is interpreted and executed. Detailed discussion about these environments can be found in [Environment Concepts](environment-concepts.mdx).
+
+The division between the host and guest environments, and the shared functionalities between them, necessitates a unique approach to resource accounting. In particular, the resources required for executing Wasm instructions and running host functions must be accounted for uniformly, with costs denoted in terms of CPU instructions and memory bytes. Consider two contracts, A and B, both comprising the same number of Wasm instructions. If Contract A repeatedly calls host functions for complex computations while Contract B executes pure arithmetic operations within the VM, Contract A should be more costly. This difference should be accurately represented in the metering process.
+
+In essence, metering ensures fairness, thwarts resource manipulation and attacks, and generates a deterministic and reproducible measure of runtime resource costs.
+
+## Methodology
+
+To maintain equivalence in metering between the host and guest, computation costs on both sides are expressed in terms of cpu instructions and memory bytes (representing CPU and RAM usage). Metering and limit-checking occur within the host environment, and pre-calibrated numerical models are used to ensure results are deterministic.
+
+### Cost Types
+
+Metering is segmented into host components, referred to as cost types. Each cost type can be viewed as a "meta instruction" symbolizing a specific host operation, having a known complexity and depends on a runtime input. For instance, cost type `ComputeSha256Hash` represents the cost of computing the SHA256 hash of a byte array.
+
+:::info
+
+Execution of Wasm instructions is accounted for as a host cost type `WasmInsnExec`, which has a constant CPU cost per Wasm instruction. This methodology treats guest instructions and host executions equivalently.
+
+:::
+
+For a complete list of host cost types and their definitions, please refer to [`ContractCostType`](https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-contract-config-setting.x#L92-L155).
+
+### Cost Parameters
+
+The cost types are carefully selected to:
+
+1. Serve as comprehensive building blocks for all significant contract execution costs.
+2. Ensure each component cost increases at most linearly (i.e., constant or linear) with respect to its input. That is, `y = a + bx`, where `y` is the cost output, `x` is the input, and `a`, `b` are the constant and linear model parameters, respectively.
+
+Each cost type has a separate model for both resource types (CPU and memory).
+
+The parameters for each model, `a` and `b`, are calibrated and fitted offline against inputs of various sizes. The collection of all model cost parameters form the network configurable entries (see [ConfigSettingsEntry](https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-contract-config-setting.x#L223-L226)), which can be updated through network consensus.
+
+### Metering Process
+
+Before contract execution, the host environment is prepared with the cost parameters and a budget defining the resource limits. Metering is then implemented to measure the cumulative resource consumption during host execution.
+
+During execution, whenever a component (a code block defining a cost type) is encountered, the corresponding model computes the resource output from the runtime input and increments the meter accordingly. The meter checks the cumulative consumption against the budget limit. If the limit is exceeded, an error is produced, and execution is terminated.
+
+If the contract execution concludes within the specified resource limits, the metered total of CPU instructions is recorded and utilized as the input for fee calculation. Note that while memory usage is not included in the fee computation, it is nevertheless subject to the resource limits.

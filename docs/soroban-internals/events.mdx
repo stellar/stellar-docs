@@ -1,0 +1,154 @@
+---
+sidebar_position: 100
+title: Events
+description: Monitor off-chain smart contract changes.
+---
+
+<head>
+  <title>Monitor off-chain smart contract changes.</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Monitor off-chain smart contract changes."
+  />
+  <meta
+    property="og:description"
+    content="Learn about the mechanism that off-chain applications can use to monitor changes and events in smart contracts that are on-chain."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/soroban-internals/events"
+  />
+</head>
+
+Events are the mechanism that applications off-chain can use to monitor changes and events in contracts on-chain.
+
+## How are events emitted?
+
+`ContractEvents` are emitted in Stellar Core's `TransactionMeta`. You can see in
+the [TransactionMetaV3] XDR below that there is a list of `OperationEvents`
+called `events`. Each `OperationEvent` corresponds to an operation in a
+transaction, and itself contains a list of `ContractEvents`. Note that `events`
+will only be populated if the transaction succeeds. Take a look at [this
+example](../tutorials/events.mdx) to learn more about how to emit an event
+in your contract.
+
+[TransactionMetaV3]: #transactionmetav3
+
+### ContractEvent
+
+```cpp
+struct ContractEvent
+{
+    // We can use this to add more fields, or because it
+    // is first, to change ContractEvent into a union.
+    ExtensionPoint ext;
+
+    Hash* contractID;
+    ContractEventType type;
+
+    union switch (int v)
+    {
+    case 0:
+        struct
+        {
+            SCVec topics;
+            SCVal data;
+        } v0;
+    }
+    body;
+};
+```
+
+### OperationEvents
+
+```cpp
+struct OperationEvents
+{
+    ContractEvent events<>;
+};
+```
+
+### TransactionMetaV3
+
+```cpp
+struct TransactionMetaV3
+{
+    LedgerEntryChanges txChangesBefore; // tx level changes before operations
+                                        // are applied if any
+    OperationMeta operations<>;         // meta for each operation
+    LedgerEntryChanges txChangesAfter;  // tx level changes after operations are
+                                        // applied if any
+    OperationEvents events<>;           // custom events populated by the
+                                        // contracts themselves. One list per operation.
+    TransactionResult txResult;
+
+    Hash hashes[3];                     // stores sha256(txChangesBefore, operations, txChangesAfter),
+                                        // sha256(events), and sha256(txResult)
+
+    // Diagnostics events that are not hashed. One list per operation.
+    // This will contain all contract and diagnostic events. Even ones
+    // that were emitted in a failed contract call.
+    OperationDiagnosticEvents diagnosticEvents<>;
+};
+```
+
+[Link](https://github.com/stellar/stellar-xdr/blob/eab1622f18b8101aa0cea76361c08beaeaa8d715/Stellar-ledger.x#L444) to the XDR above.
+
+### Event types
+
+There are three `ContractEventType`'s -
+
+1. `CONTRACT` events are events emitted by contracts that use the
+   `contract_event` host function to convey state changes.
+2. `SYSTEM` events are events emitted by the host. At the moment, there's only one system event emitted by the host. It is emitted when the `update_current_contract_wasm` host function is called, where `topics = ["executable_update", old_executable: ContractExecutable, old_executable: ContractExecutable]` and `data = []`.
+3. `DIAGNOSTIC` events are meant for debugging and will not be emitted unless the host instance explictly enables it. You can read more about this below.
+
+## What are diagnosticEvents?
+
+While looking at the `TransactionMetaV3` XDR struct above, you may have noticed
+the `diagnosticEvents` field. This list will be empty by default unless your
+stellar-core instance has `ENABLE_SOROBAN_DIAGNOSTIC_EVENTS=true` in its config
+file. If diagnostic events are enabled, this list will not only include all
+ContractEvents in `events`, but will also include events from failed contract
+calls, errors from the host, events to trace the contract call stack, and logs
+from the `log_from_linear_memory` host function. These events can be identified
+by `type == DIAGNOSTIC`. The diagnostic events emitted by the host to track the
+call stack are defined below.
+
+### fn_call
+
+The `fn_call` diagnostic event is emitted when a contract is called
+and contains -
+
+- Topics
+  1.  The symbol "fn_call".
+  2.  The contract id of the contract about to be called.
+  3.  A symbol containing the name of the function being called.
+- Data
+  1. A vector of the arguments passed to the function being called.
+
+### fn_return
+
+The `fn_return` diagnostic event is emitted when a contract call completes and contains -
+
+- Topics
+  1.  The symbol "fn_return".
+  2.  A symbol containing the name of the function that is about to return.
+- Data
+  1. The value returned by the contract function.
+
+### When should diagnostic events be enabled?
+
+`events` contain `ContractEvents` that should convey information about state
+changes. `diagnosticEvents` on the other hand contain events that are not
+useful for most users, but may be helpful in debugging issues or building the
+contract call stack. Because they won't be used by most users, they can be
+optionally enabled because they are not hashed into the ledger, and therefore
+are not part of the protocol. This is done so a
+stellar-core node can stay in sync with the network while emitting these events
+that normally would not be useful for most users.
+
+Due to the fact that a node with diagnostic events enabled will be executing code
+paths that diverge from a regular node, we highly encourage only using this
+feature on watcher node (nodes where `NODE_IS_VALIDATOR=false` is set).
