@@ -1,0 +1,289 @@
+---
+title: Atomic Swap
+description: Swap tokens atomically between authorized users.
+sidebar_custom_props:
+  tutorial:
+    level: advanced
+---
+
+<head>
+  <title>Swap tokens atomically between authorized users.</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Swap tokens atomically between authorized users."
+  />
+  <meta
+    property="og:description"
+    content="Swap two tokens between two authorized parties atomically using the auth framework; the requested minimum price must be respected for both parties."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/tutorials/atomic-swap"
+  />
+</head>
+
+The [atomic swap example] swaps two tokens between two authorized parties
+atomically while following the limits they set.
+
+This is example demonstrates advanced usage of Soroban auth framework and
+assumes the reader is familiar with the [auth example](../tutorials/auth.mdx) and with
+Soroban token usage.
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
+
+[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v20.0.0
+[atomic swap example]: https://github.com/stellar/soroban-examples/tree/v20.0.0/atomic_swap
+
+## Run the Example
+
+First go through the [Setup] process to get your development environment
+configured, then clone the `v20.0.0` tag of `soroban-examples` repository:
+
+[Setup]: ../getting-started/setup.mdx
+
+```
+git clone -b v20.0.0 https://github.com/stellar/soroban-examples
+```
+
+Or, skip the development environment setup and open this example in [Gitpod][oigp].
+
+To run the tests for the example use `cargo test`.
+
+```
+cargo test -p soroban-atomic-swap-contract
+```
+
+You should see the output:
+
+```
+running 1 test
+test test::test_atomic_swap ... ok
+```
+
+## Code
+
+```rust title="atomic_swap/src/lib.rs"
+#[contract]
+pub struct AtomicSwapContract;
+
+#[contractimpl]
+impl AtomicSwapContract {
+    // Swap token A for token B atomically. Settle for the minimum requested price
+    // for each party (this is an arbitrary choice to demonstrate the usage of
+    // allowance; full amounts could be swapped as well).
+    pub fn swap(
+        env: Env,
+        a: Address,
+        b: Address,
+        token_a: Address,
+        token_b: Address,
+        amount_a: i128,
+        min_b_for_a: i128,
+        amount_b: i128,
+        min_a_for_b: i128,
+    ) {
+        // Verify preconditions on the minimum price for both parties.
+        if amount_b < min_b_for_a {
+            panic!("not enough token B for token A");
+        }
+        if amount_a < min_a_for_b {
+            panic!("not enough token A for token B");
+        }
+        // Require authorization for a subset of arguments specific to a party.
+        // Notice, that arguments are symmetric - there is no difference between
+        // `a` and `b` in the call and hence their signatures can be used
+        // either for `a` or for `b` role.
+        a.require_auth_for_args(
+            (token_a.clone(), token_b.clone(), amount_a, min_b_for_a).into_val(&env),
+        );
+        b.require_auth_for_args(
+            (token_b.clone(), token_a.clone(), amount_b, min_a_for_b).into_val(&env),
+        );
+
+        // Perform the swap by moving tokens from a to b and from b to a.
+        move_token(&env, &token_a, &a, &b, amount_a, min_a_for_b);
+        move_token(&env, &token_b, &b, &a, amount_b, min_b_for_a);
+    }
+}
+
+fn move_token(
+    env: &Env,
+    token: &Address,
+    from: &Address,
+    to: &Address,
+    max_spend_amount: i128,
+    transfer_amount: i128,
+) {
+    let token = token::Client::new(env, token);
+    let contract_address = env.current_contract_address();
+    // This call needs to be authorized by `from` address. It transfers the
+    // maximum spend amount to the swap contract's address in order to decouple
+    // the signature from `to` address (so that parties don't need to know each
+    // other).
+    token.transfer(from, &contract_address, &max_spend_amount);
+    // Transfer the necessary amount to `to`.
+    token.transfer(&contract_address, to, &transfer_amount);
+    // Refund the remaining balance to `from`.
+    token.transfer(
+        &contract_address,
+        from,
+        &(&max_spend_amount - &transfer_amount),
+    );
+}
+```
+
+Ref: https://github.com/stellar/soroban-examples/tree/v20.0.0/atomic_swap
+
+## How it Works
+
+The example contract requires two `Address`-es to authorize their parts of the
+swap operation: one `Address` wants to sell a given amount of token A for
+token B at a given price and another `Address` wants to sell token B for token
+A at a given price. The contract swaps the tokens atomically, but only if the
+requested minimum price is respected for both parties.
+
+Open the `atomic_swap/src/lib.rs` file or see the code above to follow along.
+
+### Swap authorization
+
+```rust
+...
+a.require_auth_for_args(
+    (token_a.clone(), token_b.clone(), amount_a, min_b_for_a).into_val(&env),
+);
+b.require_auth_for_args(
+    (token_b.clone(), token_a.clone(), amount_b, min_a_for_b).into_val(&env),
+);
+...
+```
+
+Authorization of `swap` function leverages `require_auth_for_args` Soroban host
+function. Both `a` and `b` need to authorize symmetric arguments: token they
+sell, token they buy, amount of token they sell, minimum amount of token they
+want to receive. This means that `a` and `b` can be freely exchanged in the
+invocation arguments (as long as the respective arguments are changed too).
+
+### Moving the tokens
+
+```rust
+...
+// Perform the swap via two token transfers.
+move_token(&env, token_a, &a, &b, amount_a, min_a_for_b);
+move_token(&env, token_b, &b, &a, amount_b, min_b_for_a);
+...
+fn move_token(
+    env: &Env,
+    token: &Address,
+    from: &Address,
+    to: &Address,
+    max_spend_amount: i128,
+    transfer_amount: i128,
+) {
+    let token = token::Client::new(env, token);
+    let contract_address = env.current_contract_address();
+    // This call needs to be authorized by `from` address. It transfers the
+    // maximum spend amount to the swap contract's address in order to decouple
+    // the signature from `to` address (so that parties don't need to know each
+    // other).
+    token.transfer(from, &contract_address, &max_spend_amount);
+    // Transfer the necessary amount to `to`.
+    token.transfer(&contract_address, to, &transfer_amount);
+    // Refund the remaining balance to `from`.
+    token.transfer(
+        &contract_address,
+        from,
+        &(&max_spend_amount - &transfer_amount),
+    );
+}
+```
+
+The swap itself is implemented via two token moves: from `a` to `b` and from `b`
+to `a`. The token move is implemented via allowance: the users don't need to
+know each other in order to perform the swap, and instead they authorize the swap
+contract to spend the necessary amount of token on their behalf via
+`incr_allow`. Soroban auth framework makes sure that the `incr_allow` signatures
+would have the proper context, and they won't be usable outside the `swap`
+contract invocation.
+
+### Tests
+
+Open the [`atomic_swap/src/test.rs`] file to follow along.
+
+[`atomic_swap/src/test.rs`]: https://github.com/stellar/soroban-examples/tree/v20.0.0/atomic_swap/src/test.rs
+
+Refer to another examples for the general information on the test setup.
+
+The interesting part for this example is verification of `swap` authorization:
+
+```rust
+contract.swap(
+    &a,
+    &b,
+    &token_a.address,
+    &token_b.address,
+    &1000,
+    &4500,
+    &5000,
+    &950,
+);
+
+assert_eq!(
+    env.auths(),
+    std::vec![
+        (
+            a.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    contract.address.clone(),
+                    symbol_short!("swap"),
+                    (
+                        token_a.address.clone(),
+                        token_b.address.clone(),
+                        1000_i128,
+                        4500_i128
+                    )
+                        .into_val(&env),
+                )),
+                sub_invocations: std::vec![AuthorizedInvocation {
+                    function: AuthorizedFunction::Contract((
+                        token_a.address.clone(),
+                        symbol_short!("transfer"),
+                        (a.clone(), contract.address.clone(), 1000_i128,).into_val(&env),
+                    )),
+                    sub_invocations: std::vec![]
+                }]
+            }
+        ),
+        (
+            b.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    contract.address.clone(),
+                    symbol_short!("swap"),
+                    (
+                        token_b.address.clone(),
+                        token_a.address.clone(),
+                        5000_i128,
+                        950_i128
+                    )
+                        .into_val(&env),
+                )),
+                sub_invocations: std::vec![AuthorizedInvocation {
+                    function: AuthorizedFunction::Contract((
+                        token_b.address.clone(),
+                        symbol_short!("transfer"),
+                        (b.clone(), contract.address.clone(), 5000_i128,).into_val(&env),
+                    )),
+                    sub_invocations: std::vec![]
+                }]
+            }
+        ),
+    ]
+);
+```
+
+`env.auths()` returns all the authorizations. In the case of `swap` four
+authorizations are expected. Two for each address authorizing, because each
+address authorizes not only the swap, but the `approve` all on the
+token being sent.

@@ -1,0 +1,289 @@
+---
+title: Upgrade the Wasm bytecode of a deployed contract
+hide_table_of_contents: true
+---
+
+<head>
+  <title>Upgrade the Wasm bytecode of a deployed contract</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Upgrade the Wasm bytecode of a deployed contract"
+  />
+  <meta
+    property="og:description"
+    content="Upgrade the WASM bytecode of a deployed contract."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/guides/conventions/upgrading-contracts"
+  />
+</head>
+
+The [upgradeable contract example] demonstrates how to upgrade a Wasm contract.
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
+[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v20.0.0
+
+[upgradeable contract example]: https://github.com/stellar/soroban-examples/tree/v20.0.0/upgradeable_contract
+
+## Code
+
+The example contains both an "old" and "new" contract, where we upgrade from "old" to "new". The code below is for the "old" contract.
+
+```rust title="upgradeable_contract/old_contract/src/lib.rs"
+#![no_std]
+
+use soroban_sdk::{contractimpl, contracttype, Address, BytesN, Env};
+
+#[contracttype]
+#[derive(Clone)]
+enum DataKey {
+    Admin,
+}
+
+#[contract]
+pub struct UpgradeableContract;
+
+#[contractimpl]
+impl UpgradeableContract {
+    pub fn init(e: Env, admin: Address) {
+        e.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    pub fn version() -> u32 {
+        1
+    }
+
+    pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) {
+        let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        e.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+}
+
+```
+
+## How it works
+
+The upgrade is only possible because the contract calls `e.update_current_contract_wasm`, with the wasm hash of the new contract as a parameter. The contract ID does **not** change. Note that the contract required authorization from an admin before upgrading. This is to prevent anyone from upgrading the contract. You can read more about the `update_current_contract_wasm` function in the Soroban Rust SDK [here].
+
+```rust
+pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) {
+    let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
+    admin.require_auth();
+
+    e.deployer().update_current_contract_wasm(new_wasm_hash);
+}
+```
+
+The `update_current_contract_wasm` host function will also emit a `SYSTEM` contract [event] that contains the old and new wasm reference, allowing downstream users to be notified when a contract they use is updated. The event structure will have `topics = ["executable_update", old_executable: ContractExecutable, old_executable: ContractExecutable]` and `data = []`.
+
+[here]: https://docs.rs/soroban-sdk/20.0.2/soroban_sdk/struct.Env.html#method.update_current_contract_wasm
+[event]: ../../soroban-internals/events.mdx#event-types
+
+## Tests
+
+Open the `upgradeable_contract/old_contract/src/test.rs` file to follow along.
+
+```rust title="upgradeable_contract/old_contract/srctest.rs"
+#![cfg(test)]
+
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
+
+mod old_contract {
+    soroban_sdk::contractimport!(
+        file =
+            "target/wasm32-unknown-unknown/release/soroban_upgradeable_contract_old_contract.wasm"
+    );
+}
+
+mod new_contract {
+    soroban_sdk::contractimport!(
+        file = "../new_contract/target/wasm32-unknown-unknown/release/soroban_upgradeable_contract_new_contract.wasm"
+    );
+}
+
+fn install_new_wasm(e: &Env) -> BytesN<32> {
+    e.install_contract_wasm(new_contract::Wasm)
+}
+
+#[test]
+fn test() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Note that we use register_contract_wasm instead of register_contract
+    // because the old contracts Wasm is expected to exist in storage.
+    let contract_id = env.register_contract_wasm(None, old_contract::Wasm);
+
+    let client = old_contract::Client::new(&env, &contract_id);
+    let admin = Address::random(&env);
+    client.init(&admin);
+
+    assert_eq!(1, client.version());
+
+    let new_wasm_hash = install_new_wasm(&env);
+
+    client.upgrade(&new_wasm_hash);
+    assert_eq!(2, client.version());
+
+    // new_v2_fn was added in the new contract, so the existing
+    // client is out of date. Generate a new one.
+    let client = new_contract::Client::new(&env, &contract_id);
+    assert_eq!(1010101, client.new_v2_fn());
+}
+
+```
+
+We first import wasm files for both contracts -
+
+```rust
+mod old_contract {
+    soroban_sdk::contractimport!(
+        file =
+            "target/wasm32-unknown-unknown/release/soroban_upgradeable_contract_old_contract.wasm"
+    );
+}
+
+mod new_contract {
+    soroban_sdk::contractimport!(
+        file = "../new_contract/target/wasm32-unknown-unknown/release/soroban_upgradeable_contract_new_contract.wasm"
+    );
+}
+```
+
+We register the old contract, intialize it with an admin, and verify the version
+it reutrns. The note in the code below is important-
+
+```rust
+// Note that we use register_contract_wasm instead of register_contract
+// because the old contracts Wasm is expected to exist in storage.
+let contract_id = env.register_contract_wasm(None, old_contract::Wasm);
+
+let client = old_contract::Client::new(&env, &contract_id);
+let admin = Address::random(&env);
+client.init(&admin);
+
+assert_eq!(1, client.version());
+```
+
+We install the new contract's Wasm
+
+```rust
+let new_wasm_hash = install_new_wasm(&env);
+```
+
+Then we run the upgrade, and verify that the upgrade worked.
+
+```rust
+client.upgrade(&new_wasm_hash);
+assert_eq!(2, client.version());
+```
+
+## Build the Contract
+
+To build the contract `.wasm` files, run `soroban contract build` in both
+`upgradeable_contract/old_contract` and `upgradeable_contract/new_contract` in
+that order.
+
+Both `.wasm` files should be found in both contract `target` directories after building
+both contracts:
+
+```
+target/wasm32-unknown-unknown/release/soroban_upgradeable_contract_old_contract.wasm
+```
+
+```
+target/wasm32-unknown-unknown/release/soroban_upgradeable_contract_new_contract.wasm
+```
+
+## Run the Contract
+
+If you have [`soroban-cli`] installed, you can invoke contract functions. Deploy the old contract and install the wasm for the new contract.
+
+```sh
+soroban contract deploy \
+    --wasm target/wasm32-unknown-unknown/release/soroban_upgradeable_contract_old_contract.wasm \
+    --id a
+```
+
+```sh
+soroban contract install \
+    --wasm target/wasm32-unknown-unknown/release/soroban_upgradeable_contract_new_contract.wasm
+```
+
+You should see this Wasm hash from the install command:
+
+```
+c30c71a382438ed7e56669ba172aa862cc813d093b8d2f45e85b47ba38a89ddc
+```
+
+You also need to call the `init` method so the `admin` is set. This requires us
+to setup som identities.
+
+```sh
+soroban config identity generate acc1 && \
+soroban config identity address acc1
+```
+
+Example output:
+
+```
+GAJGHZ44IJXYFNOVRZGBCVKC2V62DB2KHZB7BEMYOWOLFQH4XP2TAM6B
+```
+
+Now call `init` with this key (make sure to substitute with the key you generated).
+
+```sh
+soroban contract invoke \
+    --id a \
+    -- \
+    init \
+    --admin GAJGHZ44IJXYFNOVRZGBCVKC2V62DB2KHZB7BEMYOWOLFQH4XP2TAM6B
+```
+
+Invoke the `version` function.
+
+```sh
+soroban contract invoke \
+    --id a \
+    -- \
+    version
+```
+
+The following output should occur using the code above.
+
+```json
+1
+```
+
+Now upgrade the contract. Notice the `--source` must be the
+identity name matching the address passed to the `init` function.
+
+```sh
+soroban contract invoke \
+    --source acc1 \
+    --id a \
+    -- \
+    upgrade \
+    --new_wasm_hash c30c71a382438ed7e56669ba172aa862cc813d093b8d2f45e85b47ba38a89ddc
+```
+
+Invoke the `version` function again.
+
+```sh
+soroban contract invoke \
+    --id a \
+    -- \
+    version
+```
+
+Now that the contract was upgraded, you'll see a new version.
+
+```json
+2
+```
+
+[`soroban-cli`]: ../../getting-started/setup.mdx#install-the-soroban-cli

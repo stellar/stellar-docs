@@ -1,0 +1,565 @@
+---
+title: Deployer
+description: Deploy and initialize a smart contract using another smart contract.
+sidebar_custom_props:
+  tutorial:
+    level: beginner
+---
+
+<head>
+  <title>
+    Deploy and initialize a smart contract using another smart contract.
+  </title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Deploy and initialize a smart contract using another smart contract."
+  />
+  <meta
+    property="og:description"
+    content="Deploy a smart contract on behalf of any other address using the SDK `deployer()` and initialize it atomically."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/tutorials/deployer"
+  />
+</head>
+
+The [deployer example] demonstrates how to deploy contracts using a contract.
+
+Here we deploy a contract on behalf of any address and initialize it
+atomically.
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
+[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v20.0.0
+
+:::info
+
+In this example there are two contracts that are compiled separately, and the
+tests deploy one with the other.
+
+:::
+
+[deployer example]: https://github.com/stellar/soroban-examples/tree/v20.0.0/deployer
+
+## Run the Example
+
+First go through the [Setup] process to get your development environment
+configured, then clone the `v20.0.0` tag of `soroban-examples` repository:
+
+[Setup]: ../getting-started/setup.mdx
+
+```
+git clone -b v20.0.0 https://github.com/stellar/soroban-examples
+```
+
+Or, skip the development environment setup and open this example in [Gitpod][oigp].
+
+To run the tests for the example, navigate to the `deployer/deployer`
+directory, and use `cargo test`.
+
+```
+cd deployer/deployer
+cargo test
+```
+
+You should see the output:
+
+```
+running 1 test
+test test::test ... ok
+```
+
+## Code
+
+```rust title="deployer/deployer/src/lib.rs"
+#[contract]
+pub struct Deployer;
+
+#[contractimpl]
+impl Deployer {
+    /// Deploy the contract Wasm and after deployment invoke the init function
+    /// of the contract with the given arguments.
+    ///
+    /// This has to be authorized by `deployer` (unless the `Deployer` instance
+    /// itself is used as deployer). This way the whole operation is atomic
+    /// and it's not possible to frontrun the contract initialization.
+    ///
+    /// Returns the contract address and result of the init function.
+    pub fn deploy(
+        env: Env,
+        deployer: Address,
+        wasm_hash: BytesN<32>,
+        salt: BytesN<32>,
+        init_fn: Symbol,
+        init_args: Vec<Val>,
+    ) -> (Address, Val) {
+        // Skip authorization if deployer is the current contract.
+        if deployer != env.current_contract_address() {
+            deployer.require_auth();
+        }
+
+        // Deploy the contract using the uploaded Wasm with given hash.
+        let deployed_address = env
+            .deployer()
+            .with_address(deployer, salt)
+            .deploy(wasm_hash);
+
+        // Invoke the init function with the given arguments.
+        let res: Val = env.invoke_contract(&deployed_address, &init_fn, init_args);
+        // Return the contract ID of the deployed contract and the result of
+        // invoking the init result.
+        (deployed_address, res)
+    }
+}
+```
+
+Ref: https://github.com/stellar/soroban-examples/tree/v20.0.0/deployer
+
+## How it Works
+
+Contracts can deploy other contracts using the SDK `deployer()` method.
+
+The contract address of the deployed contract is deterministic and is derived from
+the address of the deployer. The deployment also has to be authorized by the
+deployer.
+
+Open the `deployer/deployer/src/lib.rs` file to follow along.
+
+### Contract Wasm Upload
+
+Before deploying the new contract instances, the Wasm code needs to be uploaded
+on-chain. Then it can be used to deploy an arbitrary number of contract
+instances. The upload should typically happen outside of the deployer
+contract, as it needs to happen just once. However, it is possible to use
+`env.deployer().upload_contract_wasm()` function to upload Wasm from a contract
+as well.
+
+See the [tests](#tests) for an example of uploading the contract code
+programmatically. For the actual on-chain installation see the general deployment
+[tutorial](https://soroban.stellar.org/docs/getting-started/deploy-to-testnet).
+
+### Authorization
+
+:::info
+
+This section can be skipped for factory contracts that deploy another contract
+from their own address (`deployer == env.current_contract_address()``).
+
+:::
+
+:::info
+
+For introduction to Soroban authorization see the [auth tutorial](https://soroban.stellar.org/docs/tutorials/auth)
+
+:::
+
+We start with verifying authorization of the `deployer`, unless its the current
+contract (at which point the authorization is implied).
+
+```rust
+if deployer != env.current_contract_address() {
+    deployer.require_auth();
+}
+```
+
+While `deployer().with_address()` performs authorization as well, we want to
+make sure that `deployer` has also authorized the whole operation,
+as besides deployment it also performs atomic contract initialization. If we
+didn't require deployer authorization here, then it would be possible to
+frontrun the deployment operation performed by `deployer` and initialize it
+differently, thus breaking the promise of atomic initialization.
+
+See more details on the actual authorization payloads in [tests](#tests).
+
+### `deployer()`
+
+The `deployer()` SDK function comes with a few deployment-related utilities.
+Here we use the most generic deployer kind, `with_address(deployer_address, salt)`.
+
+```rust
+let deployed_address = env
+    .deployer()
+    .with_address(deployer, salt)
+    .deploy(wasm_hash);
+```
+
+`with_address()` accepts the `deployer` address and salt. Both are used to derive the
+address of the deployed contract deterministically. It is not possible to
+re-deploy an already existing contract.
+
+`deploy()` function performs the actual deployment using the provided `wasm_hash`.
+The implementation of the new contract is defined by the Wasm file uploaded under
+`wasm_hash`.
+
+:::tip
+
+Only the `wasm_hash` itself is stored per contract ID thus saving
+the ledger space and fees.
+
+:::
+
+When only deploying the contract on behalf of the current contract, i.e. when
+`deployer` address is always `env.current_contract_address()` it is possible
+to use `deployer().with_current_contract(salt)` function for brevity.
+
+### Initialization
+
+The contract can be called immediately after deployment, which is useful for
+initialization.
+
+```rust
+let res: Val = env.invoke_contract(&deployed_address, &init_fn, init_args);
+```
+
+`invoke_contract` can call any defined contract function with any arguments. We
+pass the actual function to call and the arguments from `deploy` inputs. The
+result can be any value, depending on the `init_fn`'s return value.
+
+If the initialization fails, then the whole `deploy` call falls and thus the
+contract won't be deployed. This behavior is required for the atomic
+initialization guarantee as well.
+
+The contract returns the deployed contract's address and the result of executing
+the initialization function.
+
+```rust
+ (deployed_address, res)
+```
+
+### Tests
+
+Open the `deployer/deployer/src/test.rs` file to follow along.
+
+Import the test contract Wasm to be deployed.
+
+```rust
+// The contract that will be deployed by the deployer contract.
+mod contract {
+    soroban_sdk::contractimport!(
+        file =
+            "../contract/target/wasm32-unknown-unknown/release/soroban_deployer_test_contract.wasm"
+    );
+}
+```
+
+That contract contains the following code that exports two functions:
+initialization function that takes a value and a getter function for the stored
+initialized value.
+
+```rust title="deployer/contract/src/lib.rs"
+#[contract]
+pub struct Contract;
+
+const KEY: Symbol = symbol_short!("value");
+
+#[contractimpl]
+impl Contract {
+    pub fn init(env: Env, value: u32) {
+        env.storage().instance().set(&KEY, &value);
+    }
+    pub fn value(env: Env) -> u32 {
+        env.storage().instance().get(&KEY).unwrap()
+    }
+}
+```
+
+This test contract will be used when testing the deployer. The deployer contract
+will deploys the test contract and invoke its `init` function.
+
+There are two tests: deployment from the current contract without authorization
+and deployment from an arbitrary address with authorization. Besides
+authorization, these tests are very similar.
+
+#### Curent contract deployer
+
+In the first test we deploy contract from the `Deployer` contract instance
+itself.
+
+```rust
+#[test]
+fn test_deploy_from_contract() {
+    let env = Env::default();
+    let deployer_client = DeployerClient::new(&env, &env.register_contract(None, Deployer));
+
+    // Upload the Wasm to be deployed from the deployer contract.
+    // This can also be called from within a contract if needed.
+    let wasm_hash = env.deployer().upload_contract_wasm(contract::WASM);
+
+    // Deploy contract using deployer, and include an init function to call.
+    let salt = BytesN::from_array(&env, &[0; 32]);
+    let init_fn = symbol_short!("init");
+    let init_fn_args: Vec<Val> = (5u32,).into_val(&env);
+    let (contract_id, init_result) = deployer_client.deploy(
+        &deployer_client.address,
+        &wasm_hash,
+        &salt,
+        &init_fn,
+        &init_fn_args,
+    );
+
+    assert!(init_result.is_void());
+    // No authorizations needed - the contract acts as a factory.
+    assert_eq!(env.auths(), vec![]);
+
+    // Invoke contract to check that it is initialized.
+    let client = contract::Client::new(&env, &contract_id);
+    let sum = client.value();
+    assert_eq!(sum, 5);
+}
+```
+
+In any test the first thing that is always required is an `Env`, which is the
+Soroban environment that the contract will run in.
+
+```rust
+let env = Env::default();
+```
+
+Register the deployer contract with the environment and create a client to for
+it.
+
+```rust
+let deployer_client = DeployerClient::new(&env, &env.register_contract(None, Deployer));
+```
+
+Upload the code of the test contract that we have imported above via
+`contractimport!` and get the hash of the uploaded Wasm code.
+
+```rust
+let wasm_hash = env.deployer().upload_contract_wasm(contract::WASM);
+```
+
+The client is used to invoke the `deploy` function. The contract will deploy the
+test contract using the hash of its Wasm code, call the `init` function, and
+pass in a single `5u32` argument. The expected return value of `init` function
+is just `void` (i.e. no value).
+
+```rust
+let salt = BytesN::from_array(&env, &[0; 32]);
+let init_fn = symbol_short!("init");
+let init_fn_args: Vec<Val> = (5u32,).into_val(&env);
+let (contract_id, init_result) = deployer_client.deploy(
+    &deployer_client.address,
+    &wasm_hash,
+    &salt,
+    &init_fn,
+    &init_fn_args,
+);
+```
+
+The test checks that the test contract was deployed by using its client to
+invoke it and get back the value set during initialization.
+
+```rust
+let client = contract::Client::new(&env, &contract_id);
+let sum = client.value();
+assert_eq!(sum, 5);
+```
+
+#### External deployer
+
+The second test is very similar to the first one.
+
+```rust
+#[test]
+fn test_deploy_from_address() {
+    let env = Env::default();
+    let deployer_client = DeployerClient::new(&env, &env.register_contract(None, Deployer));
+
+    // Upload the Wasm to be deployed from the deployer contract.
+    // This can also be called from within a contract if needed.
+    let wasm_hash = env.deployer().upload_contract_wasm(contract::WASM);
+
+    // Define a deployer address that needs to authorize the deployment.
+    let deployer = Address::random(&env);
+
+    // Deploy contract using deployer, and include an init function to call.
+    let salt = BytesN::from_array(&env, &[0; 32]);
+    let init_fn = symbol_short!("init");
+    let init_fn_args: Vec<Val> = (5u32,).into_val(&env);
+    env.mock_all_auths();
+    let (contract_id, init_result) =
+        deployer_client.deploy(&deployer, &wasm_hash, &salt, &init_fn, &init_fn_args);
+
+    assert!(init_result.is_void());
+
+    let expected_auth = AuthorizedInvocation {
+        // Top-level authorized function is `deploy` with all the arguments.
+        function: AuthorizedFunction::Contract((
+            deployer_client.address,
+            symbol_short!("deploy"),
+            (
+                deployer.clone(),
+                wasm_hash.clone(),
+                salt,
+                init_fn,
+                init_fn_args,
+            )
+                .into_val(&env),
+        )),
+        // From `deploy` function the 'create contract' host function has to be
+        // authorized.
+        sub_invocations: vec![AuthorizedInvocation {
+            function: AuthorizedFunction::CreateContractHostFn(CreateContractArgs {
+                contract_id_preimage: ContractIdPreimage::Address(ContractIdPreimageFromAddress {
+                    address: deployer.clone().try_into().unwrap(),
+                    salt: Uint256([0; 32]),
+                }),
+                executable: xdr::ContractExecutable::Wasm(xdr::Hash(wasm_hash.into_val(&env))),
+            }),
+            sub_invocations: vec![],
+        }],
+    };
+    assert_eq!(env.auths(), vec![(deployer, expected_auth)]);
+
+    // Invoke contract to check that it is initialized.
+    let client = contract::Client::new(&env, &contract_id);
+    let sum = client.value();
+    assert_eq!(sum, 5);
+}
+```
+
+The main difference is that the contract is deployed on behalf of the arbitrary
+address.
+
+```rust
+// Define a deployer address that needs to authorize the deployment.
+let deployer = Address::random(&env);
+```
+
+Before invoking the contract we need to enable mock authorization in order to
+get the recorded authorization payload that we can verify.
+
+```rust
+env.mock_all_auths();
+let (contract_id, init_result) =
+        deployer_client.deploy(&deployer, &wasm_hash, &salt, &init_fn, &init_fn_args);
+```
+
+The expected authorization tree for the `deployer` looks as follows.
+
+```rust
+let expected_auth = AuthorizedInvocation {
+    // Top-level authorized function is `deploy` with all the arguments.
+    function: AuthorizedFunction::Contract((
+        deployer_client.address,
+        symbol_short!("deploy"),
+        (
+            deployer.clone(),
+            wasm_hash.clone(),
+            salt,
+            init_fn,
+            init_fn_args,
+        )
+            .into_val(&env),
+    )),
+    // From `deploy` function the 'create contract' host function has to be
+    // authorized.
+    sub_invocations: vec![AuthorizedInvocation {
+        function: AuthorizedFunction::CreateContractHostFn(CreateContractArgs {
+            contract_id_preimage: ContractIdPreimage::Address(ContractIdPreimageFromAddress {
+                address: deployer.clone().try_into().unwrap(),
+                salt: Uint256([0; 32]),
+            }),
+            executable: xdr::ContractExecutable::Wasm(xdr::Hash(wasm_hash.into_val(&env))),
+        }),
+        sub_invocations: vec![],
+    }],
+};
+```
+
+At the top level we have the `deploy` function itself with all the arguments
+that we've passed to it. From the `deploy` function the `CreateContractHostFn`
+has to be authorized. This is the authorization payload that has to be
+authorized by any deployer in any context. It contains the deployer address,
+salt and executable.
+
+This authorization tree proves that the deployment and initialization are
+authorized atomically: actual deployment happens within the context of `deploy`
+and all of salt, executable, and initialization arguments are authorized
+together (i.e. there is one signature to authorizes this exact combination).
+
+Then we make sure that deployer has authorized the expected tree and that
+expected value has been stored.
+
+```rust
+assert_eq!(env.auths(), vec![(deployer, expected_auth)]);
+
+let client = contract::Client::new(&env, &contract_id);
+let sum = client.value();
+assert_eq!(sum, 5);
+```
+
+## Build the Contracts
+
+To build the contract into a `.wasm` file, use the `soroban contract build` command. Build
+both the deployer contract and the test contract.
+
+```sh
+soroban contract build
+```
+
+Both `.wasm` files should be found in both contract `target` directories after building
+both contracts:
+
+```
+target/wasm32-unknown-unknown/release/soroban_deployer_contract.wasm
+```
+
+```
+target/wasm32-unknown-unknown/release/soroban_deployer_test_contract.wasm
+```
+
+## Run the Contract
+
+If you have [`soroban-cli`] installed, you can invoke the contract function to
+deploy the test contract.
+
+Before deploying the test contract with the deployer, install the test contract
+Wasm using the `install` command. The `install` command will print out the
+hash derived from the Wasm file (it's not just the hash of the Wasm file itself
+though) which should be used by the deployer.
+
+```sh
+soroban contract install --wasm contract/target/wasm32-unknown-unknown/release/soroban_deployer_test_contract.wasm
+```
+
+The command prints out the hash as hex. It will look something like `7792a624b562b3d9414792f5fb5d72f53b9838fef2ed9a901471253970bc3b15`.
+
+We also need to deploy the `Deployer` contract:
+
+```sh
+soroban contract deploy --wasm deployer/target/wasm32-unknown-unknown/release/soroban_deployer_contract.wasm --id 1
+```
+
+This will return the deployer address: `CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM`.
+
+Then the deployer contract may be invoked with the Wasm hash value above.
+
+```sh
+soroban contract invoke --id 1 -- deploy \
+    --deployer CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+    --salt 123 \
+    --wasm_hash 7792a624b562b3d9414792f5fb5d72f53b9838fef2ed9a901471253970bc3b15 \
+    --init_fn init \
+    --init_args '[{"u32":5}]'
+```
+
+And then invoke the deployed test contract using the identifier returned from
+the previous command.
+
+```sh
+soroban contract invoke \
+    --id ead19f55aec09bfcb555e09f230149ba7f72744a5fd639804ce1e934e8fe9c5d \
+    -- \
+    value
+```
+
+The following output should occur using the code above.
+
+```json
+5
+```
+
+[`soroban-cli`]: ../getting-started/setup.mdx#install-the-soroban-cli

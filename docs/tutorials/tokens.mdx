@@ -1,0 +1,1106 @@
+---
+title: Tokens
+description: Write a CAP-46-6 compliant token contract.
+sidebar_custom_props:
+  tutorial:
+    level: beginner
+---
+
+<head>
+  <title>Write a CAP-46-6 compliant token contract</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Write a CAP-46-6 compliant token contract"
+  />
+  <meta
+    property="og:description"
+    content="Use the Token Interface to construct a smart contract token that has a uniform and predictable interface for payments, balance transfers, balance inquiries, and more."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/tutorials/tokens"
+  />
+</head>
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+The [token example] demonstrates how to write a token contract that implements
+the [Token Interface].
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
+
+[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v20.0.0
+[token example]: https://github.com/stellar/soroban-examples/tree/v20.0.0/token
+[Token Interface]: ../tokens/token-interface.mdx
+
+## Run the Example
+
+First go through the [Setup] process to get your development environment
+configured, then clone the `v20.0.0` tag of `soroban-examples` repository:
+
+```bash
+git clone -b v20.0.0 https://github.com/stellar/soroban-examples
+```
+
+Or, skip the development environment setup and open this example in
+[Gitpod][oigp].
+
+To run the tests for the example, navigate to the `hello_world` directory, and
+use `cargo test`.
+
+```bash
+cd token
+cargo test
+```
+
+You should see the output:
+
+```bash
+running 8 tests
+test test::initialize_already_initialized - should panic ... ok
+test test::transfer_spend_deauthorized - should panic ... ok
+test test::decimal_is_over_max - should panic ... ok
+test test::test_burn ... ok
+test test::transfer_receive_deauthorized - should panic ... ok
+test test::transfer_from_insufficient_allowance - should panic ... ok
+test test::transfer_insufficient_balance - should panic ... ok
+test test::test ... ok
+```
+
+[Setup]: ../getting-started/setup.mdx
+
+## Code
+
+:::note
+
+The source code for this [token example] is broken into several smaller modules.
+This is a common design pattern for more complex smart contracts.
+
+:::
+
+<Tabs>
+<TabItem value="lib" default>
+
+```rust title="token/src/lib.rs"
+#![no_std]
+
+mod admin;
+mod allowance;
+mod balance;
+mod contract;
+mod event;
+mod metadata;
+mod storage_types;
+mod test;
+
+pub use crate::contract::TokenClient;
+```
+
+</TabItem>
+<TabItem value="admin">
+
+```rust title="token/src/admin.rs"
+use crate::storage_types::DataKey;
+use soroban_sdk::{Address, Env, symbol_short};
+
+pub fn has_administrator(e: &Env) -> bool {
+    let key = DataKey::Admin;
+    e.storage().instance().has(&key)
+}
+
+pub fn read_administrator(e: &Env) -> Address {
+    let key = DataKey::Admin;
+    e.storage().instance().get(&key).unwrap()
+}
+
+pub fn write_administrator(e: &Env, id: &Address) {
+    let key = DataKey::Admin;
+    e.storage().instance().set(&key, id);
+}
+```
+
+</TabItem>
+<TabItem value="allowance">
+
+```rust title="token/src/allowance.rs"
+use crate::storage_types::{AllowanceDataKey, AllowanceValue, DataKey};
+use soroban_sdk::{Address, Env};
+
+pub fn read_allowance(e: &Env, from: Address, spender: Address) -> AllowanceValue {
+    let key = DataKey::Allowance(AllowanceDataKey { from, spender });
+    if let Some(allowance) = e.storage().temporary().get::<_, AllowanceValue>(&key) {
+        if allowance.expiration_ledger < e.ledger().sequence() {
+            AllowanceValue {
+                amount: 0,
+                expiration_ledger: allowance.expiration_ledger,
+            }
+        } else {
+            allowance
+        }
+    } else {
+        AllowanceValue {
+            amount: 0,
+            expiration_ledger: 0,
+        }
+    }
+}
+
+pub fn write_allowance(
+    e: &Env,
+    from: Address,
+    spender: Address,
+    amount: i128,
+    expiration_ledger: u32,
+) {
+    let allowance = AllowanceValue {
+        amount,
+        expiration_ledger,
+    };
+
+    if amount > 0 && expiration_ledger < e.ledger().sequence() {
+        panic!("expiration_ledger is less than ledger seq when amount > 0")
+    }
+
+    let key = DataKey::Allowance(AllowanceDataKey { from, spender });
+    e.storage().temporary().set(&key.clone(), &allowance);
+
+    if amount > 0 {
+        e.storage().temporary().bump(
+            &key,
+            expiration_ledger
+                .checked_sub(e.ledger().sequence())
+                .unwrap(),
+        )
+    }
+}
+
+pub fn spend_allowance(e: &Env, from: Address, spender: Address, amount: i128) {
+    let allowance = read_allowance(e, from.clone(), spender.clone());
+    if allowance.amount < amount {
+        panic!("insufficient allowance");
+    }
+    write_allowance(
+        e,
+        from,
+        spender,
+        allowance.amount - amount,
+        allowance.expiration_ledger,
+    );
+}
+```
+
+</TabItem>
+<TabItem value="balance">
+
+```rust title="token/src/balance.rs"
+use crate::storage_types::DataKey;
+use soroban_sdk::{Address, Env};
+
+pub fn read_balance(e: &Env, addr: Address) -> i128 {
+    let key = DataKey::Balance(addr);
+    if let Some(balance) = e.storage().persistent().get::<DataKey, i128>(&key) {
+        balance
+    } else {
+        0
+    }
+}
+
+fn write_balance(e: &Env, addr: Address, amount: i128) {
+    let key = DataKey::Balance(addr);
+    e.storage().persistent().set(&key, &amount);
+}
+
+pub fn receive_balance(e: &Env, addr: Address, amount: i128) {
+    let balance = read_balance(e, addr.clone());
+    if !is_authorized(e, addr.clone()) {
+        panic!("can't receive when deauthorized");
+    }
+    write_balance(e, addr, balance + amount);
+}
+
+pub fn spend_balance(e: &Env, addr: Address, amount: i128) {
+    let balance = read_balance(e, addr.clone());
+    if !is_authorized(e, addr.clone()) {
+        panic!("can't spend when deauthorized");
+    }
+    if balance < amount {
+        panic!("insufficient balance");
+    }
+    write_balance(e, addr, balance - amount);
+}
+
+pub fn is_authorized(e: &Env, addr: Address) -> bool {
+    let key = DataKey::State(addr);
+    if let Some(state) = e.storage().persistent().get::<DataKey, bool>(&key) {
+        state
+    } else {
+        true
+    }
+}
+
+pub fn write_authorization(e: &Env, addr: Address, is_authorized: bool) {
+    let key = DataKey::State(addr);
+    e.storage().persistent().set(&key, &is_authorized);
+}
+```
+
+</TabItem>
+<TabItem value="contract">
+
+```rust title="token/src/contract.rs"
+//! This contract demonstrates a sample implementation of the Soroban token
+//! interface.
+use crate::admin::{has_administrator, read_administrator, write_administrator};
+use crate::allowance::{read_allowance, spend_allowance, write_allowance};
+use crate::balance::{is_authorized, write_authorization};
+use crate::balance::{read_balance, receive_balance, spend_balance};
+use crate::event;
+use crate::metadata::{read_decimal, read_name, read_symbol, write_metadata};
+use soroban_sdk::{contractimpl, Address, String, Env};
+use soroban_token_sdk::TokenMetadata;
+
+pub trait TokenTrait {
+    fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String);
+
+    fn allowance(e: Env, from: Address, spender: Address) -> i128;
+
+    fn approve(e: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32);
+
+    fn balance(e: Env, id: Address) -> i128;
+
+    fn spendable_balance(e: Env, id: Address) -> i128;
+
+    fn authorized(e: Env, id: Address) -> bool;
+
+    fn transfer(e: Env, from: Address, to: Address, amount: i128);
+
+    fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128);
+
+    fn burn(e: Env, from: Address, amount: i128);
+
+    fn burn_from(e: Env, spender: Address, from: Address, amount: i128);
+
+    fn clawback(e: Env, from: Address, amount: i128);
+
+    fn set_authorized(e: Env, id: Address, authorize: bool);
+
+    fn mint(e: Env, to: Address, amount: i128);
+
+    fn set_admin(e: Env, new_admin: Address);
+
+    fn decimals(e: Env) -> u32;
+
+    fn name(e: Env) -> String;
+
+    fn symbol(e: Env) -> String;
+}
+
+fn check_nonnegative_amount(amount: i128) {
+    if amount < 0 {
+        panic!("negative amount is not allowed: {}", amount)
+    }
+}
+
+#[contract]
+pub struct Token;
+
+#[contractimpl]
+impl TokenTrait for Token {
+    fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
+        if has_administrator(&e) {
+            panic!("already initialized")
+        }
+        write_administrator(&e, &admin);
+        if decimal > u8::MAX.into() {
+            panic!("Decimal must fit in a u8");
+        }
+
+        write_metadata(
+            &e,
+            TokenMetadata {
+                decimal,
+                name,
+                symbol,
+            },
+        )
+    }
+
+    fn allowance(e: Env, from: Address, spender: Address) -> i128 {
+        read_allowance(&e, from, spender)
+    }
+
+    fn approve(e: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32) {
+        from.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        write_allowance(&e, from.clone(), spender.clone(), amount, expiration_ledger);
+        event::approve(&e, from, spender, amount, expiration_ledger);
+    }
+
+    fn balance(e: Env, id: Address) -> i128 {
+        read_balance(&e, id)
+    }
+
+    fn spendable_balance(e: Env, id: Address) -> i128 {
+        read_balance(&e, id)
+    }
+
+    fn authorized(e: Env, id: Address) -> bool {
+        is_authorized(&e, id)
+    }
+
+    fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+
+        check_nonnegative_amount(amount);
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
+        event::transfer(&e, from, to, amount);
+    }
+
+    fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        spender.require_auth();
+
+        check_nonnegative_amount(amount);
+        spend_allowance(&e, from.clone(), spender, amount);
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
+        event::transfer(&e, from, to, amount)
+    }
+
+    fn burn(e: Env, from: Address, amount: i128) {
+        from.require_auth();
+
+        check_nonnegative_amount(amount);
+        spend_balance(&e, from.clone(), amount);
+        event::burn(&e, from, amount);
+    }
+
+    fn burn_from(e: Env, spender: Address, from: Address, amount: i128) {
+        spender.require_auth();
+
+        check_nonnegative_amount(amount);
+        spend_allowance(&e, from.clone(), spender, amount);
+        spend_balance(&e, from.clone(), amount);
+        event::burn(&e, from, amount)
+    }
+
+    fn clawback(e: Env, from: Address, amount: i128) {
+        check_nonnegative_amount(amount);
+        let admin = read_administrator(&e);
+        admin.require_auth();
+        spend_balance(&e, from.clone(), amount);
+        event::clawback(&e, admin, from, amount);
+    }
+
+    fn set_authorized(e: Env, id: Address, authorize: bool) {
+        let admin = read_administrator(&e);
+        admin.require_auth();
+        write_authorization(&e, id.clone(), authorize);
+        event::set_authorized(&e, admin, id, authorize);
+    }
+
+    fn mint(e: Env, to: Address, amount: i128) {
+        check_nonnegative_amount(amount);
+        let admin = read_administrator(&e);
+        admin.require_auth();
+        receive_balance(&e, to.clone(), amount);
+        event::mint(&e, admin, to, amount);
+    }
+
+    fn set_admin(e: Env, new_admin: Address) {
+        let admin = read_administrator(&e);
+        admin.require_auth();
+        write_administrator(&e, &new_admin);
+        event::set_admin(&e, admin, new_admin);
+    }
+
+    fn decimals(e: Env) -> u32 {
+        read_decimal(&e)
+    }
+
+    fn name(e: Env) -> Bytes {
+        read_name(&e)
+    }
+
+    fn symbol(e: Env) -> Bytes {
+        read_symbol(&e)
+    }
+}
+```
+
+</TabItem>
+<TabItem value="event">
+
+```rust title="token/src/event.rs"
+use soroban_sdk::{Address, Env, Symbol, symbol_short};
+
+pub(crate) fn approve(e: &Env, from: Address, to: Address, amount: i128, expiration_ledger: u32) {
+    let topics = (Symbol::new(e, "approve"), from, to);
+    e.events().publish(topics, (amount, expiration_ledger));
+}
+
+pub(crate) fn transfer(e: &Env, from: Address, to: Address, amount: i128) {
+    let topics = (symbol_short!("transfer"), from, to);
+    e.events().publish(topics, amount);
+}
+
+pub(crate) fn mint(e: &Env, admin: Address, to: Address, amount: i128) {
+    let topics = (symbol_short!("mint"), admin, to);
+    e.events().publish(topics, amount);
+}
+
+pub(crate) fn clawback(e: &Env, admin: Address, from: Address, amount: i128) {
+    let topics = (symbol_short!("clawback"), admin, from);
+    e.events().publish(topics, amount);
+}
+
+pub(crate) fn set_authorized(e: &Env, admin: Address, id: Address, authorize: bool) {
+    let topics = (Symbol::new(e, "set_authorized"), admin, id);
+    e.events().publish(topics, authorize);
+}
+
+pub(crate) fn set_admin(e: &Env, admin: Address, new_admin: Address) {
+    let topics = (symbol_short!("set_admin"), admin);
+    e.events().publish(topics, new_admin);
+}
+
+pub(crate) fn burn(e: &Env, from: Address, amount: i128) {
+    let topics = (symbol_short!("burn"), from);
+    e.events().publish(topics, amount);
+}
+```
+
+</TabItem>
+<TabItem value="metadata">
+
+```rust title="token/src/metadata.rs"
+use soroban_sdk::{Bytes, Env};
+use soroban_token_sdk::{TokenMetadata, TokenUtils};
+
+pub fn read_decimal(e: &Env) -> u32 {
+    let util = TokenUtils::new(e);
+    util.get_metadata_unchecked().unwrap().decimal
+}
+
+pub fn read_name(e: &Env) -> Bytes {
+    let util = TokenUtils::new(e);
+    util.get_metadata_unchecked().unwrap().name
+}
+
+pub fn read_symbol(e: &Env) -> Bytes {
+    let util = TokenUtils::new(e);
+    util.get_metadata_unchecked().unwrap().symbol
+}
+
+pub fn write_metadata(e: &Env, metadata: TokenMetadata) {
+    let util = TokenUtils::new(e);
+    util.set_metadata(&metadata);
+}
+```
+
+</TabItem>
+<TabItem value="storage_types">
+
+```rust title="token/src/storage_types.rs"
+use soroban_sdk::{contracttype, Address};
+
+#[derive(Clone)]
+#[contracttype]
+pub struct AllowanceDataKey {
+    pub from: Address,
+    pub spender: Address,
+}
+
+#[contracttype]
+pub struct AllowanceValue {
+    pub amount: i128,
+    pub expiration_ledger: u32,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Allowance(AllowanceDataKey),
+    Balance(Address),
+    Nonce(Address),
+    State(Address),
+    Admin,
+}
+```
+
+</TabItem>
+</Tabs>
+
+Ref: https://github.com/stellar/soroban-examples/tree/v20.0.0/token
+
+## How it Works
+
+Tokens created on a smart contract platform can take many different forms,
+include a variety of different functionalities, and meet very different needs or
+use-cases. While each token can fulfill a unique niche, there are some "normal"
+features that almost all tokens will need to make use of (e.g., payments,
+transfers, balance queries, etc.). In an effort to minimize repetition and
+streamline token deployments, Soroban implements the [Token Interface], which
+provides a uniform, predictable interface for developers and users.
+
+Creating a Soroban token from an existing Stellar asset is very easy, and the
+wrapped token makes use of the [Stellar Asset Contract] (more on that [later]).
+This example contract, however, demonstrates how a smart contract token might be
+constructed that doesn't take advantage of the Stellar Asset Contract, but does
+still satisfy the commonly used Token Interface to maximize interoperability.
+
+[Stellar Asset Contract]: ../tokens/stellar-asset-contract.mdx
+[later]: #compatibility-with-stellar-assets
+
+### Separation of Functionality
+
+You have likely noticed that this example contract is broken into discrete
+modules, with each one responsible for a siloed set of functionality. This
+common practice helps to organize the code and make it more maintainable.
+
+For example, most of the token logic exists in the `contract.rs` module.
+Functions like `mint`, `burn`, `transfer`, etc. are written and programmed in
+that file. The Token Interface describes how some of these functions should emit
+events when they occur. However, keeping all that event-emitting logic bundled
+in with the rest of the contract code could make it harder to track what is
+happening in the code, and that confusion could ultimately lead to errors.
+
+Instead, we have a separate `events.rs` module that takes away all the headache
+of emitting events when other functions run. Here is the function to emit an
+event whenever the token is minted:
+
+```rust
+pub(crate) fn mint(e: &Env, admin: Address, to: Address, amount: i128) {
+    let topics = (symbol_short!("mint"), admin, to);
+    e.events().publish(topics, amount);
+}
+```
+
+Admittedly, this is a simple example, but constructing the contract this way
+makes it very clear to the developer what is happening and where. This function
+is then used by the `contract.rs` module whenever the `mint` function is
+invoked:
+
+```rust
+// earlier in `contract.rs`
+use crate::event;
+
+fn mint(e: Env, to: Address, amount: i128) {
+    check_nonnegative_amount(amount);
+    let admin = read_administrator(&e);
+    admin.require_auth();
+    receive_balance(&e, to.clone(), amount);
+    // highlight-next-line
+    event::mint(&e, admin, to, amount);
+}
+```
+
+This same convention is used to separate from the "main" contract code the
+metadata for the token, the storage type definitions, etc.
+
+### Standardized Interface, Customized Behavior
+
+This example contract follows the standardized [Token Interface], implementing
+all of the same functions as the [Stellar Asset Contract]. This gives wallets,
+users, developers, etc. a predictable interface to interact with the token. Even
+though we are implementing the same _interface_ of functions, that doesn't mean
+we have to implement the same _behavior_ inside those functions. While this
+example contract doesn't actually modify any of the functions that would be
+present in a deployed instance of the Stellar Asset Contract, that possibility
+remains open to the contract developer.
+
+By way of example, perhaps you have an NFT project, and the artist wants to have
+a small royalty paid every time their token transfers hands:
+
+```rust
+// This is mainly the `transfer` function from `src/contract.rs`
+fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+    from.require_auth();
+
+    check_nonnegative_amount(amount);
+    spend_balance(&e, from.clone(), amount);
+    // highlight-start
+    // We calculate some new amounts for payment and royalty
+    let payment = (amount * 997) / 1000;
+    let royalty = amount - payment
+    receive_balance(&e, artist.clone(), royalty);
+    // highlight-end
+    receive_balance(&e, to.clone(), payment);
+    event::transfer(&e, from, to, amount);
+}
+```
+
+The `transfer` interface is still in use, and is still the same as other tokens,
+but we've customized the behavior to address a specific need. Another use-case
+might be a tightly controlled token that requires authentication from an admin
+before any `transfer`, `allowance`, etc. function could be invoked.
+
+:::tip
+
+Of course, you will want your token to behave in an _intuitive_ and
+_transparent_ manner. If a user is invoking a `transfer`, they will expect
+tokens to move. If an asset issuer needs to invoke a `clawback` they will likely
+_require_ the right kind of behavior to take place.
+
+:::
+
+### Compatibility with Stellar Assets
+
+One of the key benefits of the Stellar network is that assets are first-class
+citizens. On a protocol level, asset issuers have a robust set of tools to
+manage the authorization and behavior of assets. Any asset that already exists
+on the Stellar network can also make use of the [Stellar Asset Contract] on the
+Soroban platform. All that is required is a simple, one-time action of wrapping
+the asset to be deployed for Soroban.
+
+At that point, the asset can use all the features of the Stellar Asset Contract
+that are highlighted in this example (allowance, mint, burn, etc.), while still
+maintaining the high-quality asset issuer features included with Stellar.
+
+Additionally, all of that comes with **no contract writing required**. Any asset
+can be easily wrapped using the [Soroban-CLI]:
+
+```bash
+soroban lab token wrap \
+    --asset USDC:GCYEIQEWOCTTSA72VPZ6LYIZIK4W4KNGJR72UADIXUXG45VDFRVCQTYE
+```
+
+:::note
+
+A Stellar asset could be wrapped for Soroban by _any_ user. This command will
+set the asset issuer account as the `admin` address for the Soroban token,
+meaning that issuer account will still maintain control over asset minting,
+authorization, etc.
+
+:::
+
+[Soroban-CLI]: ../reference/soroban-cli.mdx
+
+## Tests
+
+Open the `token/src/test.rs` file to follow along.
+
+```rust title="token/src/test.rs"
+#![cfg(test)]
+extern crate std;
+
+use crate::{contract::Token, TokenClient};
+use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Symbol};
+
+fn create_token<'a>(e: &Env, admin: &Address) -> TokenClient<'a> {
+    let token = TokenClient::new(e, &e.register_contract(None, Token {}));
+    token.initialize(admin, &7, &"name".into_val(e), &"symbol".into_val(e));
+    token
+}
+
+#[test]
+fn test() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin1 = Address::random(&e);
+    let admin2 = Address::random(&e);
+    let user1 = Address::random(&e);
+    let user2 = Address::random(&e);
+    let user3 = Address::random(&e);
+    let token = create_token(&e, &admin1);
+
+    token.mint(&user1, &1000);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            admin1.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("mint"),
+                    (&user1, 1000_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.approve(&user2, &user3, &500, &200);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user2.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("approve"),
+                    (&user2, &user3, 500_i128, 200_u32).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.allowance(&user2, &user3), 500);
+
+    token.transfer(&user1, &user2, &600);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user1.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("transfer"),
+                    (&user1, &user2, 600_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.balance(&user1), 400);
+    assert_eq!(token.balance(&user2), 600);
+
+    token.transfer_from(&user3, &user2, &user1, &400);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user3.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    Symbol::new(&e, "transfer_from"),
+                    (&user3, &user2, &user1, 400_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.balance(&user1), 800);
+    assert_eq!(token.balance(&user2), 200);
+
+    token.transfer(&user1, &user3, &300);
+    assert_eq!(token.balance(&user1), 500);
+    assert_eq!(token.balance(&user3), 300);
+
+    token.set_admin(&admin2);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            admin1.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("set_admin"),
+                    (&admin2,).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+
+    token.set_authorized(&user2, &false);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            admin2.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    Symbol::new(&e, "set_authorized"),
+                    (&user2, false).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.authorized(&user2), false);
+
+    token.set_authorized(&user3, &true);
+    assert_eq!(token.authorized(&user3), true);
+
+    token.clawback(&user3, &100);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            admin2.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("clawback"),
+                    (&user3, 100_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.balance(&user3), 200);
+
+    // Set allowance to 500
+    token.approve(&user2, &user3, &500, &200);
+    assert_eq!(token.allowance(&user2, &user3), 500);
+    token.approve(&user2, &user3, &0, &200);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user2.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("approve"),
+                    (&user2, &user3, 0_i128, 200_u32).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.allowance(&user2, &user3), 0);
+}
+
+#[test]
+fn test_burn() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::random(&e);
+    let user1 = Address::random(&e);
+    let user2 = Address::random(&e);
+    let token = create_token(&e, &admin);
+
+    token.mint(&user1, &1000);
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.approve(&user1, &user2, &500, &200);
+    assert_eq!(token.allowance(&user1, &user2), 500);
+
+    token.burn_from(&user2, &user1, &500);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user2.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("burn_from"),
+                    (&user2, &user1, 500_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+
+    assert_eq!(token.allowance(&user1, &user2), 0);
+    assert_eq!(token.balance(&user1), 500);
+    assert_eq!(token.balance(&user2), 0);
+
+    token.burn(&user1, &500);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user1.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("burn"),
+                    (&user1, 500_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+
+    assert_eq!(token.balance(&user1), 0);
+    assert_eq!(token.balance(&user2), 0);
+}
+
+#[test]
+#[should_panic(expected = "insufficient balance")]
+fn transfer_insufficient_balance() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::random(&e);
+    let user1 = Address::random(&e);
+    let user2 = Address::random(&e);
+    let token = create_token(&e, &admin);
+
+    token.mint(&user1, &1000);
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.transfer(&user1, &user2, &1001);
+}
+
+#[test]
+#[should_panic(expected = "can't receive when deauthorized")]
+fn transfer_receive_deauthorized() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::random(&e);
+    let user1 = Address::random(&e);
+    let user2 = Address::random(&e);
+    let token = create_token(&e, &admin);
+
+    token.mint(&user1, &1000);
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.set_authorized(&user2, &false);
+    token.transfer(&user1, &user2, &1);
+}
+
+#[test]
+#[should_panic(expected = "can't spend when deauthorized")]
+fn transfer_spend_deauthorized() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::random(&e);
+    let user1 = Address::random(&e);
+    let user2 = Address::random(&e);
+    let token = create_token(&e, &admin);
+
+    token.mint(&user1, &1000);
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.set_authorized(&user1, &false);
+    token.transfer(&user1, &user2, &1);
+}
+
+#[test]
+#[should_panic(expected = "insufficient allowance")]
+fn transfer_from_insufficient_allowance() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::random(&e);
+    let user1 = Address::random(&e);
+    let user2 = Address::random(&e);
+    let user3 = Address::random(&e);
+    let token = create_token(&e, &admin);
+
+    token.mint(&user1, &1000);
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.approve(&user1, &user3, &100, &200);
+    assert_eq!(token.allowance(&user1, &user3), 100);
+
+    token.transfer_from(&user3, &user1, &user2, &101);
+}
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn initialize_already_initialized() {
+    let e = Env::default();
+    let admin = Address::random(&e);
+    let token = create_token(&e, &admin);
+
+    token.initialize(&admin, &10, &"name".into_val(&e), &"symbol".into_val(&e));
+}
+
+#[test]
+#[should_panic(expected = "Decimal must fit in a u8")]
+fn decimal_is_over_max() {
+    let e = Env::default();
+    let admin = Address::random(&e);
+    let token = TokenClient::new(&e, &e.register_contract(None, Token {}));
+    token.initialize(
+        &admin,
+        &(u32::from(u8::MAX) + 1),
+        &"name".into_val(&e),
+        &"symbol".into_val(&e),
+    );
+}
+```
+
+The token example implements eight different tests to cover a wide array of
+potential behaviors and problems. However, all of the tests start with a few
+common pieces. In any test, the first thing that is always required is an `Env`,
+which is the Soroban environment that the contract will run in.
+
+```rust
+let e = Env::default();
+```
+
+We mock authentication checks in the tests, which allows the tests to proceed as
+if all users/addresses/contracts/etc. had successfully authenticated.
+
+```rust
+e.mock_all_auths();
+```
+
+We're also using a `create_token` function to ease the repetition of having to
+register and initialize our token contract. The resulting `token` client is then
+used to invoke the contract during each test.
+
+```rust
+// It is defined at the top of the file...
+fn create_token<'a>(e: &Env, admin: &Address) -> TokenClient<'a> {
+    let token = TokenClient::new(e, &e.register_contract(None, Token {}));
+    token.initialize(admin, &7, &"name".into_val(e), &"symbol".into_val(e));
+    token
+}
+
+// ... and it is used inside each test
+let token = create_token(&e, &admin);
+```
+
+All public functions within an `impl` block that has been annotated with the
+`#[contractimpl]` attribute will have a corresponding function in the test's
+generated client type. The client type will be named the same as the contract
+type with `Client` appended. For example, in our contract, the contract type is
+named `Token`, and the client type is named `TokenClient`.
+
+The eight tests created for this example contract test a range of possible
+conditions and ensure the contract responds appropriately to each one:
+
+- **`test()`** - This function makes use of a variety of the built-in token
+  functions to test the "predictable" way an asset might be interacted with by a
+  user, as well as an administrator.
+- **`test_burn()`** - This function ensures a `burn()` invocation decreases a
+  user's balance, and that a `burn_from()` invocation decreases a user's balance
+  as well as consuming another user's allowance of that balance.
+- **`transfer_insufficient_balance()`** - This function ensures a `transfer()`
+  invocation panics when the `from` user doesn't have the balance to cover it.
+- **`transfer_receive_deauthorized()`** - This function ensures a user who is
+  specifically de-authorized to hold the token cannot be the beneficiary of a
+  `transfer()` invocation.
+- **`transfer_spend_deauthorized()`** - This function ensures a user with a
+  token balance, who is subsequently de-authorized cannot be the source of a
+  `transfer()` invocation.
+- **`transfer_from_insufficient_allowance()`** - This function ensures a user
+  with an existing allowance for someone else's balance cannot make a
+  `transfer()` greater than that allowance.
+- **`initialize_already_initialized()`** - This function checks that the
+  contract cannot have it's `initialize()` function invoked a second time.
+- **`decimal_is_over_max()`** - This function tests that invoking `initialize()`
+  with too high of a decimal precision will not succeed.
+
+## Build the Contract
+
+To build the contract, use the `soroban contract build` command.
+
+```bash
+soroban contract build
+```
+
+A `.wasm` file should be outputted in the `target` directory:
+
+```bash
+target/wasm32-unknown-unknown/release/soroban_token_contract.wasm
+```
+
+## Run the Contract
+
+If you have [`soroban-cli`] installed, you can invoke contract functions using
+it.
+
+```bash
+soroban contract invoke \
+    --wasm target/wasm32-unknown-unknown/release/soroban_token_contract.wasm \
+    --id 1 \
+    -- \
+    balance \
+    --id GBZV3NONYSUDVTEHATQO4BCJVFXJO3XQU5K32X3XREVZKSMMOZFO4ZXR
+```
+
+[`soroban-cli`]: ../reference/soroban-cli.mdx

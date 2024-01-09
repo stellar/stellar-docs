@@ -1,0 +1,439 @@
+---
+title: Auth
+description: Implement authentication and authorization.
+sidebar_custom_props:
+  tutorial:
+    level: beginner
+---
+
+<head>
+  <title>Implement authentication and authorization.</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Implement authentication and authorization."
+  />
+  <meta
+    property="og:description"
+    content="Implement authentication and authorization into your smart contract using the Soroban Host-managed auth framework."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/tutorials/auth"
+  />
+</head>
+
+The [auth example] demonstrates how to implement authentication and
+authorization using the Soroban Host-managed auth framework.
+
+This example is an extension of the [storing data example].
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
+[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v20.0.0
+
+[storing data example]: ../getting-started/storing-data.mdx
+[auth example]: https://github.com/stellar/soroban-examples/tree/v20.0.0/auth
+
+## Run the Example
+
+First go through the [Setup] process to get your development environment
+configured, then clone the `v20.0.0` tag of `soroban-examples` repository:
+
+[Setup]: ../getting-started/setup.mdx
+
+```
+git clone -b v20.0.0 https://github.com/stellar/soroban-examples
+```
+
+Or, skip the development environment setup and open this example in [Gitpod][oigp].
+
+To run the tests for the example, navigate to the `auth` directory, and use
+`cargo test`.
+
+```
+cd auth
+cargo test
+```
+
+You should see the output:
+
+```
+running 1 test
+test test::test ... ok
+```
+
+## Code
+
+```rust title="auth/src/lib.rs"
+#[contracttype]
+pub enum DataKey {
+    Counter(Address),
+}
+
+#[contract]
+pub struct IncrementContract;
+
+#[contractimpl]
+impl IncrementContract {
+    /// Increment increments a counter for the user, and returns the value.
+    pub fn increment(env: Env, user: Address, value: u32) -> u32 {
+        // Requires `user` to have authorized call of the `increment` of this
+        // contract with all the arguments passed to `increment`, i.e. `user`
+        // and `value`. This will panic if auth fails for any reason.
+        // When this is called, Soroban host performs the necessary
+        // authentication, manages replay prevention and enforces the user's
+        // authorization policies.
+        // The contracts normally shouldn't worry about these details and just
+        // write code in generic fashion using `Address` and `require_auth` (or
+        // `require_auth_for_args`).
+        user.require_auth();
+
+        // This call is equilvalent to the above:
+        // user.require_auth_for_args((&user, value).into_val(&env));
+
+        // The following has less arguments but is equivalent in authorization
+        // scope to the above calls (the user address doesn't have to be
+        // included in args as it's guaranteed to be authenticated).
+        // user.require_auth_for_args((value,).into_val(&env));
+
+        // Construct a key for the data being stored. Use an enum to set the
+        // contract up well for adding other types of data to be stored.
+        let key = DataKey::Counter(user.clone());
+
+        // Get the current count for the invoker.
+        let mut count: u32 = env.storage().persistent().get(&key).unwrap_or_default();
+
+        // Increment the count.
+        count += value;
+
+        // Save the count.
+        env.storage().persistent().set(&key, &count);
+
+        // Return the count to the caller.
+        count
+    }
+}
+```
+
+Ref: https://github.com/stellar/soroban-examples/tree/v20.0.0/auth
+
+## How it Works
+
+The example contract stores a per-`Address` counter that can only be incremented
+by the owner of that `Address`.
+
+Open the `auth/src/lib.rs` file or see the code above to follow along.
+
+### `Address`
+
+```rust
+#[contracttype]
+pub enum DataKey {
+    Counter(Address),
+}
+```
+
+`Address` is a universal Soroban identifier that may represent a Stellar
+account, a contract or an 'account contract' (a contract that defines a custom
+authentication scheme and authorization policies). Contracts don't need to
+distinguish between these internal representations though. `Address` can be
+used any time some network identity needs to be represented, like to
+distinguish between counters for different users in this example.
+
+:::tip Enum keys like `DataKey` are useful for organizing contract storage.
+
+Different enum values create different key 'namespaces'.
+
+In the example the counter for each address is stored against
+`DataKey::Counter(Address)`. If the contract needs to start storing other types
+of data, it can do so by adding additional variants to the enum.
+:::
+
+### `require_auth`
+
+```rust
+impl IncrementContract {
+    pub fn increment(env: Env, user: Address, value: u32) -> u32 {
+        user.require_auth();
+```
+
+`require_auth` method can be called for any `Address`. Semantically
+`user.require_auth()` here means 'require `user` to have authorized calling
+`increment` function of the current `IncrementContract` instance with the
+current call arguments, i.e. the current `user` and `value` argument values'.
+In simpler terms, this ensures that the `user` has allowed incrementing their
+counter value and nobody else can increment it.
+
+When using `require_auth` the contract implementation doesn't need to worry
+about the signatures, authentication, and replay prevention. All these features
+are implemented by the Soroban host and happen automatically as long as the
+`Address` type is used.
+
+`Address` has another method called `require_auth_for_args`. It works in the
+same fashion as `require_auth`, but allows customizing the arguments that need
+to be authorized. Note though, this should be used with care to ensure that
+there is a deterministic mapping between the contract invocation arguments and
+the `require_auth_for_args` arguments.
+
+The following two calls are functionally equivalent to `user.require_auth`:
+
+```rust
+// Completely equivalent
+user.require_auth_for_args((&user, value).into_val(&env));
+// The following has less arguments but is equivalent in authorization
+// scope to the above call (the user address doesn't have to be
+// included in args as it's guaranteed to be authenticated).
+user.require_auth_for_args((value,).into_val(&env));
+```
+
+### Tests
+
+Open the [`auth/src/test.rs`] file to follow along.
+
+[`auth/src/test.rs`]: https://github.com/stellar/soroban-examples/tree/v20.0.0/auth/src/test.rs
+
+```rust title="auth/src/test.rs"
+fn test() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, IncrementContract);
+    let client = IncrementContractClient::new(&env, &contract_id);
+
+    let user_1 = Address::random(&env);
+    let user_2 = Address::random(&env);
+
+    assert_eq!(client.increment(&user_1, &5), 5);
+    // Verify that the user indeed had to authorize a call of `increment` with
+    // the expected arguments:
+    assert_eq!(
+        env.auths(),
+        [(
+            // Address for which auth is performed
+            user_1.clone(),
+            // Identifier of the called contract
+            contract_id.clone(),
+            // Name of the called function
+            symbol_short!("increment"),
+            // Arguments used to call `increment` (converted to the env-managed vector via `into_val`)
+            (user_1.clone(), 5_u32).into_val(&env)
+        )]
+    );
+
+    // Do more `increment` calls. It's not necessary to verify authorizations
+    // for every one of them as we don't expect the auth logic to change from
+    // call to call.
+    assert_eq!(client.increment(&user_1, &2), 7);
+    assert_eq!(client.increment(&user_2, &1), 1);
+    assert_eq!(client.increment(&user_1, &3), 10);
+    assert_eq!(client.increment(&user_2, &4), 5);
+}
+
+```
+
+In any test the first thing that is always required is an `Env`, which is the
+Soroban environment that the contract will run in.
+
+```rust
+let env = Env::default();
+```
+
+The test instructs the environment to mock all auths. All calls to
+`require_auth` or `require_auth_for_args` will succeed.
+
+```rust
+env.mock_all_auths();
+```
+
+The contract is registered with the environment using the contract type.
+
+```rust
+let contract_id = env.register_contract(None, IncrementContract);
+```
+
+All public functions within an `impl` block that is annotated with the
+`#[contractimpl]` attribute have a corresponding function generated in a
+generated client type. The client type will be named the same as the contract
+type with `Client` appended. For example, in our contract the contract type is
+`IncrementContract`, and the client is named `IncrementContractClient`.
+
+```rust
+let client = IncrementContractClient::new(&env, &contract_id);
+```
+
+Generate `Address`es for two users. Normally the exact value of the `Address`
+shouldn't matter for testing, so they're simply generated randomly.
+
+```rust
+let user_1 = Address::random(&env);
+let user_2 = Address::random(&env);
+```
+
+Invoke `increment` function for `user_1`.
+
+```rust
+assert_eq!(client.increment(&user_1, &5), 5);
+```
+
+In order to verify that the `require_auth` call(s) have indeed happened, use
+`auths` function that returns a vector of tuples containing the authorizations
+from the most recent contract invocation.
+
+```rust
+assert_eq!(
+    env.auths(),
+    [(
+        // Address for which auth is performed
+        user_1.clone(),
+        // Identifier of the called contract
+        contract_id.clone(),
+        // Name of the called function
+        symbol_short!("increment"),
+        // Arguments used to call `increment` (converted to the env-managed vector via `into_val`)
+        (user_1.clone(), 5_u32).into_val(&env)
+    )]
+);
+```
+
+Invoke `increment` function several more times for both users. Notice, that the
+values are tracked separately for each users.
+
+```rust
+assert_eq!(client.increment(&user_1, &2), 7);
+assert_eq!(client.increment(&user_2, &1), 1);
+assert_eq!(client.increment(&user_1, &3), 10);
+assert_eq!(client.increment(&user_2, &4), 5);
+```
+
+## Build the Contract
+
+To build the contract into a `.wasm` file, use the `soroban contract build` command.
+
+```sh
+soroban contract build
+```
+
+The `.wasm` file should be found in the `target` directory after building:
+
+```
+target/wasm32-unknown-unknown/release/soroban_auth_contract.wasm
+```
+
+## Run the Contract
+
+If you have [`soroban-cli`] installed, you can invoke functions on the contract.
+
+But since we are dealing with authorization and signatures, we need to set up
+some identities to use for testing and get their public keys:
+
+```sh
+soroban config identity generate acc1 && \
+soroban config identity generate acc2 && \
+soroban config identity address acc1 && \
+soroban config identity address acc2
+```
+
+Example output with two public keys of identities:
+
+```
+GA6S566FD3EQDUNQ4IGSLXKW3TGVSTQW3TPHPGS7NWMCEIPBOKTNCSRU
+GAJGHZ44IJXYFNOVRZGBCVKC2V62DB2KHZB7BEMYOWOLFQH4XP2TAM6B
+```
+
+Now the contract itself can be invoked. Notice the `--source` must be the
+identity name matching the address passed to the `--user` argument. This allows
+`soroban` tool to automatically sign the necessary payload for the invocation.
+
+```sh
+soroban contract invoke \
+    --source acc1 \
+    --wasm target/wasm32-unknown-unknown/release/soroban_auth_contract.wasm \
+    --id 1 \
+    -- \
+    increment \
+    --user GA6S566FD3EQDUNQ4IGSLXKW3TGVSTQW3TPHPGS7NWMCEIPBOKTNCSRU \
+    --value 2
+```
+
+Run a few more increments for both accounts.
+
+```sh
+soroban contract invoke \
+    --source acc2 \
+    --wasm target/wasm32-unknown-unknown/release/soroban_auth_contract.wasm \
+    --id 1 \
+    -- \
+    increment \
+    --user GAJGHZ44IJXYFNOVRZGBCVKC2V62DB2KHZB7BEMYOWOLFQH4XP2TAM6B \
+    --value 5
+```
+
+```sh
+soroban contract invoke \
+    --source acc1 \
+    --wasm target/wasm32-unknown-unknown/release/soroban_auth_contract.wasm \
+    --id 1 \
+    -- \
+    increment \
+    --user GA6S566FD3EQDUNQ4IGSLXKW3TGVSTQW3TPHPGS7NWMCEIPBOKTNCSRU \
+    --value 3
+```
+
+```sh
+soroban contract invoke \
+    --source acc2 \
+    --wasm target/wasm32-unknown-unknown/release/soroban_auth_contract.wasm \
+    --id 1 \
+    -- \
+    increment \
+    --user GAJGHZ44IJXYFNOVRZGBCVKC2V62DB2KHZB7BEMYOWOLFQH4XP2TAM6B \
+    --value 10
+```
+
+View the data that has been stored against each user with `soroban contract read`.
+
+```sh
+soroban contract read --id 1
+```
+
+```
+"[""Counter"",""GA6S566FD3EQDUNQ4IGSLXKW3TGVSTQW3TPHPGS7NWMCEIPBOKTNCSRU""]",5
+"[""Counter"",""GAJGHZ44IJXYFNOVRZGBCVKC2V62DB2KHZB7BEMYOWOLFQH4XP2TAM6B""]",15
+```
+
+It is also possible to preview the authorization payload that is being signed by
+providing `--auth` flag to the invocation:
+
+```sh
+soroban contract invoke \
+    --source acc2 \
+    --auth \
+    --wasm target/wasm32-unknown-unknown/release/soroban_auth_contract.wasm \
+    --id 1 \
+    -- \
+    increment \
+    --user GAJGHZ44IJXYFNOVRZGBCVKC2V62DB2KHZB7BEMYOWOLFQH4XP2TAM6B \
+    --value 123
+```
+
+```json
+Contract auth: [{"address_with_nonce":null,"root_invocation":{"contract_id":"0000000000000000000000000000000000000000000000000000000000000001","function_name":"increment","args":[{"object":{"address":{"account":{"public_key_type_ed25519":"c7bab0288753d58d3e21cc3fa68cd2546b5f78ae6635a6f1b3fe07e03ee846e9"}}}},{"u32":123}],"sub_invocations":[]},"signature_args":[]}]
+```
+
+[`soroban-cli`]: ../getting-started/setup.mdx#install-the-soroban-cli
+
+## Further reading
+
+[Authorization documentation](../soroban-internals/authorization.mdx) provides more details
+on how Soroban auth framework works.
+
+[Timelock](../tutorials/timelock.mdx) and [Single Offer](../tutorials/single-offer-sale.mdx) examples
+demonstrate authorizing token operations on behalf of the user, which can be
+extended to any nested contract invocations.
+
+[Atomic Swap](../tutorials/atomic-swap.mdx) example demonstrates multi-party authorization
+where multiple users sign their parts of the contract invocation.
+
+[Custom Account](../tutorials/custom-account.mdx) example for demonstrates an account
+contract that defines a custom authentication scheme and user-defined
+authorization policies.

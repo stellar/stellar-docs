@@ -1,0 +1,198 @@
+---
+sidebar_position: 20
+title: Stellar Asset Contract
+description: Use Stellar assets on Soroban.
+---
+
+<head>
+  <title>Use Stellar assets on Soroban.</title>
+  <meta charSet="utf-8" />
+  <meta property="og:title" content="Use Stellar assets on Soroban." />
+  <meta
+    property="og:description"
+    content="Allows the user to use their Stellar account and trustline balance on Soroban using the Token Interface, which is similar to the ERC-20 token standard."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/tokens/stellar-asset-contract"
+  />
+</head>
+
+The Stellar Asset Contract is an implementation of [CAP-46-6 Smart Contract Standardized Asset].
+
+[CAP-46-6 Smart Contract Standardized Asset]: https://stellar.org/protocol/cap-46-06
+
+## Overview
+
+Stellar has numerous assets on its classic network, and being able to use them
+in Soroban would give users much more flexibility with how they can use their
+assets. For this reason, we introduced the Stellar Asset Contract, or SAC for
+short, which allows users to use their Stellar account and trustline balances in
+Soroban.
+
+The SAC implements the [token interface](token-interface.mdx), which is similar to the
+widely used ERC-20 token standard. This should make it easier for existing
+smart contract developers to get started on Stellar.
+
+## Deployment
+
+For every Stellar asset exactly one respective Stellar Asset Contract can be
+deployed. It can be deployed using the `InvokeHostFunctionOp` with
+`HOST_FUNCTION_TYPE_CREATE_CONTRACT` and `CONTRACT_ID_FROM_ASSET` specified
+[here](../soroban-internals/contract-interactions/stellar-transaction.mdx). The resulting token will have a
+deterministic identifier, which will be the sha256 hash of
+`HashIDPreimage::ENVELOPE_TYPE_CONTRACT_ID_FROM_ASSET` xdr specified [here][contract_id].
+
+Anyone can deploy the instances of Stellar Asset Contract. Note, that the
+initialization of the Stellar Asset Contracts happens automatically during the
+deployment. Asset Issuer will have the administrative permissions after the
+contract has been deployed.
+
+[contract_id]: https://github.com/stellar/stellar-xdr/blob/dc23adf60e095a6ce626b2b09128e58a5eae0cd0/Stellar-transaction.x#L661
+
+## Interacting with classic Stellar assets
+
+The Stellar Asset Contract is the only way to interact with 'classic' Stellar
+assets in Soroban. 'Classic' assets include native Stellar token (lumens) and
+all the existing trustlines.
+
+The issuer of the asset will be the administrator
+of the deployed contract. Because the Native Stellar token doesn't have an
+issuer, it will not have an administrator either. It also cannot be burned.
+
+After the contract has been deployed, users can use their classic account (for
+lumens) or trustline (for other assets) balance. There are some differences
+depending on if you are using a classic account `Address` vs a contract
+`Address` (corresponding either to a regular contract or to a custom account
+contract). The following section references some issuer and trustline flags from
+Stellar classic, which you can learn more about [here](https://developers.stellar.org/docs/issuing-assets/control-asset-access#controlling-access-to-an-asset-with-flags).
+
+- Using `Address::Account`
+  - The balance must exist in a trustline (or an account for the native
+    balance). This means the contract will not store the balance in
+    ContractData. If the trustline or account is missing, any function that
+    tries to interact with that balance will fail.
+  - Classic trustline semantics will be followed.
+    - Transfers will only succeed if the corresponding trustline(s) have the
+      `AUTHORIZED_FLAG` set.
+    - A trustline balance can only be clawed back using the `clawback` contract
+      function if the trustline has `TRUSTLINE_CLAWBACK_ENABLED_FLAG` set.
+    - The admin can only deauthorize a trustline if the issuer of the asset has
+      `AUTH_REVOCABLE_FLAG` set. The deauthorization will fail if the issuer is
+      missing. Note that when a trustline is deauthorized from Soroban,
+      `AUTHORIZED_FLAG` is cleared and
+      `AUTHORIZED_TO_MAINTAIN_LIABILITIES_FLAG` is set to avoid having to pull
+      offers and redeeming pool shares.
+    - Transfers to the issuer account will burn the token, while transfers from
+      the issuer account will mint.
+    - Trustline balances are stored in a 64-bit signed integer even though the
+      interface accepts 128-bit signed integers. Any operation that attempts to
+      send or receive an amount more than the maximum amount that can be
+      represented by a 64-bit signed integer will fail.
+- Using `Address::Contract`
+  - The balance and authorization state will be stored in contract storage, as
+    opposed to a trustline.
+  - `AUTH_REVOCABLE_FLAG` is not required to be set on the issuer to deauthorize a
+    balance.
+  - Balances are stored in a 128-bit signed integer.
+  - A balance can only be clawed back if the issuer account had the
+    `AUTH_CLAWBACK_ENABLED_FLAG` set when the balance was created. A balance is
+    created when either an `Address::Contract` is on the receiving end of a successful
+    transfer, or if the admin sets the authorization state. Read more
+    about `AUTH_CLAWBACK_ENABLED_FLAG` [here](https://developers.stellar.org/docs/issuing-assets/control-asset-access#clawback-enabled-0x8).
+
+### Balance Authorization Required
+
+In the `Address::Contract` case, if the issuer has `AUTH_REQUIRED_FLAG` set, then the
+specified `Address::Contract` will need to be explicitly authorized with
+`set_auth` before it can receive a balance. This logic lines up with how
+trustlines interact with the `AUTH_REQUIRED_FLAG` issuer flag, allowing asset issuers
+to have the same control in Soroban as they do in Stellar classic. Read more
+about `AUTH_REQUIRED_FLAG` [here](https://developers.stellar.org/docs/issuing-assets/control-asset-access#authorization-required-0x1).
+
+## Authorization semantics
+
+See the [authorization overview](../soroban-internals/authorization.mdx) and
+[auth example](../tutorials/auth.mdx) for general information about authorization in
+Soroban.
+
+The token contract contains three kinds of operations that follow the token
+[interface](token-interface.mdx#code):
+
+- getters, such as `balance`, which do not change the state of the contract
+- unprivileged mutators, such as `incr_allow` and `xfer`, which change the state
+  of the contract but do not require special privileges
+- privileged mutators, such as `clawback` and `set_admin`, which change the
+  state of the contract but require special privileges
+
+Getters require no authorization because they do not change the state of the
+contract and all contract data is public. For example, `balance` simply returns
+the balance of the specified `Address` without changing it.
+
+Unprivileged mutators require authorization from the `Address` that spends or
+allows spending their balance. The exceptions are `xfer_from` and `burn_from`
+operations where the `Address` that require authorization from the 'spender'
+entity that has got an allowance from another `Address` beforehand.
+
+Priviliged mutators require authorization from a specific privileged identity,
+known as the "administrator". For example, only the administrator can `mint`
+more of the token. Similarly, only the administrator can appoint a new
+administrator.
+
+## Using Stellar Asset Contract with other contracts
+
+From the contract perspective Stellar Asset Contract is not different from any
+other token that implements the Soroban token interface. The Rust SDK contains
+a pregenerated client for any contract that implements the token interface:
+
+```rust
+use soroban_sdk::token;
+
+struct MyContract;
+
+#[contractimpl]
+impl MyContract {
+  fn token_fn(e: Env, token_id: BytesN<32>) {
+    // Create a client instance for the provided token identifier. If the
+    // `token_id` value corresponds to an SAC contract, then SAC implementation
+    // is used.
+    let client = token::Client::new(&env, &token_id);
+    // Call token operations.
+    client.transfer(...);
+  }
+}
+```
+
+### Examples
+
+See the full examples that utilize the token contract in various ways for more
+details:
+
+- [Timelock](../tutorials/timelock.mdx) and [single offer](../tutorials/single-offer-sale.mdx) move token
+  via `xfer` to and from the contract
+- [Atomic swap](../tutorials/atomic-swap.mdx) uses `incr_allow` to transfer token on behalf
+  of the user
+
+Notice, that these examples don't do anything to support SAC specifically.
+
+### Testing
+
+Soroban Rust SDK provides an easy way to instantiate a Stellar Asset Contract
+tokens using `register_stellar_asset_contract`. For example:
+
+```rust
+let admin = Address::random();
+let user = Address::random();
+let token = TokenClient::new(e, &e.register_stellar_asset_contract(admin.clone()));
+token.mint(&admin, &user, &1000);
+```
+
+See the tests in the [examples](#examples) above for the full test
+implementation.
+
+## Contract Interface
+
+This interface can be found in the [SDK]. It extends the common
+[token interface](token-interface.mdx).
+
+[SDK]: https://github.com/stellar/rs-soroban-sdk/blob/v20.0.0/soroban-sdk/src/token.rs
