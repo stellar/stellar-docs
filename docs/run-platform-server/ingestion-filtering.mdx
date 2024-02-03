@@ -1,0 +1,96 @@
+---
+title: Ingestion Filtering
+order: 46
+---
+
+## Overview
+
+Ingestion Filtering enables Horizon operators to drastically reduce the storage footprint of the historical data in the Horizon database by white-listing Assets and/or Accounts that are relevant to their operations.
+
+### Why is it useful:
+
+Previously, the only way to limit data storage was by limiting the temporal range of history via rolling retention (e.g. the last 30 days). The filtering feature allows users to store a longer historical timeframe in the Horizon database for only whitelisted assets, accounts, and their related historical entities (transactions, operations, trades, etc.).
+
+For further context, running an unfiltered `full` history Horizon instance currently requires over 30TB of disk space (as of June 2023) with storage growing at a rate of about 1TB/month. As a benchmark, filtering by even 100 of the most active accounts and assets reduces storage by over 90%. For the majority of applications which are interested in an even more limited set of assets and accounts, storage savings should be well over 99%. Other benefits include reducing operating costs for maintaining storage, improved DB health metrics and query performance.
+
+### How does it work:
+
+Filtering feature operates during ingestion in **live** and **historical range** processes. It tells ingestion process to only accept incoming ledger transactions which match on a filter rule, any transactions which don't match on filter rules are skipped by ingestion and therefore not stored on database.
+
+Some key aspects to note about filtering behavior:
+
+- Filtering applies only to ingestion of historical data in the database, it does not affect how ingestion process maintains current state data stored in database, which is the last known ledger entry for each unique entity within accounts, trustlines, liquidity pools, offers. However, current state data consumes a relatively small amount of the overall storage capacity.
+- When filter rules are changed, they only apply to existing, running ingestion processes(**live** and **historical range**). They don't trigger any retro-active filtering or back-filling of existing historical data on the database.
+  - When the filter rules are updated to include additional accounts or assets in the white-list, the related transactions from **live** ingestion will only appear in the historical database data once the filter rules have been updated using the Admin API. The same applies to **historical range** ingestion, where the new filter rules will only affect the data from the current ledger within its configured range at the time of the update.
+  - Updating the filter rules to include additional accounts or assets does not trigger automatic back-filling related to new entites in the historical database. To include prior history of newly white-listed entites in the database you can manually run a new [Historical Ingestion Range](ingestion.mdx#ingesting-historical-data) after updating the filter rules.
+  - When the filter rules are updated to remove accounts or assets previously defined on white-list, the historical data in the database will not be retroactively purged or filtered based on the updated rules. The data is stored in the history tables for the lifetime of the database or until the `HISTORY_RETENTION_COUNT` is exceeded. Once the retention limit is reached, Horizon will purge all historical data related to older ledgers, regardless of any filtering rules.
+- Filtering will not affect the performance or throughput rate of an ingestion process, it will remain consistent whether filter rules are present or not.
+
+Filter rules define white-lists of the following supported entities:
+
+- Account id
+- Asset id (canonical)
+
+Given that all transactions related to the white listed entities are included, all historical time series data related to those transactions are saved in horizon's history db, including transaction itself, all operations in the transaction, and references to any ancillary entities from operations.
+
+## Configuration:
+
+Filtering is enabled by default with no filter rules defined. When no filter rules are defined, it effectively means no filtering of ingested data occurs. To start filtering ingestion, need to define at least one filter rule:
+
+- enable Horizon admin port with environmental configuration parameter `ADMIN_PORT=XXXXX`, this will allow you to access the port.
+- define filter whitelists. submit Admin HTTP API requests to view and update the filter rules:
+
+  Refer to the [Horizon Admin API Docs](https://github.com/stellar/go/blob/master/services/horizon/internal/httpx/static/admin_oapi.yml) which are also published on Horizon running instances as Open API 3.0 doc on the Admin Port when enabled at `http://localhost:<admin_port>/`. You can paste the contents from that url into any OAPI tool such as [Swagger](https://editor.swagger.io/) which will render a visual explorer of the API endpoints. On the swagger editor you can also load the published Horizon admin.oapi.yml directly as a url, choose `File->Import URL`:
+
+  ```
+   https://raw.githubusercontent.com/stellar/go/master/services/horizon/internal/httpx/static/admin_oapi.yml
+  ```
+
+  Follow details and examples of request/response payloads to read and update the filter rules for these endpoints:
+
+  ```
+  /ingestion/filters/account
+  /ingestion/filters/asset
+  ```
+
+  Choosing `Try it out` button from either endpoint will display `curl` examples of entire HTTP request.
+
+## Sample Use Case:
+
+As an Asset Issuer, I have issued 4 assets and am interested in all transaction data related to those assets including customer Accounts that interact with those assets through the following operations:
+
+- Operations
+- Effects
+- Payments
+- Claimable balances
+- Trades
+
+I would like to store the full history of all transactions related from the genesis of those assets.
+
+### Pre-requisites:
+
+You have installed Horizon with empty database and it has **live** ingestion enabled.
+
+### Steps:
+
+1. Configure a filter rule with 4 white-listed Assets by POST'ing the request to Horizon ADMIN API `<horizon_host>:<ADMIN_PORT>/ingestion/filters/asset`.
+
+```
+curl -X 'PUT' \
+  'http://localhost:4200/ingestion/filters/asset' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "whitelist": [
+    "USDC:GAFRNZHK4DGH6CSF4HB5EBKK6KARUOVWEI2Y2OIC5NSQ4UBSN4DR456U",
+    "DOTT:GAFRNZHK4DGH6CSF4HB5EBKK6KARUOVWEI2Y2OIC5NSQ4UBSN4DR456U",
+    "ABCD:GAFRNZHK4DGH6CSF4HB5EBKK6KARUOVWEI2Y2OIC5NSQ4UBSN4DR456U",
+    "EFGH:GAFRNZHK4DGH6CSF4HB5EBKK6KARUOVWEI2Y2OIC5NSQ4UBSN4DR456U"
+  ],
+  "enabled": true
+}'
+```
+
+2. Since this is new horizon database, and first filter rules, there is nothing more to do, and effectively stop here.
+
+3. However, for sake of exercise, suppose you already had Horizon running for a while and the database populated based on some filter rules, and these new rules were additional white-listings you just added. In this case, you choose whether you want to retro-actively back fill historical data on horizon database for these new white-listed entites from a prior time up to the present time, because they were originally dropped at prior ingestion time and not included on the database. If you decide you want to back fill, then you run a separate Horizon **historical range** ingestion process, refer to [Historical Ingestion Range](ingestion.mdx#ingesting-historical-data) for steps:
