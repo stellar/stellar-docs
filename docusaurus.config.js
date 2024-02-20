@@ -145,9 +145,10 @@ const config = {
         },
         items: [
           {
-            to: "/docs",
-            label: "Docs",
-            position: "left",
+            type: 'docSidebar',
+            sidebarId: 'docs',
+            label: 'Docs',
+            position: 'left',
           },
           {
             type: "dropdown",
