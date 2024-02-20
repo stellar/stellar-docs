@@ -169,6 +169,12 @@ const config = {
             ]
           },
           {
+            type: 'docSidebar',
+            sidebarId: 'tools',
+            label: 'Tools',
+            position: 'left',
+          },
+          {
             href: "https://github.com/stellar/stellar-docs",
             label: "GitHub",
             position: "right",
