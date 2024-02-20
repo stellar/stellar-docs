@@ -236,7 +236,7 @@ const config = {
               },
               {
                 label: "All Tools",
-                href: "https://developers.stellar.org/docs/tools-and-sdks/",
+                href: "https://developers.stellar.org/docs/tools",
               },
             ],
           },
