@@ -145,9 +145,10 @@ const config = {
         },
         items: [
           {
-            to: "/docs",
-            label: "Docs",
-            position: "left",
+            type: 'docSidebar',
+            sidebarId: 'docs',
+            label: 'Docs',
+            position: 'left',
           },
           {
             type: "dropdown",
@@ -167,6 +168,12 @@ const config = {
                 label: "Stellar Disbursement Platform",
               }
             ]
+          },
+          {
+            type: 'docSidebar',
+            sidebarId: 'tools',
+            label: 'Tools',
+            position: 'left',
           },
           {
             href: "https://github.com/stellar/stellar-docs",
@@ -229,7 +236,7 @@ const config = {
               },
               {
                 label: "All Tools",
-                href: "https://developers.stellar.org/docs/tools-and-sdks/",
+                href: "https://developers.stellar.org/docs/tools",
               },
             ],
           },
