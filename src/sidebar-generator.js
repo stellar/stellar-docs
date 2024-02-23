@@ -1,6 +1,24 @@
 const fs = require('fs')
 const path = require('path')
 
+const migrationLinksRecursive = (sidebarItems) => {
+    const result = sidebarItems.map((sidebarItem) => {
+        if (sidebarItem.type === 'category') {
+            return {...sidebarItem, items: migrationLinksRecursive(sidebarItem.items)}
+        }
+
+        if (sidebarItem.customProps?.migration?.href && sidebarItem.customProps?.migration?.label) {
+            sidebarItem = {
+                type: 'link',
+                href: sidebarItem.customProps.migration.href,
+                label: sidebarItem.customProps.migration.label,
+            }
+        }
+        return sidebarItem
+    })
+    return result
+}
+
 module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
 
     if (args.version.contentPath.endsWith('docs')) {
@@ -31,5 +49,5 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     }
 
     const sidebarItems = await defaultSidebarItemsGenerator({ ...args })
-    return sidebarItems
+    return migrationLinksRecursive(sidebarItems)
 }
