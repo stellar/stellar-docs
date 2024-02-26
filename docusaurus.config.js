@@ -2,7 +2,7 @@
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "Stellar Documentation",
+  title: "Stellar Docs",
   tagline:
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
