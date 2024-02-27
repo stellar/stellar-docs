@@ -133,7 +133,7 @@ const config = {
     ({
       announcementBar: {
         id: 'announcementBar-migration',
-        content: "🚧 <strong>Please pardon our dust</strong> 🚧 We're merging the <a href='_blank' href='https://soroban.stellar.org/docs'>Soroban documentation</a> into this site, and things may get moved or shuffled around. Please check <a target='_blank' href='https://github.com/stellar/soroban-docs/issues/740'>this GH issue</a> for updates.",
+        content: "🚧 <strong>Please pardon our dust</strong> 🚧 We're merging the <a target='_blank' href='https://soroban.stellar.org/docs'>Soroban documentation</a> into this site, and things may get moved or shuffled around. Please check <a target='_blank' href='https://github.com/stellar/soroban-docs/issues/740'>this GH issue</a> for updates.",
       },
       docs: {
         sidebar: {
