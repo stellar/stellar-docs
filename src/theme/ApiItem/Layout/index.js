@@ -1,6 +1,7 @@
 import React from "react";
 import { MDXProvider } from "@mdx-js/react";
 import Layout from "@theme-original/ApiItem/Layout";
+// import DocItem from "@theme-original/DocItem";
 import { useDoc } from "@docusaurus/theme-common/internal";
 
 import { WrapperApiReference } from "@site/src/components/WrapperApiReference";
@@ -10,12 +11,7 @@ import styles from "./styles.module.scss";
 const LayoutWrapper = (props) => {
   const {
     frontMatter: { api },
-    metadata,
   } = useDoc();
-
-  if (metadata.permalink?.includes('admin-guide')) {
-    return <Layout {...props} />
-  }
 
   const layout = (
     <div className={styles.LayoutWrapper}>
