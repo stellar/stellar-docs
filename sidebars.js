@@ -85,27 +85,6 @@ const sidebars = {
     },
     {
       type: 'category',
-      label: 'Run Platform Services',
-      link: {
-        type: 'doc',
-        id: 'run-platform-server/index'
-      },
-      // I can't (yet) figure out a way to autogenerate this without having
-      // `overview` show up as an item
-      items: [
-        'run-platform-server/prerequisites',
-        'run-platform-server/installing',
-        'run-platform-server/configuring',
-        'run-platform-server/running',
-        'run-platform-server/ingestion',
-        'run-platform-server/monitoring',
-        'run-platform-server/scaling',
-        'run-platform-server/upgrading',
-        'run-platform-server/ingestion-filtering',
-      ]
-    },
-    {
-      type: 'category',
       label: 'Access Historical Data',
       link: {
         type: 'generated-index',
