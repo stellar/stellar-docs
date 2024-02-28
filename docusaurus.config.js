@@ -28,18 +28,18 @@ const config = {
       "docusaurus-plugin-openapi-docs",
       {
         id: "openapi",
-        docsPluginId: "api",
+        docsPluginId: "platforms",
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
-            outputDir: "api/horizon/resources", // Output directory for generated .mdx docs
+            outputDir: "platforms/horizon/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
           },
           anchor_platform_api: {
             specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
-            outputDir: "api/anchor-platform/resources", // Output directory for generated .mdx docs
+            outputDir: "platforms/anchor-platform/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -47,7 +47,7 @@ const config = {
           },
           anchor_platform_callbacks: {
             specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
-            outputDir: "api/anchor-platform/callbacks", // Output directory for generated .mdx docs
+            outputDir: "platforms/anchor-platform/callbacks", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -55,7 +55,7 @@ const config = {
           },
           anchor_custody_api: {
             specPath: "openapi/anchor-platform/bundled_custody.yml", // Path to designated spec file
-            outputDir: "api/anchor-platform/custody-server", // Output directory for generated .mdx docs
+            outputDir: "platforms/anchor-platform/custody-server", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -63,7 +63,7 @@ const config = {
           },
           stellar_disbursement_platform: {
             specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
-            outputDir: "api/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
+            outputDir: "platforms/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -75,13 +75,13 @@ const config = {
     [
       "@docusaurus/plugin-content-docs",
       {
-        id: "api",
-        path: "api",
-        routeBasePath: "/api",
+        id: "platforms",
+        path: "platforms",
+        routeBasePath: "/platforms",
         docLayoutComponent: "@theme/DocPage",
         docItemComponent: "@theme/ApiItem",
-        sidebarPath: require.resolve("./sidebarsApi.js"),
-        sidebarItemsGenerator: require("./src/sidebar-api-generator"),
+        sidebarPath: require.resolve("./sidebarsPlatforms.js"),
+        sidebarItemsGenerator: require("./src/sidebar-platforms-generator"),
         editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         showLastUpdateTime: true,
         showLastUpdateAuthor: true,
@@ -155,29 +155,39 @@ const config = {
             position: 'left',
           },
           {
-            type: "dropdown",
-            label: "APIs",
-            position: "left",
-            items: [
-              {
-                to: "/api/horizon",
-                label: "Horizon",
-              },
-              {
-                to: "/api/anchor-platform",
-                label: "Anchor Platform",
-              },
-              {
-                to: "/api/stellar-disbursement-platform",
-                label: "Stellar Disbursement Platform",
-              }
-            ]
-          },
-          {
             type: 'docSidebar',
             sidebarId: 'tools',
             label: 'Tools',
             position: 'left',
+          },
+          {
+            type: "dropdown",
+            label: "Platforms",
+            position: "left",
+            items: [
+              {
+                type: 'html',
+                value: 'Data Availability',
+                className: 'platformsHeading',
+              },
+              {
+                to: "/platforms/horizon",
+                label: "Horizon",
+              },
+              {
+                type: 'html',
+                value: 'SDF Platforms',
+                className: 'platformsHeading',
+              },
+              {
+                to: "/platforms/anchor-platform",
+                label: "Anchor Platform",
+              },
+              {
+                to: "/platforms/stellar-disbursement-platform",
+                label: "Stellar Disbursement Platform",
+              }
+            ]
           },
           {
             href: "https://github.com/stellar/stellar-docs",
