@@ -6,12 +6,13 @@ export default function ApiItemWrapper(props) {
   if (
     props.location?.pathname?.includes('admin-guide')
     || props.location?.pathname?.startsWith('/platforms/hubble')
+    || props.location?.pathname?.startsWith('/platforms/soroban-rpc')
   ) {
     return (
       <>
         <DocItem {...props} />
       </>
-    )
+    );
   }
   return (
     <>
