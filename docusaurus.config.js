@@ -171,12 +171,16 @@ const config = {
                 className: 'platformsHeading',
               },
               {
-                to: "/platforms/horizon",
-                label: "Horizon",
+                to: "/platforms/soroban-rpc",
+                label: "Soroban RPC",  
               },
               {
-                to: "/platforms/soroban-rpc",
-                label: "Soroban RPC",
+                to: "/platforms/hubble",
+                label: "Hubble",  
+              },
+              {
+                to: "/platforms/horizon",
+                label: "Horizon",
               },
               {
                 type: 'html',
