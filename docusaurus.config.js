@@ -175,6 +175,10 @@ const config = {
                 label: "Horizon",
               },
               {
+                to: "/platforms/soroban-rpc",
+                label: "Soroban RPC",
+              },
+              {
                 type: 'html',
                 value: 'SDF Platforms',
                 className: 'platformsHeading',
