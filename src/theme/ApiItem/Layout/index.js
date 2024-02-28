@@ -10,7 +10,12 @@ import styles from "./styles.module.scss";
 const LayoutWrapper = (props) => {
   const {
     frontMatter: { api },
+    metadata,
   } = useDoc();
+
+  if (metadata.permalink?.includes('admin-guide')) {
+    return <Layout {...props} />
+  }
 
   const layout = (
     <div className={styles.LayoutWrapper}>
