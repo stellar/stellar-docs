@@ -49,27 +49,27 @@ const sidebars = {
         dirName: 'building-apps',
       }]
     },
-    {
-      type: 'category',
-      label: 'Run a Core Node',
-      link: {
-        type: 'doc',
-        id: 'run-core-node/index'
-      },
-      // I can't (yet) figure out a way to autogenerate this without having
-      // `overview` show up as an item
-      items: [
-        'run-core-node/prerequisites',
-        'run-core-node/installation',
-        'run-core-node/configuring',
-        'run-core-node/publishing-history-archives',
-        'run-core-node/running-node',
-        'run-core-node/monitoring',
-        'run-core-node/commands',
-        'run-core-node/network-upgrades',
-        'run-core-node/tier-1-orgs',
-      ]
-    },
+    // {
+    //   type: 'category',
+    //   label: 'Run a Core Node',
+    //   link: {
+    //     type: 'doc',
+    //     id: 'run-core-node/index'
+    //   },
+    //   // I can't (yet) figure out a way to autogenerate this without having
+    //   // `overview` show up as an item
+    //   items: [
+    //     'run-core-node/prerequisites',
+    //     'run-core-node/installation',
+    //     'run-core-node/configuring',
+    //     'run-core-node/publishing-history-archives',
+    //     'run-core-node/running-node',
+    //     'run-core-node/monitoring',
+    //     'run-core-node/commands',
+    //     'run-core-node/network-upgrades',
+    //     'run-core-node/tier-1-orgs',
+    //   ]
+    // },
     {
       type: 'category',
       label: 'Encyclopedia',
