@@ -28,18 +28,18 @@ const config = {
       "docusaurus-plugin-openapi-docs",
       {
         id: "openapi",
-        docsPluginId: "platforms",
+        docsPluginId: "network",
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
-            outputDir: "platforms/horizon/resources", // Output directory for generated .mdx docs
+            outputDir: "network/horizon/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
           },
           anchor_platform_api: {
             specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/resources", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -47,7 +47,7 @@ const config = {
           },
           anchor_platform_callbacks: {
             specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/callbacks", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/callbacks", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -55,7 +55,7 @@ const config = {
           },
           anchor_custody_api: {
             specPath: "openapi/anchor-platform/bundled_custody.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/custody-server", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/custody-server", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -63,7 +63,7 @@ const config = {
           },
           stellar_disbursement_platform: {
             specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
-            outputDir: "platforms/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
+            outputDir: "network/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -75,13 +75,13 @@ const config = {
     [
       "@docusaurus/plugin-content-docs",
       {
-        id: "platforms",
-        path: "platforms",
-        routeBasePath: "/platforms",
+        id: "network",
+        path: "network",
+        routeBasePath: "/network",
         docLayoutComponent: "@theme/DocPage",
         docItemComponent: "@theme/ApiItem",
-        sidebarPath: require.resolve("./sidebarsPlatforms.js"),
-        sidebarItemsGenerator: require("./src/sidebar-platforms-generator"),
+        sidebarPath: require.resolve("./sidebarsNetwork.js"),
+        sidebarItemsGenerator: require("./src/sidebar-network-generator"),
         editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         showLastUpdateTime: true,
         showLastUpdateAuthor: true,
@@ -168,40 +168,40 @@ const config = {
               {
                 type: 'html',
                 value: '<small>Data Availability</small>',
-                className: 'platformsSubtitle',
+                className: 'subtitle',
               },
               {
-                to: "/platforms/soroban-rpc",
+                to: "/network/soroban-rpc",
                 label: "Soroban RPC",
               },
               {
-                to: "/platforms/hubble",
+                to: "/network/hubble",
                 label: "Hubble",
               },
               {
-                to: "/platforms/horizon",
+                to: "/network/horizon",
                 label: "Horizon",
               },
               {
                 type: 'html',
                 value: '<hr><small>SDF Platforms</small>',
-                className: 'platformsSubtitle',
+                className: 'subtitle',
               },
               {
-                to: "/platforms/anchor-platform",
+                to: "/network/anchor-platform",
                 label: "Anchor Platform",
               },
               {
-                to: "/platforms/stellar-disbursement-platform",
+                to: "/network/stellar-disbursement-platform",
                 label: "Stellar Disbursement Platform",
               },
               {
                 type: 'html',
                 value: '<hr><small>Network Infrastructure</small>',
-                className: 'platformsSubtitle',
+                className: 'subtitle',
               },
               {
-                to: "/platforms/core-node",
+                to: "/network/core-node",
                 label: "Validator Node",
               },
             ]
