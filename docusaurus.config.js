@@ -162,21 +162,21 @@ const config = {
           },
           {
             type: "dropdown",
-            label: "Platforms",
+            label: "Network",
             position: "left",
             items: [
               {
                 type: 'html',
-                value: 'Data Availability',
-                className: 'platformsHeading',
+                value: '<small>Data Availability</small>',
+                className: 'platformsSubtitle',
               },
               {
                 to: "/platforms/soroban-rpc",
-                label: "Soroban RPC",  
+                label: "Soroban RPC",
               },
               {
                 to: "/platforms/hubble",
-                label: "Hubble",  
+                label: "Hubble",
               },
               {
                 to: "/platforms/horizon",
@@ -184,8 +184,8 @@ const config = {
               },
               {
                 type: 'html',
-                value: 'SDF Platforms',
-                className: 'platformsHeading',
+                value: '<hr><small>SDF Platforms</small>',
+                className: 'platformsSubtitle',
               },
               {
                 to: "/platforms/anchor-platform",
@@ -194,7 +194,16 @@ const config = {
               {
                 to: "/platforms/stellar-disbursement-platform",
                 label: "Stellar Disbursement Platform",
-              }
+              },
+              {
+                type: 'html',
+                value: '<hr><small>Network Infrastructure</small>',
+                className: 'platformsSubtitle',
+              },
+              {
+                to: "/platforms/core-node",
+                label: "Validator Node",
+              },
             ]
           },
           {
