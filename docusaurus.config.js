@@ -202,7 +202,7 @@ const config = {
               },
               {
                 to: "/network/core-node",
-                label: "Validator Node",
+                label: "Core Validator Node",
               },
             ]
           },
