@@ -164,6 +164,7 @@ const config = {
             type: "dropdown",
             label: "Network",
             position: "left",
+            to: '/network',
             items: [
               {
                 type: 'html',
