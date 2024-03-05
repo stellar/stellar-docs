@@ -156,6 +156,12 @@ const config = {
           },
           {
             type: 'docSidebar',
+            sidebarId: 'learn',
+            label: 'Learn',
+            position: 'left',
+          },
+          {
+            type: 'docSidebar',
             sidebarId: 'tools',
             label: 'Tools',
             position: 'left',
