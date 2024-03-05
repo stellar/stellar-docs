@@ -5,7 +5,7 @@ export default function DocSidebarWrapper(props) {
   let newProps
 
   // For all `/api` sidebars, remove the parent category from the sidebar
-  if (props.path.startsWith('/api'))  {
+  if (props.path.startsWith('/network'))  {
     newProps = {
       ...props,
       sidebar: props.sidebar[0].items
