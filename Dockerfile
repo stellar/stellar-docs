@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y gpg curl git ma
 COPY . /app/
 
 RUN yarn install
+RUN yarn rpcspec:build
 RUN yarn build
 
 FROM nginx:1.17
