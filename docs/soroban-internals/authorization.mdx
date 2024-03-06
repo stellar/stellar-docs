@@ -1,0 +1,349 @@
+---
+sidebar_position: 20
+title: Authorization
+description: Smart contract authorization.
+---
+
+<head>
+  <title>Smart contract authorization</title>
+  <meta charSet="utf-8" />
+  <meta property="og:title" content="Smart contract authorization" />
+  <meta
+    property="og:description"
+    content="Learn about Soroban’s authorization framework, smart contract-specific authorization, account abstraction, and other authorization concepts in blockchain."
+  />
+  <link
+    rel="canonical"
+    href="https://soroban.stellar.org/docs/soroban-internals/authorization"
+  />
+</head>
+
+:::info
+
+This is an overview of the Soroban authorization framework.
+
+:::
+
+# Authorization
+
+Authorization is the process of judging which operations "should" or "should
+not" be allowed to occur; it is about judging _permission_.
+
+Authorization differs from _authentication_, which is the narrower problem of
+judging whether a person "is who they say they are", or whether a message
+claiming to come from a person "really" came from them.
+
+Authorization often uses cryptographic authentication (via signatures) to
+support its judgments, but is a broader, more general process.
+
+## Soroban Authorization Framework
+
+Soroban aims to provide a light-weight, but flexible and extensible framework
+that allows contracts to implement arbitrarily complex authorization rules,
+while providing built-in implementation for some common tasks (such as replay
+prevention). The framework consists of the following components:
+
+- Contract-specific authorization - custom authorization rules implemented by
+  contracts using the private contract storage and abstract accounts.
+- Account abstraction - allows users to customize their authentication rules and
+  define universal authorization policies via custom account contracts
+  (this includes the built-in support for the Stellar accounts).
+- Host-based authorization library - ensures integrity between the custom
+  accounts and regular contracts. Also defines the structured signature payload
+  format, ensures replay prevention and takes care of providing the correct
+  signature contexts.
+
+Soroban host also provides some cryptographic functions (signature verification,
+hashing) which may be useful for the custom account implementation.
+
+Contracts that use Soroban authorization framework are interoperable with each
+other. Also it is easier for the client applications to write generic code for
+interaction with Soroban authorization framework. For example, wallets can
+implement a generalized way to present and sign Soroban payloads.
+
+We realize that it's not possible to cover each and every case, but we hope that
+the vast majority of the contracts can operate within the framework and thus
+contribute to building a more cohesive ecosystem. Custom authorization
+frameworks are still possible to implement, but are not encouraged (unless there
+are no alternatives).
+
+### Contract-specific Authorization
+
+#### Contract storage
+
+Contracts have an exclusive read and write access to their [storage] in the
+ledger. This allows contracts to safely control and manage user access to their
+data. For example, a token contract may ensure that only the administrator can mint
+more of the token by storing the administrator identity in its storage.
+Similarly, it can make sure that only an owner of the balance may transfer that
+balance.
+
+[storage]: ../getting-started/storing-data.mdx
+
+#### `Address`
+
+The storage-based approach described in the previous section requires a way to
+represent the user identities and authenticate them. `Address` type is a
+host-managed type that performs these functions.
+
+From the contract perspective `Address` is an opaque identifier type. The
+contract logic doesn't need to depend on the internal representation of the
+`Address` (see [Account Abstraction](#account-abstraction) section below for
+more details).
+
+`Address` type has two similar methods in Soroban SDK: `require_auth` and
+`require_auth_for_args` (these methods call the respective Soroban host
+function). The only difference between the functions is the ability to
+customize the invocation arguments. See [auth example] that demonstrates
+how to use these functions.
+
+Both functions ensure that the `Address` has authorized the call of the current
+function within the current context (where context is defined by `require_auth`
+calls in the current call stack; see more formal definition in the
+[section below](#require_auth-implementation-details)). The authentication rules
+for this authorization are defined by the `Address` and are enforced by the
+Soroban host. Replay protection is also implemented in the host, i.e., there is
+normally no need for a contract to manage its own nonces.
+
+[auth example]: ../tutorials/auth.mdx
+
+#### Authorizing Sub-contract Calls
+
+One of the key features of Soroban Authorization Framework is the ability to
+easily make authorized sub-contract calls. For example, it is possible for a
+contract to call `require_auth` for an `Address` and then call `token.xfer`
+authorized for the same `Address` (see [timelock example] that demonstrates
+this pattern).
+
+Contracts don't need to do anything special to benefit from this feature. Just
+calling a sub-contract that calls `require_auth` will ensure that the
+sub-contract call has been properly authorized.
+
+[timelock example]: ../tutorials/timelock.mdx
+
+#### When to `require_auth`
+
+The main authorization-related decision a contract writer needs to make for any
+given `Address` is whether they need to call `require_auth` for it. While the
+decision needs to be made on case-by-case basis, here are some rules of thumb:
+
+- If the access to the `Address` data in this contract is read-only, then
+  `require_auth` is probably not needed.
+- If the `Address` data in this contract is being modified in a way that's not
+  strictly beneficial to the user, then `require_auth` is probably needed
+  (e.g. reducing the user's token balance needs to be authorized, while
+  increasing it doesn't need to be authorized)
+- If a contract calls another contract that will call `require_auth` for the
+  `Address` (e.g. `token.xfer`), then adding `require_auth` in the caller would
+  ensure that the authorization for the inner call can't be reused outside of
+  your contract. For example, if you want to do something positive for the
+  user, but only when they have transferred some token to your contract, then
+  the contract call itself should `require_auth`.
+
+#### Authorizing Multiple `Address`es
+
+There is no explicit restriction on how many `Address` entities the contract
+uses and how many `Address`es have `require_auth` called. That means that it is
+possible to authorize a contract call on behalf of multiple users, which may
+even have different authorization contexts (customized via arguments in
+`require_auth_for_args`). [Atomic swap] is an example that deals with
+authorization of two `Address`es.
+
+[Atomic swap]: ../tutorials/atomic-swap.mdx
+
+Note though, that contracts that deal with multiple authorized `Address`es need
+a bit more complex support on the client side (to collect and attach the proper
+signatures).
+
+### Account Abstraction
+
+Account abstraction is a way to decouple the authentication logic from the
+contract-specific authorization rules. The `Address` defined above is in fact
+an identifier of an 'abstract' account. That is, the contracts know the
+`Address` and can require authorization from it, but they don't know how
+exactly it is implemented.
+
+For example, imagine a token contract. Its responsibilities are to manage the
+balances of multiple users (transfer, mint, burn etc.). There is really nothing
+about these responsibilities that has anything to do with _how exactly_ the
+user authorized the balance-modifying transaction. The users may want to use
+some hardware key that supports a new generation of crypto algorithms(which don't
+even have to exist today) or they may want to have bespoke multisig scheme and
+none of this really has anything to do with the token logic.
+
+Account abstraction provides a convenient extension point for every contract
+that uses `Address` for authorization. It doesn't solve all the issues
+automatically - client-side tooling may still need to be adapted to support
+different authentication schemes or different wallets. But the on-chain state
+doesn't need to be modified and modifying the on-chain state is a much harder
+problem.
+
+#### Types of Account Implementations
+
+Conceptually, every abstract account is a special contract that defines
+authentication rules and potentially some additional account-specific
+authorization policies. However, for the sake of optimization and integration
+with the existing Stellar accounts, Soroban supports 4 different kinds of the
+account implementations.
+
+Below are the general descriptions of these implementations. See the transaction
+[guide](contract-interactions/stellar-transaction.mdx) for the
+concrete information of how different accounts are represented.
+
+##### Stellar Account
+
+Corresponds to `Address::Account`.
+
+This is a special, built-in 'account contract' that handles all the Stellar
+accounts. It is not a real contract and doesn't need to be deployed.
+
+This supports the Stellar multisig with medium threshold. See Stellar
+[documentation] for more details on multisig and thresholds.
+
+[documentation]: https://developers.stellar.org/docs/encyclopedia/signatures-multisig
+
+##### Transaction Invoker
+
+Corresponds to `Address::Account`.
+
+This is also a Stellar account, but its signature is inferred from the source
+account of the Stellar transaction (or operation, if it has one).
+
+This is purely an optimization of the [Stellar Account](#stellar-account) that
+can skip one signature in case the transaction source account also
+authorizes the contract invocation.
+
+##### Contract Invoker
+
+Corresponds to `Address::Contract`.
+
+This is a special case of an 'account' that may appear only when a contract
+calls another contract. We consider that since the contract makes a call, then
+it must be authorizing it (otherwise, it shouldn't have made that call). Hence
+all the `require_auth` calls made on behalf of the **direct** invoker contract
+`Address` are considered to be authorized (but not any calls on behalf of the
+contract deeper down the stack).
+
+##### Custom Account
+
+Corresponds to `Address::Contract`.
+
+This is the extension point of account abstraction. Custom account is a
+special contract that implements `__check_auth` method. If any contract calls
+`require_auth` for the `Address` of this contract, Soroban host will call
+`__check_auth` with the corresponding arguments.
+
+`__check_auth` gets a signature payload, a list of signatures (in any user-defined
+format) and a list of the contract invocations that are being authorized by
+these signatures. Its responsibility is to perform the authentication via
+verifying the signatures and also (optionally) to apply a custom authorization
+policy. For example, a signature weight system similar to Stellar can be
+implemented, but it also can have customizable rules for the weights, e.g. to
+allow spending more than X units of token Y only given signature weight Z.
+
+Custom account can also be treated as a custodial smart wallet. It holds the
+user's funds (token balances, NFTs etc.) and provides the user(s) with ways to
+authorize operations on these funds. That said, nothing prevents custom
+accounts to authorize operations that have nothing to do with any balances, for
+example, it can be used to perform administrative functions for tokens
+(don't forget, custom account simply defines what to do when `require_auth` is
+called).
+
+For the exact interface and more details, see the [custom account example].
+
+[custom account example]: ../tutorials/custom-account.mdx
+
+### Advanced Concepts
+
+Most of the contracts shouldn't need the concepts described in this section.
+Refer to this when developing complex contracts that deal with deep contract
+call trees and/or multiple `Address`es.
+
+#### `require_auth` implementation details
+
+When a Soroban transaction is executed on-chain, the host collects a list of
+`SorobanAuthorizationEntry` entries from the transaction ([XDR][soroban-auth-entry]).
+These entries contain signed authorizer credentials and authorized invocation
+trees. The host uses these entries to verify authorization during the contract
+execution.
+
+Every time `require_auth`/`require_auth_for_args` host function is called for
+non-contract-invoker account, the following steps happen:
+
+- Find an authorized invocation tree that matches the `require_auth` call. The
+  matching process is pretty involved and is described in the section below.
+- If authentication hasn't happened for this tree yet, then perform it:
+  - Verify signature expiration. Expired signatures are not valid.
+  - Verify and consume nonce. Nonce is an arbitrary number, that has to be
+    unique among all the non-expired signatures of the address.
+  - Build the expected [signature payload preimage] and compute its SHA-256 hash
+    to get the final signature payload
+  - Call `__check_auth` of the account contract corresponding to the `Address`
+    using the signature payload and the invocations from the authorization
+    tree
+- Mark the invocation as 'exhausted' in its authorized invocation tree.
+  'Exhausted' invocations will be skipped when matching the future `require_auth`
+  calls.
+
+If any of the steps above fails, then the authorization is considered
+unsuccessful.
+
+Notice, that authentication happens just once per tree, as the whole tree needs
+to be signed.
+
+[soroban-auth-entry]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L570
+[signature payload preimage]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L703
+
+#### Matching Authorized Invocation Trees
+
+In order for authorizations to succeed, all the
+`require_auth`/`require_auth_for_args` calls have to be covered by the
+corresponding `SorobanAuthorizedInvocation` trees in a transaction (defined in
+transaction [XDR][invocation-xdr]).
+
+Formally, this correspondence is defined as follows.
+
+Given a top-level contract invocation `I` we can build a 'contract invocation
+tree' `T` by tracing all the sub-contract calls (a directed edge `A->B` in the
+tree means 'contract function A calls contract function B). Note, that we only
+consider the functions that are implemented in different contracts, i.e. any
+function calls that don't involve a contract invocation via host `call` are
+considered to belong to the same node.
+
+Let's say authorization is required from addresses `A_1..A_N`. Then for every
+address `A_i` there are two kinds of nodes in the invocation tree `T`:
+`R`-nodes that had a `require_auth` call for `A_i` and `N`-nodes that didn't
+have such call. Then we remove all the `N`-nodes and all the edges from `T`
+and add the directed edges connecting the remaining `R`-nodes
+such that the edge goes from `R_j` to `R_k` if there was a path between `R_j`
+and `R_k` in `T` that doesn't contain any other `R`-nodes. As a result we get a
+forest of `SorobanAuthorizedInvocation` trees for `A_i`. Notice, that these trees don't
+have to have their root be `I` node (i.e. the top-level contract call), so it's
+possible to e.g. batch the authorized call together without requiring signing
+the batching function.
+
+In simpler terms, `SorobanAuthorizedInvocation` trees for an `Address` are subsets of
+the full invocation tree that are 'condensed' to only contain invocations that
+have `require_auth` call for that `Address`.
+
+During the matching process that happens for every `require_auth` host tries
+to match the current path in `T` to a `SorobanAuthorizedInvocation` tree for the
+corresponding `Address`. The path is considered to be matched only when there is
+a corresponding path of _exhausted_ `R` nodes leading to the current call. This
+means that if the `Address` signs a sequence of calls `A.foo->B.bar->C.baz`,
+then its authorization check will fail in case if `A.foo` directly calls `C.baz`
+because `C.baz` strictly has to be called from `B.bar`.
+
+##### Duplicate Addresses
+
+In case if the same contract function calls `require_auth` for the same
+`Address` multiple times (e.g. when multiple operations from the same user are
+being batched), every `require_auth` call still has to have a corresponding node
+in the `SorobanAuthorizedInvocation` tree. Due to that, there might be multiple valid
+trees that make all the authorization checks pass. There is nothing wrong about
+that - the address still must have authorized all the invocations. The only
+requirement for such cases to be handled correctly is to ensure that the
+`require_auth` calls for an `Address` happen before the corresponding
+sub-contract calls.
+
+[invocation-xdr]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L537
