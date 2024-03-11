@@ -208,6 +208,11 @@ const config = {
             ]
           },
           {
+            href: "http://www.stellar-dbt-docs.com/",
+            label: "Dbt docs",
+            position: "left",
+          },
+          {
             href: "https://github.com/stellar/stellar-docs",
             label: "GitHub",
             position: "right",
