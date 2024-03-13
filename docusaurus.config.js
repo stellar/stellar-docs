@@ -161,6 +161,12 @@ const config = {
             position: 'left',
           },
           {
+            type: 'docSidebar',
+            sidebarId: 'reference',
+            label: 'Reference',
+            position: 'left',
+          },
+          {
             type: "dropdown",
             label: "Network",
             position: "left",
