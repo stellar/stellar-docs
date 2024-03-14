@@ -224,7 +224,7 @@ const config = {
           {
             to: '/meetings',
             label: 'Meetings',
-            psition: 'right',
+            position: 'right',
           },
           {
             href: "https://github.com/stellar/stellar-docs",
