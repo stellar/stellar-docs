@@ -206,7 +206,7 @@ const config = {
               },
               {
                 type: 'html',
-                value: '<hr><small>SDF Platforms</small>',
+                value: '<hr><small>Platforms</small>',
                 className: 'subtitle',
               },
               {
