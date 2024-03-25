@@ -350,7 +350,9 @@ const config = {
           "python",
           "docker",
           "kotlin",
-          "dart"
+          "dart",
+          "nginx",
+          "log",
         ],
       },
     }),
