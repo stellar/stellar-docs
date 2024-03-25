@@ -1,24 +1,6 @@
 const fs = require('fs')
 const path = require('path')
 
-const migrationLinksRecursive = (sidebarItems) => {
-    const result = sidebarItems.map((sidebarItem) => {
-        if (sidebarItem.type === 'category') {
-            return {...sidebarItem, items: migrationLinksRecursive(sidebarItem.items)}
-        }
-
-        if (sidebarItem.customProps?.migration?.href && sidebarItem.customProps?.migration?.label) {
-            sidebarItem = {
-                type: 'link',
-                href: sidebarItem.customProps.migration.href,
-                label: sidebarItem.customProps.migration.label,
-            }
-        }
-        return sidebarItem
-    })
-    return result
-}
-
 module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
 
     if (args.version.contentPath.endsWith('docs')) {
@@ -30,7 +12,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
          * underneath it, while those items are not displayed in the sidebar.
          */
         args.docs.map((doc) => {
-            if (doc.id === 'guides/README' || doc.id === 'tutorials/README') {
+            if (doc.id === 'smart-contracts/guides/README' || doc.id === 'smart-contracts/tutorials/README') {
                 doc.frontMatter.sidebar_class_name = "sidebar-category-items-hidden"
             }
         })
@@ -49,5 +31,5 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     }
 
     const sidebarItems = await defaultSidebarItemsGenerator({ ...args })
-    return migrationLinksRecursive(sidebarItems)
+    return sidebarItems
 }
