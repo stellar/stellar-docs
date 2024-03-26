@@ -30,9 +30,10 @@ const WayfindingWays = [
         ahead and move your docs into the <code>docs</code> directory.
       </>
     ),
+    // temporarily set this to /docs/soroban until "smart contracts" section is done
     link: (
       <Link
-        to="/docs/smart-contracts/getting-started/setup">
+        to="/docs/soroban">
         Get Started
       </Link>
     )
