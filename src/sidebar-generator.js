@@ -12,7 +12,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
          * underneath it, while those items are not displayed in the sidebar.
          */
         args.docs.map((doc) => {
-            if (doc.id === 'smart-contracts/guides/README' || doc.id === 'smart-contracts/tutorials/README') {
+            if (doc.id === 'smart-contracts/guides/README' || doc.id === 'smart-contracts/example-contracts/README') {
                 doc.frontMatter.sidebar_class_name = "sidebar-category-items-hidden"
             }
         })

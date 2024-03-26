@@ -13,7 +13,7 @@ import { title } from 'process';
 
 function DocCardListForCurrentSidebarCategory({className}) {
   const category = useCurrentSidebarCategory();
-  return category.label === 'Tutorials'
+  return category.label === 'Example Contracts'
     ? <TutorialsDocCardList items={category.items} className={className} />
     : category.label === 'How-To Guides'
     ? <GuidesDocCardList items={category.items} className={className} />
