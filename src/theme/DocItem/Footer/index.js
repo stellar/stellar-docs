@@ -5,6 +5,7 @@ import {useDoc} from '@docusaurus/theme-common/internal';
 import LastUpdated from '@theme/LastUpdated';
 import EditThisPage from '@theme/EditThisPage';
 import TagsListInline from '@theme/TagsListInline';
+import DocCardList from '@theme/DocCardList';
 
 import ReaderFeedback from '@site/src/components/ReaderFeedback';
 import styles from './styles.module.css';
@@ -51,11 +52,18 @@ export default function DocItemFooter() {
   const canDisplayTagsRow = tags.length > 0;
   const canDisplayEditMetaRow = !!(editUrl || lastUpdatedAt || lastUpdatedBy);
   const canDisplayFooter = canDisplayTagsRow || canDisplayEditMetaRow;
+  const canDisplayDocCardsOnGuide = metadata.permalink.startsWith('/docs/smart-contracts/guides');
   if (!canDisplayFooter) {
     return null;
   }
   return (
     <>
+      {canDisplayDocCardsOnGuide &&
+        <div className={clsx(metadata.permalink === '/docs/smart-contracts/guides/' ? 'margin-top--lg' : 'margin-top--xl')}>
+          {metadata.permalink !== '/docs/smart-contracts/guides/' && <h3>Guides in this category:</h3>}
+          <DocCardList />
+        </div>
+      }
       <ReaderFeedback pageId={metadata.unversionedId} />
       <footer
         className={clsx(ThemeClassNames.docs.docFooter, 'docusaurus-mt-lg')}>

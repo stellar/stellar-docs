@@ -165,6 +165,12 @@ const config = {
           },
           {
             type: 'docSidebar',
+            sidebarId: 'smartContracts',
+            label: 'Smart Contracts',
+            position: 'left',
+          },
+          {
+            type: 'docSidebar',
             sidebarId: 'learn',
             label: 'Learn',
             position: 'left',
