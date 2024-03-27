@@ -102,12 +102,12 @@ function Feature({image, title, description, link}) {
   return (
     <div className={clsx('col col--4')}>
       <div className="text--center">
-        <Link {...link.props}><img src={image} className={styles.boxIcon} role="img" /></Link>
+        <Link {...link.props} className={clsx(styles.boxIconLink, 'button', 'button--secondary')}><img src={image} className={styles.boxIcon} role="img" /></Link>
       </div>
       <div className="text--center padding-horiz--md">
         <Heading as="h3">{title}</Heading>
         <p>{description}</p>
-        <p><Link className="button button--primary" {...link.props} /></p>
+        <p className="margin-bottom--lg"><Link className="button button--primary" {...link.props} /></p>
       </div>
     </div>
   );
@@ -115,7 +115,7 @@ function Feature({image, title, description, link}) {
 
 export default function WayfindingBoxes() {
   return (
-    <section className={styles.boxes}>
+    <section className='margin-vert--lg'>
       <div className="container">
         <div className="row">
           {WayfindingWays.map((props, idx) => (
