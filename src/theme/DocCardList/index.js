@@ -40,6 +40,20 @@ function GuidesDocCardList(props) {
   )
 }
 
+function ExampleContractBadge(props) {
+  const level = props.level
+  switch (level) {
+    case 'beginner':
+      return <span className={clsx(styles.exampleContractBadge, 'badge', styles.badgePrimarySuccess)}>{level}</span>
+    case 'intermediate':
+      return <span className={clsx(styles.exampleContractBadge, 'badge', styles.badgePrimaryWarning)}>{level}</span>
+    case 'advanced':
+      return <span className={clsx(styles.exampleContractBadge, 'badge', styles.badgePrimaryDanger)}>{level}</span>
+    default:
+      return null
+  }
+}
+
 function ExampleContractsDocCardList(props) {
   const [exampleLevel, setExampleContractsLevel] = useState('All');
   const [exampleQuery, setExampleContractsQuery] = useState('');
@@ -78,7 +92,10 @@ function ExampleContractsDocCardList(props) {
           const doc = useDocById(item.docId ?? undefined);
           item.description = item.description ?? doc?.description
           return (
-            <p className='col col--12'><a href={item.href}><strong>{item.label}</strong></a> - {item.description}</p>
+            <p className='col col--12'>
+              <ExampleContractBadge level={item.customProps?.example?.level} />
+              <a href={item.href}><strong>{item.label}</strong></a> - {item.description}
+            </p>
           )
         })}
       </section>
