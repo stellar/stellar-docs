@@ -40,66 +40,20 @@ function GuidesDocCardList(props) {
   )
 }
 
-function ExampleContractBadge(props) {
-  const level = props.level
-  switch (level) {
-    case 'beginner':
-      return <span className={clsx(styles.exampleContractBadge, 'badge', styles.badgePrimarySuccess)}>{level}</span>
-    case 'intermediate':
-      return <span className={clsx(styles.exampleContractBadge, 'badge', styles.badgePrimaryWarning)}>{level}</span>
-    case 'advanced':
-      return <span className={clsx(styles.exampleContractBadge, 'badge', styles.badgePrimaryDanger)}>{level}</span>
-    default:
-      return null
-  }
-}
-
 function ExampleContractsDocCardList(props) {
-  const [exampleLevel, setExampleContractsLevel] = useState('All');
-  const [exampleQuery, setExampleContractsQuery] = useState('');
-
   const {items, className} = props;
-  const filteredItems = filterDocCardListItems(items);
-
-  const filterDocCardsByExampleLevel = (level) => {
-    return filteredItems.filter(item => level.toLowerCase() === 'all' ? true : item.customProps?.example?.level === level.toLowerCase())
-  }
-  let filteredDocCards = filterDocCardsByExampleLevel(exampleLevel)
-
-  const filterDocCardsByExampleQuery = (query) => {
-    return filteredDocCards.filter(item => query !== '' ? item.label.toLowerCase().includes(query.toLowerCase()) || item.description.toLowerCase().includes(query.toLowerCase()) : true)
-  }
-  filteredDocCards = filterDocCardsByExampleQuery(exampleQuery)
-
   return (
-    <>
-      <div className={clsx('row', className)}>
-        <div className={clsx('col', 'col--6', className)}>
-          <select className={styles.docCardFilterSelect} onChange={e => setExampleContractsLevel(e.target.value)}>
-            <option default selected disabled>Select Example Level</option>
-            <option value="All">Recommended Order</option>
-            <option>Beginner</option>
-            <option>Intermediate</option>
-            <option>Advanced</option>
-          </select>
-        </div>
-        <div className={clsx('col', 'col--6', className)}>
-          <input placeholder="Search Example Contracts" className={styles.docCardFilterSearch} onChange={e => setExampleContractsQuery(e.target.value)} />
-        </div>
-      </div>
-      <section className={clsx('row', className)}>
-        {filteredDocCards.map((item, index) => {
-          const doc = useDocById(item.docId ?? undefined);
-          item.description = item.description ?? doc?.description
-          return (
-            <p className='col col--12'>
-              <ExampleContractBadge level={item.customProps?.example?.level} />
-              <a href={item.href}><strong>{item.label}</strong></a> - {item.description}
-            </p>
-          )
-        })}
-      </section>
-    </>
+    <section className={clsx('row', className)}>
+      {items.map((item, index) => {
+        const doc = useDocById(item.docId ?? undefined);
+        item.description = item.description ?? doc?.description
+        return (
+          <p className='col col--12'>
+            <a href={item.href}><strong>{item.label}</strong></a> - {item.description}
+          </p>
+        )
+      })}
+    </section>
   )
 }
 
