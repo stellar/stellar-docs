@@ -3,7 +3,6 @@
 /** @type {import('@docusaurus/plugin-content-docs').SidebarsConfig} */
 const sidebars = {
   docs: [
-    'index',
     {
       type: 'category',
       label: 'Basic Tutorials',
@@ -43,7 +42,6 @@ const sidebars = {
         dirName: 'building-apps',
       }]
     },
-    'soroban',
   ],
   tools: [
     {
