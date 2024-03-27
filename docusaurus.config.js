@@ -262,7 +262,7 @@ const config = {
             title: "Resources",
             items: [
               {
-                label: "Developers Blog",
+                label: "Developer Blog",
                 href: "https://www.stellar.org/developers-blog",
               },
               {
@@ -270,8 +270,8 @@ const config = {
                 href: "https://quest.stellar.org/",
               },
               {
-                label: "Stellar Community Fund",
-                href: "https://communityfund.stellar.org/",
+                label: "Soroban Quest",
+                href: "https://fastcheapandoutofcontrol.com/tutorial",
               },
             ],
           },
@@ -296,7 +296,7 @@ const config = {
               },
               {
                 label: "All Tools",
-                href: "https://developers.stellar.org/docs/tools",
+                href: "https://developers.stellar.org/docs/tools/developer-tools",
               },
             ],
           },
@@ -304,16 +304,20 @@ const config = {
             title: "Community",
             items: [
               {
-                label: "Developers Discord",
+                label: "Developer Discord",
                 href: "https://discord.gg/st7Mxd58BV",
               },
               {
-                label: "Developers Google Group",
+                label: "Developer Google Group",
                 href: "https://groups.google.com/g/stellar-dev",
               },
               {
                 label: "Stack Exchange",
                 href: "https://stellar.stackexchange.com/",
+              },
+              {
+                label: "Stellar Community Fund",
+                href: "https://communityfund.stellar.org/",
               },
             ],
           },
