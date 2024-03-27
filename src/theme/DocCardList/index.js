@@ -14,7 +14,7 @@ import { title } from 'process';
 function DocCardListForCurrentSidebarCategory({className}) {
   const category = useCurrentSidebarCategory();
   return category.label === 'Example Contracts'
-    ? <TutorialsDocCardList items={category.items} className={className} />
+    ? <ExampleContractsDocCardList items={category.items} className={className} />
     : category.label === 'How-To Guides'
     ? <GuidesDocCardList items={category.items} className={className} />
     : <DocCardList items={category.items} className={className} />;
@@ -40,37 +40,37 @@ function GuidesDocCardList(props) {
   )
 }
 
-function TutorialsDocCardList(props) {
-  const [tutorialLevel, setTutorialLevel] = useState('All');
-  const [tutorialQuery, setTutorialQuery] = useState('');
+function ExampleContractsDocCardList(props) {
+  const [exampleLevel, setExampleContractsLevel] = useState('All');
+  const [exampleQuery, setExampleContractsQuery] = useState('');
 
   const {items, className} = props;
   const filteredItems = filterDocCardListItems(items);
 
-  const filterDocCardsByTutorialLevel = (level) => {
-    return filteredItems.filter(item => level.toLowerCase() === 'all' ? true : item.customProps?.tutorial?.level === level.toLowerCase())
+  const filterDocCardsByExampleLevel = (level) => {
+    return filteredItems.filter(item => level.toLowerCase() === 'all' ? true : item.customProps?.example?.level === level.toLowerCase())
   }
-  let filteredDocCards = filterDocCardsByTutorialLevel(tutorialLevel)
+  let filteredDocCards = filterDocCardsByExampleLevel(exampleLevel)
 
-  const filterDocCardsByTutorialQuery = (query) => {
+  const filterDocCardsByExampleQuery = (query) => {
     return filteredDocCards.filter(item => query !== '' ? item.label.toLowerCase().includes(query.toLowerCase()) || item.description.toLowerCase().includes(query.toLowerCase()) : true)
   }
-  filteredDocCards = filterDocCardsByTutorialQuery(tutorialQuery)
+  filteredDocCards = filterDocCardsByExampleQuery(exampleQuery)
 
   return (
     <>
       <div className={clsx('row', className)}>
         <div className={clsx('col', 'col--6', className)}>
-          <select className={styles.docCardFilterSelect} onChange={e => setTutorialLevel(e.target.value)}>
-            <option default selected disabled>Select Tutorial Level</option>
-            <option>All</option>
+          <select className={styles.docCardFilterSelect} onChange={e => setExampleContractsLevel(e.target.value)}>
+            <option default selected disabled>Select Example Level</option>
+            <option value="All">Recommended Order</option>
             <option>Beginner</option>
             <option>Intermediate</option>
             <option>Advanced</option>
           </select>
         </div>
         <div className={clsx('col', 'col--6', className)}>
-          <input placeholder="Search Tutorials" className={styles.docCardFilterSearch} onChange={e => setTutorialQuery(e.target.value)} />
+          <input placeholder="Search Example Contracts" className={styles.docCardFilterSearch} onChange={e => setExampleContractsQuery(e.target.value)} />
         </div>
       </div>
       <section className={clsx('row', className)}>
