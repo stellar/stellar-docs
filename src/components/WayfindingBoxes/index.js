@@ -10,8 +10,7 @@ const WayfindingWays = [
     image: require('@site/static/icons/stellar-101.png').default,
     description: (
       <>
-        Docusaurus was designed from the ground up to be easily installed and
-        used to get your website up and running quickly.
+        Learn the core concepts of Stellar in this educational section.
       </>
     ),
     link: (
@@ -26,8 +25,7 @@ const WayfindingWays = [
     image: require('@site/static/icons/contract.png').default,
     description: (
       <>
-        Docusaurus lets you focus on your docs, and we'll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        Get set up and write your first smart contract on the Stellar network.
       </>
     ),
     // temporarily set this to /docs/soroban until "smart contracts" section is done
@@ -43,14 +41,13 @@ const WayfindingWays = [
     image: require('@site/static/icons/issue-assets.png').default,
     description: (
       <>
-        Docusaurus lets you focus on your docs, and we'll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        Issuing assets on Stellar is easy. Learn how in this tutorial.
       </>
     ),
     link: (
       <Link
         to="/docs/issuing-assets/how-to-issue-an-asset">
-        Issue
+        Issue Asset
       </Link>
     )
   },
@@ -59,14 +56,13 @@ const WayfindingWays = [
     image: require('@site/static/icons/build-applications.png').default,
     description: (
       <>
-        Docusaurus lets you focus on your docs, and we'll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        Build an application on Stellar using the Wallet SDK or JS SDK.
       </>
     ),
     link: (
       <Link
         to="/docs/category/build-applications">
-        Build
+        Get Building
       </Link>
     )
   },
@@ -75,14 +71,13 @@ const WayfindingWays = [
     image: require('@site/static/icons/dev-tools.png').default,
     description: (
       <>
-        Docusaurus lets you focus on your docs, and we'll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        Stellar has a myriad of community and SDF-maintained tools. Check them out!
       </>
     ),
     link: (
       <Link
         to="/docs/tools/developer-tools">
-        See Available Tools
+        See Tools
       </Link>
     )
   },
@@ -91,8 +86,7 @@ const WayfindingWays = [
     image: require('@site/static/icons/access-data.png').default,
     description: (
       <>
-        Docusaurus lets you focus on your docs, and we'll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        The RPC, Hubble, and Horizon offer all the data capabilities you could possibly need.
       </>
     ),
     link: (
