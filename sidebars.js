@@ -42,7 +42,6 @@ const sidebars = {
         dirName: 'building-apps',
       }]
     },
-    'soroban',
   ],
   tools: [
     {
