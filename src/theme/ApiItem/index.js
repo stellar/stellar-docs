@@ -8,6 +8,7 @@ export default function ApiItemWrapper(props) {
     || props.location?.pathname?.startsWith('/network/hubble')
     || props.location?.pathname?.startsWith('/network/soroban-rpc')
     || props.location?.pathname?.startsWith('/network/core-node')
+    || props.location?.pathname === '/network/horizon/horizon-providers'
   ) {
     return (
       <>
