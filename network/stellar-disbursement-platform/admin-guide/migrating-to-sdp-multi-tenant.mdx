@@ -1,0 +1,247 @@
+---
+title: Migrating to Stellar Disbursement Platform Multi-Tenant
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Here you will find the required steps to migrate an existing single-tenant Stellar Disbursement Platform application (SDP) to a multi-tenant version.
+
+## Preparing for the migration
+
+Before initiating the migration process, ensure that all the payments and transactions have reached their final states (`SUCCESS`, `FAILED`, or `CANCELED`) to prevent duplicate payments and incorrect transaction statuses. 
+
+Additionally, confirm that receiver registrations are complete to prevent issues with verification completion
+
+### Database Backup
+
+It is strongly recommended to create a backup of your database before proceeding with any of the migration steps outlined in this document. Failure to do so could lead to irreversible data loss.
+
+## SDP Multi-tenant Version
+
+Starting with version 2.x.x, **the SDP exclusively supports the multi-tenant architecture**. In order to have the latest updates and features, we recommend upgrading to the multi-tenant version.
+
+This version is also suitable for single-tenant scenarios, offering a streamlined process for provisioning and configuring an SDP instance through the **Admin API**. 
+
+In the multi-tenant version, multiple organizations can manage disbursements under a unified infrastructure while maintaining separate datasets.
+
+## Configuration Changes
+
+The SDP Multi-tenant introduces additional configuration requirements. In this section, we outline the necessary setup needed to get it up and running.
+
+### Infrastructure
+
+For the infrastructure setup, SDP Multi-tenant offers flexible operational modes. Administrators can optionally configure the SDP to utilize an event broker for event-driven operations. This setup currently only supports Kafka but can be extended to support other brokers like SQS or Solace. Alternatively, the SDP can operate on a scheduled job basis for payment processing and sending receiver invitations. The choice between these two modes depends on the needs of the host. Event brokers are recommended when the host needs to support multiple tenants, while scheduled jobs are recommended for local setups or single-tenant SDPs.
+
+### Environment Variables
+
+General environment variables: 
+
+- `INSTANCE_NAME`: Name of the SDP instance. Example: "SDP Testnet".
+- `TENANT_XLM_BOOTSTRAP_AMOUNT`: The amount of the native asset that will be sent to the tenant distribution account from the host distribution account when it's created if applicable.
+- `ADMIN_PORT`: The port of the Admin server. Default is 8003. 
+- `ADMIN_ACCOUNT`: ID of the admin account. To use, add to the request header as "Authorization", formatted as Base64-encoded "ADMIN_ACCOUNT:ADMIN_API_KEY".
+- `ADMIN_API_KEY`: API key for the admin account. To use, add to the request header as "Authorization", formatted as Base64-encoded "ADMIN_ACCOUNT:ADMIN_API_KEY".
+- `DISTRIBUTION_SIGNER_TYPE`
+- `DISTRIBUTION_ACCOUNT_ENCRYPTION_PASSPHRASE`
+- `CHANNEL_ACCOUNT_ENCRYPTION_PASSPHRASE`
+
+Broker configuration environment variables:
+
+- `EVENT_BROKER_TYPE`: Event Broker type. Options: "KAFKA", "NONE"
+- `BROKER_URLS`: List of Message Broker URLs comma separated.
+- `CONSUMER_GROUP_ID`: Message Broker Consumer Group ID.
+- `KAFKA_SECURITY_PROTOCOL`: Kafka Security Protocol. Options: PLAINTEXT, SASL_PLAINTEXT, SASL_SSL, SSL. For EVENT_BROKER_TYPE KAFKA only.
+- `KAFKA_SASL_USERNAME`: Kafka SASL Username. For `KAFKA_SECURITY_PROTOCOL` SASL_PLAINTEXT and SASL_SSL only.
+- `KAFKA_SASL_PASSWORD`: Kafka SASL Password. For `KAFKA_SECURITY_PROTOCOL` SASL_PLAINTEXT and SASL_SSL only.
+- `KAFKA_SSL_ACCESS_KEY`: The Kafka Access Key (keystore) on PEM format. For `KAFKA_SECURITY_PROTOCOL` SSL only.
+- `KAFKA_SSL_ACCESS_CERTIFICATE`: Kafka SSL Access Certificate on PEM format that matches with the Kafka Access Key. For `KAFKA_SECURITY_PROTOCOL` SSL only.
+
+Scheduler environment variables: 
+
+- `ENABLE_SCHEDULER`: Default "false". This enables scheduled jobs that replace the operations of a broker for synchronizing payments between SDP and TSS as well as submitting receiver invitations.
+- `SCHEDULER_PAYMENT_JOB_SECONDS`: Interval in seconds for the job that synchronizes payments between SDP and TSS. Minimum is 5s.
+- `SCHEDULER_RECEIVER_INVITATION_JOB_SECONDS`: Interval in seconds for the job that submits receiver invitations. Minimum is 5s.
+
+On the Anchor Platform side, we must set the following envs:
+
+- `SEP10_HOME_DOMAINS`: "localhost:8000, *.stellar.local:8000" # Comma separated list of home domains
+- `SEP10_HOME_DOMAIN`: "" # Here should be empty for the Multi-tenant version
+
+## Database Schemas
+
+In the updated version, database schemas have been revised to accommodate multi-tenancy. The organization of schemas as follows:
+
+- **public**: The public schema houses tables associated with tenant administration, referred to as the admin tables. It serves as the central point for managing tenant-related information.
+- **tss**: Dedicated to the Transaction Submitter Service (TSS), this schema is distinct from the SDP's primary schemas, a change from the single-tenant version where TSS tables were integrated with SDP tables. The TSS schema includes tables such as submitter_transactions, channel_accounts, and vault, specifically for handling transaction submissions.
+- **sdp\_&lt;tenant name&gt;**: Tenant-specific schemas are prefixed with "sdp_". For example, for tenants BlueCorp and RedCorp, the provisioned schemas would be named **sdp_bluecorp** and **sdp_redcorp**, respectively. These schemas contain all necessary tables for the SDP’s operation tailored to each tenant.
+
+## Migration Process
+
+### Deploying a new version
+
+To transaction to a multi-tenant setup, deploy the latest version of the SDP 2.x.x. This deployment can be achieved through various methods depending on your infrastructure, such as updating to a new Docker image, utilizing the latest Helm chart for Kubernetes deployments, etc.
+
+### Executing Database Migrations
+
+Following the deployment of the new SDP, the next step is to perform **database migrations** to align the database structure with the multi-tenant requirements.
+
+Migration Commands:
+
+<CodeExample>
+
+```bash
+./stellar-disbursement-platform db admin migrate up
+./stellar-disbursement-platform db tss migrate up
+```
+
+</CodeExample>
+
+These commands will create the tenant admin tables on the **public** schema and the Transaction Submitter Service tables on the **tss** schema, respectively.
+
+### New Tenant Provisioning Process
+
+After successfully applying the database migrations, the next step is to provision a new tenant. This is achieved by making an HTTP request to the **Admin API**.
+
+#### Starting the SDP API server 
+
+To facilitate tenant provisioning, initiate the SDP Server using the command:
+
+<CodeExample>
+
+```bash
+./stellar-disbursement-platform serve
+```
+
+</CodeExample>
+
+#### Accessing the Admin API 
+
+- **Port Configuration**: The Admin API is accessible on port `8003` by default. This port setting can be adjusted by altering the `ADMIN_PORT` environment variable.
+- **Authentication**: Admin API employs Basic Authentication for securing access. To authenticate, concatenate the administrator’s account name (set in the `ADMIN_ACCOUNT` environment variable) and the Admin API KEy (specified in the `ADMIN_API_KEY` environment variable). This concatenated string must then be base64 encoded to create the Authorization Header.
+
+Shell script example of creating a tenant through the Admin API:
+
+<CodeExample>
+
+```shell
+adminAccount="SDP-admin"
+adminApiKey="api_key_1234567890"
+encodedCredentials=$(echo -n "$adminAccount:$adminApiKey" | base64)
+AuthHeader="Authorization: Basic $encodedCredentials"
+
+curl -X POST https://bluecorp.backend.com:8003/tenants \
+        -H "Content-Type: application/json" \
+        -H "$AuthHeader" \
+        -d '{
+                "name": "bluecorp",
+                "organization_name": "Blue Corp",
+                "email_sender_type": "DRY_RUN",
+                "sms_sender_type": "DRY_RUN",
+                "base_url": "https://bluecorp.backend.com",
+                "sdp_ui_base_url": "https://bluecorp.com",
+                "owner_email": "owner@bluecorp.com",
+                "owner_first_name": "john",
+                "owner_last_name": "doe"
+        }'
+```
+
+</CodeExample>
+
+In the SDP Multi-tenant, certain configurations previously managed through environment variables in the single-tenant setup are now stored within the **tenants** table in the admin schema. This change allows each tenant to have its own custom configuration. 
+
+The field **name** is important because it's the tenant identifier. The other fields can be set to the same values used on the environment variables used on the non-tenant version.
+
+### Importing your data
+
+Now that we've provisioned a new tenant, we can import our data into it. We need to copy our old tables' data to the new tenant schema.
+
+An important note on this is that there are some tables that we don't need to copy. These tables are:
+
+- **_gorp_migrations_**
+- **_auth_migrations_**
+- **_countries_**
+- **_organizations_**
+
+To import your data it's important to start with the following tables but we need to delete the pre-existing entries from the provisioned tenant, before importing it. These tables are:
+
+- **_auth_users_**
+- **_wallets_assets_**
+- **_assets_**
+- **_wallets_**
+
+The following SQL script deletes the entries on those tables:
+
+<CodeExample>
+
+```sql
+DELETE FROM sdp_<tenant name>.auth_users;
+DELETE FROM sdp_<tenant name>.wallets_assets;
+DELETE FROM sdp_<tenant name>.assets;
+DELETE FROM sdp_<tenant name>.wallets;
+```
+
+</CodeExample>
+
+After this step, you can import the data for those tables. Remember importing them in the opposite order they were deleted.
+
+Next, we can import the tables left. We recommend following the table order described here because foreign keys references:
+
+- **_receivers_**
+- **_receiver_wallets_**
+- **_receiver_verifications_**
+- **_disbursements_**
+- **_payments_**
+- **_messages_**
+- **_auth_user_mfa_codes_**
+- **_Auth_user_password_reset_**
+
+_**Note**: some columns like **status** and **types** have their enum type, so you probably will need to cast values to the type (i.e. **status::sdp_bluecorp.payment_status**)_
+
+With this, we complete importing the SDP data but still need to import the Transaction Submitter Service data. To that, we will import our data to the tss schema tables. But before importing the submitter_transactions table we need to get the tenant ID generated for our provisioned tenant:
+
+<CodeExample>
+
+```sql
+SELECT id, name FROM public.tenants;
+```
+
+</CodeExample>
+
+This query retrieves the ID for the tenant.
+
+- **_channel_accounts_** will be imported to **_tss.channel_accounts_**
+- **_submitter_transactions_** will be imported to **_tss.submitter_transactions_**. Note that 2 new columns were added for this table on this version **_tenant_id_** and **_distribution_account_**, for the **_tenant_id_** column we will add the ID we got before, and for the **_distribution_account_** we set the public key of the distribution account.
+- **_tss.vault_**  this table is used for storing encrypted distribution account private keys when `DISTRIBUTION_SIGNER_TYPE=DISTRIBUTION_ACCOUNT_DB`
+
+Now, the migration from the non-tenant version to the tenant version is complete. You can log in to your SDP
+
+### [Optional] Drop old tables
+
+In case you applied these changes to the same database you were using before, you may now drop the SDP tables from the public schema since your tenant now has its own schema. Please, be careful running these commands since it can result in permanent data loss.
+
+<CodeExample>
+
+```sql
+BEGIN TRANSACTION;
+DROP TABLE public.wallets CASCADE;
+DROP TABLE public.assets CASCADE;
+DROP TABLE public.receiver_verifications CASCADE;
+DROP TABLE public.receiver_wallets CASCADE;
+DROP TABLE public.receivers CASCADE;
+DROP TABLE public.messages CASCADE;
+DROP TABLE public.auth_migrations CASCADE;
+DROP TABLE public.auth_user_mfa_codes CASCADE;
+DROP TABLE public.auth_user_password_reset CASCADE;
+DROP TABLE public.auth_users CASCADE;
+DROP TABLE public.countries CASCADE;
+DROP TABLE public.gorp_migrations CASCADE;
+DROP TABLE public.organizations CASCADE;
+DROP TABLE public.submitter_transactions CASCADE;
+DROP TABLE public.channel_accounts CASCADE;
+DROP TABLE public.wallets_assets CASCADE;
+DROP TABLE public.payments CASCADE;
+DROP TABLE public.disbursements CASCADE;
+COMMIT;
+```
+
+</CodeExample>
