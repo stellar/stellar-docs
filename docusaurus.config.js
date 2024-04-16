@@ -84,6 +84,7 @@ const config = {
         sidebarPath: require.resolve("./sidebarsNetwork.js"),
         sidebarItemsGenerator: require("./src/sidebar-network-generator"),
         editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+        exclude: ['**/component/**', '**/README.md'],
         showLastUpdateTime: true,
         showLastUpdateAuthor: true,
       },
@@ -356,7 +357,8 @@ const config = {
           "python",
           "docker",
           "kotlin",
-          "dart"
+          "dart",
+          "powershell"
         ],
       },
     }),
