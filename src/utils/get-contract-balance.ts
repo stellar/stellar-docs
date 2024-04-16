@@ -6,7 +6,7 @@ import {
   Address,
   SorobanRpc
 } from "@stellar/stellar-sdk";
-import { FUTURENET_DETAILS } from "../contants";
+import { FUTURENET_DETAILS } from "../constants";
 
 const XLM_DECIMALS = 7;
 
@@ -18,7 +18,7 @@ const server = new SorobanRpc.Server(RPC_URLS[FUTURENET_DETAILS.network]);
 
 function formatAmount(
   undivided: bigint,
-  decimals?: number = XLM_DECIMALS,
+  decimals: number = XLM_DECIMALS,
 ): string {
   const n =
     undivided.valueOf() < BigInt(Number.MAX_SAFE_INTEGER)
