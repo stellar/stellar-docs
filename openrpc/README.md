@@ -128,11 +128,9 @@ required in the example pairing objects:
 > Soroban RPC doesn't make use of any methods as notifications, so we've listed
 > it as required here.
 
-[method objects]: <https://spec.open-rpc.org/#method-object>
-[contentDescriptor objects]:
-    <https://spec.open-rpc.org/#content-descriptor-object>
-[schema objects]: <https://spec.open-rpc.org/#schema-object>
-[JSON Schema Specification 7]:
-    <https://json-schema.org/draft-07/json-schema-release-notes.html>
-[example objects]: <https://spec.open-rpc.org/#example-object>
-[example pairing objects]: <https://spec.open-rpc.org/#example-pairing-object>
+[method objects]: https://spec.open-rpc.org/#method-object
+[contentDescriptor objects]: https://spec.open-rpc.org/#content-descriptor-object
+[schema objects]: https://spec.open-rpc.org/#schema-object
+[JSON Schema Specification 7]: https://json-schema.org/draft-07/json-schema-release-notes.html
+[example objects]: https://spec.open-rpc.org/#example-object
+[example pairing objects]: https://spec.open-rpc.org/#example-pairing-object
