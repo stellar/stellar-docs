@@ -117,6 +117,7 @@ const config = {
           ]],
           rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
+          sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
           exclude: ['**/component/**', '**/README.md'],
         },
