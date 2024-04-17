@@ -5,7 +5,6 @@ import React, {
   ChangeEvent,
   FormEvent,
 } from "react";
-import { SorobanEventsProvider } from "@soroban-react/events";
 import BrowserOnly from "@docusaurus/BrowserOnly";
 import styles from "./style.module.css";
 import CompleteStepButton from "../complete-step-button";
@@ -118,10 +117,8 @@ function InnerComponent({ id }: { id: number }) {
 
 export function ParentChallengeContractForm({ id }: { id: number }) {
   return (
-    <SorobanEventsProvider>
       <BrowserOnly fallback={<div>Please connect to Testnet network.</div>}>
         {() => <InnerComponent id={id} />}
       </BrowserOnly>
-    </SorobanEventsProvider>
   );
 }
