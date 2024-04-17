@@ -25,23 +25,23 @@ case the challenge might have Pending status and require PR submission */
 const challengeConfig: { [key: string]: ChallengeConfig } = {
   0: {
     icon: iconBulb,
-    route: "/dapps/dapp-challenges/challenge-0-crowdfund",
+    route: "/docs/learn/interactive/dapps/challenges/challenge-0-crowdfund",
     lastCheckpointRoute:
-      "/dapps/dapp-challenges/challenge-0-crowdfund#checkpoint-7--check-your-work",
+      "/docs/learn/interactive/dapps/challenges/challenge-0-crowdfund#checkpoint-7--check-your-work",
   },
   1: {
     icon: iconWallet,
-    route: "/dapps/dapp-challenges/challenge-1-payment",
+    route: "/docs/learn/interactive/dapps/challenges/challenge-1-payment",
   },
   2: {
     icon: iconBulb,
-    route: "/dapps/dapp-challenges/challenge-2-liquidity-pool",
+    route: "/docs/learn/interactive/dapps/challenges/challenge-2-liquidity-pool",
   },
   3: {
     icon: iconBulb,
-    route: "/dapps/dapp-challenges/challenge-3-oracle",
+    route: "/docs/learn/interactive/dapps/challenges/challenge-3-oracle",
     lastCheckpointRoute:
-    "/dapps/dapp-challenges/challenge-3-oracle#checkpoint-8--check-your-work",
+    "/docs/learn/interactive/dapps/challenges/challenge-3-oracle#checkpoint-8--check-your-work",
   },
 };
 const months = [
