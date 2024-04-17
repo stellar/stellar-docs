@@ -6,23 +6,23 @@ import { toast } from "react-toastify";
 import {
   LeaderboardParams,
   fetchLeaderboard,
-} from "../../services/leaderboard";
+} from "@site/src/services/leaderboard";
 import styles from "./style.module.css";
 import {
   fetchInitialChallenges,
   fetchUserProgress,
   resetUserProgress,
-} from "../../services/challenges";
-import useAuth from "../../hooks/useAuth";
-import DashboardHeader from "../../components/atoms/dashboard-header";
-import Leaderboard from "../../components/molecules/leaderboard";
-import ChallengesList from "../../components/atoms/challenges-list";
+} from "@site/src/services/challenges";
+import useAuth from "@site/src/hooks/useAuth";
+import DashboardHeader from "@site/src/components/atoms/dashboard-header";
+import Leaderboard from "@site/src/components/molecules/leaderboard";
+import ChallengesList from "@site/src/components/atoms/challenges-list";
 import {
   Challenge,
   ChallengeInfo,
   Leaderboard as LeaderboardI,
   Ranking,
-} from "../../interfaces/challenge";
+} from "@site/src/interfaces/challenge";
 
 export default function Dashboard() {
   const { address, isConnected, connect } = useAuth();
