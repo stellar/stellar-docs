@@ -267,19 +267,19 @@ sdpUIBaseURL="http://$tenant.stellar.local:3000"
 ownerEmail="owner@$tenant.org"
 
 curl -X POST http://localhost:8003/tenants \
-        -H "Content-Type: application/json" \
-        -H "$AuthHeader" \
-        -d '{
-                "name": "'"$tenant"'",
-                "organization_name": "Blue Corp",
-                "email_sender_type": "DRY_RUN",
-                "sms_sender_type": "DRY_RUN",
-                "base_url": "'"$baseURL"'",
-                "sdp_ui_base_url": "'"$sdpUIBaseURL"'",
-                "owner_email": "'"$ownerEmail"'",
-                "owner_first_name": "john",
-                "owner_last_name": "doe"
-        }'
+     -H "Content-Type: application/json" \
+     -H "$AuthHeader" \
+     -d '{
+            "name": "'"$tenant"'",
+            "organization_name": "Blue Corp",
+            "email_sender_type": "DRY_RUN",
+            "sms_sender_type": "DRY_RUN",
+            "base_url": "'"$baseURL"'",
+            "sdp_ui_base_url": "'"$sdpUIBaseURL"'",
+            "owner_email": "'"$ownerEmail"'",
+            "owner_first_name": "john",
+            "owner_last_name": "doe"
+     }'
 ```
 
 </CodeExample>
@@ -296,92 +296,165 @@ The field **name** is important because it's the tenant identifier. The other fi
 
 Now that we've provisioned a new tenant, we can import our data into it. We need to copy our old tables' data to the new tenant schema.
 
-An important note on this is that there are some tables that we don't need to copy. These tables are:
+Please notice that the following tables don't need to be copied:
 
 - **_gorp_migrations_**
 - **_auth_migrations_**
 - **_countries_**
 - **_organizations_**
 
-To import your data it's important to start with the following tables but we need to delete the pre-existing entries from the provisioned tenant, before importing it. These tables are:
-
-- **_auth_users_**
-- **_wallets_assets_**
-- **_assets_**
-- **_wallets_**
-
-The following SQL script deletes the entries on those tables:
-
-<CodeExample>
-
-```sql
-DELETE FROM sdp_<tenant name>.auth_users;
-DELETE FROM sdp_<tenant name>.wallets_assets;
-DELETE FROM sdp_<tenant name>.assets;
-DELETE FROM sdp_<tenant name>.wallets;
-```
-
-</CodeExample>
-
-After this step, you can import the data for those tables. Remember importing them in the opposite order they were deleted.
-
-Next, we can import the tables left. We recommend following the table order described here because foreign keys references:
-
-- **_receivers_**
-- **_receiver_wallets_**
-- **_receiver_verifications_**
-- **_disbursements_**
-- **_payments_**
-- **_messages_**
-- **_auth_user_mfa_codes_**
-- **_Auth_user_password_reset_**
-
-_**Note**: some columns like **status** and **types** have their enum type, so you probably will need to cast values to the type (i.e. **status::sdp_bluecorp.payment_status**)_
-
-With this, we complete importing the SDP data but still need to import the Transaction Submitter Service data. To that, we will import our data to the tss schema tables. But before importing the submitter_transactions table we need to get the tenant ID generated for our provisioned tenant:
-
-<CodeExample>
-
-```sql
-SELECT id, name FROM public.tenants;
-```
-
-</CodeExample>
-
-This query retrieves the ID for the tenant.
-
-- **_channel_accounts_** will be imported to **_tss.channel_accounts_**
-- **_submitter_transactions_** will be imported to **_tss.submitter_transactions_**. Note that 2 new columns were added for this table on this version **_tenant_id_** and **_distribution_account_**, for the **_tenant_id_** column we will add the ID we got before, and for the **_distribution_account_** we set the public key of the distribution account.
-- **_tss.vault_**  this table is used for storing encrypted distribution account private keys when `DISTRIBUTION_SIGNER_TYPE=DISTRIBUTION_ACCOUNT_DB`
-
-Now, the migration from the non-tenant version to the tenant version is complete. You can log in to your SDP
-
-### [Optional] Drop old tables
-
-In case you applied these changes to the same database you were using before, you may now drop the SDP tables from the public schema since your tenant now has its own schema. Please, be careful running these commands since it can result in permanent data loss.
+To import your data from the single-tenant structure, we'll start by removing pre-existing multi-tenant entries that were automatically added when provisioning the tenant:
 
 <CodeExample>
 
 ```sql
 BEGIN TRANSACTION;
-DROP TABLE public.wallets CASCADE;
-DROP TABLE public.assets CASCADE;
-DROP TABLE public.receiver_verifications CASCADE;
-DROP TABLE public.receiver_wallets CASCADE;
-DROP TABLE public.receivers CASCADE;
+
+DELETE FROM sdp_<tenant name>.auth_users;
+DELETE FROM sdp_<tenant name>.wallets_assets;
+DELETE FROM sdp_<tenant name>.assets;
+DELETE FROM sdp_<tenant name>.wallets;
+
+COMMIT;
+```
+
+</CodeExample>
+
+Now we can import the data for the remaining tenant tables. Please notice that some tables cannot be imported directly due to a custom-type conflict. For instance, the `status` column in the `public.payments` table depends on `public.payment_status` enum type, while the one in the `sdp_<tenant name>.payments` table depends on the `sdp_<tenant name>.payment_status` enum type. To solve this, we update the type in the source table to match the destination table type:
+
+<CodeExample>
+
+```sql
+-- INSERT new data:
+BEGIN TRANSACTION;
+
+-- These tables can be copied without changing any types in the source table columns:
+INSERT INTO sdp_<tenant name>.wallets SELECT * FROM public.wallets;
+INSERT INTO sdp_<tenant name>.assets SELECT * FROM public.assets;
+INSERT INTO sdp_<tenant name>.wallets_assets SELECT * FROM public.wallets_assets;
+INSERT INTO sdp_<tenant name>.auth_users SELECT * FROM public.auth_users;
+INSERT INTO sdp_<tenant name>.receivers SELECT * FROM public.receivers;
+INSERT INTO sdp_<tenant name>.auth_user_mfa_codes SELECT * FROM public.auth_user_mfa_codes;
+INSERT INTO sdp_<tenant name>.auth_user_password_reset SELECT * FROM public.auth_user_password_reset;
+
+-- These tables need to have the type of some columns changed, we do that with the `ALTER TABLE` directives:
+-- NOTE: we're not reverting the types back to the original ones, as the source tables will be dropped after the migration.
+ALTER TABLE public.receiver_wallets
+	ALTER COLUMN status DROP DEFAULT,
+	ALTER COLUMN status TYPE sdp_<tenant name>.receiver_wallet_status
+		USING status::text::sdp_<tenant name>.receiver_wallet_status;
+INSERT INTO sdp_<tenant name>.receiver_wallets SELECT * FROM public.receiver_wallets;
+
+ALTER TABLE public.receiver_verifications
+	ALTER COLUMN verification_field TYPE sdp_<tenant name>.verification_type
+		USING verification_field::text::sdp_<tenant name>.verification_type;
+INSERT INTO sdp_<tenant name>.receiver_verifications SELECT * FROM public.receiver_verifications;
+
+ALTER TABLE public.disbursements
+	ALTER COLUMN status DROP DEFAULT,
+	ALTER COLUMN status TYPE sdp_<tenant name>.disbursement_status
+		USING status::text::sdp_<tenant name>.disbursement_status;
+ALTER TABLE public.disbursements
+	ALTER COLUMN verification_field DROP DEFAULT,
+	ALTER COLUMN verification_field TYPE sdp_<tenant name>.verification_type
+		USING verification_field::text::sdp_<tenant name>.verification_type;
+INSERT INTO sdp_<tenant name>.disbursements SELECT * FROM public.disbursements;
+
+ALTER TABLE public.payments
+	ALTER COLUMN status DROP DEFAULT,
+	ALTER COLUMN status TYPE sdp_<tenant name>.payment_status
+		USING status::text::sdp_<tenant name>.payment_status;
+INSERT INTO sdp_<tenant name>.payments SELECT * FROM public.payments;
+
+ALTER TABLE public.messages
+	ALTER COLUMN status DROP DEFAULT,
+	ALTER COLUMN status TYPE sdp_<tenant name>.message_status
+		USING status::text::sdp_<tenant name>.message_status;
+ALTER TABLE public.messages
+	ALTER COLUMN type TYPE sdp_<tenant name>.message_type
+		USING type::text::sdp_<tenant name>.message_type;
+INSERT INTO sdp_<tenant name>.messages SELECT * FROM public.messages;
+
+COMMIT;
+```
+
+</CodeExample>
+
+This concludes the SDP **tenant data** import, so the next step will be to import the Transaction Submitter Service (TSS) data. As a pre-requisite for that, make sure you have exactly one result in from this query and that no fields are empty:
+
+<CodeExample>
+
+```sql
+SELECT id, name, distribution_account FROM public.tenants;
+```
+
+</CodeExample>
+
+Now we can use these fields to import the TSS data:
+
+<CodeExample>
+
+```sql
+BEGIN TRANSACTION;
+
+-- TABLE 1: channel_accounts
+INSERT INTO tss.channel_accounts SELECT * FROM public.channel_accounts;
+
+-- TABLE 2: submitter_transactions
+---- 2.1: add new columns to the transaction_submitter table and populate them
+ALTER TABLE public.submitter_transactions
+    ADD COLUMN tenant_id VARCHAR(36),
+    ADD COLUMN distribution_account VARCHAR(56);
+WITH SelectedTenant AS (
+    SELECT id AS tenant_id, distribution_account
+    FROM public.tenants
+    LIMIT 1
+)
+UPDATE public.submitter_transactions SET tenant_id = (SELECT tenant_id FROM SelectedTenant), distribution_account = (SELECT distribution_account FROM SelectedTenant);
+
+---- 2.2: copy values to the new table
+INSERT INTO tss.submitter_transactions 
+SELECT
+    id, external_id,
+    status::text::tss.transaction_status AS status,
+    status_history, status_message, asset_code, asset_issuer, amount, destination, created_at, updated_at, locked_at, started_at, sent_at, completed_at, synced_at, locked_until_ledger_number, stellar_transaction_hash, attempts_count, xdr_sent, xdr_received, tenant_id, distribution_account
+FROM public.submitter_transactions;
+
+COMMIT;
+```
+
+</CodeExample>
+
+This concludes the migration of the SDP data to the multi-tenant version. The next step is to drop the old tables that are no longer needed.
+
+### Drop Old Tables
+
+Now, the only missing step is to drop the single-tenant tables that should not be in the multi-tenant database:
+
+<CodeExample>
+
+```sql
+BEGIN TRANSACTION;
+
 DROP TABLE public.messages CASCADE;
-DROP TABLE public.auth_migrations CASCADE;
-DROP TABLE public.auth_user_mfa_codes CASCADE;
-DROP TABLE public.auth_user_password_reset CASCADE;
-DROP TABLE public.auth_users CASCADE;
-DROP TABLE public.countries CASCADE;
-DROP TABLE public.gorp_migrations CASCADE;
-DROP TABLE public.organizations CASCADE;
-DROP TABLE public.submitter_transactions CASCADE;
-DROP TABLE public.channel_accounts CASCADE;
-DROP TABLE public.wallets_assets CASCADE;
 DROP TABLE public.payments CASCADE;
 DROP TABLE public.disbursements CASCADE;
+DROP TABLE public.receiver_verifications CASCADE;
+DROP TABLE public.receiver_wallets CASCADE;
+DROP TABLE public.auth_user_password_reset CASCADE;
+DROP TABLE public.auth_user_mfa_codes CASCADE;
+DROP TABLE public.receivers CASCADE;
+DROP TABLE public.auth_users CASCADE;
+DROP TABLE public.wallets_assets CASCADE;
+DROP TABLE public.assets CASCADE;
+DROP TABLE public.wallets CASCADE;
+DROP TABLE public.organizations CASCADE;
+DROP TABLE public.gorp_migrations CASCADE;
+DROP TABLE public.auth_migrations CASCADE;
+DROP TABLE public.countries CASCADE;
+DROP TABLE public.submitter_transactions CASCADE;
+DROP TABLE public.channel_accounts CASCADE;
+
 COMMIT;
 ```
 
