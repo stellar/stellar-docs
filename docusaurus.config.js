@@ -357,7 +357,8 @@ const config = {
           "python",
           "docker",
           "kotlin",
-          "dart"
+          "dart",
+          "powershell"
         ],
       },
     }),
