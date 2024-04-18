@@ -275,6 +275,10 @@ const config = {
                 label: "Soroban Quest",
                 href: "https://fastcheapandoutofcontrol.com/tutorial",
               },
+              {
+                label: "Dapps Challenge",
+                href: "/docs/learn/interactive/dapps/introduction"
+              }
             ],
           },
           {
