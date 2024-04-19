@@ -46,7 +46,7 @@ No matter what you contribute, whether a PR or an issue, you can expect to recei
   - Blocked: these issues are being worked on but are blocked for some reason and need attention.
   - Done: these issues have been completed and can be closed.
 
-If you have questions, feel free to ping bri (.aythia) or ElliotFriend (.elliotfriend) in the [Stellar Developer Discord](https://discord.gg/stellardev).
+If you have questions, feel free to ask in the [Stellar Developer Discord](https://discord.gg/stellardev).
 
 ## Quick Start
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]
