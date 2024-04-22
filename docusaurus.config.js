@@ -252,10 +252,6 @@ const config = {
             className: "header-discord-link",
             'aria-label': "Discord",
           },
-          {
-            type: "search",
-            position: "right",
-          },
         ],
       },
       algolia: {
