@@ -238,13 +238,15 @@ const config = {
           },
           {
             href: "https://github.com/stellar/stellar-docs",
-            label: "GitHub",
             position: "right",
+            className: "header-github-link",
+            'aria-label': "GitHub",
           },
           {
             href: "https://discord.gg/stellardev",
-            label: "Discord",
             position: "right",
+            className: "header-discord-link",
+            'aria-label': "Discord",
           },
           {
             type: "search",
