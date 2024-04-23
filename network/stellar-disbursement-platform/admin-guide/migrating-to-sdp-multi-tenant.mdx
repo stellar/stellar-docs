@@ -204,17 +204,17 @@ The ensure command was updated from using the `--num-channel-accounts-ensure` fl
 
 ### Database Structure
 
-> TODO: rename public to admin after https://stellarorg.atlassian.net/browse/SDP-1147 is done.
-
 In the updated version, the database structure has been revised to accommodate multi-tenancy. As a result, the tables are now distributed across multiple schemas, and new tables have been introduced to support the multi-tenant architecture. The following schemas are used in the multi-tenant version:
 
-- **public (soon to be admin)**: it houses tables associated with tenant administration, referred to as the admin tables. It serves as the central point for managing tenant-related information and to resolve tenant schema names based on tenant IDs. None of these tables existed in the single-tenant version.
+- **admin**: it houses tables associated with tenant administration. It serves as the central point for managing tenant-related information and to resolve tenant schema names based on tenant IDs. None of these tables existed in the single-tenant version.
 - **sdp\_&lt;tenant_name&gt;**: are per-tenant schemas that are prefixed with `sdp_`. For example, for tenants BlueCorp and RedCorp, the provisioned schemas would be named `sdp_bluecorp` and `sdp_redcorp`, respectively. These schemas contain all necessary tables for the SDP operation tailored to each tenant, including per-tenant user authentication.
 - **tss**: is a schema dedicated to the Transaction Submitter Service (TSS). The TSS tables do not belong to any tenant, although each TSS transaction contains a column that signals which tenant it belongs to.
 
 These changes allow for the isolation of tenant data per schema, ensuring that each tenant's data is kept separate from other tenants.
 
 ## Step-by-Step Migration Guide
+
+> EDIT: the code contains a helper script called [`./dev/migrate_1.1.6_to_2.0.0.sh`](https://github.com/stellar/stellar-disbursement-platform-backend/pull/267) that does most of the below steps automatically for you. Keep in mind that you'll need to edit the script with values such as your database DSN, and your tenant name. If you see any errors, you may still need to resort to the steps below to incrementally execute the migration manually.
 
 Using the new database created from the single-tenant database dump as a starting point (as described in the [Database Backup & Setup](#database-backup--setup-) section), we can now proceed with the migration steps below.
 
@@ -237,9 +237,7 @@ Migration Commands:
 
 </CodeExample>
 
-> TODO: rename public to admin after https://stellarorg.atlassian.net/browse/SDP-1147 is done.
-
-These commands will create the tenant admin tables on the **public** (soon to be **admin**) schema and the Transaction Submitter Service tables on the **tss** schema, respectively.
+These commands will create the tenant admin tables on the **admin** schema and the Transaction Submitter Service tables on the **tss** schema, respectively.
 
 ### New Tenant Provisioning Process
 
@@ -394,7 +392,7 @@ This concludes the SDP **tenant data** import, so the next step will be to impor
 <CodeExample>
 
 ```sql
-SELECT id, name, distribution_account FROM public.tenants;
+SELECT id, name, distribution_account FROM admin.tenants;
 ```
 
 </CodeExample>
@@ -406,22 +404,18 @@ Now we can use these fields to import the TSS data:
 ```sql
 BEGIN TRANSACTION;
 
--- TABLE 1: channel_accounts
-INSERT INTO tss.channel_accounts SELECT * FROM public.channel_accounts;
-
--- TABLE 2: submitter_transactions
----- 2.1: add new columns to the transaction_submitter table and populate them
+---- 1. add new columns to the transaction_submitter table and populate them
 ALTER TABLE public.submitter_transactions
     ADD COLUMN tenant_id VARCHAR(36),
     ADD COLUMN distribution_account VARCHAR(56);
 WITH SelectedTenant AS (
     SELECT id AS tenant_id, distribution_account
-    FROM public.tenants
+    FROM admin.tenants
     LIMIT 1
 )
 UPDATE public.submitter_transactions SET tenant_id = (SELECT tenant_id FROM SelectedTenant), distribution_account = (SELECT distribution_account FROM SelectedTenant);
 
----- 2.2: copy values to the new table
+---- 2. copy values to the new table
 INSERT INTO tss.submitter_transactions 
 SELECT
     id, external_id,
