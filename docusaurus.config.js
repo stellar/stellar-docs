@@ -360,6 +360,8 @@ const config = {
           "docker",
           "kotlin",
           "dart",
+          "nginx",
+          "log",
           "powershell"
         ],
       },
