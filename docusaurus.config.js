@@ -33,14 +33,14 @@ const config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
-            outputDir: "network/horizon/resources", // Output directory for generated .mdx docs
+            outputDir: "network/horizon/api-reference/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
           },
           anchor_platform_api: {
             specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
-            outputDir: "network/anchor-platform/resources", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/api-reference/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -48,7 +48,7 @@ const config = {
           },
           anchor_platform_callbacks: {
             specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
-            outputDir: "network/anchor-platform/callbacks", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/api-reference/callbacks", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -56,7 +56,7 @@ const config = {
           },
           anchor_custody_api: {
             specPath: "openapi/anchor-platform/bundled_custody.yml", // Path to designated spec file
-            outputDir: "network/anchor-platform/custody-server", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/api-reference/custody-server", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -64,7 +64,7 @@ const config = {
           },
           stellar_disbursement_platform: {
             specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
-            outputDir: "network/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
+            outputDir: "network/stellar-disbursement-platform/api-reference/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -137,6 +137,10 @@ const config = {
       type: 'text/css',
       integrity: 'sha384-odtC+0UGzzFL/6PNoE8rX/SPcQDXBJ+uRepguP4QkPCm2LBxH3FA3y+fKSiJ+AmM',
       crossorigin: 'anonymous',
+    },
+    {
+      href: "https://use.fontawesome.com/releases/v6.5.2/css/all.css",
+      type: 'text/css',
     },
   ],
   themeConfig:
@@ -239,17 +243,15 @@ const config = {
           },
           {
             href: "https://github.com/stellar/stellar-docs",
-            label: "GitHub",
             position: "right",
+            className: "header-github-link",
+            'aria-label': "GitHub",
           },
           {
             href: "https://discord.gg/stellardev",
-            label: "Discord",
             position: "right",
-          },
-          {
-            type: "search",
-            position: "right",
+            className: "header-discord-link",
+            'aria-label': "Discord",
           },
         ],
       },
@@ -363,6 +365,8 @@ const config = {
           "docker",
           "kotlin",
           "dart",
+          "nginx",
+          "log",
           "powershell"
         ],
       },
