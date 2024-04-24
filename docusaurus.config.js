@@ -117,6 +117,7 @@ const config = {
           ]],
           rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
+          sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
           exclude: ['**/component/**', '**/README.md'],
         },
@@ -276,6 +277,10 @@ const config = {
                 label: "Soroban Quest",
                 href: "https://fastcheapandoutofcontrol.com/tutorial",
               },
+              {
+                label: "Dapps Challenge",
+                href: "/docs/learn/interactive/dapps/introduction"
+              }
             ],
           },
           {
