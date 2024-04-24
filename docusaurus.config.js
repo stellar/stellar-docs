@@ -117,6 +117,7 @@ const config = {
           ]],
           rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
+          sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
           exclude: ['**/component/**', '**/README.md'],
         },
@@ -136,6 +137,10 @@ const config = {
       type: 'text/css',
       integrity: 'sha384-odtC+0UGzzFL/6PNoE8rX/SPcQDXBJ+uRepguP4QkPCm2LBxH3FA3y+fKSiJ+AmM',
       crossorigin: 'anonymous',
+    },
+    {
+      href: "https://use.fontawesome.com/releases/v6.5.2/css/all.css",
+      type: 'text/css',
     },
   ],
   themeConfig:
@@ -238,17 +243,15 @@ const config = {
           },
           {
             href: "https://github.com/stellar/stellar-docs",
-            label: "GitHub",
             position: "right",
+            className: "header-github-link",
+            'aria-label': "GitHub",
           },
           {
             href: "https://discord.gg/stellardev",
-            label: "Discord",
             position: "right",
-          },
-          {
-            type: "search",
-            position: "right",
+            className: "header-discord-link",
+            'aria-label': "Discord",
           },
         ],
       },
@@ -274,6 +277,10 @@ const config = {
                 label: "Soroban Quest",
                 href: "https://fastcheapandoutofcontrol.com/tutorial",
               },
+              {
+                label: "Dapps Challenge",
+                href: "/docs/learn/interactive/dapps/introduction"
+              }
             ],
           },
           {
@@ -358,6 +365,8 @@ const config = {
           "docker",
           "kotlin",
           "dart",
+          "nginx",
+          "log",
           "powershell"
         ],
       },
