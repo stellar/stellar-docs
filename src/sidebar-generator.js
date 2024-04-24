@@ -21,7 +21,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     dappsChallenge.items.splice(1, 0, {
       type: 'link',
       href: '/docs/learn/interactive/dapps/dashboard',
-      label: 'Dashboard'
+      label: 'Dapps Challenge Dashboard'
     })
   }
 
