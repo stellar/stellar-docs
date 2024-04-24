@@ -137,6 +137,10 @@ const config = {
       integrity: 'sha384-odtC+0UGzzFL/6PNoE8rX/SPcQDXBJ+uRepguP4QkPCm2LBxH3FA3y+fKSiJ+AmM',
       crossorigin: 'anonymous',
     },
+    {
+      href: "https://use.fontawesome.com/releases/v6.5.2/css/all.css",
+      type: 'text/css',
+    },
   ],
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
@@ -238,17 +242,15 @@ const config = {
           },
           {
             href: "https://github.com/stellar/stellar-docs",
-            label: "GitHub",
             position: "right",
+            className: "header-github-link",
+            'aria-label': "GitHub",
           },
           {
             href: "https://discord.gg/stellardev",
-            label: "Discord",
             position: "right",
-          },
-          {
-            type: "search",
-            position: "right",
+            className: "header-discord-link",
+            'aria-label': "Discord",
           },
         ],
       },
