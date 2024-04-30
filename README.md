@@ -1,9 +1,8 @@
 # Stellar Documentation and API Reference <!-- omit in toc -->
 
-Welcome to the official home repository for [Documentation][docs] and
-[API Reference][api] for the [Stellar Network][stellar].
+Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
 
-# Table of Contents <!-- omit in toc -->
+## Table of Contents <!-- omit in toc -->
 
 - [Contributing](#contributing)
 - [Quick Start](#quick-start)
@@ -14,7 +13,7 @@ Welcome to the official home repository for [Documentation][docs] and
     - [Alert](#alert)
     - [Code Example](#code-example)
 
-# Contributing
+## Contributing
 
 Contributions are more than welcome! Thank you! 🎉
 
@@ -29,8 +28,28 @@ helpful and meaningful way. Markdown is super easy to learn, and will come quite
 naturally after only a bit of practice. You can always help fix typos, spelling,
 and broken links, too.
 
-# Quick Start
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]  
+You can contribute to the docs in several ways:
+
+- See something that needs to be fixed in the docs, like an error in the code or a typo? File a [pull request (PR)](https://github.com/stellar/stellar-docs/pulls) proposing to correct the error;
+- Think there is helpful content missing from the docs, like a specific how-to guide or piece of explanatory content? File an [issue](https://github.com/stellar/stellar-docs/issues) explaining what you’d like to see (be sure to search existing issues to avoid duplication);
+- Have an idea that could make the docs better, like a structural change or a new section idea? File an [issue](https://github.com/stellar/stellar-docs/issues) explaining what you’d like to see (these will be added to the Ideas section on the [Dev Docs board](https://github.com/orgs/stellar/projects/56/views/1) for discussion);
+- Want to complete an existing issue? Search through the issues to find something to work on! Issues without an assignee and labeled as a “Good First Issue” or with “Help Wanted” are great places to start! Once you’ve selected an issue to work on, file a PR with your proposed fix.
+
+No matter what you contribute, whether a PR or an issue, you can expect to receive a response from docs maintainers within one week.
+
+- PRs need to be reviewed and approved before merging. Look for either an approval or a follow-up question.
+- Issues will be prioritized, labeled, and assigned (if possible). You can check the status of your issue on the Dev Docs board. The status of issues according to the column is:
+  - Ideas: these issues are being actively discussed. Ideas will either be discarded or repurposed into an actionable issue and added to the queue within three weeks. 
+  - Backlog: these issues are not prioritized or actively being worked on.
+  - To Do: these issues are prioritized and will be worked on soon.
+  - In Progress: these issues are currently being worked on.
+  - Blocked: these issues are being worked on but are blocked for some reason and need attention.
+  - Done: these issues have been completed and can be closed.
+
+If you have questions, feel free to ask in the [Stellar Developer Discord](https://discord.gg/stellardev).
+
+## Quick Start
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][gitpod]
 
 To begin development on the documentation, you will first need [yarn][yarn]
@@ -55,7 +74,7 @@ npm run check:mdx # this will search for problems in the MDX files
 npm run format:mdx # this will fix any problems that were found
 ```
 
-# Repository Structure
+## Repository Structure
 
 - `/docs/` Contains all the documentation content. If you're contributing to the
   actual documentation, rather than site functionality, this is likely where you
@@ -88,9 +107,9 @@ npm run format:mdx # this will fix any problems that were found
     case-by-case basis, and it may be determined that a redirect isn't the right
     approach in some instances.)
 
-# Using Markdown
+## Using Markdown
 
-## Markdown Basics
+### Markdown Basics
 
 If you're unfamiliar with Markdown, there are **loads** of good tutorials and
 cheat sheets out there. Check out some of these resources to get a handle on the
@@ -100,24 +119,24 @@ basics:
 - [Interactive markdown tutorial][tutorial]
 - [The markdown guide][guide]
 
-## Custom Markdown
+### Custom Markdown
 
 Our repository uses some custom React components that can be used inside the
 `MDX` documents. Use them as follows:
 
 **Make sure that there is an empty line within the wrapper.** For example,
 
-```
+```text
 <Alert>
 <!-- EMPTY LINE AFTER THE COMPONENT'S OPENING TAG IS REQUIRED -->
 
-Note: the testnet is reset every three months, so when building on it, make sure you have a plan to recreate necessary accounts and other data. For more info, check out the [best practices for using the testnet](../../fundamentals-and-concepts/testnet-and-pubnet).
+Note: the testnet is reset every three months, so when building on it, make sure you have a plan to recreate necessary accounts and other data. For more info, check out the [best practices for using the testnet](../../learn/fundamentals/networks.mdx).
 
 <!-- EMPTY LINE BEFORE THE COMPONENT'S CLOSING TAG IS REQUIRED -->
 </Alert>
 ```
 
-### Alert
+#### Alert
 
 ![Testnet reset alert](./readme-imgs/alert.png)
 
@@ -134,7 +153,7 @@ Note: the testnet is reset every three months, so when building on it, make sure
 </Alert>
 ```
 
-### Code Example
+#### Code Example
 
 ![Create account code example](./readme-imgs/code-example.png)
 

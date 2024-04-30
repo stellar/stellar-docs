@@ -7,6 +7,7 @@ const config = {
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
   baseUrl: "/",
+  trailingSlash: false,
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
@@ -32,14 +33,14 @@ const config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
-            outputDir: "network/horizon/resources", // Output directory for generated .mdx docs
+            outputDir: "network/horizon/api-reference/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
           },
           anchor_platform_api: {
             specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
-            outputDir: "network/anchor-platform/resources", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/api-reference/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -47,7 +48,7 @@ const config = {
           },
           anchor_platform_callbacks: {
             specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
-            outputDir: "network/anchor-platform/callbacks", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/api-reference/callbacks", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -55,7 +56,7 @@ const config = {
           },
           anchor_custody_api: {
             specPath: "openapi/anchor-platform/bundled_custody.yml", // Path to designated spec file
-            outputDir: "network/anchor-platform/custody-server", // Output directory for generated .mdx docs
+            outputDir: "network/anchor-platform/api-reference/custody-server", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -63,7 +64,7 @@ const config = {
           },
           stellar_disbursement_platform: {
             specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
-            outputDir: "network/stellar-disbursement-platform/resources", // Output directory for generated .mdx docs
+            outputDir: "network/stellar-disbursement-platform/api-reference/resources", // Output directory for generated .mdx docs
             sidebarOptions: {
               groupPathsBy: "tag",
             },
@@ -83,6 +84,7 @@ const config = {
         sidebarPath: require.resolve("./sidebarsNetwork.js"),
         sidebarItemsGenerator: require("./src/sidebar-network-generator"),
         editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+        exclude: ['**/component/**', '**/README.md'],
         showLastUpdateTime: true,
         showLastUpdateAuthor: true,
       },
@@ -96,7 +98,15 @@ const config = {
       "classic",
       /** @type {import('@docusaurus/preset-classic').Options} */
       ({
-        blog: false,
+        blog: {
+          path: 'meeting-notes',
+          blogTitle: 'Meeting Notes',
+          blogDescription: 'Notes and recordings from the Soroban protocol & developers meetings',
+          blogSidebarTitle: 'All meetings',
+          blogSidebarCount: 'ALL',
+          postsPerPage: 'ALL',
+          routeBasePath: 'meetings',
+        },
         docs: {
           showLastUpdateTime: true,
           showLastUpdateAuthor: true,
@@ -107,6 +117,7 @@ const config = {
           ]],
           rehypePlugins: [require('rehype-katex')],
           sidebarPath: require.resolve("./sidebars.js"),
+          sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
           exclude: ['**/component/**', '**/README.md'],
         },
@@ -127,14 +138,14 @@ const config = {
       integrity: 'sha384-odtC+0UGzzFL/6PNoE8rX/SPcQDXBJ+uRepguP4QkPCm2LBxH3FA3y+fKSiJ+AmM',
       crossorigin: 'anonymous',
     },
+    {
+      href: "https://use.fontawesome.com/releases/v6.5.2/css/all.css",
+      type: 'text/css',
+    },
   ],
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
-      announcementBar: {
-        id: 'announcementBar-migration',
-        content: "🚧 <strong>Please pardon our dust</strong> 🚧 We're merging the <a target='_blank' href='https://soroban.stellar.org/docs'>Soroban documentation</a> into this site, and things may get moved or shuffled around. Please check <a target='_blank' href='https://github.com/stellar/soroban-docs/issues/740'>this GH issue</a> for updates.",
-      },
       docs: {
         sidebar: {
           autoCollapseCategories: false,
@@ -145,7 +156,7 @@ const config = {
           width: 100,
           src: "img/stellar-logo.svg",
           srcDark: "img/stellar-logo-dark.svg",
-          href: "/docs",
+          href: "/",
         },
         items: [
           {
@@ -156,8 +167,26 @@ const config = {
           },
           {
             type: 'docSidebar',
+            sidebarId: 'smartContracts',
+            label: 'Smart Contracts',
+            position: 'left',
+          },
+          {
+            type: 'docSidebar',
+            sidebarId: 'learn',
+            label: 'Learn',
+            position: 'left',
+          },
+          {
+            type: 'docSidebar',
             sidebarId: 'tools',
             label: 'Tools',
+            position: 'left',
+          },
+          {
+            type: 'docSidebar',
+            sidebarId: 'reference',
+            label: 'Reference',
             position: 'left',
           },
           {
@@ -185,7 +214,7 @@ const config = {
               },
               {
                 type: 'html',
-                value: '<hr><small>SDF Platforms</small>',
+                value: '<hr><small>Platforms</small>',
                 className: 'subtitle',
               },
               {
@@ -213,18 +242,21 @@ const config = {
             position: "left",
           },
           {
+            to: '/meetings',
+            label: 'Meetings',
+            position: 'right',
+          },
+          {
             href: "https://github.com/stellar/stellar-docs",
-            label: "GitHub",
             position: "right",
+            className: "header-github-link",
+            'aria-label': "GitHub",
           },
           {
             href: "https://discord.gg/stellardev",
-            label: "Discord",
             position: "right",
-          },
-          {
-            type: "search",
-            position: "right",
+            className: "header-discord-link",
+            'aria-label': "Discord",
           },
         ],
       },
@@ -239,7 +271,7 @@ const config = {
             title: "Resources",
             items: [
               {
-                label: "Developers Blog",
+                label: "Developer Blog",
                 href: "https://www.stellar.org/developers-blog",
               },
               {
@@ -247,9 +279,13 @@ const config = {
                 href: "https://quest.stellar.org/",
               },
               {
-                label: "Stellar Community Fund",
-                href: "https://communityfund.stellar.org/",
+                label: "Soroban Quest",
+                href: "https://fastcheapandoutofcontrol.com/tutorial",
               },
+              {
+                label: "Dapps Challenge",
+                href: "/docs/learn/interactive/dapps/introduction"
+              }
             ],
           },
           {
@@ -273,7 +309,7 @@ const config = {
               },
               {
                 label: "All Tools",
-                href: "https://developers.stellar.org/docs/tools",
+                href: "https://developers.stellar.org/docs/tools/developer-tools",
               },
             ],
           },
@@ -281,16 +317,20 @@ const config = {
             title: "Community",
             items: [
               {
-                label: "Developers Discord",
+                label: "Developer Discord",
                 href: "https://discord.gg/st7Mxd58BV",
               },
               {
-                label: "Developers Google Group",
+                label: "Developer Google Group",
                 href: "https://groups.google.com/g/stellar-dev",
               },
               {
                 label: "Stack Exchange",
                 href: "https://stellar.stackexchange.com/",
+              },
+              {
+                label: "Stellar Community Fund",
+                href: "https://communityfund.stellar.org/",
               },
             ],
           },
@@ -329,7 +369,10 @@ const config = {
           "python",
           "docker",
           "kotlin",
-          "dart"
+          "dart",
+          "nginx",
+          "log",
+          "powershell"
         ],
       },
     }),
