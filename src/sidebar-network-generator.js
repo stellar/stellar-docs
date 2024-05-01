@@ -1,5 +1,7 @@
-const fs = require("fs");
-const path = require("path");
+// const fs = require("fs");
+// const path = require("path");
+import fs from 'fs'
+import path from 'path'
 
 module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
   const docs = args.docs.filter(
@@ -25,7 +27,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     const sidebarPath = path.join(
       args.version.contentPath,
       args.item.dirName,
-      "./api-reference/resources/sidebar.js",
+      "./api-reference/resources/sidebar.ts",
     );
 
     if (resources && fs.existsSync(sidebarPath)) {
@@ -54,7 +56,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     const sidebarPath2 = path.join(
         args.version.contentPath,
         args.item.dirName,
-        "./api-reference/callbacks/sidebar.js",
+        "./api-reference/callbacks/sidebar.ts",
     );
 
     if (resources2 && fs.existsSync(sidebarPath2)) {
@@ -83,7 +85,7 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     const sidebarPath3 = path.join(
         args.version.contentPath,
         args.item.dirName,
-        "./api-reference/custody-server/sidebar.js",
+        "./api-reference/custody-server/sidebar.ts",
     );
 
     if (resources3 && fs.existsSync(sidebarPath3)) {

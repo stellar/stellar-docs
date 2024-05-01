@@ -1,4 +1,7 @@
 // @ts-check
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import { themes as prismThemes } from 'prism-react-renderer';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -79,7 +82,7 @@ const config = {
         id: "network",
         path: "network",
         routeBasePath: "/network",
-        docLayoutComponent: "@theme/DocPage",
+        docRootComponent: "@theme/DocRoot",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsNetwork.js"),
         sidebarItemsGenerator: require("./src/sidebar-network-generator"),
@@ -112,10 +115,10 @@ const config = {
           showLastUpdateAuthor: true,
           breadcrumbs: true,
           routeBasePath: "/docs",
-          remarkPlugins: [require("mdx-mermaid"), require('remark-math'), [
+          remarkPlugins: [require("mdx-mermaid"), remarkMath, [
             require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
           ]],
-          rehypePlugins: [require('rehype-katex')],
+          rehypePlugins: [rehypeKatex],
           sidebarPath: require.resolve("./sidebars.js"),
           sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
@@ -353,14 +356,14 @@ const config = {
         ],
       },
       prism: {
-        theme: require("prism-react-renderer/themes/github"),
-        darkTheme: require("prism-react-renderer/themes/vsDark"),
+        theme: prismThemes.github,
+        darkTheme: prismThemes.vsDark,
         additionalLanguages: [
           "java",
           "scala",
           "rust",
           "toml",
-          "json5",
+          // "json5",
           "python",
           "docker",
           "kotlin",
