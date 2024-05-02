@@ -9,6 +9,7 @@ import { WrapperApiReference } from "@site/src/components/WrapperApiReference";
 import styles from "./styles.module.scss";
 
 const LayoutWrapper = (props) => {
+  console.log('LayoutWrapper props', props)
   const {
     frontMatter: { api },
   } = useDoc();

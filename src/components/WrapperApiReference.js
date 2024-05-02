@@ -12,6 +12,7 @@ const RIGHT_COLUMN_COMPONENTS_NAME = {
 };
 
 export const WrapperApiReference = ({ children, ...props }) => {
+  console.log('WrapperApiReference children', children)
   const [rightColumnContent, middleColumnContent] = React.useMemo(
     () =>
       partition(
