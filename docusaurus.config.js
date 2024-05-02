@@ -213,6 +213,10 @@ const config = {
                 label: "Horizon",
               },
               {
+                to: "/network/data-indexers",
+                label: "Data Indexers",
+              },
+              {
                 type: 'html',
                 value: '<hr><small>Platforms</small>',
                 className: 'subtitle',
