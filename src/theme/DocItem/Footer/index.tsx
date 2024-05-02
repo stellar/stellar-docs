@@ -11,7 +11,6 @@ type Props = WrapperProps<typeof FooterType>;
 
 export default function FooterWrapper(props: Props): JSX.Element {
   const { metadata } = useDoc();
-  console.log('FooterWrapper metadata', metadata)
 
   const canDisplayDocCardsOnGuide = metadata.permalink?.startsWith('/docs/smart-contracts/guides');
   return (
