@@ -1,10 +1,13 @@
 import React from 'react';
 import ApiExplorer from '@theme-original/ApiExplorer';
+import type ApiExplorerType from '@theme-original/ApiExplorer';
+import type { WrapperProps } from '@docusaurus/types';
 import Admonition from "@theme/Admonition";
 import Link from "@docusaurus/Link";
 
-export default function ApiExplorerWrapper(props) {
-  console.log('api explorer wrapper props', props)
+type Props = WrapperProps<typeof ApiExplorerType>;
+
+export default function ApiExplorerWrapper(props: Props): JSX.Element {
   return (
     <>
       <ApiExplorer {...props} />
