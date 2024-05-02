@@ -13,7 +13,7 @@ export const CODE_LANGS = {
     javascript: 'JavaScript',
     js: 'JavaScript',
     json: 'JSON',
-    // json5: 'JSON5',
+    json5: 'JSON5',
     python: 'Python',
     scss: 'SCSS',
     sql: 'SQL',
