@@ -1,15 +1,15 @@
 import { useContext, useState } from "react";
 import { toast } from "react-toastify";
+// Import the Freighter library
+import { isConnected, setAllowed, getPublicKey } from "@stellar/freighter-api";
 import UserChallengesContext, {
   UserChallengesContextProps,
 } from "../store/user-challenges-context";
 
-// Import the Freighter library
-import { isConnected, setAllowed, getPublicKey } from "@stellar/freighter-api";
 
 const useAuth = () => {
   const { address, setAddress } = useContext<UserChallengesContextProps>(
-    UserChallengesContext
+    UserChallengesContext,
   );
 
   const [loading, setLoading] = useState(false);
@@ -36,7 +36,7 @@ const useAuth = () => {
         setLoading(false);
 
         return true;
-      } else {
+      }
         // Handle the case where Freighter is not installed
         toast("Freighter is not installed!", {
           type: "error",
@@ -45,7 +45,7 @@ const useAuth = () => {
           autoClose: 2000,
         });
         return false;
-      }
+
     } catch (e) {
       console.error("Connection error", e);
 

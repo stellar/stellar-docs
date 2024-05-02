@@ -2,7 +2,7 @@ import React from 'react';
 import Footer from '@theme-original/DocItem/Footer';
 import { useDoc } from "@docusaurus/theme-common/internal";
 import ReaderFeedback from '@site/src/components/ReaderFeedback';
-import DocCardList from '@theme/DocCardList'
+import DocCardList from '@theme/DocCardList';
 import type FooterType from '@theme/DocItem/Footer';
 import type { WrapperProps } from '@docusaurus/types';
 import clsx from 'clsx';

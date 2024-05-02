@@ -6,11 +6,11 @@ import { combineAdjacentStrings, partition } from "@site/src/helpers";
 import styles from "./styles.module.scss";
 
 export const ListItem = (props) => {
-  const children = props.children.props.children.filter((child) => child !== "\n")
+  const children = props.children.props.children.filter((child) => child !== "\n");
 
   const [name, sublist] = children;
 
-  const [typeElement, descriptionElement] = sublist.props.children.filter((child) => child !== "\n")
+  const [typeElement, descriptionElement] = sublist.props.children.filter((child) => child !== "\n");
 
   const type =
   typeElement.props.children === "skip" ? null : typeElement.props.children;
@@ -20,14 +20,14 @@ export const ListItem = (props) => {
     (child) => child?.type?.name !== "MDXUl",
   );
 
-  const collapsedList = []
+  const collapsedList = [];
   collapsedChildren.length > 0 && collapsedChildren[0].props.children
     .filter((child) => child !== "\n")
     .map((child) => {
       collapsedList.push(
-        <ListItem>{child}</ListItem>
-      )
-    })
+        <ListItem>{child}</ListItem>,
+      );
+    });
 
   return (
     <li className={styles.ListItem}>

@@ -32,14 +32,14 @@ function GuidesDocCardList(props: Props): JSX.Element {
             <section className={clsx('col', 'col--6', 'margin-bottom--lg', className)}>
               <h2>{item.label}</h2>
               {item.items.map((item, index) =>
-                <p className='margin-bottom--sm'><a href={item.href}>{item.label}</a></p>
+                <p className='margin-bottom--sm'><a href={item.href}>{item.label}</a></p>,
               )}
             </section>
-          )
+          );
         }
       })}
     </div>
-  )
+  );
 }
 
 function ExampleContractsDocCardList(props: Props): JSX.Element {
@@ -47,13 +47,13 @@ function ExampleContractsDocCardList(props: Props): JSX.Element {
   return (
     <section className={clsx('row', className)}>
       {items?.map((item, index) => {
-        const doc = useDocById(item.docId ?? undefined)
+        const doc = useDocById(item.docId ?? undefined);
         item.description = item.description ?? doc?.description;
         return (
           <p className='col col--12'>
             <a href={item.href}><strong>{item.label}</strong></a> - {item.description}
           </p>
-        )
+        );
       })}
     </section>
   );
