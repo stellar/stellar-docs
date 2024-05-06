@@ -23,9 +23,9 @@ export const ListItem = (props) => {
   const collapsedList = [];
   collapsedChildren.length > 0 && collapsedChildren[0].props.children
     .filter((child) => child !== "\n")
-    .map((child) => {
+    .map((child, index) => {
       collapsedList.push(
-        <ListItem>{child}</ListItem>,
+        <ListItem key={`collapsedItem-${index}`}>{child}</ListItem>,
       );
     });
 

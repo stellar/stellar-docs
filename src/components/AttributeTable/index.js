@@ -9,9 +9,9 @@ export const AttributeTable = ({ children }) => {
   const renderArray = [];
   children.props.children
     .filter((child) => child !== "\n")
-    .map((child) => {
+    .map((child, index) => {
       renderArray.push(
-        <ListItem>{child}</ListItem>,
+        <ListItem key={`attributeItem-${index}`}>{child}</ListItem>,
       );
     });
 
