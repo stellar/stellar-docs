@@ -13,6 +13,11 @@ const config = {
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
+  customFields: {
+    themeConfig: {
+      image: 'img/favicon-96x96.png',
+    },
+  },
   i18n: {
     defaultLocale: "en",
     locales: ["en"],
