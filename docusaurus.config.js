@@ -15,7 +15,7 @@ const config = {
   projectName: "stellar-docs",
   customFields: {
     themeConfig: {
-      image: 'img/favicon-96x96.png',
+      image: 'img/stellar_stacked.jpg',
     },
   },
   i18n: {
