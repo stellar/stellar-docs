@@ -151,6 +151,7 @@ const config = {
           autoCollapseCategories: false,
         },
       },
+      image: 'img/cropped-twitter-header.png',
       navbar: {
         logo: {
           width: 100,
