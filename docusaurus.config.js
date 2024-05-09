@@ -13,11 +13,6 @@ const config = {
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
-  customFields: {
-    themeConfig: {
-      image: 'img/cropped-twitter-header.png',
-    },
-  },
   i18n: {
     defaultLocale: "en",
     locales: ["en"],
@@ -156,7 +151,7 @@ const config = {
           autoCollapseCategories: false,
         },
       },
-      image: 'img/favicon-96x96.png',
+      image: 'cropped-twitter-header.png',
       navbar: {
         logo: {
           width: 100,
