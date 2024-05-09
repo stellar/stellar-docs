@@ -156,6 +156,7 @@ const config = {
           autoCollapseCategories: false,
         },
       },
+      image: 'img/favicon-96x96.png',
       navbar: {
         logo: {
           width: 100,
