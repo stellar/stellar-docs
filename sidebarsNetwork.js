@@ -26,7 +26,7 @@ const sidebars = {
         },
         {
           type: 'category',
-          label: 'References',
+          label: 'Reference',
           items: [
             {
               type: 'link',
