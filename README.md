@@ -2,7 +2,7 @@
 
 Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
 
-If you're here for the Deep Dive Docs Bounty, please navigate to the bottom of this page for all relevant information: [Deep Dive Docs Bounty](#welcome-to-the-deep-dive-docs-bounty).
+If you're here for the Deep Dive Docs Bounty, please navigate to the bottom of this page for all relevant information: [Deep Dive Docs Bounty](#welcome-to-the-deep-dive-docs-bounty-).
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -14,7 +14,7 @@ If you're here for the Deep Dive Docs Bounty, please navigate to the bottom of t
   - [Custom Markdown](#custom-markdown)
     - [Alert](#alert)
     - [Code Example](#code-example)
-- [Deep Dive Docs Bounty](#welcome-to-the-deep-dive-docs-bounty)
+- [Deep Dive Docs Bounty](#welcome-to-the-deep-dive-docs-bounty-)
 
 ## Contributing
 
