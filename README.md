@@ -55,8 +55,17 @@ If you have questions, feel free to ask in the [Stellar Developer Discord](https
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][gitpod]
 
-To begin development on the documentation, you will first need [yarn][yarn]
-installed on your system. Once it is, you can run the following commands:
+### Prerequisites
+
+To begin development on the documentation, you will first need to install the following:
+
+- Node.js (v19, not higher): see https://nodejs.org/en/download/package-manager for details for your system
+- npm: e.g. `sudo apt install npm` on Ubuntu
+- yarn: `npm install yarn`
+
+### Development
+
+Once all the prerequisites have been installed, you can run the following commands:
 
 ```bash
 git clone https://github.com/stellar/stellar-docs
@@ -69,8 +78,8 @@ This will begin the development server, and open a browser window/tab pointing
 to `http://localhost:3000/docs/`. This development server will auto-reload when
 it detects changes to the repository.
 
-After you've made your changes, please use `prettier` to ensure consistent
-formatting throughout the repository:
+After you've made your changes, use the following commands to ensure the consistent
+MDX file formatting and style across the repository:
 
 ```bash
 npm run check:mdx # this will search for problems in the MDX files
@@ -311,7 +320,6 @@ SDF’s failure to enforce any of these terms or guidelines shall not constitute
 [coc]: https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md
 [docusaurus]: https://docusaurus.io
 [mdx]: https://mdxjs.com
-[yarn]: https://yarnpkg.com/
 [commonmark]: https://commonmark.org/help/
 [tutorial]: https://www.markdowntutorial.com/
 [guide]: https://www.markdownguide.org/
