@@ -237,9 +237,9 @@ If you haven't already, check out the [Stellar docs](https://developers.stellar.
 
 - Navigate to the [Stellar Developer Docs issues](https://github.com/stellar/stellar-docs/issues) on GitHub
 - Look through the open issues marked with the `Docs Bounty` label and pick one you’d like to work on
-- Mark your chosen issue as “In Progress” in the Projects - Status section and assign yourself to the issue
+- Comment and tag `briwylde08` on the issue you'd like to work on and she will mark your chosen issue as “In Progress” in the Projects - Status section and assign you to the issue
 - When you’re ready, open a [pull request (PR)](https://github.com/stellar/stellar-docs/pulls) in the Stellar Developer Docs GitHub and link to the corresponding issue in the PR description
-- When you’ve completed your work on the PR, tag briwylde08 as a reviewer and add a comment in the PR that it’s ready for review
+- When you’ve completed your work on the PR, comment on the PR tagging `briwylde08` to let her know the PR is ready for review
 - Bri will respond to your PR within three days of it being submitted and will mark the corresponding issue as “In Review” 
 
 We will review your submission within three weeks and reply on your submission thread to let you know if your submission qualifies to earn an award! If so, we will ask you to complete a form to collect the info necessary to validate and deliver an award.
