@@ -4,62 +4,79 @@ title: Error Handling
 
 import { CodeExample } from "@site/src/components/CodeExample";
 
-It’s important to anticipate errors your users may encounter as you develop on Stellar. In many tutorials throughout our developer documentation, we leave out error handling code to focus on the example. In this section, we will do the opposite and talk specifically about the errors.
+It’s important to anticipate errors your users may encounter as you develop on Stellar. In many tutorials throughout our developer documentation, we leave out error handling code to focus on the example. In this section, we will do the opposite and talk specifically about the errors. By the end of this section, you should be able to categorize errors and understand the best way to handle them in your application.
 
-By the end of this section, you should be able to categorize errors and understand the best way to handle them in your application.
+Many actions interact with the Stellar network through the Horizon API, and these possible actions fall into two main categories:
 
-There are two main parts to this section:
-
-1. Resolution strategies — recommended resolution strategies that apply to most error scenarios you may encounter
-2. Managing specific errors — a deeper dive into the errors themselves. Refer to this section if you have encountered a specific error and want a better understanding of its cause.
-
-For a fuller list of errors, see the Error section in our API documentation.
-
-## Part 1: resolution strategies
-
-Many actions interact with the Stellar network through the Horizon API, and these possible actions fall into two main categories: 1. Queries (any `GET` request, like to `/accounts`) and 2. Transaction submissions (a `POST /transactions`).
+1. Queries (any `GET` request, like to `/accounts`)
+2. Transaction submissions (a `POST /transactions`, `POST /transactions_async`).
 
 There are many possible error codes when executing these actions, and you can typically handle these error codes using the following strategies:
 
 - Request adjustments: adjusting the request to resolve structural errors with queries or transaction submissions. Suppose you’ve included a bad parameter, malformed your XDR, or otherwise didn’t follow the endpoint’s specification. In these cases, resolve the error by referencing the details or result codes of the error response.
-- Retrying until success: this is the recommended way to work around latency or congestion issues encountered along the pipeline between your computer and the Stellar network, which can sometimes happen due to the nature of the distributed system.
+- Polling and retrying: this is the recommended way to work around latency or congestion issues encountered along the pipeline between your computer and the Stellar network, which can sometimes happen due to the nature of distributed systems.
 - Adjusting the transaction: this can also resolve issues but must be done with extreme care. If one of the above scenarios is in effect, it can trigger destructive duplicate actions (like sending a payment twice).
 
-Let’s get into these strategies in more detail. We will mainly focus on the transaction submission category for each strategy since queries only return a read-only request.
+Let’s get into these strategies in more detail.
 
-### Request adjustments strategy
-
-#### Queries
+## Error Handling for Queries
 
 Many `GET` requests have specific parameter requirements, and while the SDKs can help enforce them, you can still pass invalid arguments (for example, an asset string that isn’t SEP-11 compatible) that error out every time. In this scenario, there’s nothing you can do aside from following the API specification. The `extras` field of the error response will often clue you in on where to look and what to look for.
 
 <CodeExample>
 
-```bash
-curl -s https://horizon-testnet.stellar.org/claimable_balances/0000 | jq '.extras'
-{
-  "invalid_field": "id",
-  "reason": "Invalid claimable balance ID"
-}
-```
+    ```bash
+    curl -s https://horizon-testnet.stellar.org/claimable_balances/0000 | jq '.extras'
+    {
+        "invalid_field": "id",
+        "reason": "Invalid claimable balance ID"
+    }
+    ```
 
 </CodeExample>
 
 Note that the SDKs make it a point to distinguish an invalid request (as above) versus a missing resource (a `404 Not Found`) (for example, the generic `NetworkError` versus a `NotFoundError` in the JavaScript SDK), where the latter might not be considered an error depending on your situation.
 
-#### Transaction submissions
+[//]: # "1. Resolution strategies — recommended resolution strategies that apply to most error scenarios you may encounter"
+[//]: # "2. Managing specific errors — a deeper dive into the errors themselves. Refer to this section if you have encountered a specific error and want a better understanding of its cause."
+[//]: #
+[//]: # "For a fuller list of errors, see the Error section in our API documentation."
 
-Certain transaction submission failures also need adjustments to succeed. If the XDR is malformed, or the transaction is otherwise invalid, you’ll encounter a `400 Bad Request` (for example, see excluding a source account). Both transactions and their operations can be easily malformed: look at the `extras.result_codes` field for details and cross-reference them with the appropriate result codes documentation to determine specifics.
+## Error Handling for Transaction Submissions
 
-Transaction fees are also a safe adjustment. If you get a `tx_insufficient_fee` error, refer to the Insufficient Fees and Surge Pricing section later in this document.
+Horizon currently supports two types of transaction submission endpoints:
 
-### Retrying until success strategy
+1. `/transactions_async`: Horizon submits a transaction to core in an async manner and passes the relevant core response back to the client. It is then the client's responsibility to poll for the status of that transaction.
+2. `/transactions`: Horizon submits a transaction to core and then waits for it to be ingested in the database. It will either timeout while waiting or return a transaction response on success.
 
-#### Transaction submissions
+There are some resolution strategies that are common between the 2 endpoints while some strategies are more endpoint specific.
 
-There are many possible scenarios (`504 Timeouts`, transient outages, congestion on the network) in which retrying your transaction submission is the only reasonable solution. However, only use this method after trying to make safe modifications to the transaction.
+### Request Adjustments
 
-There is no way to cancel a transaction after submitting it. So, successfully resubmitting your transaction has two considerations. 1. Time bounds. Time bounds are optional but recommended, as they put a time limit on the transaction- so either the transaction makes it onto the ledger or it times out depending on your time parameters. 2. If the transaction has already successfully made it to the ledger, Horizon will return any attempted resubmission. Only in cases where a transaction’s status is unknown (and thus will have a chance to make it on the ledger) will a resubmission to the network occur.
+Certain transaction submission failures also need adjustments to succeed.
+
+- If the XDR is malformed, or the transaction is otherwise invalid, you’ll encounter a `400 Bad Request` (for example, see excluding a source account). Both transactions and their operations can be easily malformed: look at the `extras.result_codes` field for details and cross-reference them with the appropriate result codes documentation to determine specifics.
+- Transaction fees are also a safe adjustment. If you get a `tx_insufficient_fee` error, refer to the Insufficient Fees and Surge Pricing section later in this document.
+
+### Polling and Retrying Transactions
+
+#### Async Transaction Submission
+
+Submissions using the async endpoint return a clear response back from core. There are different actions that clients can take based on the specific `tx_status` returned:
+
+1. `PENDING`: the submission is successful but the txn is still waiting to be included in the ledger. You should use a `GET` endpoint like `/transactions` to poll for the submitted txn and check if it makes into the ledger.
+2. `ERROR`: the submission did not go through due to some error with core. Take a look at the attached error message and retry the submission again.
+3. `TRY_AGAIN_LATER`: this indicates that the stellar-core instance is currently unable to process any submission requests. Clients should wait for sometime before retrying it again.
+
+#### Non-Async Transaction Submission
+
+Due to the blocking nature of the non-async endpoint, things are a little different compared to the async strategy. There are 3 possible scenarios that clients can encounter:
+
+1. The submission is successful and Horizon returns the transaction response back. This is the happy path and clients do not need to do anything but wait for Horizon's response.
+2. Core sends back an `ERROR` response from the submission. Clients should consult the attached error message and retry the submission again.
+3. Horizon responds with a `504 Timeout`. Due to the blocking nature of the endpoint, there are many possible scenarios behind the timeout - transient outages, congestion on the network, issues on Core side, issues on Horizon side etc.... There is no way to cancel a transaction after submitting it. So, you need to carefully consider before resubmitting your transactions.
+   1. Time bounds are optional but recommended, as they put a time limit on the transaction - so either the transaction makes it onto the ledger or it times out depending on your time parameters.
+   2. If the transaction has already successfully made it to the ledger, Horizon will return any attempted resubmission. Only in cases where a transaction’s status is unknown (and thus will have a chance to make it on the ledger) will a resubmission to the network occur.
 
 If a transaction successfully makes it into the ledger, any attempted resubmitted transactions will be returned to you.
 
@@ -105,9 +122,7 @@ function submitTransaction(tx, timeout) {
 
 We assume the existence of a sleep implementation similar to the one [here](https://stackoverflow.com/a/39914235) Be sure to integrate backoff into your retry mechanism. In our example error-handling code above, we implement a simple linear backoff, but there are [plenty of recommendations](https://backoff-utils.readthedocs.io/en/latest/strategies.html#why-are-backoff-strategies-useful) for various other strategies. Backoff is important both for maintaining performance and avoiding rate-limiting issues.
 
-### Adjusting the transaction- unsafe transaction adjustments strategy
-
-#### Transaction submissions
+### Adjusting the Transaction - unsafe transaction adjustments strategy
 
 Resubmitting an unchanged transaction (same operations, signatures, sequence number, etc.) is always safe to do. However, be careful when working around an error that does require changes to the transaction. It can cause duplicate transactions, which can cause problems (double payments, incorrect trustlines, and more).
 
