@@ -6,7 +6,6 @@ import type {WrapperProps} from '@docusaurus/types';
 type Props = WrapperProps<typeof DocSidebarType>;
 
 export default function DocSidebarWrapper(props: Props): JSX.Element {
-  console.log('DocsSidebarWrapper props', props);
   let newProps;
 
   // For all `/network` sidebars, remove the parent category from the sidebar
