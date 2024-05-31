@@ -12,7 +12,7 @@ which is one of the most used library used in Python to query database.
 Similarly to Prisma, SQLAlchemy is an Object Relational Mapper (ORM),
 allowing us to write database query directly in Python.
 
-Then, we will use [stellar-sdk](https://stellar-sdk.readthedocs.io/) to
+Then, we will use [stellar-sdk] to
 decode the events and process them.
 
 Let's get started!
@@ -62,11 +62,11 @@ Base.metadata.create_all(engine)
 
 ```text
 BEGIN (implicit)
-PRAGMA main.table_info("events")
+PRAGMA main.table_info("event")
 ...
-PRAGMA temp.table_info("events")
+PRAGMA temp.table_info("event")
 ...
-CREATE TABLE events (
+CREATE TABLE event (
 	id INTEGER NOT NULL,
 	topics JSON NOT NULL,
 	value VARCHAR NOT NULL,
@@ -76,33 +76,157 @@ CREATE TABLE events (
 COMMIT
 ```
 
-We are ready to add some events:
+We are ready to add some event. Remember that events published by Soroban are
+XDR encoded. We can use [stellar-sdk] to convert back and forth between values
+and XDR representation.
+
+In the following, we will use a topic called `transfer` and another one
+called `refund`. We can generate some test data:
+```python
+import stellar_sdk
+
+stellar_sdk.scval.to_symbol("transfer").to_xdr()
+# 'AAAADwAAAAh0cmFuc2Zlcg=='
+stellar_sdk.scval.to_int32(10_000).to_xdr()
+# 'AAAABAAAJxA='
+stellar_sdk.scval.to_int32(5_000).to_xdr()
+# 'AAAABAAAE4g='
+stellar_sdk.scval.to_int32(1_000).to_xdr()
+# 'AAAABAAAA+g='
+stellar_sdk.scval.to_address("GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH").to_xdr()
+# 'AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc='
+stellar_sdk.scval.to_address("GAFYGBHKVFP36EOIRGG74V42F3ORAA2ZWBXNULMNDXAMMXQH5MCIGXXI").to_xdr()
+# 'AAAAEgAAAAAAAAAAC4ME6qlfvxHIiY3+V5ou3RADWbBu2i2NHcDGXgfrBIM='
+```
+
+Now we can make some events using our ORM and send them to the database:
 
 ```python
 with orm.Session(engine) as session:
-    event = Event(
+    event_1 = Event(
         topics={
-            "topic_1": "AAAADwAAAAh0cmFuc2Zlcg=="
+            # transfer
+            "topic_1": "AAAADwAAAAh0cmFuc2Zlcg==",
+            # GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH
+            "topic_2": "AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc="
         },
-        value="AAAADwAAAAZjb21taXQAAA=="
+        value="AAAABAAAJxA="
     )
-    session.add_all([event])
+    event_2 = Event(
+        topics={
+            # transfer
+            "topic_1": "AAAADwAAAAh0cmFuc2Zlcg==",
+            # GAFYGBHKVFP36EOIRGG74V42F3ORAA2ZWBXNULMNDXAMMXQH5MCIGXXI
+            "topic_2": "AAAAEgAAAAAAAAAAC4ME6qlfvxHIiY3+V5ou3RADWbBu2i2NHcDGXgfrBIM="
+        },
+        value="AAAABAAAE4g="
+    )
+    session.add_all([event_1, event_2])
     session.commit()
 ```
 
 ```text
 BEGIN (implicit)
-INSERT INTO events (topics, value) VALUES (?, ?)
-[...] ('{"topic_1": "AAAADwAAAAh0cmFuc2Zlcg=="}', 'AAAADwAAAAZjb21taXQAAA==')
+INSERT INTO event (topics, value) VALUES (?, ?)
+[...] ('{"topic_1": "AAAADwAAAAh0cmFuc2Zlcg==", "topic_2": "AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc="}', 'AAAABAAAJxA=')
+INSERT INTO event (topics, value) VALUES (?, ?)
+[...] ('{"topic_1": "AAAADwAAAAh0cmFuc2Zlcg==", "topic_2": "AAAAEgAAAAAAAAAAC4ME6qlfvxHIiY3+V5ou3RADWbBu2i2NHcDGXgfrBIM="}', 'AAAABAAAE4g=')
 COMMIT
 ```
 
 ## Consuming events
 
+```python
+import sqlalchemy
 
+with orm.Session(engine) as session:
+    stmt = sqlalchemy.select(Event)
+    for event in session.scalars(stmt):
+        print(event.topics, event.value)
+```
+
+```text
+BEGIN (implicit)
+SELECT event.id, event.topics, event.value
+FROM event
+...
+{'topic_1': 'AAAADwAAAAh0cmFuc2Zlcg==', 'topic_2': 'AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc='} AAAABAAAJxA=
+{'topic_1': 'AAAADwAAAAh0cmFuc2Zlcg==', 'topic_2': 'AAAAEgAAAAAAAAAAC4ME6qlfvxHIiY3+V5ou3RADWbBu2i2NHcDGXgfrBIM='} AAAABAAAE4g=
+ROLLBACK
+```
+
+SQLAlchemy allows to make advanced queries so we could filter a single event
+based on some specific fields.
+
+```python
+with orm.Session(engine) as session:
+    stmt = sqlalchemy.select(Event).where(Event.topics.)
+    for event in session.scalars(stmt):
+        print(event.topics, event.value)
+```
+
+```text
+BEGIN (implicit)
+SELECT event.id, event.topics, event.value
+FROM event
+WHERE (event.topics LIKE '%' || ? || '%')
+[...] ('AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc=',)
+{'topic_1': 'AAAADwAAAAh0cmFuc2Zlcg==', 'topic_2': 'AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc='} AAAABAAAJxA=
+ROLLBACK
+```
+
+## Streaming events
+
+Now, we can consume events from a database by periodically calling the database
+to see if there is anything new. Or fetch data as needed by our application.
+There is another possibility: event listeners!
+
+While we are at it, we can make the results more readable or usable in Python
+by using the conversion helper provided by [stellar-sdk].
+
+```python
+@sqlalchemy.event.listens_for(Event, "after_insert")
+def event_handler(mapper, connection, target):
+    topics = target.topics
+    value = stellar_sdk.scval.to_native(target.value)
+
+    for key, topic in topics.items():
+        topics[key] = stellar_sdk.scval.to_native(topic)
+
+    print(f"Event listener: {topics} {value}")
+```
+
+Next time a record gets inserted into the database, this event handler will be
+called. Let's try this:
+
+```python
+with orm.Session(engine) as session:
+    event_3 = Event(
+        topics={
+            # transfer
+            "topic_1": "AAAADwAAAAh0cmFuc2Zlcg==",
+            # GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH
+            "topic_2": "AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc="
+        },
+        value="AAAABAAAJxA="
+    )
+    session.add_all([event_3])
+    session.commit()
+```
+
+```text
+BEGIN (implicit)
+INSERT INTO event (topics, value) VALUES (?, ?)
+[...] ('{"topic_1": "AAAADwAAAAh0cmFuc2Zlcg==", "topic_2": "AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc="}', 'AAAABAAAJxA=')
+Event listener: {'topic_1': 'transfer', 'topic_2': <Address [type=ACCOUNT, address=GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH]>} 10000
+COMMIT
+```
+
+Congratulations, you are ready to consume events from Soroban RPC!
 
 ## Idempotency considerations
 
 
 
 [ingest guide]: ingest.mdx
+[stellar-sdk]: https://stellar-sdk.readthedocs.io/
