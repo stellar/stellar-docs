@@ -1,5 +1,7 @@
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import type * as Plugin from '@docusaurus/types/src/plugin';
+import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -41,7 +43,8 @@ const config: Config = {
             sidebarOptions: {
               groupPathsBy: "tag",
             },
-          },
+            showSchemas: true,
+          } satisfies OpenApiPlugin.Options,
           anchor_platform_api: {
             specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
             outputDir: "network/anchor-platform/api-reference/resources", // Output directory for generated .mdx docs
@@ -49,7 +52,7 @@ const config: Config = {
               groupPathsBy: "tag",
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
-          },
+          } satisfies OpenApiPlugin.Options,
           anchor_platform_callbacks: {
             specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
             outputDir: "network/anchor-platform/api-reference/callbacks", // Output directory for generated .mdx docs
@@ -57,7 +60,7 @@ const config: Config = {
               groupPathsBy: "tag",
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
-          },
+          } satisfies OpenApiPlugin.Options,
           anchor_custody_api: {
             specPath: "openapi/anchor-platform/bundled_custody.yml", // Path to designated spec file
             outputDir: "network/anchor-platform/api-reference/custody-server", // Output directory for generated .mdx docs
@@ -65,7 +68,7 @@ const config: Config = {
               groupPathsBy: "tag",
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
-          },
+          } satisfies OpenApiPlugin.Options,
           stellar_disbursement_platform: {
             specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
             outputDir: "network/stellar-disbursement-platform/api-reference/resources", // Output directory for generated .mdx docs
@@ -73,8 +76,8 @@ const config: Config = {
               groupPathsBy: "tag",
             },
             template: "src/template.mustache", // Customize API MDX with mustache template
-          }
-        },
+          } satisfies OpenApiPlugin.Options,
+        } satisfies Plugin.PluginOptions,
       },
     ],
     [
