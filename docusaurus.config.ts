@@ -152,6 +152,7 @@ const config: Config = {
         autoCollapseCategories: false,
       },
     },
+    image: "img/dev-docs-preview.png",
     navbar: {
       logo: {
         width: 100,

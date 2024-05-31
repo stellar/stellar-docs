@@ -10,7 +10,7 @@ const WayfindingWays = [
     image: require('@site/static/icons/stellar-101.png').default,
     description: (
       <>
-        Learn the core concepts of Stellar in this educational section.
+        Learn about the core concepts of Stellar in this educational section.
       </>
     ),
     link: (
