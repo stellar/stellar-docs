@@ -99,7 +99,10 @@ const config: Config = {
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
   ],
-  themes: ["docusaurus-theme-openapi-docs"],
+  markdown: {
+    mermaid: true,
+  },
+  themes: ["docusaurus-theme-openapi-docs", '@docusaurus/theme-mermaid'],
   presets: [
     [
       "classic",
@@ -118,7 +121,7 @@ const config: Config = {
           showLastUpdateAuthor: true,
           breadcrumbs: true,
           routeBasePath: "/docs",
-          remarkPlugins: [require("mdx-mermaid"), remarkMath, [
+          remarkPlugins: [remarkMath, [
             require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
           ]],
           rehypePlugins: [rehypeKatex],
