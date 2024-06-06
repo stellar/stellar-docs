@@ -1,6 +1,6 @@
 import React from 'react';
 import ApiItem from '@theme-original/ApiItem';
-import DocItem from '@theme-original/DocItem';
+import DocItem from '@theme/DocItem';
 
 export default function ApiItemWrapper(props) {
   if (

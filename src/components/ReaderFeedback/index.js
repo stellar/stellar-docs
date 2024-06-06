@@ -4,7 +4,7 @@ import useIsBrowser from '@docusaurus/useIsBrowser';
 import IconThumbsUp from '@site/static/icons/thumbs-up.svg';
 import IconThumbsDown from '@site/static/icons/thumbs-down.svg';
 
-const ReaderFeedback = ({ pageId }) => {
+export default function ReaderFeedback({ pageId }) {
   const [feedbackGiven, setFeedbackGiven] = useState(false);
   const isBrowser = useIsBrowser();
   if (!isBrowser) {
@@ -36,6 +36,4 @@ const ReaderFeedback = ({ pageId }) => {
       )}
     </div>
   );
-};
-
-export default ReaderFeedback;
+}

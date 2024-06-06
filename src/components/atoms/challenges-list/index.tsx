@@ -32,9 +32,7 @@ export default function ChallengeList({
   const myChallanges = (
     <>
       {userChallenges?.length ? (
-        userChallenges?.map((challenge: ChallengeInfo) => {
-          return <ChallengeCard challenge={challenge} key={challenge.id} />;
-        })
+        userChallenges?.map((challenge: ChallengeInfo) => <ChallengeCard challenge={challenge} key={challenge.id} />)
       ) : (
         <p>You haven't completed any challenges yet.</p>
       )}

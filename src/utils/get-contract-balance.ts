@@ -4,7 +4,7 @@ import {
   TransactionBuilder,
   TimeoutInfinite,
   Address,
-  SorobanRpc
+  SorobanRpc,
 } from "@stellar/stellar-sdk";
 import { FUTURENET_DETAILS } from "../constants";
 

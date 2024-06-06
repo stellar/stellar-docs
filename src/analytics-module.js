@@ -12,7 +12,7 @@ module.exports = () => ({
             j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
             'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
             })(window,document,'script','dataLayer','GTM-M2JLH37');
-          `
+          `,
         },
         {
           tagName: 'meta',
@@ -20,7 +20,7 @@ module.exports = () => ({
             name: 'facebook-domain-verification',
             content: 'd0o7hha86jfxvtqyxz3d9i5wtfanmy',
           },
-        }
+        },
       ],
       preBodyTags: [
         {
@@ -37,8 +37,8 @@ module.exports = () => ({
           innerHTML: `
           <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-M2JLH37"
           height="0" width="0" style="display:none;visibility:hidden"></iframe>
-          `
-        }
+          `,
+        },
       ],
     };
   },

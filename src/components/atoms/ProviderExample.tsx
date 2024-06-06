@@ -1,4 +1,4 @@
-import React from 'react'
+import React from 'react';
 import {SorobanReactProvider} from '@soroban-react/core';
 import {SorobanEventsProvider} from '@soroban-react/events';
 import {futurenet, sandbox, standalone, testnet} from '@soroban-react/chains';
@@ -8,15 +8,15 @@ import {ChainMetadata, Connector} from "@soroban-react/types";
 const chains: ChainMetadata[] = [sandbox, standalone, futurenet, testnet];
 const connectors: Connector[] = [freighter()];
                                            
-  export default function ProviderExample({children}:{children: React.ReactNode}) {
+  export default function ProviderExample({children}: {children: React.ReactNode}) {
     return (
       <SorobanReactProvider
         chains={chains}
-        appName={"Example Stellar App"}
+        appName="Example Stellar App"
         connectors={connectors}>
           <SorobanEventsProvider>
           {children}
         </SorobanEventsProvider>
       </SorobanReactProvider>
-    )
+    );
   }
