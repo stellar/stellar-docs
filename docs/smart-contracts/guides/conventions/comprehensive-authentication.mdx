@@ -1,0 +1,528 @@
+## Guide to Implementing Custom Authentication and Authorization in Soroban Smart Contracts
+
+## Table of Contents
+
+1. [Introduction](#introduction)
+    - [Authorization Workflow](#authorization-workflow)
+2. [Overview of Soroban Authentication](#overview-of-soroban-authentication)
+    - [`require_auth`](#require_auth)
+    - [`require_auth_for_args`](#require_auth_for_args)
+    - [`authorize_as_current_contract`](#authorize_as_current_contract)
+3. [Step 1: Define the Custom Account Contract](#step-1-define-the-custom-account-contract)
+    - [Define Data Structures and Initialization](#define-data-structures-and-initialization)
+4. [Step 2: Define the Deposit and Withdraw Functions](#step-2-define-the-deposit-and-withdraw-functions)
+5. [Step 3: Implement Custom Authentication Logic](#step-3-implement-custom-authentication-logic)
+    - [Define Authorization Policy](#define-authorization-policy)
+6. [Step 4: Testing the Custom Account Contract](#step-4-testing-the-custom-account-contract)
+    - [Example Test: Single Authorization](#example-test-single-authorization)
+    - [Test Multi-Signature Authorization](#test-multi-signature-authorization)
+7. [Step 6: Deep Contract Authentication](#step-6-deep-contract-authentication)
+    - [Define Deep Authentication Contracts](#define-deep-authentication-contracts)
+    - [Test Deep Contract Authentication](#test-deep-contract-authentication)
+8. [Security Considerations](#security-considerations)
+9. [Conclusion](#conclusion)
+10. [Further Reading](#further-reading)
+
+### Introduction
+
+In this guide we will try to visit all aspects of Soroban auth.  To do this we will build a pretty simple custom multi-signature account contract which allows users to make a deposit of some token, and specify the accounts that have to sign in order to make a withdrawal from the account.  For fun we will also add a custom authorization policy which let's the invoker withdrawal more coins, based on how many users or contracts signed the transaction.  We will also attempt to demonstrate calling the multisig contract while authorizing it as another contract.  So for example, a user could deposit an amount, and another countract might be in the authorized list of addresses that can be a valid signer to make a withdrawal.
+
+#### Authorization Workflow
+
+1. **Invocation Structure**: In Soroban, every transaction can be viewed as a tree of invocations, which typically are calls to contract functions. Each invocation can generate sub-invocations, creating a layered structure of calls.
+
+2. **Authorization Checks**: Authorization checks are performed at these invocation boundaries. This structure is crucial because each contract may have different authors with varying trust levels. The boundaries where these invocations occur are logical points to perform authorization checks.
+
+3. **Requiring Authorization**: At any point during an invocation, a contract may call the `require_auth(Address)` function provided by the host. This function is designed to ensure that the invoking entity has the necessary authorization to execute the intended action.
+
+4. **Dynamic Authorization**: Soroban allows contracts to not only require but also provide authentication and authorization services dynamically. This flexibility supports complex architectures where contracts can act based on real-time decisions regarding permissions.
+
+#### Overview of Soroban Authentication
+
+Soroban smart contracts allow for complex authorization mechanisms. This guide will help you implement a custom account contract with multi-signature support and demonstrate how to use various authentication functions like `require_auth`, `require_auth_for_args`, and `authorize_as_current_contract`. You can also implement custom authentication logic by implementing `__check_auth()` as a function on your contract.
+
+#### `require_auth`
+
+The `require_auth` function is used to ensure that a particular address has authorized the current contract invocation. It is a straightforward way to enforce that an action being taken within a contract has the explicit permission of the address in question.
+
+**Example Usage:**
+
+```rust
+impl IncrementContract {
+    pub fn increment(env: Env, user: Address, value: u32) -> u32 {
+        user.require_auth(); // Ensure the user has authorized this call
+        value + 1 // Proceed with increment logic
+    }
+}
+```
+
+#### `require_auth_for_args`
+
+This function extends `require_auth` by allowing the contract to specify which arguments need to be authorized, thus providing finer control over what exactly is being authorized.
+
+**Example Usage:**
+
+```rust
+user.require_auth_for_args((&user, value).into_val(&env)); // Authorize with specific arguments
+```
+
+#### `authorize_as_current_contract`
+
+Used for authorizing actions in a contract that will be called later in the execution stack. This is particularly useful for complex interactions involving multiple contracts.
+
+**Example Scenario:**
+
+```rust
+env.authorize_as_current_contract(vec![
+    InvokerContractAuthEntry::Contract(SubContractInvocation {
+        context: ContractContext {
+            contract: contract_c_address,
+            fn_name: Symbol::new(&env, "authorized_fn_c"),
+            args: (env.current_contract_address(),).into_val(&env),
+        },
+        sub_invocations: vec![&env],
+    })
+]);
+```
+
+### Step 1: Define the Custom Account Contract
+
+Start by defining the custom account contract with necessary functions and data structures. This contract will handle initialization with a list of signers, depositing tokens, and withdrawing tokens.
+
+#### Define Data Structures and Initialization
+
+We need to define data structures for storing signers and an initialization function to set up the contract.
+```rust
+use soroban_sdk::{
+    auth::{Context, CustomAccountInterface},
+    contract, contracterror, contractimpl, contracttype, symbol_short, token::Client as TokenClient, Address, BytesN, Env, Map,
+    Symbol, TryIntoVal, Vec,
+};
+
+#[derive(Clone)]
+#[contracttype]
+pub struct BalanceInfo {
+    pub token: Address,
+    pub amount: i128,
+    pub base_withdrawal_limit: i128,
+    pub authorized_addresses: Vec<Address>,
+    pub min_signers: u32,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    Balance(BytesN<32>),
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct AccSignature {
+    pub public_key: BytesN<32>,
+    pub signature: BytesN<64>,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum AccError {
+    NotEnoughSigners = 1,
+    InvalidSignature = 2,
+    InvalidContext = 3,
+    InsufficientFunds = 4,
+    WithdrawalLimitExceeded = 5,
+    UnknownSigner = 6,
+}
+```
+
+### Step 2: Define the Deposit and Withdraw functions
+
+Now, let's write the deposit and withdraw functions. The deposit function transfers tokens into the contract and stores balance information, while the withdraw function transfers tokens out of the contract, ensuring the withdrawal amount does not exceed the available balance, and that you can withdrawal up to the base withdrawal limit * the number of valid signers (signers that are in the authorized_addresses vec)
+
+```rust
+#[contract]
+pub struct CustomAccountContract;
+
+#[contractimpl]
+impl CustomAccountContract {
+    pub fn deposit(env: Env, from: Address, token: Address, amount: i128, authorized_addresses: Vec<Address>, min_signers: u32, base_withdrawal_limit: i128) -> Result<BytesN<32>, AccError> {
+        from.require_auth();
+
+        // Transfer token from `from` to this contract.
+        TokenClient::new(&env, &token).transfer(&from, &env.current_contract_address(), &amount);
+
+        // Create a unique identifier for this balance entry.
+        let balance_id = env.crypto().sha256(&(from.clone(), token.clone()).try_into_val(&env));
+
+        // Retrieve or initialize balance information.
+        let mut balance: BalanceInfo = env.storage().instance().get(&DataKey::Balance(balance_id.clone()))
+            .unwrap_or(BalanceInfo {
+                token: token.clone(),
+                amount: 0,
+                base_withdrawal_limit,
+                authorized_addresses: authorized_addresses.clone(),
+                min_signers,
+            });
+
+        // Update the balance.
+        balance.amount += amount;
+        balance.authorized_addresses = authorized_addresses;
+        balance.min_signers = min_signers;
+        balance.base_withdrawal_limit = base_withdrawal_limit;
+
+        // Store the updated balance.
+        env.storage().instance().set(&DataKey::Balance(balance_id.clone()), &balance);
+
+        Ok(balance_id)
+    }
+
+    pub fn withdraw(env: Env, balance_id: BytesN<32>, to: Address, amount: i128) -> Result<BalanceInfo, AccError> {
+        // Require the current contract to authorize the withdrawal.
+        env.current_contract_address().require_auth();
+
+        // Retrieve balance information.
+        let mut balance: BalanceInfo = env.storage().instance().get(&DataKey::Balance(balance_id.clone()))
+            .ok_or(AccError::InsufficientFunds)?;
+
+        // Check if the balance is sufficient.
+        if amount > balance.amount {
+            return Err(AccError::InsufficientFunds);
+        }
+
+        // Update the balance.
+        balance.amount -= amount;
+        env.storage().instance().set(&DataKey::Balance(balance_id.clone()), &balance);
+
+        // Transfer the token to the `to` address.
+        TokenClient::new(&env, &balance.token).transfer(&env.current_contract_address(), &to, &amount);
+
+        Ok(balance)
+    }
+}
+```
+
+### Step 3: Implement Custom Authentication Logic
+
+The `__check_auth` function is pivotal for custom authentication in account contracts. Each account contract must implement this special function, which takes the signature payload, signatures, and authorization context. If authentication fails, the function should return an error; otherwise, it will approve the authentication.
+
+This function serves as the 'entry point' for the account contract, and its implementation is mandatory. When `require_auth` is invoked for the address of this contract, it triggers the `__check_auth` function with the necessary arguments. Successful authentication and authorization checks should result in the function returning `()`, while failures should result in an error or panic.
+
+The `__check_auth` function processes the payload that needed to be signed, a vector of signatures (`Vec<AccSignature>` in this context), and the authorization context, which includes all the invocations requiring verification. This function must validate the signatures and can also use the `auth_context` to enforce additional authorization policies, such as token spend limits.
+
+The Soroban host ensures that `__check_auth` is only called during `require_auth` verification. Therefore, it can safely mutate its state without needing extra authorization. For instance, it can store token spend limits per time period rather than enforcing limits per contract call.
+
+It's important to note that the `__check_auth` function should not call `require_auth` on the contract's own address to avoid infinite recursion.
+
+```rust
+impl CustomAccountInterface for CustomAccountContract {
+    type Signature = Vec<AccSignature>;
+    type Error = AccError;
+
+    fn __check_auth(env: Env, signature_payload: BytesN<32>, signatures: Vec<AccSignature>, auth_context: Vec<Context>) -> Result<(), AccError> {
+        // Perform authentication and authorization policy verification in a single function.
+        authenticate_and_verify_policy(&env, &signature_payload, &signatures, &auth_context)?;
+
+        Ok(())
+    }
+}
+```
+#### Define Authorization Policy
+Combine authentication and authorization policy verification. Check if the signatures are valid, count the number of valid signatures, and ensure the withdrawal amount does not exceed the dynamic limit based on the number of valid signatures.
+
+
+```rust
+
+fn authenticate_and_verify_policy(env: &Env, signature_payload: &BytesN<32>, signatures: &Vec<AccSignature>, auth_context: &Vec<Context>) -> Result<(), AccError> {
+    let mut valid_signatures_count = 0;
+
+    // Iterate through each context.
+    for context in auth_context.iter() {
+        let contract_context = match context {
+            Context::Contract(c) => c,
+            _ => return Err(AccError::InvalidContext),
+        };
+
+        // Retrieve the balance_id from the contract context arguments (assuming it's the first argument).
+        let balance_id: BytesN<32> = contract_context.args.get(0).unwrap().try_into_val(env).unwrap();
+        let balance_info: BalanceInfo = env.storage().instance().get(&DataKey::Balance(balance_id))
+            .ok_or(AccError::InvalidContext)?;
+
+        // Check that all the signers are authorized addresses.
+        for signature in signatures {
+            let address = Address::from_key(signature.public_key.clone());
+            if balance_info.authorized_addresses.contains(&address) {
+                // Verify the signature.
+                env.crypto().ed25519_verify(
+                    &signature.public_key,
+                    &signature_payload.clone().into(),
+                    &signature.signature,
+                ).map_err(|_| AccError::InvalidSignature)?;
+                
+                // Increment the count of valid signatures.
+                valid_signatures_count += 1;
+            }
+        }
+
+        // Check if the required number of valid signatures are provided.
+        if valid_signatures_count < balance_info.min_signers as usize {
+            return Err(AccError::NotEnoughSigners);
+        }
+
+        // Calculate the dynamic withdrawal limit.
+        let dynamic_withdrawal_limit = balance_info.base_withdrawal_limit * valid_signatures_count as i128;
+
+        // Check if the amount exceeds the dynamic withdrawal limit.
+        if contract_context.fn_name == symbol_short!("withdraw") {
+            let amount: i128 = contract_context.args.get(2).unwrap().try_into_val(env).unwrap();
+            if amount > dynamic_withdrawal_limit {
+                return Err(AccError::WithdrawalLimitExceeded);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+
+### Step 4: Testing the Custom Account Contract
+
+We will test our custom account contract to ensure it behaves as expected. Let's start with basic single authorization tests and then move to multi-signature and deep contract authentication.
+
+#### Example Test: Single Authorization
+
+```rust
+#![cfg(test)]
+extern crate std;
+
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
+    token, Address, Env, IntoVal,
+};
+
+use crate::{CustomAccountContract, CustomAccountContractClient};
+
+#[test]
+fn test_single_auth() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, CustomAccountContract);
+    let client = CustomAccountContractClient::new(&env, &contract_id);
+
+    let user = Address::generate(&env);
+    let token = token::Client::new(&env, &Address::generate(&env));
+    token.mint(&user, 1000);
+
+    client.deposit(&user, &token.address, 1000, vec![user.clone()], 1);
+
+    let signatures = vec![AccSignature {
+        public_key: user.to_bytes(),
+        signature: BytesN::random(&env),
+    }];
+
+    client.withdraw(&user, &token.address, 500, signatures.clone()).expect("Authorization failed");
+
+    // Verify that the correct authorizations were recorded
+    assert_eq!(
+        env.auths(),
+        std::vec![(
+            user.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    contract_id.clone(),
+                    symbol_short!("withdraw"),
+                    (user.clone(), token.address.clone(), 500_i128, vec![user.clone()]).into_val(&env),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+}
+
+```
+
+#### Step 5: Test Multi-Signature Authorization
+
+To demonstrate multi-signature authorization, we will add tests that require multiple signatures for authorization.
+
+```rust
+#![cfg(test)]
+extern crate std;
+
+use super::*;
+use soroban_sdk::{testutils::{Address as _, MockAuth, MockAuthInvoke}, Env, BytesN, Symbol, Address, Signature};
+
+#[test]
+fn test_multi_sig_auth() {
+    let e = Env::default();
+    let contract_id = e.register_contract(None, CustomAccountContract);
+    let client = CustomAccountContractClient::new(&e, &contract_id);
+
+    let signer1 = Address::generate(&e);
+    let signer2 = Address::generate(&e);
+
+    client.deposit(&signer1, &BytesN::random(&e), 1000, vec![signer1.clone(), signer2.clone()], 2);
+
+    let payload = BytesN::random(&e);
+
+    let signatures = vec![
+        AccSignature {
+            public_key: signer1.to_bytes(),
+            signature: BytesN::random(&e),
+        },
+        AccSignature {
+            public_key: signer2.to_bytes(),
+            signature: BytesN::random(&e),
+        },
+    ];
+
+    client.withdraw(
+        &signer1,
+        &BytesN::random(&e),
+        500,
+        signatures.clone(),
+    ).expect("Authorization failed");
+
+    // Verify that the correct authorizations were recorded
+    assert_eq!(
+        e.auths(),
+        std::vec![
+            (
+                signer1.clone(),
+                AuthorizedInvocation {
+                    function: AuthorizedFunction::Contract((
+                        contract_id.clone(),
+                        symbol_short!("withdraw"),
+                        (signer1.clone(), BytesN::random(&e), 500_i128, vec![signer1.clone(), signer2.clone()]).into_val(&e),
+                    )),
+                    sub_invocations: std::vec![]
+                }
+            ),
+            (
+                signer2.clone(),
+                AuthorizedInvocation {
+                    function: AuthorizedFunction::Contract((
+                        contract_id.clone(),
+                        symbol_short!("withdraw"),
+                        (signer2.clone(), BytesN::random(&e), 500_i128, vec![signer1.clone(), signer2.clone()]).into_val(&e),
+                    )),
+                    sub_invocations: std::vec![]
+                }
+            )
+        ]
+    );
+}
+
+```
+
+### Step 6: Deep Contract Authentication
+
+To handle scenarios where another contract must authorize a multi-signature withdrawal, use the authorize_as_current_contract function.
+
+#### Define Deep Authentication Contracts
+
+```rust
+pub mod contract_a {
+    use soroban_sdk::{auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation}, contract, contractimpl, vec, Address, Env, Symbol};
+
+    use crate::contract_b::ContractBClient;
+
+    #[contract]
+    pub struct ContractA;
+
+    #[contractimpl]
+    impl ContractA {
+        pub fn call_b(env: Env, contract_b_address: Address, custom_account_address: Address, balance_id: BytesN<32>) {
+            env.authorize_as_current_contract(vec![
+                InvokerContractAuthEntry::Contract(SubContractInvocation {
+                    context: ContractContext {
+                        contract: custom_account_address.clone(),
+                        fn_name: Symbol::new(&env, "withdraw"),
+                        args: (balance_id.clone(), env.current_contract_address(), 100).into_val(&env),
+                    },
+                    sub_invocations: vec![InvokerContractAuthEntry::Contract(SubContractInvocation {
+                        context: ContractContext {
+                            contract: contract_b_address.clone(),
+                            fn_name: Symbol::new(&env, "authorized_fn_b"),
+                            args: (env.current_contract_address(), custom_account_address.clone(), balance_id.clone(),).into_val(&env),
+                        },
+                        sub_invocations: vec![],
+                    })],
+                })
+            ]);
+            let client = ContractBClient::new(&env, &contract_b_address);
+            client.authorized_fn_b(&env.current_contract_address(), &custom_account_address, balance_id);
+        }
+    }
+}
+
+pub mod contract_b {
+    use soroban_sdk::{contract, contractimpl, Address, Env};
+
+    #[contract]
+    pub struct ContractB;
+
+    #[contractimpl]
+    impl ContractB {
+        pub fn authorized_fn_b(env: Env, authorizer: Address, custom_account_address: Address, balance_id: BytesN<32>) {
+            authorizer.require_auth();
+            let client = CustomAccountContractClient::new(&env, &custom_account_address);
+            client.withdraw(&authorizer, &BytesN::random(&env), 100);
+        }
+    }
+}
+```
+
+#### Test Deep Contract Authentication
+
+```rust
+#[cfg(test)]
+mod deep_auth_tests {
+    use super::*;
+    use soroban_sdk::{testutils::{Address as _, MockAuth, MockAuthInvoke}, Env};
+
+    #[test]
+    fn test_deep_auth() {
+        let e = Env::default();
+        let custom_account_id = e.register_contract(None, CustomAccountContract);
+        let contract_a_id = e.register_contract(None, contract_a::ContractA);
+        let contract_b_id = e.register_contract(None, contract_b::ContractB);
+        let client = contract_a::ContractAClient::new(&e, &contract_a_id);
+
+        let user = Address::generate(&e);
+
+        client.mock_auths(&[
+            MockAuth {
+                address: &user,
+                invoke: &MockAuthInvoke {
+                    contract: &custom_account_id,
+                    fn_name: "withdraw",
+                    args: (&user,).into_val(&e),
+                    sub_invokes: &[MockAuthInvoke {
+                        contract: &contract_b_id,
+                        fn_name: "authorized_fn_b",
+                        args: (&user,).into_val(&e),
+                        sub_invokes: &[],
+                    }],
+                },
+            },
+        ])
+        .call_b(&contract_b_id, &custom_account_id);
+    }
+}
+
+```
+### Security Considerations
+
+When implementing authorization in your smart contracts, consider the following to enhance security:
+- Always verify that the authorization checks are placed correctly to prevent unauthorized actions.
+- Be cautious with `require_auth_for_args` to avoid mismatches between expected and actual arguments, which can lead to security vulnerabilities.
+- Regularly audit and test authorization logic under different scenarios to ensure there are no exploitable loopholes.
+- 
+### Conclusion
+This guide walks you through the implementation of a custom account contract on Soroban with multisig and dynamic withdrawal limits based on the number of valid signatures. By following these steps, you should be able to create a secure and flexible account contract that meets your needs.
+
+### Further Reading
+
+- [Stellar Smart Contract Internals: Authorization](../../learn/smart-contract-internals/authorization.mdx)
+- [Soroban Examples: Authorization](https://github.com/stellar/soroban-examples/tree/main/auth)
