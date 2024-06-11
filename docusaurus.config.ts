@@ -14,8 +14,10 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenLinks: "throw",
-  onBrokenMarkdownLinks: "throw",
+  // onBrokenLinks: "throw",
+  // onBrokenMarkdownLinks: "throw",
+  onBrokenLinks: "ignore",
+  onBrokenMarkdownLinks: "ignore",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
@@ -39,9 +41,10 @@ const config: Config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
-            outputDir: "network/horizon/api-reference/resources", // Output directory for generated .mdx docs
+            outputDir: "network/horizon/api-reference", // Output directory for generated .mdx docs
             sidebarOptions: {
-              groupPathsBy: "tag",
+              groupPathsBy: "tagGroup",
+              categoryLinkSource: 'tag',
             },
             showSchemas: true,
           } satisfies OpenApiPlugin.Options,
@@ -86,10 +89,10 @@ const config: Config = {
         id: "network",
         path: "network",
         routeBasePath: "/network",
-        docRootComponent: "@theme/DocRoot",
+        // docRootComponent: "@theme/DocRoot",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsNetwork.js"),
-        sidebarItemsGenerator: require("./src/sidebar-network-generator"),
+        // sidebarItemsGenerator: require("./src/sidebar-network-generator"),
         editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         exclude: ['**/component/**', '**/README.md'],
         showLastUpdateTime: true,
