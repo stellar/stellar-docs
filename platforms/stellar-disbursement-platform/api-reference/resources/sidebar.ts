@@ -348,6 +348,18 @@ const sidebar: SidebarsConfig = {
         },
       ],
     },
+    {
+      type: "category",
+      label: "Balances",
+      items: [
+        {
+          type: "doc",
+          id: "stellar-disbursement-platform/api-reference/resources/get-organization-circle-balances",
+          label: "Get Organization (Circle) Balances",
+          className: "api-method get",
+        },
+      ],
+    },
   ],
 };
 
