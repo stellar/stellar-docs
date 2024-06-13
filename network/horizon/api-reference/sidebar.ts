@@ -22,6 +22,12 @@ const sidebar: SidebarsConfig = {
           items: [
             {
               type: "doc",
+              id: "horizon/api-reference/schemas/account",
+              label: "Account",
+              className: "schema",
+            },
+            {
+              type: "doc",
               id: "horizon/api-reference/list-all-accounts",
               label: "List all Accounts",
               className: "api-method get",
@@ -86,6 +92,12 @@ const sidebar: SidebarsConfig = {
           items: [
             {
               type: "doc",
+              id: "horizon/api-reference/schemas/asset",
+              label: "Asset",
+              className: "schema",
+            },
+            {
+              type: "doc",
               id: "horizon/api-reference/list-all-assets",
               label: "List all Assets",
               className: "api-method get",
@@ -100,6 +112,12 @@ const sidebar: SidebarsConfig = {
             id: "horizon/api-reference/claimable-balances",
           },
           items: [
+            {
+              type: "doc",
+              id: "horizon/api-reference/schemas/claimable-balance",
+              label: "Claimable Balance",
+              className: "schema",
+            },
             {
               type: "doc",
               id: "horizon/api-reference/list-all-claimable-balances",
@@ -152,6 +170,12 @@ const sidebar: SidebarsConfig = {
           items: [
             {
               type: "doc",
+              id: "horizon/api-reference/schemas/liquidity-pool",
+              label: "Liquidity Pool",
+              className: "schema",
+            },
+            {
+              type: "doc",
               id: "horizon/api-reference/list-liquidity-pools",
               label: "List Liquidity Pools",
               className: "api-method get",
@@ -196,6 +220,12 @@ const sidebar: SidebarsConfig = {
             id: "horizon/api-reference/ledgers",
           },
           items: [
+            {
+              type: "doc",
+              id: "horizon/api-reference/schemas/ledger",
+              label: "Ledger",
+              className: "schema",
+            },
             {
               type: "doc",
               id: "horizon/api-reference/retrieve-a-ledger",
@@ -352,272 +382,6 @@ const sidebar: SidebarsConfig = {
             },
           ],
         },
-        {
-          type: "category",
-          label: "Schemas",
-          items: [
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/accident",
-              label: "Accident",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/link",
-              label: "link",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/links",
-              label: "Links",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/id",
-              label: "id",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/address",
-              label: "address",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/sequence",
-              label: "sequence",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/sequence-ledger",
-              label: "sequence_ledger",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/subentry-count",
-              label: "subentry_count",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/last-modified-ledger",
-              label: "last_modified_ledger",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/thresholds",
-              label: "thresholds",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/flags",
-              label: "flags",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/currency",
-              label: "currency",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/balancelinenative",
-              label: "BalanceLineNative",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/balancelineasset",
-              label: "BalanceLineAsset",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/balancelineliquiditypool",
-              label: "BalanceLineLiquidityPool",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/signers",
-              label: "signers",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/account",
-              label: "Account",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/signatures",
-              label: "signatures",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/transactionpreconditionstimebounds",
-              label: "TransactionPreconditionsTimebounds",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/transactionpreconditionsledgerbounds",
-              label: "TransactionPreconditionsLedgerbounds",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/transactionpreconditions",
-              label: "TransactionPreconditions",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/hash",
-              label: "hash",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/feebumptransaction",
-              label: "FeeBumpTransaction",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/innertransaction",
-              label: "InnerTransaction",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/transaction",
-              label: "Transaction",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/createaccount",
-              label: "CreateAccount",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/payment",
-              label: "Payment",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/pathpaymentstrictreceive",
-              label: "PathPaymentStrictReceive",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/pathpaymentstrictsend",
-              label: "PathPaymentStrictSend",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/accountmerge",
-              label: "AccountMerge",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/baseasset",
-              label: "BaseAsset",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/price",
-              label: "Price",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/offer",
-              label: "Offer",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/paging-token",
-              label: "paging_token",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/tradeprice",
-              label: "tradePrice",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/trade",
-              label: "Trade",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/asset",
-              label: "Asset",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/claimablebalances",
-              label: "ClaimableBalances",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/claimablebalance",
-              label: "ClaimableBalance",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/effect",
-              label: "Effect",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/feedistribution",
-              label: "FeeDistribution",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/feestats",
-              label: "FeeStats",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/ledger",
-              label: "Ledger",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/operation",
-              label: "Operation",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/liquiditypools",
-              label: "LiquidityPools",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/liquiditypool",
-              label: "LiquidityPool",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/orderbook",
-              label: "OrderBook",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/schemas-asset",
-              label: "schemas-Asset",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/path",
-              label: "Path",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/tradeaggregation",
-              label: "TradeAggregation",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/schemas-transaction",
-              label: "schemas-Transaction",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/submittransaction",
-              label: "SubmitTransaction",
-            },
-          ],
-        },
       ],
     },
     {
@@ -697,272 +461,6 @@ const sidebar: SidebarsConfig = {
               id: "horizon/api-reference/list-trade-aggregations",
               label: "List Trade Aggregations",
               className: "api-method get",
-            },
-          ],
-        },
-        {
-          type: "category",
-          label: "Schemas",
-          items: [
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/accident",
-              label: "Accident",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/link",
-              label: "link",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/links",
-              label: "Links",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/id",
-              label: "id",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/address",
-              label: "address",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/sequence",
-              label: "sequence",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/sequence-ledger",
-              label: "sequence_ledger",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/subentry-count",
-              label: "subentry_count",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/last-modified-ledger",
-              label: "last_modified_ledger",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/thresholds",
-              label: "thresholds",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/flags",
-              label: "flags",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/currency",
-              label: "currency",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/balancelinenative",
-              label: "BalanceLineNative",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/balancelineasset",
-              label: "BalanceLineAsset",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/balancelineliquiditypool",
-              label: "BalanceLineLiquidityPool",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/signers",
-              label: "signers",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/account",
-              label: "Account",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/signatures",
-              label: "signatures",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/transactionpreconditionstimebounds",
-              label: "TransactionPreconditionsTimebounds",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/transactionpreconditionsledgerbounds",
-              label: "TransactionPreconditionsLedgerbounds",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/transactionpreconditions",
-              label: "TransactionPreconditions",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/hash",
-              label: "hash",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/feebumptransaction",
-              label: "FeeBumpTransaction",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/innertransaction",
-              label: "InnerTransaction",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/transaction",
-              label: "Transaction",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/createaccount",
-              label: "CreateAccount",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/payment",
-              label: "Payment",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/pathpaymentstrictreceive",
-              label: "PathPaymentStrictReceive",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/pathpaymentstrictsend",
-              label: "PathPaymentStrictSend",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/accountmerge",
-              label: "AccountMerge",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/baseasset",
-              label: "BaseAsset",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/price",
-              label: "Price",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/offer",
-              label: "Offer",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/paging-token",
-              label: "paging_token",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/tradeprice",
-              label: "tradePrice",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/trade",
-              label: "Trade",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/asset",
-              label: "Asset",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/claimablebalances",
-              label: "ClaimableBalances",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/claimablebalance",
-              label: "ClaimableBalance",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/effect",
-              label: "Effect",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/feedistribution",
-              label: "FeeDistribution",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/feestats",
-              label: "FeeStats",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/ledger",
-              label: "Ledger",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/operation",
-              label: "Operation",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/liquiditypools",
-              label: "LiquidityPools",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/liquiditypool",
-              label: "LiquidityPool",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/orderbook",
-              label: "OrderBook",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/schemas-asset",
-              label: "schemas-Asset",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/path",
-              label: "Path",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/tradeaggregation",
-              label: "TradeAggregation",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/schemas-transaction",
-              label: "schemas-Transaction",
-            },
-            {
-              type: "doc",
-              id: "horizon/api-reference/schemas/submittransaction",
-              label: "SubmitTransaction",
             },
           ],
         },

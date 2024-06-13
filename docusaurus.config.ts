@@ -46,7 +46,7 @@ const config: Config = {
               groupPathsBy: "tagGroup",
               categoryLinkSource: 'tag',
             },
-            showSchemas: true,
+            // showSchemas: true,
           } satisfies OpenApiPlugin.Options,
           anchor_platform_api: {
             specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
