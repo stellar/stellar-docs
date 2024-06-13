@@ -274,6 +274,12 @@ const sidebar: SidebarsConfig = {
           items: [
             {
               type: "doc",
+              id: "horizon/api-reference/schemas/offer",
+              label: "Offer",
+              className: "schema",
+            },
+            {
+              type: "doc",
               id: "horizon/api-reference/get-all-offers",
               label: "List All Offers",
               className: "api-method get",
