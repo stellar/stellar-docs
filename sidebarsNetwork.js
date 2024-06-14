@@ -12,8 +12,6 @@ const sidebars = {
     { type: 'html', value: '<small>Platforms</small>', defaultStyle: true, className: 'networkMenuHtmlItem'},
     { type: 'ref', id: 'anchor-platform/README', label: 'Anchor Platform'},
     { type: 'ref', id: 'stellar-disbursement-platform/README', label: 'Stellar Disbursement Platform'},
-    { type: 'html', value: '<small>Network Infrastructure</small>', defaultStyle: true, className: 'networkMenuHtmlItem'},
-    { type: 'ref', id: 'core-node/README', label: 'Core Validator Node'},
   ],
   horizon: [
     {
