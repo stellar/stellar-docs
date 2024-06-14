@@ -238,6 +238,12 @@ const config = {
             ]
           },
           {
+            type: 'docSidebar',
+            sidebarId: 'validators',
+            label: 'Validators',
+            position: 'left',
+          },
+          {
             to: '/meetings',
             label: 'Meetings',
             position: 'right',
