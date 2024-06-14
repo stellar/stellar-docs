@@ -226,15 +226,6 @@ const config = {
                 to: "/network/stellar-disbursement-platform",
                 label: "Stellar Disbursement Platform",
               },
-              {
-                type: 'html',
-                value: '<hr><small>Network Infrastructure</small>',
-                className: 'subtitle',
-              },
-              {
-                to: "/network/core-node",
-                label: "Core Validator Node",
-              },
             ]
           },
           {
