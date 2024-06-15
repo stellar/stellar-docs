@@ -1,0 +1,104 @@
+---
+title: Ingest events published from a contract
+---
+
+Soroban RPC provides a `getEvents` method which allows you to query events from a smart contract. However, the data retention window for these events is roughly 24 hours. If you need access to a longer-lived record of these events you'll want to "ingest" the events as they are published, maintaining your own record or database as events are ingested.
+
+There are many strategies you can use to ingest and keep the events published by a smart contract. Among the simplest might be using a community-developed tool such as [Mercury](https://mercurydata.app) which will take all the infrastructure work off your plate for a low subscription fee.
+
+Another approach we'll explore here is using a cron job to query Soroban RPC periodically and store the relevant events in a locally stored SQLite database, using [Prisma](https://www.prisma.io) as a database abstraction layer. By using Prisma here, it should be relatively trivial to scale this approach up to any other database software of your choosing.
+
+## Setup the Database Client
+
+The finer details of choosing a Prisma configuration are beyond the scope of this document. You can get a lot more information in the [Prisma quickstart](https://www.prisma.io/docs/getting-started/quickstart). Here is our Prisma schema's model:
+
+```text
+model SorobanEvent {
+  id          String @id
+  type        String
+  ledger      Int
+  contract_id String
+  topic_1     String?
+  topic_2     String?
+  topic_3     String?
+  topic_4     String?
+  value       String
+}
+```
+
+We'll use this model to create and query for the events stored in our database.
+
+## Query Events from Soroban RPC
+
+First, we'll need to query the events from Soroban RPC. This simple JavaScript example will use the `@stellar/stellar-sdk` library to make an RPC request using the `getEvents` method, filtering for all `transfer` events that are emitted by the native XLM contract.
+
+:::note
+
+We are making some assumptions here. We'll assume that your contract sees enough activity, and that you are querying for events frequently enough that you aren't in danger of needing to figure out the oldest ledger Soroban RPC is aware of. The approach we're taking is to find the largest (most recent) ledger sequence number in the database and query for events starting there. Your use-case may require some logic to determine what the latest ledger is, and what the oldest ledger available is, etc.
+
+:::
+
+```javascript
+import { SorobanRpc } from "@stellar/stellar-sdk";
+import { PrismaClient } from "@prisma/client";
+
+const server = new SorobanRpc.Server("https://soroban-testnet.stellar.org");
+const prisma = new PrismaClient();
+
+let latestEventIngested = await prisma.sorobanEvent.findFirst({
+  orderBy: [
+    {
+      ledger: "desc",
+    },
+  ],
+});
+
+let events = await server.getEvents({
+  startLedger: latestEventIngested.ledger,
+  filters: [
+    {
+      type: "contract",
+      contractIds: ["CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"],
+      topics: [["AAAADwAAAAh0cmFuc2Zlcg==", "*", "*", "*"]],
+    },
+  ],
+});
+```
+
+## Store Events in the Database
+
+Now, we'll check if the `events` object contains any new events we should store, and we do exactly that. We're storing the event's topics and values as base64-encoded strings here, but you could decode the necessary topics and values into the appropriate data types for your use-case.
+
+```javascript
+if (events.events?.length) {
+  events.events.forEach(async (event) => {
+    await prisma.sorobanEvent.create({
+      data: {
+        id: event.id,
+        type: event.type,
+        ledger: event.ledger,
+        contract_id: event.contractId.toString(),
+        topic_1: event.topic[0].toXDR("base64") || null,
+        topic_2: event.topic[1].toXDR("base64") || null,
+        topic_3: event.topic[2].toXDR("base64") || null,
+        topic_4: event.topic[3].toXDR("base64") || null,
+        value: event.value.toXDR("base64"),
+      },
+    });
+  });
+}
+```
+
+## Run the Script with Cron
+
+A cron entry is an excellent way to automate this script to gather and ingest events every so often. You could configure this script to run as (in)frequently as you want or need. This example would run the script every 24 hours at 1:14 pm:
+
+```bash
+14 13 * * * node /absolute/path/to/script.js
+```
+
+Here's another example that will run the script every 30 minutes:
+
+```bash
+30 * * * * node /absolute/path/to/script.js
+```
