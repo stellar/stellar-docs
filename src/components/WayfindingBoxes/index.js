@@ -91,7 +91,7 @@ const WayfindingWays = [
     ),
     link: (
       <Link
-        to="/network">
+        to="/docs/data">
         Get the Goods
       </Link>
     )
