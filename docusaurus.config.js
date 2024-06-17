@@ -190,18 +190,43 @@ const config = {
             position: 'left',
           },
           {
-            type: 'dropdown',
-            label: 'Tools',
-            position: 'left',
+            type: "dropdown",
+            label: "Data",
+            position: "left",
+            to: '/docs/data',
             items: [
               {
                 type: 'doc',
-                docId: 'tools/sdks/README',
-                label: 'SDKs'
+                docId: "data/rpc/README",
+                label: "RPC",
               },
               {
                 type: 'doc',
-                docId: 'tools/developer-tools',
+                docId: "data/hubble/README",
+                label: "Hubble",
+              },
+              {
+                type: 'doc',
+                docId: "data/horizon/README",
+                label: "Horizon",
+              },
+
+            ]
+          },
+          {
+            type: 'dropdown',
+            label: 'Tools',
+            position: 'left',
+            to: '/docs/tools',
+            activeBaseRegex: `(docs/tools|platforms)`,
+            items: [
+              {
+                to: '/docs/tools/sdks',
+                label: 'SDKs',
+                activeBasePath: '/docs/tools/sdks'
+              },
+              {
+                to: '/docs/tools/developer-tools',
                 label: 'Developer Tools'
               },
               {
@@ -224,27 +249,6 @@ const config = {
             sidebarId: 'reference',
             label: 'Reference',
             position: 'left',
-          },
-          {
-            type: "dropdown",
-            label: "Data",
-            position: "left",
-            to: '/docs/data',
-            items: [
-              {
-                to: "/docs/data/rpc",
-                label: "RPC",
-              },
-              {
-                to: "/docs/data/hubble",
-                label: "Hubble",
-              },
-              {
-                to: "/docs/data/horizon",
-                label: "Horizon",
-              },
-
-            ]
           },
           {
             type: 'docSidebar',
