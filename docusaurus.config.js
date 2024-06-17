@@ -121,8 +121,8 @@ const config = {
           showLastUpdateAuthor: true,
           breadcrumbs: true,
           routeBasePath: "/docs",
-          // docLayoutComponent: "@theme/DocPage",
-          // docItemComponent: "@theme/ApiItem",
+          docLayoutComponent: "@theme/DocPage",
+          docItemComponent: "@theme/ApiItem",
           remarkPlugins: [require("mdx-mermaid"), require('remark-math'), [
             require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
           ]],
@@ -221,9 +221,9 @@ const config = {
             activeBaseRegex: `(docs/tools|platforms)`,
             items: [
               {
-                to: '/docs/tools/sdks',
+                to: '/docs/tools/sdks/library',
                 label: 'SDKs',
-                activeBasePath: '/docs/tools/sdks'
+                activeBasePath: 'docs/tools/sdks'
               },
               {
                 to: '/docs/tools/developer-tools',
