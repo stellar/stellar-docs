@@ -38,38 +38,9 @@ interface SimulateTransactionParams {
 }
 ```
 
-**SimulateTransactionResult** is the return result from the call. It includes many useful things! let's take a look.
+**SimulateTransactionResult** is the return result from the call. It includes many useful things! (take a look at the code here!)[https://github.com/stellar/stellar-docs/blob/88eeb4a318778513880e01fe9728c4cbbc73b87c/openrpc/src/methods/simulateTransaction.json#L18].
 
-```typescript
-interface SimulateTransactionResult {
-  latestLedger: number; // The sequence number of the latest ledger known to Soroban RPC at the time it handled the request.
-  minResourceFee?: string; // Recommended minimum resource fee to add when submitting the transaction. This fee is to be added on top of the Stellar network fee.
-  cost?: {
-    cpuInsns: string; // Total CPU instructions consumed by this transaction.
-    memBytes: string; // Total memory bytes allocated by this transaction.
-  };
-  results?: {
-    xdr: string; // Serialized base64 string - return value of the Host Function call.
-    auth: string[]; // Array of serialized base64 strings - Per-address authorizations recorded when simulating this Host Function call.
-  }[];
-  transactionData?: string; // Serialized base64 string - The recommended Soroban Transaction Data to use when submitting the simulated transaction.
-  events?: string[]; // Array of serialized base64 strings - The events emitted during the contract invocation.
-  restorePreamble?: {
-    // There is a restorePreamble if a ledgerkey or contract code is expired, and you can use the transactionData to build a new transaction.
-    minResourceFee: string; // Recommended minimum resource fee to add when submitting the RestoreFootprint operation.
-    transactionData: string; // The recommended Soroban Transaction Data to use when submitting the RestoreFootprint operation.
-  };
-  stateChanges?: {
-    type: number; // Indicates if the entry was created (1), updated (2), or deleted (3).
-    key: string; // The LedgerKey for this delta.
-    before: string | null; // LedgerEntry state prior to simulation.
-    after: string | null; // LedgerEntry state after simulation.
-  }[];
-  error?: string; // Details about why the invoke host function call failed.
-}
-```
-
-## When to Use `simulateTransaction` (whenever you use soroban :D )
+## When to Use `simulateTransaction` (whenever you use soroban :D)
 
 1. **Preparing `invokeHostFunctionOp` Transactions**: Anytime you need to submit an `invokeHostFunctionOp` transaction to the network.
 2. **Footprint Determination**: To determine the ledger footprint, which includes all the data entries the transaction will read or write.
@@ -164,125 +135,9 @@ The footprint ensures that a transaction is aware of all the ledger entries it w
 
 Once you have simulated the transaction and obtained the necessary data, you can assemble the transaction for actual submission. The `assembleTransaction` function in the SDK helps with this process, but you can also call `prepareTransaction` to have it both simulate and assemble the transaction for you.
 
-### javascript-sdk-assembleTransaction
+### js-stellar-sdk `assembleTransaction `
 
-Here's how the `assembleTransaction` function in the javascript sdk works to combine the raw transaction with the simulation results:
-
-```javascript
-import {
-  FeeBumpTransaction,
-  Operation,
-  Transaction,
-  TransactionBuilder
-} from '@stellar/stellar-base';
-
-import { Api } from './api';
-import { parseRawSimulation } from './parsers';
-
-/**
- * Combines the given raw transaction alongside the simulation results.
- *
- * @param raw         the initial transaction, w/o simulation applied
- * @param simulation  the Soroban RPC simulation result (see
- *    {@link Server.simulateTransaction})
- *
- * @returns a new, cloned transaction with the proper auth and resource (fee,
- *    footprint) simulation data applied
- *
- * @note if the given transaction already has authorization entries in a host
- *    function invocation (see {@link Operation.invokeHostFunction}), **the
- *    simulation entries are ignored**.
- *
- * @see {Server.simulateTransaction}
- * @see {Server.prepareTransaction}
- */
-export function assembleTransaction(
-  raw: Transaction | FeeBumpTransaction,
-  simulation:
-    | Api.SimulateTransactionResponse
-    | Api.RawSimulateTransactionResponse
-): TransactionBuilder {
-  if ('innerTransaction' in raw) {
-    // TODO: Handle feebump transactions
-    return assembleTransaction(
-      raw.innerTransaction,
-      simulation
-    );
-  }
-
-  if (!isSorobanTransaction(raw)) {
-    throw new TypeError(
-      'unsupported transaction: must contain exactly one ' +
-        'invokeHostFunction, extendFootprintTtl, or restoreFootprint ' +
-        'operation'
-    );
-  }
-
-  let success = parseRawSimulation(simulation);
-  if (!Api.isSimulationSuccess(success)) {
-    throw new Error
-
-(`simulation incorrect: ${JSON.stringify(success)}`);
-  }
-
-  const classicFeeNum = parseInt(raw.fee) || 0;
-  const minResourceFeeNum = parseInt(success.minResourceFee) || 0;
-  const txnBuilder = TransactionBuilder.cloneFrom(raw, {
-    // automatically update the tx fee that will be set on the resulting tx to
-    // the sum of 'classic' fee provided from incoming tx.fee and minResourceFee
-    // provided by simulation.
-    //
-    // 'classic' tx fees are measured as the product of tx.fee * 'number of
-    // operations', In soroban contract tx, there can only be single operation
-    // in the tx, so can make simplification of total classic fees for the
-    // soroban transaction will be equal to incoming tx.fee + minResourceFee.
-    fee: (classicFeeNum + minResourceFeeNum).toString(),
-    // apply the pre-built Soroban Tx Data from simulation onto the Tx
-    sorobanData: success.transactionData.build(),
-    networkPassphrase: raw.networkPassphrase
-  });
-
-  switch (raw.operations[0].type) {
-    case 'invokeHostFunction':
-      // In this case, we don't want to clone the operation, so we drop it.
-      txnBuilder.clearOperations();
-
-      const invokeOp: Operation.InvokeHostFunction = raw.operations[0];
-      const existingAuth = invokeOp.auth ?? [];
-      txnBuilder.addOperation(
-        Operation.invokeHostFunction({
-          source: invokeOp.source,
-          func: invokeOp.func,
-          // if auth entries are already present, we consider this "advanced
-          // usage" and disregard ALL auth entries from the simulation
-          //
-          // the intuition is "if auth exists, this tx has probably been
-          // simulated before"
-          auth: existingAuth.length > 0 ? existingAuth : success.result!.auth
-        })
-      );
-      break;
-  }
-
-  return txnBuilder;
-}
-
-function isSorobanTransaction(tx: Transaction): boolean {
-  if (tx.operations.length !== 1) {
-    return false;
-  }
-
-  switch (tx.operations[0].type) {
-    case 'invokeHostFunction':
-    case 'extendFootprintTtl':
-    case 'restoreFootprint':
-      return true;
-
-    default:
-      return false;
-  }
-}
-```
+Using the javascript SDK we can call (`assembleTransaction`)[https://github.com/stellar/js-stellar-sdk/blob/master/src/rpc/transaction.ts#L28] to easily assemble a transaction.
 
 ## Handling Archived Ledger Entries
 
@@ -302,19 +157,21 @@ Here is an example for handling restoration using the `restorePreamble` to resto
  * Simulates a restoration transaction to determine if restoration is needed.
  * This function first checks the ledger entry for the given WASM hash. If the entry is found and has expired,
  * it attempts a restoration. If the entry hasn't expired yet but the TTL needs extension, it proceeds with TTL extension.
- * @param wasmHash - The hash of the WASM to check.
+ * @param contract - The address of the contract to check
  * @param txParams - The transaction parameters including account and signer.
  * @returns A promise that resolves to a simulation response, indicating whether restoration or TTL extension is needed.
  */
 export async function simulateRestorationIfNeeded(
-  wasmHash: Buffer,
+  contract: ContractAddress,
   txParams: TxParams,
 ): Promise<
   SorobanRpc.Api.SimulateTransactionRestoreResponse | string | undefined
 > {
   try {
     const account = await config.rpc.getAccount(txParams.account.accountId());
-    const ledgerKey = getLedgerKeyWasmId(wasmHash);
+    const contract = new Contract(contract);
+    //const ledgerKey = getLedgerKeyWasmId(wasmHash);
+    const ledgerKey = contract.getFootprint();
     const response = await config.rpc.getLedgerEntries(...[ledgerKey]);
     if (
       response.entries &&
@@ -479,7 +336,7 @@ Soroban smart contracts on Stellar use a multidimensional resource fee model, ch
 5. **Events & Return Value Size**: Size of the events produced by the contract and the return value of the top-level contract function.
 6. **Ledger Space Rent**: Payment for ledger entry TTL extensions and rent payments for increasing ledger entry size.
 
-Fees are calculated based on the resource consumption declared in the transaction. Refundable fees are charged before execution and refunded based on actual usage, while non-refundable fees are calculated from CPU instructions, read bytes, write bytes, and transaction size.
+Fees are calculated based on the resource consumption declared in the transaction. Refundable fees are charged before execution and refunded based on actual usage, while non-refundable fees are calculated from CPU instructions, read bytes, write bytes, and transaction size. (Check out this document for a more in depth understanding of fees and metering.)[https://developers.stellar.org/docs/learn/fundamentals/fees-resource-limits-metering]
 
 ## Preflight Error Handling
 
