@@ -76,7 +76,7 @@ Some notable fields from this `info` endpoint are:
   - `age`: time elapsed since this ledger closed (during normal operation less than 10 seconds)
   - `num`: ledger number
   - `version`: protocol version supported by this ledger
-- `network` the [network passphrase](/docs/learn/encyclopedia/network-passphrases) for the network this core instance is using
+- `network` the [network passphrase](../../../docs/learn/encyclopedia/network-configuration/network-passphrases) for the network this core instance is using
 - `peers`: information on the connectivity to the network
   - `authenticated_count`: the number of live connections
   - `pending_count`: the number of connections that are not fully established yet
@@ -172,15 +172,46 @@ The output will look something like:
 
 There is a survey mechanism in the overlay that allows a validator to request connection information from other nodes on the network. The survey can be triggered from a validator, and will flood through the network like any other message, but will request information from other nodes about which nodes it is connected to and a brief summary of their per-connection traffic volumes.
 
-By default, a node will relay or respond to a survey message if the message originated from a node in the receiving nodes transitive quorum. This behavior can be overridden by setting the `SURVEYOR_KEYS` field in the config file to a more restrictive set of nodes to relay or respond to.
+By default, a node will relay or respond to a survey message if the message originated from a node in the receiving node's transitive quorum. This behavior can be overridden by setting the `SURVEYOR_KEYS` field in the config file to a more restrictive set of nodes to relay or respond to. Set `SURVIVOR_KEYS` to `["$self"]` to opt-out of responding to survey requests entirely.
 
 The survey works in two phases: the collecting phase, and the reporting phase. During the collecting phase, nodes record information about themselves and their peers, such as the number of messages sent to a given peer. During the reporting phase, the surveyor requests the results of the collecting phase from nodes on the network.
 
-The surveyor begins the collecting phase by broadcasting a `TimeSlicedSurveyStartCollectingMessage`. The surveyor ends the collecting phase and initiates the reporting phase by broadcasting a `TimeSlicedSurveyStopCollectingMessage`. These start/stop collecting messages ensure that the collecting phase is roughly equal for all nodes present for the duration of the collecting phase.
+The surveyor begins the collecting phase by broadcasting a `TimeSlicedSurveyStartCollectingMessage`. The surveyor ends the collecting phase and initiates the reporting phase by broadcasting a `TimeSlicedSurveyStopCollectingMessage`. These "start/stop collecting" messages ensure that the collecting phase is roughly equal in duration for all nodes present during the entire collecting phase. We recommend sending the "stop collecting" message about 20 minutes after the "start collecting" message. If 30 minutes elapse without receiving a "stop collecting" message, the survey will automatically transition to the reporting phase.
+
+Additionally, the "stop/start collecting" messages contain a `nonce` field identifying the survey instance. The nonce in the "stop collecting" message must match the nonce from the "start collecting" message. The surveyor should choose a random 32-bit unsigned integer for the nonce.
 
 During the reporting phase, the surveyor sends `TimeSlicedSurveyRequestMessage`s to individual nodes to gather the information the node recorded during the collecting phase.
 
-#### Example Survey Command
+#### Overlay Survey Script
+
+To simplify running an overlay survey, stellar-core ships with a script [`OverlaySurvey.py`](https://github.com/stellar/stellar-core/blob/master/scripts/OverlaySurvey.py) in the [`scripts` directory](https://github.com/stellar/stellar-core/tree/master/scripts). This script walks the network using the overlay survey HTTP endpoints to build a graph containing the topology of the overlay network. The script outputs this graph both in JSON format, as well as GraphML.  You can analyze the GraphML file using a GraphML viewer such as [Gephi](https://gephi.org/).
+
+An example usage of the survey script to run an overlay survey is as follows:
+```bash
+$ python3 OverlaySurvey.py survey -n http://127.0.0.1:11626 -c 20 -sr sr.json -gmlw gmlw.graphml
+```
+The arguments this example uses are:
+- sub command `survey` - run survey and analyze
+    - `-n NODE`, `--node NODE` - address of initial survey node
+    - `-c DURATION`, `--collect-duration DURATION` - duration of survey collecting phase in minutes
+    - `-gmlw GRAPHMLWRITE`, `--graphmlWrite GRAPHMLWRITE` - output file for graphml file
+    - `-sr SURVEYRESULT`, `--surveyResult SURVEYRESULT` - output file for survey results
+
+Therefore, this example will run a survey from a stellar-core node running on the local machine with a collecting phase duration of 20 minutes and output the results to `sr.json` and `gmlw.graphml`.
+
+The survey script contains additional subcommands and options to further analyze the survey results. You can find a complete list of subcommands by running:
+```bash
+$ python3 OverlaySurvey.py -h
+```
+From there, you can run:
+```bash
+$ python3 OverlaySurvey.py <subcommand> -h
+```
+for more info about any given subcommand.
+
+#### Example Survey Command Using HTTP Endpoints
+
+This section walks through an example of running an overlay survey by calling the survey HTTP endpoints directly. We highly recommend using the overlay survey script instead. This section may be useful to anyone who wants to modify the survey script, or anyone who is curious about the lower-level details of how the survey works and the data it includes.
 
 In this example, we have three nodes `GBBN`, `GDEX`, and `GBUI` (we'll refer to them by the first four letters of their public keys). We will execute the commands below from `GBUI`, and note that `GBBN` has `SURVEYOR_KEYS=["$self"]` in it's config file, so `GBBN` will not relay or respond to any survey messages.
 
@@ -249,8 +280,8 @@ Once the responses are received, the `getsurveyresult` command will return a res
       "maxOutboundPeerCount": 8,
       "addedAuthenticatedPeers" : 0,
       "droppedAuthenticatedPeers" : 0,
-      "p75SCPFirstToSelfLatencyNs" : 121042,
-      "p75SCPSelfToOtherLatencyNs" : 112452,
+      "p75SCPFirstToSelfLatencyMs" : 72,
+      "p75SCPSelfToOtherLatencyMs" : 112,
       "lostSyncCount" : 0,
       "isValidator" : false,
       "outboundPeers": null
@@ -287,10 +318,10 @@ Some notable fields from this `getsurveyresult` endpoint are:
 - `maxInboundPeerCount`/`maxOutboundPeerCount`: The number of total inbound and outbound peers that this node can accept. These fields correspond to stellar-core configurations `MAX_ADDITIONAL_PEER_CONNECTIONS` and `TARGET_PEER_CONNECTIONS`, respectively.
 - `addedAuthenticatedPeers`: The number of authenticated peers added.
 - `droppedAuthenticatedPeers`: The number of authenticated peers dropped.
-- `p75SCPFirstToSelfLatencyNs`: 75th percentile latency to hear about new SCP messages in nanoseconds.
-  - `p75SCPSelfToOtherLatencyNs`: 75th percentile latency for other nodes to hear this node's SCP messages in nanoseconds.
-  - `lostSyncCount`: The number of times this node lost sync.
-  - `isValidator`: Is this node a validator?
+- `p75SCPFirstToSelfLatencyMs`: 75th percentile latency to hear about new SCP messages in milliseconds.
+- `p75SCPSelfToOtherLatencyMs`: 75th percentile latency for other nodes to hear this node's SCP messages in milliseconds.
+- `lostSyncCount`: The number of times this node lost sync.
+- `isValidator`: Is this node a validator?
 
 ## Quorum Health
 
