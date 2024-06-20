@@ -179,7 +179,7 @@ const config = {
           },
           {
             type: 'docSidebar',
-            sidebarId: 'smartContracts',
+            sidebarId: 'tokens',
             label: 'Tokens',
             position: 'left',
           },
