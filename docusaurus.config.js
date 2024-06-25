@@ -8,8 +8,8 @@ const config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenLinks: "log", // TODO: set these back to `throw` before we merge
-  onBrokenMarkdownLinks: "log", // TODO: set these back to `throw` before we merge
+  onBrokenLinks: "throw",
+  onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
