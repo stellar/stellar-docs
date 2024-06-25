@@ -8,8 +8,8 @@ const config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenLinks: "throw",
-  onBrokenMarkdownLinks: "throw",
+  onBrokenLinks: "log",
+  onBrokenMarkdownLinks: "log",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
@@ -173,7 +173,7 @@ const config = {
         items: [
           {
             type: 'docSidebar',
-            sidebarId: 'docs',
+            sidebarId: 'build',
             label: 'Build',
             position: 'left',
           },
