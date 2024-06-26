@@ -179,14 +179,14 @@ const config = {
           },
           {
             type: 'docSidebar',
-            sidebarId: 'tokens',
-            label: 'Tokens',
+            sidebarId: 'learn',
+            label: 'Learn',
             position: 'left',
           },
           {
             type: 'docSidebar',
-            sidebarId: 'learn',
-            label: 'Learn',
+            sidebarId: 'tokens',
+            label: 'Tokens',
             position: 'left',
           },
           {
