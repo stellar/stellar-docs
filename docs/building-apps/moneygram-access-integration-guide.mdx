@@ -476,6 +476,7 @@ Please note that the `Python` code is highly simplified. It does not use timebou
 
 ```ts
 import { Wallet, IssuedAssetId } from "@stellar/typescript-wallet-sdk";
+import { Horizon } from "@stellar/stellar-sdk";
 
 const wallet = Wallet.TestNet();
 
@@ -521,11 +522,85 @@ onMessage: (transaction) => {
     transferTransaction.sign(FUNDS_STELLAR_KEYPAIR);
 
     // Finally submits it to the stellar network. This stellar.submitTransaction()
-    // function handles '504' status codes by keep retrying it until submission
-    // succeeds or we get a different error.
-    const response = await stellar.submitTransaction(transferTransaction);
+    // function handles '504' status codes (timeout) by keep retrying it until
+    // submission succeeds or we get a different error.
+    try {
+      const response = await stellar.submitTransaction(transferTransaction);
+      console.log("Stellar-generated transaction ID: ", response.id);
+    } catch (error) {
+      /* 
+        In case it's not a 504 (timeout) error, the application could try some
+        resolution strategy based on the error kind.
+        
+        On Stellar docs you can find a whole lot of info regarding error handling:
+        https://developers.stellar.org/docs/learn/encyclopedia/errors-and-debugging/error-handling
+        
+        And status/result codes:
+        https://developers.stellar.org/docs/data/horizon/api-reference/errors
+      */
 
-    console.log("Stellar-generated transaction ID: ", response.id);
+      // Let's illustrate here how we could handle an 'invalid sequence number' error.
+
+      // We can access all possible result codes through Horizon's API.
+      const sdkResultCodes = Horizon.HorizonApi.TransactionFailedResultCodes;
+
+      // We can access error's response data to check for useful error details.
+      const errorData = error.response?.data;
+      /*
+        Sample of errorData object returned by the Wallet SDK:
+        {
+          type: 'https://stellar.org/horizon-errors/transaction_failed',
+          title: 'Transaction Failed',
+          status: 400,
+          detail: 'The transaction failed when submitted to the stellar network.
+            The `extras.result_codes` field on this response contains further details.
+            Descriptions of each code can be found at:
+            https://developers.stellar.org/api/errors/http-status-codes/horizon-specific/transaction-failed/',
+          extras: {
+            envelope_xdr: 'AAAAAgAAAADBjF7n9gfByOwlnyaJH...k4BRagf/////////8AAAAAAAAAAA==',
+            result_codes: { transaction: 'tx_bad_seq' },
+            result_xdr: 'AAAAAAAAAGT////6AAAAAA=='
+          }
+        }
+      */
+
+      /*
+        Example scenario: invalid sequence numbers.
+
+        These errors typically occur when you have an outdated view of an account.
+        This could be because multiple devices are using this account, you have
+        concurrent submissions happening, or other reasons. The solution is relatively
+        simple: retrieve the account details and try again with an updated sequence number.
+      */
+      if (
+        errorData?.status == 400 &&
+        errorData?.extras?.result_codes?.transaction ===
+          sdkResultCodes.TX_BAD_SEQ
+      ) {
+        // Creating a new transaction builder means retrieving an updated sequence number.
+        const txBuilder2 = await stellar.transaction({
+          sourceAddress: FUNDS_STELLAR_KEYPAIR,
+          baseFee: 10000,
+          timebounds: 180,
+        });
+
+        // ...
+
+        // Repeat all the steps until submitting the transaction again.
+
+        // ...
+
+        const response2 = await stellar.submitTransaction(transferTransaction);
+        console.log(
+          "Stellar-generated transaction ID on retry: ",
+          response2.id,
+        );
+
+        // The application should take care to not resubmit the same transaction
+        // blindly with an updated sequence number as it could result in more than
+        // one payment being made when only one was intended.
+      }
+    }
   }
 };
 ```
