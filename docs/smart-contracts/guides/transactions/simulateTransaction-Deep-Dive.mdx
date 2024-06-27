@@ -50,16 +50,16 @@ interface SimulateTransactionParams {
 }
 ```
 
-**SimulateTransactionResult** is the return result from the call. It includes [many useful things](https://developers.stellar.org/docs/data/rpc/methods/simulateTransaction)!
+**SimulateTransactionResult** is the return result from the call. It includes [many useful things](https://developers.stellar.org/docs/data/rpc/api-reference/methods/simulateTransaction)!
 
-## When to Use `simulateTransaction` (whenever you use soroban :D)
+## Things `simulateTransaction` is used for:
 
 1. **Preparing `invokeHostFunctionOp` Transactions**: Anytime you need to submit an `invokeHostFunctionOp` transaction to the network.
 2. **Footprint Determination**: To determine the ledger footprint, which includes all the data entries the transaction will read or write.
 3. **Authorization Identification**: To identify the authorizations required for the transaction.
 4. **Error Detection**: To detect potential errors and issues before actual submission, saving time and network resources.
 5. **Restoring Archived Ledger Entries or Contract Code**: To prepare and restore archived data before actual transaction submission.
-6. **Simulating Contract Getter Calls**: To retrieve certain data from the contract without affecting the ledger state.
+6. **Simulating Contract Getter Calls**: To retrieve certain data from the contract without affecting the ledger state. (It's worth noting you could also retrieve certain contract data direct from the ledgerkeys without simulation if it doesn't require any manipulation within the contract logic.)
 7. **Resource Calculation**: To calculate the necessary resources (CPU instructions, memory, etc.) that a transaction will consume.
 
 ## How to Call `simulateTransaction`
@@ -98,6 +98,7 @@ async function simulateTransaction(transactionXDR) {
 // Replace the following placeholder with your actual XDR transaction envelope
 const transactionXDR =
   "AAAAAgAAAAAg4dbAxsGAGICfBG3iT2cKGYQ6hK4sJWzZ6or1C5v6GAAAAGQAJsOiAAAAEQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABzAP+dP0PsNzYvFF1pv7a8RQXwH5eg3uZBbbWjE9PwAsAAAAJaW5jcmVtZW50AAAAAAAAAgAAABIAAAAAAAAAACDh1sDGwYAYgJ8EbeJPZwoZhDqEriwlbNnqivULm/oYAAAAAwAAAAMAAAAAAAAAAAAAAAA=";
+// An example of where to get the XDR is from TransactionBuilder class from the sdk as shown in the next example.
 simulateTransaction(transactionXDR);
 ```
 
@@ -108,7 +109,7 @@ The Stellar SDK provides a convenient method to simulate a transaction:
 ```javascript
 import { Keypair, rpc } from "@stellar/stellar-sdk";
 
-const rpc_url = 'https://soroban-testnet.stellar.org:443'
+const rpc_url = "https://soroban-testnet.stellar.org:443";
 
 // Generate a new keypair for transaction authorization.
 const keypair = Keypair.random();
@@ -116,10 +117,10 @@ const secret = keypair.secret();
 const public = keypair.publicKey();
 
 // Initialize the rpcServer
-const rpcServer = new rpc.Server(rpc_url)
+const rpcServer = new rpc.Server(rpc_url);
 
 // Load the account (getting the sequence number for the account and making an account object.)
-const account = rpcServer.getAccount(public)
+const account = rpcServer.getAccount(public);
 
 // Define the transaction
 const transaction = new TransactionBuilder(account, {
@@ -133,6 +134,7 @@ const transaction = new TransactionBuilder(account, {
     }),
   )
   .build();
+// If you want to get this as an XDR string directly, you would use `transaction.toXDR('base64')`
 
 rpcServer.simulateTransaction(transaction).then((sim) => {
   console.log("cost:", sim.cost);
@@ -153,11 +155,7 @@ The footprint ensures that a transaction is aware of all the ledger entries it w
 
 ## Assembling a Transaction
 
-Once you have simulated the transaction and obtained the necessary data, you can assemble the transaction for actual submission. The `assembleTransaction` function in the SDK helps with this process, but you can also call `prepareTransaction` to have it both simulate and assemble the transaction for you in one step.
-
-### js-stellar-sdk `assembleTransaction `
-
-Using the javascript SDK we can call [`assembleTransaction`](https://github.com/stellar/js-stellar-sdk/blob/master/src/rpc/transaction.ts#L28) to easily assemble a transaction.
+Once you have simulated the transaction and obtained the necessary data, you can assemble the transaction for actual submission. The `assembleTransaction` function in the SDK helps with this process, but you can also call `prepareTransaction` to have it both simulate and assemble the transaction for you in one step. Using the javascript SDK we can call [`assembleTransaction`](https://stellar.github.io/js-stellar-sdk/global.html#assembleTransaction) to easily assemble a transaction.
 
 ## Handling Archived Ledger Entries
 
@@ -173,6 +171,20 @@ interface RestorePreamble {
 Here is an example for handling restoration using the `restorePreamble` to restore archived data:
 
 ```typescript
+// Make sure to add the necessary imports:
+import { Contract } from "@stellar/stellar-sdk/contract";
+import {
+  Account,
+  Keypair,
+  Operation,
+  SorobanDataBuilder,
+  SorobanRpc,
+  TimeoutInfinite,
+  Transaction,
+  TransactionBuilder,
+  scValToNative,
+  xdr,
+} from "@stellar/stellar-sdk";
 /**
  * Simulates a restoration transaction to determine if restoration is needed.
  * This function first checks the ledger entry for the given WASM hash. If the entry is found and has expired,
@@ -188,11 +200,15 @@ export async function simulateRestorationIfNeeded(
   SorobanRpc.Api.SimulateTransactionRestoreResponse | string | undefined
 > {
   try {
-    const account = await config.rpc.getAccount(txParams.account.accountId());
+    const RpcServer = new SorobanRpc.Server(
+      "https://soroban-testnet.stellar.org",
+      { allowHttp: true },
+    );
+    const account = await RpcServer.getAccount(txParams.account.accountId());
     const contract = new Contract(contract);
-    //const ledgerKey = getLedgerKeyWasmId(wasmHash);
     const ledgerKey = contract.getFootprint();
-    const response = await config.rpc.getLedgerEntries(ledgerKey);
+    const response = await RpcServer.getLedgerEntries(ledgerKey);
+    // Here we parse the response to make sure we got a response and that the liveUntilLedgerSeq parameter is there to make sure it's the response we want before continuing.
     if (
       response.entries &&
       response.entries.length > 0 &&
@@ -200,6 +216,7 @@ export async function simulateRestorationIfNeeded(
     ) {
       const expirationLedger = response.entries[0].liveUntilLedgerSeq;
       const desiredLedgerSeq = response.latestLedger + 500000;
+      // Be very aware of how many ledgers you want to extend it by.  It could quickly become extremely pricey in fees.
       let extendLedgers = desiredLedgerSeq - expirationLedger;
       if (extendLedgers < 10000) {
         extendLedgers = 10000;
@@ -219,7 +236,7 @@ export async function simulateRestorationIfNeeded(
       // Simulate a transaction with a restoration operation to check if it's necessary
 
       const restorationSimulation: SorobanRpc.Api.SimulateTransactionResponse =
-        await config.rpc.simulateTransaction(restoreTx);
+        await RpcServer.simulateTransaction(restoreTx);
 
       //check if restore is necessary. this code also checks if the simulation was successful.
       const restoreNeeded = SorobanRpc.Api.isSimulationRestore(
@@ -231,7 +248,7 @@ export async function simulateRestorationIfNeeded(
         return restorationSimulation as SorobanRpc.Api.SimulateTransactionRestoreResponse;
       } else {
         console.log("No restoration needed., bumping the ttl.");
-        const account1 = await config.rpc.getAccount(
+        const account1 = await RpcServer.getAccount(
           txParams.account.accountId(),
         );
 
@@ -249,14 +266,14 @@ export async function simulateRestorationIfNeeded(
           ) // The actual TTL extension operation
           .build();
         const ttlSimResponse: SorobanRpc.Api.SimulateTransactionResponse =
-          await config.rpc.simulateTransaction(bumpTTLtx);
+          await RpcServer.simulateTransaction(bumpTTLtx);
         const assembledTx = SorobanRpc.assembleTransaction(
           bumpTTLtx,
           ttlSimResponse,
         ).build();
         const signedTx = new Transaction(
           await txParams.signerFunction(assembledTx.toXDR()),
-          config.passphrase,
+          Networks.TESTNET,
         );
         // submit the assembled and signed transaction to bump it.
         try {
@@ -289,9 +306,13 @@ export async function handleRestoration(
   simResponse: SorobanRpc.Api.SimulateTransactionRestoreResponse,
   txParams: TxParams,
 ): Promise<void> {
+  const RpcServer = new SorobanRpc.Server(
+    "https://soroban-testnet.stellar.org",
+    { allowHttp: true },
+  );
   const restorePreamble = simResponse.restorePreamble;
   console.log("Restoring for account:", txParams.account.accountId());
-  const account = await config.rpc.getAccount(txParams.account.accountId());
+  const account = await RpcServer.getAccount(txParams.account.accountId());
   // Construct the transaction builder with the necessary parameters
   const restoreTx = new TransactionBuilder(account, {
     ...txParams.txBuilderOptions,
@@ -302,7 +323,7 @@ export async function handleRestoration(
     .build(); // Build the transaction
 
   const simulation: SorobanRpc.Api.SimulateTransactionResponse =
-    await config.rpc.simulateTransaction(restoreTx);
+    await RpcServer.simulateTransaction(restoreTx);
   const assembledTx = SorobanRpc.assembleTransaction(
     restoreTx,
     simulation,
@@ -310,14 +331,14 @@ export async function handleRestoration(
 
   const signedTx = new Transaction(
     await txParams.signerFunction(assembledTx.toXDR()),
-    config.passphrase,
+    Networks.TESTNET,
   );
 
   console.log("Submitting restoration transaction");
 
   try {
     // Submit the transaction to the network
-    const response = await config.rpc.sendTransaction(signedTx);
+    const response = await RpcServer.sendTransaction(signedTx);
     console.log(
       "Restoration transaction submitted successfully:",
       response.hash,
@@ -327,19 +348,6 @@ export async function handleRestoration(
     throw new Error("Restoration transaction failed");
   }
 }
-
-import {
-  Account,
-  Keypair,
-  Operation,
-  SorobanDataBuilder,
-  SorobanRpc,
-  TimeoutInfinite,
-  Transaction,
-  TransactionBuilder,
-  scValToNative,
-  xdr,
-} from "@stellar/stellar-sdk";
 ```
 
 ## Fees and Resource Usage
@@ -359,11 +367,7 @@ Fees are calculated based on the resource consumption declared in the transactio
 
 The preflight mechanism provides an estimation of CPU and memory consumption in a transaction. It helps identify potential errors and resource limitations before actual submission. Errors returned by the host are propagated through RPC and do not cover network errors or errors in RPC itself.
 
-### Common Preflight Errors
-
-- **HostError(Budget, LimitExceeded)**: A network-defined resource limit was exceeded: optimize the contract to consume fewer resources.
-- **HostError(Storage, MissingValue)**: Trying to access a non-existent ledger entry. Deploy the respective contract or Wasm.
-- **HostError(WasmVm, InvalidAction)**: Failure in a Wasm contract, typically a panic. Fix the contract logic or invocation arguments.
+[Common Preflight Errors, and more information can be found here.](https://developers.stellar.org/docs/learn/encyclopedia/errors-and-debugging/debugging-errors#1-preflight)
 
 ## Backend Code and Workflow
 
