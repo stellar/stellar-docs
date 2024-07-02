@@ -46,7 +46,7 @@ const WayfindingWays = [
     ),
     link: (
       <Link
-        to="/docs/tokens/issued/how-to-issue-an-asset">
+        to="/docs/tokens/how-to-issue-an-asset">
         Issue Asset
       </Link>
     )
