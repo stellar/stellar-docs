@@ -52,15 +52,15 @@ export default function DocItemFooter() {
   const canDisplayTagsRow = tags.length > 0;
   const canDisplayEditMetaRow = !!(editUrl || lastUpdatedAt || lastUpdatedBy);
   const canDisplayFooter = canDisplayTagsRow || canDisplayEditMetaRow;
-  const canDisplayDocCardsOnGuide = metadata.permalink.startsWith('/docs/smart-contracts/guides');
+  const canDisplayDocCardsOnGuide = metadata.permalink.startsWith('/docs/build/guides');
   if (!canDisplayFooter) {
     return null;
   }
   return (
     <>
       {canDisplayDocCardsOnGuide &&
-        <div className={clsx(metadata.permalink === '/docs/smart-contracts/guides/' ? 'margin-top--lg' : 'margin-top--xl')}>
-          {metadata.permalink !== '/docs/smart-contracts/guides/' && <h3>Guides in this category:</h3>}
+        <div className={clsx(metadata.permalink === '/docs/build/guides/' ? 'margin-top--lg' : 'margin-top--xl')}>
+          {metadata.permalink !== '/docs/build/guides/' && <h3>Guides in this category:</h3>}
           <DocCardList />
         </div>
       }

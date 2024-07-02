@@ -173,20 +173,20 @@ const config = {
         items: [
           {
             type: 'docSidebar',
-            sidebarId: 'docs',
-            label: 'Docs',
-            position: 'left',
-          },
-          {
-            type: 'docSidebar',
-            sidebarId: 'smartContracts',
-            label: 'Smart Contracts',
+            sidebarId: 'build',
+            label: 'Build',
             position: 'left',
           },
           {
             type: 'docSidebar',
             sidebarId: 'learn',
             label: 'Learn',
+            position: 'left',
+          },
+          {
+            type: 'docSidebar',
+            sidebarId: 'tokens',
+            label: 'Tokens',
             position: 'left',
           },
           {
