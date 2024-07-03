@@ -397,6 +397,7 @@ const config: Config = {
         "rust",
         "scala",
         "toml",
+        "yaml",
       ],
     },
   } satisfies Preset.ThemeConfig,
