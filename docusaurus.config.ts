@@ -94,7 +94,6 @@ const config: Config = {
         id: "platforms",
         path: "platforms",
         routeBasePath: "/platforms",
-        docLayoutComponent: "@theme/DocPage",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsPlatforms.js"),
         sidebarItemsGenerator: require("./src/sidebar-platforms-generator"),
