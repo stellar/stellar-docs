@@ -4,7 +4,7 @@ import {
   TransactionBuilder,
   TimeoutInfinite,
   Address,
-  SorobanRpc
+  SorobanRpc,
 } from "@stellar/stellar-sdk";
 import { FUTURENET_DETAILS } from "../constants";
 
@@ -48,6 +48,6 @@ export const getContractBalance = async (
     throw response;
   }
 
-  const balanceStr = formatAmount(scValToBigInt(response.result!.retval));
+  const balanceStr = formatAmount(scValToBigInt(response.result.retval));
   return +balanceStr;
 };

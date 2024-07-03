@@ -14,11 +14,11 @@ export default function DocSidebarWrapper(props: Props): JSX.Element {
       ...props,
     };
     if (props.sidebar[0].type === 'category') {
-      newProps.sidebar = props.sidebar[0].items
+      newProps.sidebar = props.sidebar[0].items;
     }
   } else {
     // For all other sidebars, pass the default props.
-    newProps = props
+    newProps = props;
   }
 
   return (

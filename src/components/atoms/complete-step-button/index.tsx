@@ -111,13 +111,11 @@ export default function CompleteStepButton({
     const isStepCompleted = !!challenge && challenge.progress >= progress;
     const isLastCourseStep = !!(challenge?.milestonesAmount === progress);
 
-    setState((prevState: CompleteStepButtonState) => {
-      return {
+    setState((prevState: CompleteStepButtonState) => ({
         isCompleted: isStepCompleted,
         isLastStep: isLastCourseStep,
         isStarted: !!challenge?.startDate,
-      };
-    });
+      }));
   }, [challenge, data, progress, id]);
 
   const showToast = (template: JSX.Element) => {
@@ -201,12 +199,10 @@ export default function CompleteStepButton({
       }
     }
 
-    setState((prevState: CompleteStepButtonState) => {
-      return {
+    setState((prevState: CompleteStepButtonState) => ({
         ...prevState,
         isCompleted: true,
-      };
-    });
+      }));
 
     await postUserProgress({
       userId: address,

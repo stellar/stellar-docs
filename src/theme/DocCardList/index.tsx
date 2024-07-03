@@ -27,7 +27,7 @@ function GuidesDocCardList(props: Props): JSX.Element {
             <section className={clsx('col', 'col--6', 'margin-bottom--lg', className)}>
               <h2>{item.label}</h2>
               {item.items.map((item, _) =>
-                <p className='margin-bottom--sm'><a href={item.href}>{item.label}</a></p>
+                <p className='margin-bottom--sm'><a href={item.href}>{item.label}</a></p>,
               )}
             </section>
           );
@@ -58,7 +58,7 @@ function ExampleContractsDocCardList(props: Props): JSX.Element {
 export default function DocCardListWrapper(props: Props): JSX.Element {
   const { items } = props;
   if (!items) {
-    return <DocCardListForCurrentSidebarCategory {...props} />
+    return <DocCardListForCurrentSidebarCategory {...props} />;
   }
   return (
     <>
