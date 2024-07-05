@@ -22,4 +22,4 @@ description: This document contains the help content for the stellar command-lin
 ${text}
 `;
 
-fs.writeFileSync("docs/build/smart-contracts/stellar-cli.mdx", text);
+fs.writeFileSync("docs/tools/developer-tools/stellar-cli.mdx", text);
