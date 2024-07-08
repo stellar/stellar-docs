@@ -31,7 +31,7 @@ const WayfindingWays = [
     // temporarily set this to /docs/soroban until "smart contracts" section is done
     link: (
       <Link
-        to="/docs/smart-contracts/getting-started/setup">
+        to="/docs/build/smart-contracts/getting-started/setup">
         Get Started
       </Link>
     )
@@ -46,7 +46,7 @@ const WayfindingWays = [
     ),
     link: (
       <Link
-        to="/docs/issuing-assets/how-to-issue-an-asset">
+        to="/docs/tokens/how-to-issue-an-asset">
         Issue Asset
       </Link>
     )
@@ -61,7 +61,7 @@ const WayfindingWays = [
     ),
     link: (
       <Link
-        to="/docs/category/build-applications">
+        to="/docs/build/apps">
         Get Building
       </Link>
     )
