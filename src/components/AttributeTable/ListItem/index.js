@@ -17,7 +17,7 @@ export const ListItem = (props) => {
 
   const [description, collapsedChildren] = partition(
     React.Children.toArray(descriptionElement.props.children),
-    (child) => child?.type?.name !== "MDXUl",
+    (child) => child?.type?.name !== "MDXUl" && child?.type?.name !== "ul",
   );
 
   const collapsedList = [];
@@ -38,7 +38,7 @@ export const ListItem = (props) => {
 
       <p>{description}</p>
 
-      {collapsedChildren.length > 0 && (
+      {collapsedList.length > 0 && (
         <Details summary={<summary>Show child attributes</summary>}>
           {collapsedList}
         </Details>
