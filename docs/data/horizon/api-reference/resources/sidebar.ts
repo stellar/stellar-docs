@@ -310,6 +310,12 @@ const sidebar: SidebarsConfig = {
           label: "Submit a Transaction",
           className: "api-method post",
         },
+        {
+          type: "doc",
+          id: "data/horizon/api-reference/resources/submit-async-transaction",
+          label: "Submit a Transaction Asynchronously",
+          className: "api-method post",
+        },
       ],
     },
     {
