@@ -15,11 +15,11 @@ result = await fetch(
 let text = await result.text();
 
 text = `---
-sidebar_position: 20
+sidebar_position: 30
 description: This document contains the help content for the stellar command-line program.
 ---
 
 ${text}
 `;
 
-fs.writeFileSync("docs/tools/developer-tools/stellar-cli.mdx", text);
+fs.writeFileSync("docs/tools/stellar-cli.mdx", text);

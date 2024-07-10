@@ -8,42 +8,40 @@ type LanguageProps = {
     fallback?: JSX.Element;
 };
 
-export const walletDefaultLang = "ts"
+export const walletDefaultLang = "ts";
 
-export const LanguageSpecific: React.FC<LanguageProps> = (props) => {
-    return (
+export const LanguageSpecific: React.FC<LanguageProps> = (props) => (
         <BrowserOnly fallback={props.fallback || getToShow(props, null)}>
             {() => getToShow(props, getCookie())}
         </BrowserOnly>
     );
-};
 
 const getToShow = (props: LanguageProps, cookie: String) => {
-    let toShow = <></>
+    let toShow = <></>;
 
     if (cookie == null) {
-        cookie = walletDefaultLang
+        cookie = walletDefaultLang;
     }
 
     if (cookie == "kt") {
-        toShow = props.kt || <></>
+        toShow = props.kt || <></>;
     } else if (cookie == "ts") {
-        toShow = props.ts || <></>
+        toShow = props.ts || <></>;
     } else if (cookie == "dart") {
-        toShow = props.flutter || <></>
+        toShow = props.flutter || <></>;
     }
 
-    return toShow
-}
+    return toShow;
+};
 
 export function getCookie() {
-    let name = "selected_language=";
-    let decodedCookie = decodeURIComponent(document.cookie);
-    let ca = decodedCookie.split(';');
+    const name = "selected_language=";
+    const decodedCookie = decodeURIComponent(document.cookie);
+    const ca = decodedCookie.split(';');
     for (let i = 0; i < ca.length; i++) {
-        let ind = ca[i].indexOf(name)
+        const ind = ca[i].indexOf(name);
         if (ind != -1) {
-            let val = ca[i].indexOf("=")
+            const val = ca[i].indexOf("=");
             return ca[i].substring(val + 1, ca[i].length);
         }
     }
