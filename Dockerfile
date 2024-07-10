@@ -18,6 +18,7 @@ COPY . /app/
 
 RUN yarn install
 RUN yarn rpcspec:build
+RUN yarn stellar-cli:build
 RUN yarn build
 
 FROM nginx:1.17
