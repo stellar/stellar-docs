@@ -18,6 +18,7 @@ COPY . /app/
 
 RUN yarn install
 RUN yarn rpcspec:build
+RUN yarn stellar-cli:build
 RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build
 
 FROM nginx:1.17
