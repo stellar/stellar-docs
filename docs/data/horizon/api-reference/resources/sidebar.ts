@@ -320,6 +320,18 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Payments",
+      items: [
+        {
+          type: "doc",
+          id: "data/horizon/api-reference/resources/list-all-payments",
+          label: "List All Payments",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "Operations",
       items: [
         {
@@ -338,12 +350,6 @@ const sidebar: SidebarsConfig = {
           type: "doc",
           id: "data/horizon/api-reference/resources/list-all-operations",
           label: "List All Operations",
-          className: "api-method get",
-        },
-        {
-          type: "doc",
-          id: "data/horizon/api-reference/resources/list-all-payments",
-          label: "List All Payments",
           className: "api-method get",
         },
       ],
