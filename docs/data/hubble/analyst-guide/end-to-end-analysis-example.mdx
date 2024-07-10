@@ -16,7 +16,11 @@ import click_add_data from "/img/hubble/click-add-data.png";
 import add_custom_query from "/img/hubble/add-custom-query.png";
 import add_column_chart from "/img/hubble/add-column-chart.png";
 import column_chart_config from "/img/hubble/column-chart-config.png";
-import resource_column_chart from "/img/hubble/resource-column-chart.png";
+import expired_entry_column_chart from "/img/hubble/expired-entry-column-chart.png";
+import add_quick_filter from "/img/hubble/add-quick-filter.png";
+import filter_contract from "/img/hubble/filter-contract.png";
+import persistent_only from "/img/hubble/persistent-only.png";
+import filtered_report from "/img/hubble/filtered-report.png";
 
 This page will guide you through an end-to-end analysis use case with Hubble and [Google Looker Studio](https://cloud.google.com/looker-studio?hl=en)
 
@@ -82,120 +86,73 @@ This page will guide you through an end-to-end analysis use case with Hubble and
 3. Add the following query and click `Add`
 
 ```sql
--- Selects each ContractData ledger entry from the last 7 days from the contract_data table.
-with
-  contract_data as (
-    select
-      contract_id
-      , (contract_id || contract_key_type || contract_durability) as contract_entrykey
-      , date(closed_at) as ledger_date
-    from `crypto-stellar.crypto_stellar.contract_data`
-    where(
-      deleted is false
-      and (date(closed_at) between datetime_sub(current_datetime(), interval 7 day)
-      and current_datetime())
-    )
-  )
+-- Find the latest ledger sequence within Hubble.
+-- This may be slightly behind the actual Stellar latest ledger
+-- because Hubble is scheduled to run and insert data at 5 minute intervals
+with latest_ledger_in_hubble as (
+  select
+    max(sequence) as latest_ledger_sequence
+  from `crypto-stellar.crypto_stellar.history_ledgers`
+),
 
--- Selects successful 'invoke_contract' Soroban transactions and its resource consumption from the enriched_history_operations table.
-  , enriched_operations as (
-    select
-      transaction_id
-      , contract_id
-      , soroban_resources_instructions
-      , soroban_resources_read_bytes
-      , soroban_resources_write_bytes
-      , closed_at
-      , date(closed_at) as ledger_date
-    from `crypto-stellar.crypto_stellar_dbt.enriched_history_operations_soroban`
-    where(
-      op_type = 24
-      and successful is true
-      and soroban_operation_type = 'invoke_contract'
-      and (date(closed_at) between datetime_sub(current_datetime(), interval 7 day)
-      and current_datetime())
-    )
-  )
+-- Find all the ttl that have expired
+expired_ttl as (
+  select
+    key_hash
+    , live_until_ledger_seq
+    -- Saving the date to aggregate on at the final step of the query
+    , date(closed_at) as ledger_date
+  from `crypto-stellar.crypto_stellar_dbt.ttl_current`
+  where true
+    -- Filter for expired entries only with the use of latest_ledger_sequence
+    and live_until_ledger_seq < (select latest_ledger_sequence from latest_ledger_in_hubble)
+)
 
-  , join_tables as (
-    select
-      eo.ledger_date
-      , cd.contract_entrykey
-      , eo.soroban_resources_instructions
-      , eo.soroban_resources_read_bytes
-      , eo.soroban_resources_write_bytes
-      , row_number() over(
-          partition by cd.contract_entrykey, eo.transaction_id
-          order by eo.closed_at desc
-      ) as rn
-    from enriched_operations as eo
-    inner join contract_data as cd
-      on eo.contract_id = cd.contract_id
-      and eo.ledger_date = cd.ledger_date
-  )
-
--- Deduplicates transactions and calculates the average resource consumption over the last 7 days.
-  , last_7_days_avg_resources as (
-    select
-      avg(soroban_resources_instructions) as avg_resources_instructions
-      , avg(soroban_resources_read_bytes) as avg_resources_read_bytes
-      , avg(soroban_resources_write_bytes) as avg_resources_write_bytes
-    from join_tables
-    where rn = 1
-  )
-
--- Get the max resources that can currently be requested on the network
-  , config_settings as (
-    select
-      max(tx_max_instructions) as tx_max_instructions
-      , max(tx_max_read_bytes) as tx_max_read_bytes
-      , max(tx_max_write_bytes) as tx_max_write_bytes
-    from `crypto-stellar.crypto_stellar_dbt.config_settings_current`
-    where config_setting_id in (1,2)
-  )
-
--- Calculates the average percentage of the last 7 days' usage for each resource relative to the configured limit.
-  , actual_vs_config as (
-    select
-      (res.avg_resources_instructions / cs.tx_max_instructions) as resources_instructions_perc
-      , (res.avg_resources_read_bytes / cs.tx_max_read_bytes) as resources_read_bytes_perc
-      , (res.avg_resources_write_bytes / cs.tx_max_write_bytes) as resources_write_bytes_perc
-    from last_7_days_avg_resources as res
-    join config_settings as cs
-      on 1=1
-  )
-
--- Lists each resource and its percentages.
-  , percentage_list as (
-      select
-        'Ledger CPU Instructions' as resource
-        , resources_instructions_perc as percentage_usage
-      from actual_vs_config
-      union all
-      select
-        'Ledger Read Bytes' as resource
-        , resources_read_bytes_perc as percentage_usage
-      from actual_vs_config
-      union all
-      select
-        'Ledger Write Bytes' as resource
-        , resources_write_bytes_perc as percentage_usage
-      from actual_vs_config
-  )
-
-  select *
-  from percentage_list
-  order by percentage_usage desc
+-- Aggregate based on the month and contract durability type
+select
+  date_trunc(et.ledger_date, month) as month_agg
+  , cd.contract_durability
+  , count(1) as expired_entry_count
+from expired_ttl as et
+  join `crypto-stellar.crypto_stellar_dbt.contract_data_current` as cd
+    on et.key_hash = cd.ledger_key_hash
+where true
+  -- Optionally filter for a specific date/date range
+  and et.ledger_date between '2024-02-01' and '2024-06-30'
+group by 1,2
+order by 1 desc, 2
 ```
 
 4. Insert `Column chart`
 
 <img src={add_column_chart} width="200" />
 
-5. Select `BigQuery Custom SQL` as your `Data source`, `resource` as the `Dimension`, and `percentage_usage` as the `Metric`
+5. Select `BigQuery Custom SQL` as your `Data source`, `month_agg` as the `Dimension`, `contract_durability` as the `Breakdown Dimension, and `expired_entry_count` as the `Metric`
 
 <img src={column_chart_config} width="300" />
 
-6. You should now have a column chart (bar chart) showing the Soroban Average Resource Utilization
+6. You should now have a column chart (bar chart) showing the expired Soroban contract entries
 
-<img src={resource_column_chart} width="500" />
+<img src={expired_entry_column_chart} width="500" />
+
+:::note
+
+Note that between `2024-02-01` and `2024-06-30` there aren't that many expired persistent entries
+
+:::
+
+7. Click `+Add quick filter` to apply a filter throughout the whole report
+
+<img src={add_quick_filter} width="500" />
+
+8. Select `contract_durability` to filter by `contract_durability` values
+
+<img src={filter_contract} width="500" />
+
+9. Select only `ContractDataDurabilityPersistent` and click `Apply`
+
+<img src={persistent_only} width="500" />
+
+10. Your charts should now be filtered and show only `ContractDataDurabilityPersistent` data
+
+<img src={filtered_report} width="500" />
