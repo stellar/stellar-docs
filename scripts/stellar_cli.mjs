@@ -9,7 +9,7 @@ const version = json.crate.newest_version;
 
 result = await fetch(
   // `https://github.com/stellar/stellar-cli/raw/v${version}/FULL_HELP_DOCS.md`,
-  `https://github.com/stellar/stellar-cli/raw/update-markdown-docs/FULL_HELP_DOCS.md`,
+  `https://github.com/stellar/stellar-cli/raw/main/FULL_HELP_DOCS.md`,
   { headers },
 );
 let text = await result.text();
