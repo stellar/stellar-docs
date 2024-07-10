@@ -4,8 +4,8 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import { toast } from "react-toastify";
-import { useReward } from "react-rewards";
+// import { toast } from "react-toastify";
+// import { useReward } from "react-rewards";
 import { AxiosResponse } from "axios";
 import useAuth from "../../../hooks/useAuth";
 import styles from "./styles.module.css";

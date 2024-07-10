@@ -1,5 +1,5 @@
 import { useContext, useState } from "react";
-import { toast } from "react-toastify";
+// import { toast } from "react-toastify";
 import { isConnected, setAllowed, getPublicKey } from "@stellar/freighter-api";
 import UserChallengesContext, {
   UserChallengesContextProps,
@@ -36,7 +36,7 @@ const useAuth = () => {
         setLoading(false);
 
         return true;
-      } 
+      }
         // Handle the case where Freighter is not installed
         toast("Freighter is not installed!", {
           type: "error",
@@ -45,7 +45,7 @@ const useAuth = () => {
           autoClose: 2000,
         });
         return false;
-      
+
     } catch (e) {
       console.error("Connection error", e);
 
