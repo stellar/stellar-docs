@@ -1,7 +1,7 @@
 import React from 'react';
 import BrowserOnly from '@docusaurus/BrowserOnly';
 
-import styles from './styles.module.css'
+import styles from './styles.module.css';
 
 export default function CanvasEmbed() {
   return (
@@ -13,5 +13,5 @@ export default function CanvasEmbed() {
         }}
       </BrowserOnly>
     </div>
-  )
+  );
 }
