@@ -74,11 +74,93 @@ In this optimized approach, we'll accumulate the changes outside the loop and pe
 
 :::
 
-## 2. **Use of Events over Storage**
+## 2. **Proper Use of Batch Operations**
+
+From the first example, we can see that batch operations are more efficient than individual operations. This is because batch operations reduce the number of external calls to the blockchain, which can be costly. However, there are some scenarios where the use of batch operations can be further optimized. Examples are shown below
+
+#### Not Optimal Contract ❎
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+use soroban_sdk::token::Client as TokenClient;
+
+#[contract]
+pub struct TokenTransferContract;
+
+#[contractimpl]
+impl TokenTransferContract {
+    // Inefficient way: Multiple individual transfers
+    pub fn transfer_tokens_inefficient(
+        env: Env,
+        token: Address,
+        from: Address,
+        to: Vec<Address>,
+        amount_each: i128,
+    ) {
+        let token_client = TokenClient::new(&env, &token);
+
+        for recipient in to.iter() {
+            token_client.transfer(&from, recipient, &amount_each);
+        }
+    }
+}
+```
+
+:::danger
+
+This function performs individual transfers for each recipient. While straightforward, it's inefficient because each transfer is a separate subcontract call, potentially leading to higher gas costs and slower execution. :::
+
+#### Optimal Contract ✅
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+use soroban_sdk::token::Client as TokenClient;
+
+#[contract]
+pub struct TokenTransferContract;
+
+#[contractimpl]
+impl TokenTransferContract {
+    // Efficient way: Batch transfer
+    pub fn transfer_tokens_efficient(
+        env: Env,
+        token: Address,
+        from: Address,
+        to: Vec<Address>,
+        amount_each: i128,
+    ) {
+        let token_client = TokenClient::new(&env, &token);
+        let total_amount = amount_each * (to.len() as i128);
+
+        // Perform a single transfer for the total amount
+        token_client.transfer(&from, &env.current_contract_address(), &total_amount);
+
+        // Then distribute from the contract
+        for recipient in to.iter() {
+            token_client.transfer(&env.current_contract_address(), recipient, &amount_each);
+        }
+    }
+}
+```
+
+:::tip
+
+This function optimizes the process by:
+
+- First transferring the total amount to the contract itself in a single operation.
+- Then distributing the tokens from the contract to each recipient.
+
+Internal distributions are cheaper due to the reduction in the number of costly external blockchain transactions. By transferring the total amount to the contract and then distributing it internally, the contract minimizes the number of external calls, reducing gas costs and improving efficiency.
+
+:::
+
+## 3. **Use of Events over Storage**
 
 Events are a cost-effective way to store data that doesn't need to be accessed frequently. Events are cheaper than storage operations and can be used to store data that doesn't need to be accessed frequently.
 
-#### Not Optimal Contract ❎
+#### Default Contract
 
 ```rust
 #![no_std]
@@ -118,7 +200,7 @@ We cannot store everything in storage like we would do in a traditional database
 
 :::
 
-#### Optimal Contract ✅
+#### Optimized Using Events
 
 ```rust
 #![no_std]
@@ -147,11 +229,44 @@ impl GameContract {
 
 :::tip
 
-In this optimized approach, we'll use events to store data that doesn't need to be accessed frequently. This reduces the number of storage operations and the overall gas cost of the contract.
+In this optimized approach, we use events to store data that doesn't need to be accessed frequently. This reduces the number of storage operations and the overall gas cost of the contract.
 
 :::
 
-## 3. **Use of Efficient Data Structures**
+#### Trade-offs:
+
+The current approach using events is indeed optimized for gas efficiency, but it comes with its own set of trade-offs. Lets see different approaches and their implications:
+
+**Current Approach (Using Events)**:
+
+- Pros:
+
+  - Extremely gas-efficient as it minimizes storage operations
+  - Useful for off-chain applications that can listen to and process events
+  - Ideal for data that doesn't need to be accessed on-chain frequently
+
+- Cons:
+
+  - Data is not directly accessible within the contract
+  - Relies on external systems to capture and process the event data
+  - Not suitable if you need to query or validate past moves within the contract
+
+**Storing Latest Move in Persistent Storage and History in Temporary Storage**:
+
+This approach offers a balance between accessibility and efficiency.
+
+- Pros:
+
+  - Latest move is always accessible on-chain
+  - Historical data is available within the same transaction
+  - More flexible for in-contract logic that might need recent history
+
+- Cons:
+
+  - Slightly higher gas cost than using only events
+  - Temporary storage is cleared after each transaction, so historical data is not permanently accessible on-chain
+
+## 4. **Use of Efficient Data Structures**
 
 Heap allocated arrays are slow and costly. Prefer fixed-sized arrays or `soroban_sdk::vec!`. This is crucial for large arrays, as exceeding the current linear memory size (a multiple of 64KB) triggers `wasm32::memory_grow`, which is highly computationally intensive.
 
@@ -167,91 +282,181 @@ let mut v1 = alloc::vec![];
 let mut v2 = [0; 100];
 ```
 
-Maps help a lot to prevent multiple storage operations. Use `soroban_sdk::Map` for efficient storage operations.
+Storing many items in a `Vec` can be inefficient due to the linear time complexity of membership checks.However, there are some alternatives to having a cumbersome `Vec`:
 
 ##### Example (Inefficient Data Storage) ❎
 
 ```rust
 #![no_std]
-use soroban_sdk::{contract, contractimpl, log, vec, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
+
+#[derive(Clone)]
+pub struct PlayerMove {
+    player: Address,
+    move_type: Symbol,
+}
+
+#[derive(Clone)]
+pub struct PlayerAchievement {
+    player: Address,
+    achievement: Symbol,
+}
 
 #[contract]
-pub struct ExampleContract;
+pub struct NonOptimalGameContract;
 
 #[contractimpl]
-impl ExampleContract {
-    // Function to add an item to the collection
-    pub fn add_item(env: Env, item: Symbol) {
-        let mut items: Vec<Symbol> = env.storage().persistent().get("items");
-        if !items.contains(&item) {
-            items.push(item.clone());
-            env.storage().persistent().set("items", &items);
-            log!(&env, "Item added: {}", item);
-        } else {
-            log!(&env, "Item already exists: {}", item);
+impl NonOptimalGameContract {
+    // Function to record a move for a specific player
+    pub fn record_move(env: Env, player: Address, move_type: Symbol) {
+        let mut all_moves: Vec<PlayerMove> = env.storage().persistent().get("all_moves").unwrap_or_default();
+        all_moves.push(PlayerMove { player: player.clone(), move_type });
+        env.storage().persistent().set("all_moves", &all_moves);
+    }
+
+    // Function to get moves for a specific player
+    pub fn get_moves(env: Env, player: Address) -> Vec<Symbol> {
+        let all_moves: Vec<PlayerMove> = env.storage().persistent().get("all_moves").unwrap_or_default();
+        all_moves
+            .iter()
+            .filter(|m| m.player == player)
+            .map(|m| m.move_type.clone())
+            .collect()
+    }
+
+    // Function to unlock an achievement for a specific player
+    pub fn unlock_achievement(env: Env, player: Address, achievement: Symbol) {
+        let mut all_achievements: Vec<PlayerAchievement> = env.storage().persistent().get("all_achievements").unwrap_or_default();
+        if !all_achievements.iter().any(|a| a.player == player && a.achievement == achievement) {
+            all_achievements.push(PlayerAchievement { player: player.clone(), achievement });
+            env.storage().persistent().set("all_achievements", &all_achievements);
         }
     }
 
-    // Function to check if an item exists in the collection
-    pub fn contains_item(env: Env, item: Symbol) -> bool {
-        let items: Vec<Symbol> = env.storage().persistent().get("items");
-        let exists = items.contains(&item);
-        log!(&env, "Item exists: {}", exists);
-        exists
+    // Function to get achievements for a specific player
+    pub fn get_achievements(env: Env, player: Address) -> Vec<Symbol> {
+        let all_achievements: Vec<PlayerAchievement> = env.storage().persistent().get("all_achievements").unwrap_or_default();
+        all_achievements
+            .iter()
+            .filter(|a| a.player == player)
+            .map(|a| a.achievement.clone())
+            .collect()
     }
 }
 ```
 
-:::danger
+:::danger This non-optimal version has several inefficiencies:
 
-- Data Structure: Uses a Vec to store items.
-- Inefficiency: Membership checks (contains) have linear time complexity O(n), making the contract inefficient for large collections.
-- Storage Operations: Involves multiple storage operations for each item addition and retrieval, increasing gas costs.
+- Single Vec for All Data:
+
+  All moves and achievements are stored in single Vecs (all_moves and all_achievements), regardless of the player. This means every operation requires loading and saving the entire dataset, which becomes increasingly expensive as the number of entries grows.
+
+- Linear Search Operations:
+
+  Retrieving moves or achievements for a specific player requires iterating through the entire Vec, which has O(n) time complexity. This becomes very slow and gas-intensive as the number of entries increases.
+
+- Redundant Data Storage:
+
+  The player's address is stored repeatedly for each move and achievement, leading to unnecessary data duplication.
+
+- Inefficient Achievement Checking:
+
+  Before adding a new achievement, the code iterates through all achievements to check for duplicates, which is an O(n) operation.
+
+- Gas Inefficiency:
+
+  Every operation (adding a move, unlocking an achievement, retrieving data) requires loading and saving the entire dataset, which is extremely gas-inefficient.
+
+- Scalability Issues:
+
+  As the number of players and their actions increase, the performance of this contract will degrade significantly.
+
+- Lack of Data Separation:
+
+  Moves and achievements are not clearly separated in the storage structure, making it harder to manage and potentially leading to confusion in more complex scenarios.
 
 :::
 
-##### Example (Correct Data Storage) ✅
+##### Alternative: Using Keyed Vecs ✅
 
 ```rust
 #![no_std]
-use soroban_sdk::{contract, contractimpl, log, Address, Env, Map, Symbol};
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
+
+#[derive(Clone)]
+pub enum DataKey {
+    Moves(Address),
+    Achievements(Address),
+}
 
 #[contract]
-pub struct ExampleContract;
+pub struct GameContract;
 
 #[contractimpl]
-impl ExampleContract {
-    // Function to add an item to the collection
-    pub fn add_item(env: Env, item: Symbol) {
-        let mut items: Map<Symbol, ()> = env.storage().persistent().get_or_default("items");
-        if !items.contains_key(&item) {
-            items.set(item.clone(), ());
-            env.storage().persistent().set("items", &items);
-            log!(&env, "Item added: {}", item);
-        } else {
-            log!(&env, "Item already exists: {}", item);
+impl GameContract {
+    // Function to record a move for a specific player
+    pub fn record_move(env: Env, player: Address, move_type: Symbol) {
+        let key = DataKey::Moves(player.clone());
+        let mut moves: Vec<Symbol> = env.storage().persistent().get(&key).unwrap_or_default();
+        moves.push(move_type.clone());
+        env.storage().persistent().set(&key, &moves);
+    }
+
+    // Function to get moves for a specific player
+    pub fn get_moves(env: Env, player: Address) -> Vec<Symbol> {
+        let key = DataKey::Moves(player);
+        env.storage().persistent().get(&key).unwrap_or_default()
+    }
+
+    // Function to unlock an achievement for a specific player
+    pub fn unlock_achievement(env: Env, player: Address, achievement: Symbol) {
+        let key = DataKey::Achievements(player.clone());
+        let mut achievements: Vec<Symbol> = env.storage().persistent().get(&key).unwrap_or_default();
+        if !achievements.contains(&achievement) {
+            achievements.push(achievement);
+            env.storage().persistent().set(&key, &achievements);
         }
     }
 
-    // Function to check if an item exists in the collection
-    pub fn contains_item(env: Env, item: Symbol) -> bool {
-        let items: Map<Symbol, ()> = env.storage().persistent().get_or_default("items");
-        let exists = items.contains_key(&item);
-        log!(&env, "Item exists: {}", exists);
-        exists
+    // Function to get achievements for a specific player
+    pub fn get_achievements(env: Env, player: Address) -> Vec<Symbol> {
+        let key = DataKey::Achievements(player);
+        env.storage().persistent().get(&key).unwrap_or_default()
     }
 }
 ```
 
 :::tip
 
-- Data Structure: Uses a Map to store items.
-- Efficiency: Membership checks (contains) have constant time complexity O(1), making the contract efficient for large collections.
-- Storage Operations: Minimizes storage operations by using a single Map for item storage, reducing gas costs.
+Here's a breakdown of the optimizations and benefits:
+
+- Address-Specific Storage:
+
+  Each player's moves and achievements are stored separately, allowing for efficient retrieval of player-specific data. The DataKey enum provides a clear structure for organizing different types of data associated with addresses.
+
+- Efficient Data Access:
+
+  By using the enum as a key, we can directly access the data for a specific player without needing to search through a larger data structure. This approach is particularly efficient when you need to frequently access or update data for individual players.
+
+- Flexible Data Structure:
+
+  The use of `Vec<Symbol>` for both moves and achievements allows for an unlimited number of entries for each player. This structure is suitable for storing ordered lists of moves or unique achievements.
+
+- Gas Efficiency:
+
+  By storing data separately for each player, we avoid having to load and modify a large, all-encompassing data structure for every operation. This can lead to significant gas savings, especially as the number of players and amount of data grows.
+
+- Clear Separation of Concerns:
+
+  The enum clearly separates different types of data (moves vs. achievements), making the code more readable and maintainable.
+
+- Easy Extensibility:
+
+  If you need to add new types of data associated with players, you can easily extend the DataKey enum without changing the existing structure.
 
 :::
 
-## 4. **Use of Appropriate `env.storage` Mechanisms**
+## 5. **Use of Appropriate `env.storage` Mechanisms**
 
 There are 3 types of storage mechanisms in Stellar:
 
@@ -318,67 +523,6 @@ To optimize the size of your `wasm` binary, you can:
 - Minimize the use of external dependencies
 - Use built-in tools to optimize the size of your `wasm` binary
 
-#### Example (Non-Optimized Contract) ❎
-
-```rust
-#![no_std]
-
-extern crate serde;
-extern crate serde_json;
-extern crate regex;
-
-use soroban_sdk::{contract, contractimpl, log, vec, Env, Symbol};
-use serde::{Deserialize, Serialize};
-use regex::Regex;
-
-#[contract]
-pub struct ExampleContract;
-
-#[contractimpl]
-impl ExampleContract {
-    // Function to log a message
-    pub fn log_message(env: Env, message: Symbol) {
-        log!(&env, "Message: {}", message);
-
-        // Unnecessary use of serde and regex
-        let _data: Vec<u8> = serde_json::to_vec(&message).unwrap();
-        let _re = Regex::new(r"\w+").unwrap();
-    }
-}
-```
-
-:::danger
-
-- Unnecessary Libraries: The contract includes serde, serde_json, and regex, which are not essential for the contract's primary functionality.
-- Increased WASM Size: Including these libraries adds unnecessary bloat, increasing the size of the compiled WASM file
-
-:::
-
-#### Example (Optimized Contract) ✅
-
-```rust
-#![no_std]
-use soroban_sdk::{contract, contractimpl, log, Env, Symbol};
-
-#[contract]
-pub struct ExampleContract;
-
-#[contractimpl]
-impl ExampleContract {
-    // Function to log a message
-    pub fn log_message(env: Env, message: Symbol) {
-        log!(&env, "Message: {}", message);
-    }
-}
-```
-
-:::tip
-
-- Essential Libraries Only: The contract only includes soroban_sdk, which is necessary for its functionality.
-- Reduced WASM Size: By avoiding unnecessary libraries, the size of the compiled WASM file is minimized.
-
-:::
-
 ## Other tips to optimize smart contract cost:
 
 ### 1. **Use of built-in tools**
@@ -413,7 +557,7 @@ Perform a manual code review of your smart contract to identify areas where you 
 
 Use unit tests to measure the gas cost of your smart contract functions. This will help you identify functions that are consuming a lot of gas and optimize them accordingly.
 
-Frameworks like `cargo-contract` provide tools to measure the gas cost of your smart contract functions. Use these tools to identify bottlenecks in your smart contract code.
+Also, using [simulateTransaction](/docs/data/rpc/api-reference/methods/simulateTransaction) rpc helper method can give you an insight of the gas cost of your contract functions.
 
 ### 4. **Static analysis tools:**
 
@@ -422,7 +566,7 @@ Tools like [Clippy](https://doc.rust-lang.org/clippy/) (part of the Rust compile
 - Unnecessary allocations
 - Redundant code
 
-### 5. **Reconsidering Storage Mechanisms**
+### 5. **Reconsidering Storage Locations**
 
 - #### State Variables:
 
