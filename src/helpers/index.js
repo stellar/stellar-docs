@@ -2,7 +2,7 @@ export const combineAdjacentStrings = (list) =>
   list.reduce((accum, item) => {
     const lastIndex = accum.length - 1;
     if (typeof accum[lastIndex] === "string" && typeof item === "string") {
-      // eslint-disable-next-line no-param-reassign
+       
       accum[lastIndex] = `${accum[lastIndex]}${item}`;
     } else {
       accum.push(item);
