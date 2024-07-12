@@ -253,8 +253,8 @@ const config: Config = {
         },
         {
           type: 'docSidebar',
-          sidebarId: 'reference',
-          label: 'Reference',
+          sidebarId: 'networks',
+          label: 'Networks',
           position: 'left',
         },
         {
