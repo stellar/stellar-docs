@@ -283,9 +283,9 @@ const config: Config = {
       ],
     },
     algolia: {
-      appId: "VNSJF5AWIZ",
-      apiKey: "c932e7670879e29070e269d202fb6740",
-      indexName: "crawler_Stellar Docs - Docusaurus",
+      appId: "34XUACALO9",
+      apiKey: "84d1f88c539b94def1b3e489685ebc82",
+      indexName: "crawler_Stellar Test Docs - Docusaurus",
     },
     footer: {
       links: [
