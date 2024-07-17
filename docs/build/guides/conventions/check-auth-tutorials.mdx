@@ -15,9 +15,537 @@ title: Tutorials on how to use __check_auth in interesting ways
   />
 </head>
 
-check_auth explanations
+# Tutorial 1: time based restriction on token transfers
 
-Tutorial 1 Background Story / Use Case Conceptual Explnations Whole Code walkthrough with snippet explanations Written Explanation of code, and how will the problem be resolved at the end. Code
+Imagine a multi-sig account contract where certain actions, like transferring tokens, need to be controlled by the time elapsed between consecutive transfers. For example, a token transfer should only be allowed if a certain period of time has passed since the last transfer. This can be useful in scenarios where you want to limit the frequency of transactions to prevent misuse or to implement rate limiting.
+
+## Basic Concepts behind the tutorial
+
+### Time-Based Restrictions
+
+The idea is to enforce a minimum time interval between consecutive token transfers. Each token can have its own time limit, and the contract will track the last transfer time for each token.
+
+### Data Storage
+
+The contract will store the time limit and last transfer time for each token in its storage to keep track of these values across transactions.
+
+### Code walkthrough
+
+#### Contract Initialization:
+
+1. Initializes the contract with a list of signers' public keys.
+2. Stores the count of signers in the contract's storage.
+
+```rust
+pub fn init(env: Env, signers: Vec<BytesN<32>>) {
+    for signer in signers.iter() {
+        env.storage().instance().set(&DataKey::Signer(signer), &());
+    }
+    env.storage()
+        .instance()
+        .set(&DataKey::SignerCnt, &signers.len());
+}
+```
+
+#### Setting Time Limits
+
+1. Allows setting a time limit for a specific token.
+2. Ensures that only the contract itself can set these limits by requiring the contract's authorization.
+
+```rust
+pub fn set_time(env: Env, token: Address, time_limit: u64) {
+    env.current_contract_address().require_auth();
+    env.storage()
+        .instance()
+        .set(&DataKey::TimeLimit(token), &time_limit);
+}
+```
+
+#### Authentication Check
+
+1. Authenticates the signatures.
+2. Checks if all required signers have signed.
+3. Iterates through the authorization context to verify the authorization policy.
+
+```rust
+#[allow(non_snake_case)]
+pub fn __check_auth(
+    env: Env,
+    signature_payload: BytesN<32>,
+    signatures: Vec<Signature>,
+    auth_context: Vec<Context>,
+) -> Result<(), AccError> {
+    authenticate(&env, &signature_payload, &signatures)?;
+
+    let tot_signers: u32 = env
+        .storage()
+        .instance()
+        .get::<_, u32>(&DataKey::SignerCnt)
+        .unwrap();
+    let all_signed = tot_signers == signatures.len();
+
+    let curr_contract = env.current_contract_address();
+    let mut transfer_times_per_token = Map::<Address, u64>::new(&env);
+
+    for context in auth_context.iter() {
+        verify_authorization_policy(
+            &env,
+            &context,
+            &curr_contract,
+            all_signed,
+            &mut transfer_times_per_token,
+        )?;
+    }
+    Ok(())
+}
+```
+
+#### Authentication Function
+
+1. Verifies that the signatures are in the correct order and that each signer is authorized.
+2. Uses ed25519 to verify each signature.
+
+```rust
+fn authenticate(
+    env: &Env,
+    signature_payload: &BytesN<32>,
+    signatures: &Vec<Signature>,
+) -> Result<(), AccError> {
+    for i in 0..signatures.len() {
+        let signature = signatures.get_unchecked(i);
+        if i > 0 {
+            let prev_signature = signatures.get_unchecked(i - 1);
+            if prev_signature.public_key >= signature.public_key {
+                return Err(AccError::BadSignatureOrder);
+            }
+        }
+        if !env
+            .storage()
+            .instance()
+            .has(&DataKey::Signer(signature.public_key.clone()))
+        {
+            return Err(AccError::UnknownSigner);
+        }
+        env.crypto().ed25519_verify(
+            &signature.public_key,
+            &signature_payload.clone().into(),
+            &signature.signature,
+        );
+    }
+    Ok(())
+}
+```
+
+#### Authorization Policy Verification
+
+1. Checks if the function being called is a transfer or approve function.
+2. Enforces the time-based restriction by comparing the current time with the last transfer time.
+3. Updates the last transfer time if the transfer is allowed.
+
+```rust
+fn verify_authorization_policy(
+    env: &Env,
+    context: &Context,
+    curr_contract: &Address,
+    all_signed: bool,
+    transfer_times_per_token: &mut Map<Address, u64>,
+) -> Result<(), AccError> {
+    let contract_context = match context {
+        Context::Contract(c) => {
+            if &c.contract == curr_contract {
+                if !all_signed {
+                    return Err(AccError::NotEnoughSigners);
+                }
+            }
+            c
+        }
+        Context::CreateContractHostFn(_) => return Err(AccError::InvalidContext),
+    };
+
+    if contract_context.fn_name != TRANSFER_FN
+        && contract_context.fn_name != Symbol::new(env, "approve")
+    {
+        return Ok(());
+    }
+
+    let current_time = env.ledger().timestamp();
+    let time_limit: Option<u64> =
+        env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::TimeLimit(contract_context.contract.clone()));
+
+    if let Some(limit) = time_limit {
+        let last_transfer_time: u64 = transfer_times_per_token
+            .get(contract_context.contract.clone())
+            .unwrap_or_else(|| {
+                env.storage()
+                    .instance()
+                    .get::<_, u64>(&DataKey::LastTransferTime(contract_context.contract.clone()))
+                    .unwrap_or(0)
+            });
+
+        if current_time - last_transfer_time < limit {
+            return Err(AccError::TimeLimitExceeded);
+        }
+
+        transfer_times_per_token.set(contract_context.contract.clone(), current_time);
+        env.storage()
+            .instance()
+            .set(&DataKey::LastTransferTime(contract_context.contract.clone()), &current_time);
+    }
+    Ok(())
+}
+```
+
+### Summary
+
+The contract begins by initializing with a set of authorized signers. It allows setting a time limit for token transfers, which controls how frequently a token can be transferred. The \_\_check_auth function is the core of the authorization process, ensuring that all necessary signatures are valid and checking the time-based restriction for token transfers. If the required time has not passed since the last transfer, the contract will deny the operation, enforcing the desired rate limiting. By tracking the last transfer time and enforcing a minimum time interval between transfers, the contract effectively limits the frequency of token transfers, resolving the issue of potential abuse through rapid consecutive transactions.
+
+### Complete Code
+
+Here are all the snippets stacked together in a single file for convenience:
+
+```rust
+#![no_std]
+
+use soroban_sdk::{
+    auth::Context, contract, contracterror, contractimpl, contracttype, symbol_short, Address,
+    BytesN, Env, Map, Symbol, TryIntoVal, Vec,
+};
+#[contract]
+struct AccountContract;
+
+#[contracttype]
+#[derive(Clone)]
+pub struct Signature {
+    pub public_key: BytesN<32>,
+    pub signature: BytesN<64>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+enum DataKey {
+    SignerCnt,
+    Signer(BytesN<32>),
+    TimeLimit(Address),
+    LastTransferTime(Address),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum AccError {
+    NotEnoughSigners = 1,
+    NegativeAmount = 2,
+    BadSignatureOrder = 3,
+    UnknownSigner = 4,
+    InvalidContext = 5,
+    TimeLimitExceeded = 6,
+}
+
+const TRANSFER_FN: Symbol = symbol_short!("transfer");
+
+#[contractimpl]
+impl AccountContract {
+    pub fn init(env: Env, signers: Vec<BytesN<32>>) {
+        for signer in signers.iter() {
+            env.storage().instance().set(&DataKey::Signer(signer), &());
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::SignerCnt, &signers.len());
+    }
+
+    pub fn set_time(env: Env, token: Address, time_limit: u64) {
+        env.current_contract_address().require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::TimeLimit(token), &time_limit);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn __check_auth(
+        env: Env,
+        signature_payload: BytesN<32>,
+        signatures: Vec<Signature>,
+        auth_context: Vec<Context>,
+    ) -> Result<(), AccError> {
+        authenticate(&env, &signature_payload, &signatures)?;
+
+        let tot_signers: u32 = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SignerCnt)
+            .unwrap();
+        let all_signed = tot_signers == signatures.len();
+
+        let curr_contract = env.current_contract_address();
+        let mut transfer_times_per_token = Map::<Address, u64>::new(&env);
+
+        for context in auth_context.iter() {
+            verify_authorization_policy(
+                &env,
+                &context,
+                &curr_contract,
+                all_signed,
+                &mut transfer_times_per_token,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn authenticate(
+    env: &Env,
+    signature_payload: &BytesN<32>,
+    signatures: &Vec<Signature>,
+) -> Result<(), AccError> {
+    for i in 0..signatures.len() {
+        let signature = signatures.get_unchecked(i);
+        if i > 0 {
+            let prev_signature = signatures.get_unchecked(i - 1);
+            if prev_signature.public_key >= signature.public_key {
+                return Err(AccError::BadSignatureOrder);
+            }
+        }
+        if !env
+            .storage()
+            .instance()
+            .has(&DataKey::Signer(signature.public_key.clone()))
+        {
+            return Err(AccError::UnknownSigner);
+        }
+        env.crypto().ed25519_verify(
+            &signature.public_key,
+            &signature_payload.clone().into(),
+            &signature.signature,
+        );
+    }
+    Ok(())
+}
+
+fn verify_authorization_policy(
+    env: &Env,
+    context: &Context,
+    curr_contract: &Address,
+    all_signed: bool,
+    transfer_times_per_token: &mut Map<Address, u64>,
+) -> Result<(), AccError> {
+    let contract_context = match context {
+        Context::Contract(c) => {
+            if &c.contract == curr_contract {
+                if !all_signed {
+                    return Err(AccError::NotEnoughSigners);
+                }
+            }
+            c
+        }
+        Context::CreateContractHostFn(_) => return Err(AccError::InvalidContext),
+    };
+
+    if contract_context.fn_name != TRANSFER_FN
+        && contract_context.fn_name != Symbol::new(env, "approve")
+    {
+        return Ok(());
+    }
+
+    let current_time = env.ledger().timestamp();
+    let time_limit: Option<u64> =
+        env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::TimeLimit(contract_context.contract.clone()));
+
+    if let Some(limit) = time_limit {
+        let last_transfer_time: u64 = transfer_times_per_token
+            .get(contract_context.contract.clone())
+            .unwrap_or_else(|| {
+                env.storage()
+                    .instance()
+                    .get::<_, u64>(&DataKey::LastTransferTime(contract_context.contract.clone()))
+                    .unwrap_or(0)
+            });
+
+        if current_time - last_transfer_time < limit {
+            return Err(AccError::TimeLimitExceeded);
+        }
+
+        transfer_times_per_token.set(contract_context.contract.clone(), current_time);
+        env.storage()
+            .instance()
+            .set(&DataKey::LastTransferTime(contract_context.contract.clone()), &current_time);
+    }
+    Ok(())
+}
+
+mod test;
+
+```
+
+Test cases, save it as test.rs
+
+```rust
+#![cfg(test)]
+extern crate std;
+
+use ed25519_dalek::Keypair;
+use ed25519_dalek::Signer;
+use rand::thread_rng;
+use soroban_sdk::auth::ContractContext;
+use soroban_sdk::symbol_short;
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::AuthorizedFunction;
+use soroban_sdk::testutils::AuthorizedInvocation;
+use soroban_sdk::Val;
+use soroban_sdk::{
+    auth::Context, testutils::BytesN as _, vec, Address, BytesN, Env, IntoVal, Symbol,
+};
+use soroban_sdk::testutils::Ledger;
+use soroban_sdk::testutils::LedgerInfo;
+use crate::AccError;
+use crate::{AccountContract, AccountContractClient, Signature};
+
+fn generate_keypair() -> Keypair {
+    Keypair::generate(&mut thread_rng())
+}
+
+fn signer_public_key(e: &Env, signer: &Keypair) -> BytesN<32> {
+    signer.public.to_bytes().into_val(e)
+}
+
+fn create_account_contract(e: &Env) -> AccountContractClient {
+    AccountContractClient::new(e, &e.register_contract(None, AccountContract {}))
+}
+
+fn sign(e: &Env, signer: &Keypair, payload: &BytesN<32>) -> Val {
+    Signature {
+        public_key: signer_public_key(e, signer),
+        signature: signer
+            .sign(payload.to_array().as_slice())
+            .to_bytes()
+            .into_val(e),
+    }
+    .into_val(e)
+}
+
+fn token_auth_context(e: &Env, token_id: &Address, fn_name: Symbol, amount: i128) -> Context {
+    Context::Contract(ContractContext {
+        contract: token_id.clone(),
+        fn_name,
+        args: ((), (), amount).into_val(e),
+    })
+}
+
+#[test]
+fn test_token_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let account_contract = create_account_contract(&env);
+
+    let mut signers = [generate_keypair(), generate_keypair()];
+    if signers[0].public.as_bytes() > signers[1].public.as_bytes() {
+        signers.swap(0, 1);
+    }
+    account_contract.init(&vec![
+        &env,
+        signer_public_key(&env, &signers[0]),
+        signer_public_key(&env, &signers[1]),
+    ]);
+
+    let payload = BytesN::random(&env);
+    let token = Address::generate(&env);
+
+    env.try_invoke_contract_check_auth::<AccError>(
+        &account_contract.address,
+        &payload,
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
+        &vec![
+            &env,
+            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1000),
+        ],
+    )
+    .unwrap();
+    env.try_invoke_contract_check_auth::<AccError>(
+        &account_contract.address,
+        &payload,
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
+        &vec![
+            &env,
+            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1000),
+        ],
+    )
+    .unwrap();
+
+    // Add a time limit of 1000 seconds for the token.
+    account_contract.set_time(&token, &1000);
+    // Verify that this call needs to be authorized.
+
+    assert_eq!(
+        env.auths(),
+        std::vec![(
+            account_contract.address.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    account_contract.address.clone(),
+                    symbol_short!("set_time"),
+                    (token.clone(), 1000_u64).into_val(&env),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+
+    // Attempting a transfer within the time limit should fail.
+    // env.ledger().set_timestamp(0); // Set initial timestamp
+
+    env.ledger().set(LedgerInfo {
+        timestamp: 0,
+        protocol_version: 1,
+        sequence_number: 10,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_temp_entry_ttl: 16,
+        min_persistent_entry_ttl: 16,
+        max_entry_ttl: 100_000,
+    });
+
+    env.try_invoke_contract_check_auth::<AccError>(
+        &account_contract.address,
+        &payload,
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
+        &vec![
+            &env,
+            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1001)
+        ],
+    )
+    .err()
+    .unwrap()
+    .unwrap() == AccError::TimeLimitExceeded;
+
+    // Simulate passing of time to allow the next transfer.
+    env.ledger().set(LedgerInfo {
+        timestamp: 1000,
+        protocol_version: 1,
+        sequence_number: 10,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_temp_entry_ttl: 16,
+        min_persistent_entry_ttl: 16,
+        max_entry_ttl: 100_000,
+    });
+
+    env.try_invoke_contract_check_auth::<AccError>(
+        &account_contract.address,
+        &payload,
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
+        &vec![
+            &env,
+            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1001),
+        ],
+    )
+    .unwrap();
+}
+```
 
 Tutorial 2 Background Story / Use Case Conceptual Explnations Whole Code walkthrough with snippet explanations Written Explanation of code, and how will the problem be resolved at the end. Code
 
