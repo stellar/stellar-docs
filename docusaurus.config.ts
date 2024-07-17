@@ -8,7 +8,7 @@ import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
 const config: Config = {
-  title: "Stellar Docs",
+  title: "Stellar Test Docs",
   tagline:
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
