@@ -11,7 +11,7 @@ const config: Config = {
   title: "Stellar Test Docs",
   tagline:
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
-  url: "https://developers.stellar.org",
+  url: "http://developers-pr804.previews.kube001.services.stellar-ops.com",
   baseUrl: "/",
   trailingSlash: false,
   onBrokenLinks: "throw",
