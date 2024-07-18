@@ -321,7 +321,7 @@ To determine the number of XLM equal to the USD value of any Award, the USD valu
 
 SDF’s failure to enforce any of these terms or guidelines shall not constitute a waiver of that provision. Should any provision of these Sorobanathon Eligibility Guidelines be or become illegal or unenforceable in any jurisdiction whose laws or regulations may apply to a participant or submission, such illegality or unenforceability shall leave the remainder of these Sorobanathon Eligibility Guidelines to the fullest extent permitted by law, unaffected and valid. The illegal or unenforceable provision shall be replaced by a valid and enforceable provision that comes closest and best reflects the SDF’s intention in a legal and enforceable manner with respect to the invalid or unenforceable provision.
 
-**Remember that this is a community we build together 💪! Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
+**Remember that this is a community; we build together! 💪 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
 
 [docs]: https://developers.stellar.org/docs
 [api]: https://developers.stellar.org/api
