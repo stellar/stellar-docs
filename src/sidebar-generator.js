@@ -43,22 +43,26 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
       (item) =>
         item.type === "category" && item.label.toLowerCase() === "resources",
     );
+    const aggregations = apiReference.items.find(
+      (item) =>
+        item.type === "category" && item.label.toLowerCase() === "aggregations"
+    )
 
     const sidebarPath = path.join(
       args.version.contentPath,
       args.item.dirName,
-      "./api-reference/resources/sidebar.ts",
+      "./api-reference/sidebar.ts",
     );
 
     if (resources && fs.existsSync(sidebarPath)) {
-      const generatedApiSidebar = require(sidebarPath);
+      const generatedApiSidebar = require(sidebarPath)[0];
 
       const categories = resources.items.filter(
         (item) => item.type === "category",
       );
 
       categories.forEach((category) => {
-        const generatedCategory = generatedApiSidebar.find(
+        const generatedCategory = generatedApiSidebar.items.find(
           (item) => item.type === "category" && item.label === category.label,
         );
 
@@ -67,6 +71,25 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
         }
       });
     }
+
+    if (aggregations && fs.existsSync(sidebarPath)) {
+      const generatedApiSidebar = require(sidebarPath)[1];
+
+      const categories = aggregations.items.filter(
+        (item) => item.type === "category",
+      );
+
+      categories.forEach((category) => {
+        const generatedCategory = generatedApiSidebar.items.find(
+          (item) => item.type === "category" && item.label === category.label,
+        );
+
+        if (generatedCategory) {
+          category.items = [...category.items, ...generatedCategory.items];
+        }
+      });
+    }
+
   }
 
   // return the sidebar items
