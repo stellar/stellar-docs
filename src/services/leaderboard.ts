@@ -17,8 +17,7 @@ export const fetchLeaderboard = async ({
   colName,
   direction = "asc",
   pageNumber,
-}: LeaderboardParams) => {
-  return await httpClient.get<Leaderboard[]>("/leaderboard", {
+}: LeaderboardParams) => await httpClient.get<Leaderboard[]>("/leaderboard", {
     params: {
       ...(colName
         ? {
@@ -28,4 +27,3 @@ export const fetchLeaderboard = async ({
       ...(pageNumber ? { pageNumber } : {}),
     },
   });
-};
