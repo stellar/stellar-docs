@@ -20,18 +20,6 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
-      label: "Fees",
-      items: [
-        {
-          type: "doc",
-          id: "anchor-platform/api-reference/callbacks/get-fee",
-          label: "Retrieve Fees",
-          className: "api-method get",
-        },
-      ],
-    },
-    {
-      type: "category",
       label: "Rates",
       items: [
         {
@@ -74,12 +62,6 @@ const sidebar: SidebarsConfig = {
           type: "doc",
           id: "anchor-platform/api-reference/callbacks/gen-address",
           label: "Generate Unique Address",
-          className: "api-method get",
-        },
-        {
-          type: "doc",
-          id: "anchor-platform/api-reference/callbacks/get-fee",
-          label: "Retrieve Fees",
           className: "api-method get",
         },
         {
