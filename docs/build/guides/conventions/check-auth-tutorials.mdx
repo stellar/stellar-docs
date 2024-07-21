@@ -28,19 +28,67 @@ The contract will store the time limit and last transfer time for each token in 
 
 ## Code walkthrough
 
+### Contract Structure and Imports
+
+```rust
+#![no_std]
+
+use soroban_sdk::{
+    auth::{Context, CustomAccountInterface}, contract, contracterror, contractimpl, contracttype, symbol_short, Address,
+    BytesN, Env, Symbol, Vec,
+};
+#[contract]
+struct AccountContract;
+
+#[contracttype]
+#[derive(Clone)]
+pub struct Signature {
+    pub public_key: BytesN<32>,
+    pub signature: BytesN<64>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+enum DataKey {
+    SignerCnt,
+    Signer(BytesN<32>),
+    TimeLimit(Address),
+    LastTransferTime(Address),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum AccError {
+    NotEnoughSigners = 1,
+    NegativeAmount = 2,
+    BadSignatureOrder = 3,
+    UnknownSigner = 4,
+    InvalidContext = 5,
+    TimeLimitExceeded = 6,
+}
+
+const TRANSFER_FN: Symbol = symbol_short!("transfer");
+
+```
+
 ### Contract Initialization:
 
 1. Initializes the contract with a list of signers' public keys.
 2. Stores the count of signers in the contract's storage.
 
 ```rust
-pub fn init(env: Env, signers: Vec<BytesN<32>>) {
-    for signer in signers.iter() {
-        env.storage().instance().set(&DataKey::Signer(signer), &());
+#[contractimpl]
+impl AccountContract {
+
+    pub fn init(env: Env, signers: Vec<BytesN<32>>) {
+        for signer in signers.iter() {
+            env.storage().instance().set(&DataKey::Signer(signer), &());
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::SignerCnt, &signers.len());
     }
-    env.storage()
-        .instance()
-        .set(&DataKey::SignerCnt, &signers.len());
 }
 ```
 
@@ -50,11 +98,15 @@ pub fn init(env: Env, signers: Vec<BytesN<32>>) {
 2. Ensures that only the contract itself can set these limits by requiring the contract's authorization.
 
 ```rust
-pub fn set_time(env: Env, token: Address, time_limit: u64) {
-    env.current_contract_address().require_auth();
-    env.storage()
-        .instance()
-        .set(&DataKey::TimeLimit(token), &time_limit);
+#[contractimpl]
+
+impl AccountContract {
+    pub fn set_time(env: Env, token: Address, time_limit: u64) {
+        env.current_contract_address().require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::TimeLimit(token), &time_limit);
+    }
 }
 ```
 
@@ -65,35 +117,42 @@ pub fn set_time(env: Env, token: Address, time_limit: u64) {
 3. Iterates through the authorization context to verify the authorization policy.
 
 ```rust
-#[allow(non_snake_case)]
-pub fn __check_auth(
-    env: Env,
-    signature_payload: BytesN<32>,
-    signatures: Vec<Signature>,
-    auth_context: Vec<Context>,
-) -> Result<(), AccError> {
-    authenticate(&env, &signature_payload, &signatures)?;
+#[contractimpl]
+impl CustomAccountInterface for AccountContract {
 
-    let tot_signers: u32 = env
-        .storage()
-        .instance()
-        .get::<_, u32>(&DataKey::SignerCnt)
-        .unwrap();
-    let all_signed = tot_signers == signatures.len();
+    type Error = AccError;
+    type Signature = Vec<Signature>;
 
-    let curr_contract = env.current_contract_address();
-    let mut transfer_times_per_token = Map::<Address, u64>::new(&env);
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,
+        signature_payload: BytesN<32>,
+        signatures: Vec<Signature>,
+        auth_context: Vec<Context>,
+    ) -> Result<(), AccError> {
+        authenticate(&env, &signature_payload, &signatures)?;
 
-    for context in auth_context.iter() {
-        verify_authorization_policy(
-            &env,
-            &context,
-            &curr_contract,
-            all_signed,
-            &mut transfer_times_per_token,
-        )?;
+        let tot_signers: u32 = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SignerCnt)
+            .unwrap();
+
+        let all_signed = tot_signers == signatures.len();
+
+        let curr_contract = env.current_contract_address();
+
+        for context in auth_context.iter() {
+            verify_authorization_policy(
+                &env,
+                &context,
+                &curr_contract,
+                all_signed,
+            )?;
+        }
+        Ok(())
     }
-    Ok(())
+
 }
 ```
 
@@ -103,10 +162,10 @@ pub fn __check_auth(
 2. Uses [ed25519_verify](https://docs.rs/soroban-sdk/latest/soroban_sdk/crypto/struct.Crypto.html#method.ed25519_verify) function to verify each signature.
 
 ```rust
-fn authenticate(
-    env: &Env,
-    signature_payload: &BytesN<32>,
-    signatures: &Vec<Signature>,
+ fn authenticate(
+        env: &Env,
+        signature_payload: &BytesN<32>,
+        signatures: &Vec<Signature>,
 ) -> Result<(), AccError> {
     for i in 0..signatures.len() {
         let signature = signatures.get_unchecked(i);
@@ -141,56 +200,50 @@ fn authenticate(
 
 ```rust
 fn verify_authorization_policy(
-    env: &Env,
-    context: &Context,
-    curr_contract: &Address,
-    all_signed: bool,
-    transfer_times_per_token: &mut Map<Address, u64>,
-) -> Result<(), AccError> {
-    let contract_context = match context {
-        Context::Contract(c) => {
-            if &c.contract == curr_contract {
-                if !all_signed {
-                    return Err(AccError::NotEnoughSigners);
+        env: &Env,
+        context: &Context,
+        curr_contract: &Address,
+        all_signed: bool,
+    ) -> Result<(), AccError> {
+        let contract_context = match context {
+            Context::Contract(c) => {
+                if &c.contract == curr_contract {
+                    if !all_signed {
+                        return Err(AccError::NotEnoughSigners);
+                    }
                 }
+                c
             }
-            c
-        }
-        Context::CreateContractHostFn(_) => return Err(AccError::InvalidContext),
-    };
+            Context::CreateContractHostFn(_) => return Err(AccError::InvalidContext),
+        };
 
-    if contract_context.fn_name != TRANSFER_FN
-        && contract_context.fn_name != Symbol::new(env, "approve")
-    {
-        return Ok(());
-    }
-
-    let current_time = env.ledger().timestamp();
-    let time_limit: Option<u64> =
-        env.storage()
-            .instance()
-            .get::<_, u64>(&DataKey::TimeLimit(contract_context.contract.clone()));
-
-    if let Some(limit) = time_limit {
-        let last_transfer_time: u64 = transfer_times_per_token
-            .get(contract_context.contract.clone())
-            .unwrap_or_else(|| {
-                env.storage()
-                    .instance()
-                    .get::<_, u64>(&DataKey::LastTransferTime(contract_context.contract.clone()))
-                    .unwrap_or(0)
-            });
-
-        if current_time - last_transfer_time < limit {
-            return Err(AccError::TimeLimitExceeded);
+        if contract_context.fn_name != TRANSFER_FN
+            && contract_context.fn_name != Symbol::new(env, "approve")
+        {
+            return Ok(());
         }
 
-        transfer_times_per_token.set(contract_context.contract.clone(), current_time);
-        env.storage()
-            .instance()
-            .set(&DataKey::LastTransferTime(contract_context.contract.clone()), &current_time);
-    }
-    Ok(())
+        let current_time = env.ledger().timestamp();
+        let time_limit: Option<u64> =
+            env.storage()
+                .instance()
+                .get::<_, u64>(&DataKey::TimeLimit(contract_context.contract.clone()));
+
+        if let Some(limit) = time_limit {
+            let last_transfer_time: u64 = env.storage()
+                .instance()
+                .get::<_, u64>(&DataKey::LastTransferTime(contract_context.contract.clone()))
+                .unwrap_or(0);
+
+            if current_time - last_transfer_time < limit {
+                return Err(AccError::TimeLimitExceeded);
+            }
+
+            env.storage()
+                .instance()
+                .set(&DataKey::LastTransferTime(contract_context.contract.clone()), &current_time);
+        }
+        Ok(())
 }
 ```
 
@@ -204,10 +257,9 @@ Here are all the snippets stacked together in a single file for convenience:
 
 ```rust
 #![no_std]
-
 use soroban_sdk::{
-    auth::Context, contract, contracterror, contractimpl, contracttype, symbol_short, Address,
-    BytesN, Env, Map, Symbol, TryIntoVal, Vec,
+    auth::{Context, CustomAccountInterface}, contract, contracterror, contractimpl, contracttype, symbol_short, Address,
+    BytesN, Env, Symbol, Vec,
 };
 #[contract]
 struct AccountContract;
@@ -259,9 +311,16 @@ impl AccountContract {
             .instance()
             .set(&DataKey::TimeLimit(token), &time_limit);
     }
+}
+
+#[contractimpl]
+impl CustomAccountInterface for AccountContract {
+
+    type Error = AccError;
+    type Signature = Vec<Signature>;
 
     #[allow(non_snake_case)]
-    pub fn __check_auth(
+    fn __check_auth(
         env: Env,
         signature_payload: BytesN<32>,
         signatures: Vec<Signature>,
@@ -274,10 +333,10 @@ impl AccountContract {
             .instance()
             .get::<_, u32>(&DataKey::SignerCnt)
             .unwrap();
+
         let all_signed = tot_signers == signatures.len();
 
         let curr_contract = env.current_contract_address();
-        let mut transfer_times_per_token = Map::<Address, u64>::new(&env);
 
         for context in auth_context.iter() {
             verify_authorization_policy(
@@ -285,11 +344,11 @@ impl AccountContract {
                 &context,
                 &curr_contract,
                 all_signed,
-                &mut transfer_times_per_token,
             )?;
         }
         Ok(())
     }
+
 }
 
 fn authenticate(
@@ -326,7 +385,6 @@ fn verify_authorization_policy(
     context: &Context,
     curr_contract: &Address,
     all_signed: bool,
-    transfer_times_per_token: &mut Map<Address, u64>,
 ) -> Result<(), AccError> {
     let contract_context = match context {
         Context::Contract(c) => {
@@ -353,20 +411,15 @@ fn verify_authorization_policy(
             .get::<_, u64>(&DataKey::TimeLimit(contract_context.contract.clone()));
 
     if let Some(limit) = time_limit {
-        let last_transfer_time: u64 = transfer_times_per_token
-            .get(contract_context.contract.clone())
-            .unwrap_or_else(|| {
-                env.storage()
-                    .instance()
-                    .get::<_, u64>(&DataKey::LastTransferTime(contract_context.contract.clone()))
-                    .unwrap_or(0)
-            });
+        let last_transfer_time: u64 = env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::LastTransferTime(contract_context.contract.clone()))
+            .unwrap_or(0);
 
         if current_time - last_transfer_time < limit {
             return Err(AccError::TimeLimitExceeded);
         }
 
-        transfer_times_per_token.set(contract_context.contract.clone(), current_time);
         env.storage()
             .instance()
             .set(&DataKey::LastTransferTime(contract_context.contract.clone()), &current_time);
@@ -375,10 +428,9 @@ fn verify_authorization_policy(
 }
 
 mod test;
-
 ```
 
-These are the test cases, save it in a file named test.rs alongside the lib.rs
+These are the test cases
 
 ```rust
 #![cfg(test)]
@@ -543,7 +595,7 @@ fn test_token_auth() {
 
 # Tutorial 2: implementing a smart wallet (webauthn)
 
-Imagine a world where traditional passwords are obsolete. In this world, WebAuthn (Web Authentication) has become the standard for secure online interactions. Alice, a blockchain enthusiast, wants to create a wallet that leverages WebAuthn technology for enhanced security. She decides to implement a WebAuthn wallet on the Soroban platform, allowing users to manage their digital assets using their device's biometric features or security keys.
+Imagine a world where traditional passwords are obsolete. In this world, WebAuthn (Web Authentication) has become the standard for secure online interactions. Alice, a blockchain enthusiast, wants to create a wallet that leverages WebAuthn technology for enhanced security. She decides to implement a WebAuthn wallet on the Soroban platform, allowing users to manage their digital assets using their device's biometric features or security keys (eg. YubiKey, Google Titan Security Key, etc).
 
 ## Base Concept:
 
@@ -556,7 +608,11 @@ The WebAuthn wallet implemented in this tutorial will be able to:
 3. Differentiate between admin and regular users
 4. Allow contract updates for future improvements
 
-:::info This tutorial's code credit goes to [@kalepail](https://github.com/kalepail) work on passkeys, which you can explore more [here](https://github.com/kalepail/passkey-kit) :::
+:::info
+
+This tutorial's code credit goes to [@kalepail](https://github.com/kalepail) work on passkeys, which you can explore more [here](https://github.com/kalepail/passkey-kit)
+
+:::
 
 ## Code Walkthrough:
 
@@ -923,7 +979,7 @@ The WebAuthn wallet contract manages user credentials and authentication. It all
 
 ### Test cases:
 
-Let's add a section on test cases to ensure our WebAuthn wallet is functioning correctly. We'll use the Soroban SDK's testing utilities to create and run these tests.
+These are test cases to ensure our WebAuthn wallet is functioning correctly. We'll use the Soroban SDK's testing utilities to create and run these tests.
 
 ```rust
 #[cfg(test)]
