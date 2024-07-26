@@ -1,0 +1,199 @@
+---
+title: Implementing State Archival in DApps
+description: Learn how to implement state archival in your DApp.
+---
+
+When developing decentralized applications using soroban, state archival is part of what we need to consider due to how data is stored on the stellar network. This guide will help you understand what state archival is and how to work with it in your DApp.
+
+Some terminologies we will be using here are already described [here](/docs/learn/encyclopedia/storage/state-archival#terms-and-semantics).
+
+# What is State Archival?
+
+When storing data in smart contracts, they can either be marked as [`Persistent`](/docs/learn/encyclopedia/storage/state-archival#persistent), [`Temporary`](/docs/learn/encyclopedia/storage/state-archival#temporary), or [`Instance`](/docs/learn/encyclopedia/storage/state-archival#instance).
+
+The TTL is the number of ledgers between the current ledger and the final ledger for which the data can still be accessed.
+
+State archival in Stellar decentralized applications (dApps) is a crucial process for managing the lifecycle and accessibility of contract data and code on the blockchain. It revolves around the concept of Time To Live (TTL), where each data entry, whether `Persistent`, `Temporary`, or `Instance` has a countdown to inaccessibility. When an entry's TTL reaches zero, it becomes either archived or deleted, depending on its type. `Temporary` data is permanently removed, while `Persistent` and `Instance` data become inaccessible but can be restored.
+
+This system allows for efficient blockchain resource management by enabling temporary data to expire and be removed, while providing mechanisms to keep important data accessible long-term. Developers must actively manage their data's lifecycle by extending TTLs and restoring archived data when necessary. The process applies not only to contract data but also to contract instances and their associated WebAssembly (WASM) code. Different storage types have varying costs and archival behaviors, allowing developers to optimize based on their specific needs. Ultimately, state archival requires careful consideration in dApp design and ongoing maintenance to ensure continued functionality.
+
+## What can be archived?
+
+- **Contract Data**: `Persistent` and `Instance` data entries can get archived when their TTL reaches zero. `Temporary` data is permanently removed.
+- **Contract Instances**: The Contract WASM or instance itself can be archived when their TTL reaches zero, making them inaccessible until restored. `Instance` data is archived when the contract instance is archived and also restored when the contract instance is restored.
+
+See this [guide](/docs/learn/encyclopedia/storage/state-archival) for advanced details on state archival.
+
+## Why Managing State Archival is Important for Applications
+
+Managing state archival is crucial for Stellar dApps for several reasons:
+
+- Data Accessibility: Archived data becomes inaccessible, potentially breaking application functionality so it's important to manage data lifecycle and know when to restore.
+- Cost Efficiency: Different storage types have varying fees and archival behaviors, allowing developers to optimize costs. Due to this, some data may be more cost-effective to store in a way that makes it get archived after a certain period.
+- Data Lifecycle Management: Proper management ensures that important data remains accessible while allowing temporary data to expire.
+- Application Continuity: Ensuring contract instances and WASM code remain live is essential for uninterrupted dApp operation. It is essential to check for contract availability before attempting to interact with the contract after a long period of inactivity.
+
+## Methods of Implementing State Archival on the Client Side
+
+### 1. Extending TTL from the smart contract
+
+This method involves invoking the `extend_ttl()` from your smart contract to extend the TTL of the contract instance and its associated data. This method is useful when you want to keep the data accessible for a longer period. To use this method, your contract must not be archived at the moment of calling.
+
+`extend_ttl()` has 2 important parameters (T,N),
+
+- T is threshold, the current ledger height at which the extension should happen.
+- N is the new ledger height at which the data will expire.
+- current TTL must be less than T for the extension to happen.
+- If N is less than the current ledger height, the TTL will not be extended and the call will be regarded as a no-op.
+- If N is greater than the current ledger height, the TTL will be extended to N.
+
+Lets see a sample of how we can implement this in a smart contract.
+
+```rust
+#![no_std]
+/// This is a simple contract that just extends TTL for its keys.
+/// It's main purpose is to demonstrate how TTL extension can be tested,
+use soroban_sdk::{contract, contractimpl, contracttype, Env};
+
+#[contracttype]
+pub enum DataKey {
+    MyKey,
+}
+
+#[contract]
+pub struct TtlContract;
+
+#[contractimpl]
+impl TtlContract {
+    /// Creates a contract entry in every kind of storage.
+    pub fn setup(env: Env) {
+        env.storage().persistent().set(&DataKey::MyKey, &0);
+        env.storage().instance().set(&DataKey::MyKey, &1);
+        env.storage().temporary().set(&DataKey::MyKey, &2);
+    }
+
+    /// Extend the persistent entry TTL to 5000 ledgers, when its
+    /// TTL is smaller than 1000 ledgers.
+    pub fn extend_persistent(env: Env) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::MyKey, 1000, 5000);
+    }
+
+    /// Extend the instance entry TTL to become at least 10000 ledgers,
+    /// when its TTL is smaller than 2000 ledgers.
+    pub fn extend_instance(env: Env) {
+        env.storage().instance().extend_ttl(2000, 10000);
+    }
+
+    /// Extend the temporary entry TTL to become at least 7000 ledgers,
+    /// when its TTL is smaller than 3000 ledgers.
+    pub fn extend_temporary(env: Env) {
+        env.storage()
+            .temporary()
+            .extend_ttl(&DataKey::MyKey, 3000, 7000);
+    }
+}
+
+mod test;
+```
+
+:::info
+
+The above contract shows how to extend the TTL of a `Persistent`, `Instance`, and `Temporary` data entry. The `extend_ttl()` method is used to extend the TTL of the data entry to a new ledger height.
+
+:::
+
+Calling the methods to extend the TTL of the data entries from our DApp will ensure that the data remains accessible for a longer period.
+
+For this, we will need some libraries
+
+```shell
+npm install @stellar/stellar-sdk @stellar/freighter-api
+```
+
+Then we can implement the following code in our DApp to extend the TTL of the data entries.
+
+```js
+import * as StellarSdk from "@stellar/stellar-sdk";
+import { prepareTransaction } from "@stellar/stellar-sdk/rpc";
+import {
+  isConnected,
+  setAllowed,
+  getPublicKey,
+  signTransaction,
+} from "@stellar/freighter-api";
+    const rpcUrl = "https://soroban-testnet.stellar.org";
+    const contractAddress = "CXXXXXXXXXXXXXXXXXXXXXXXXXX";
+    const server = new StellarSdk.SorobanRpc.Server(rpcUrl);
+    const sendTransaction = async () => {
+      try {
+          let hasFreighter = await isConnected();
+          if (!hasFreighter && isMainnet.value) {
+            return alert(
+              "Freighter wallet is required for mainnet transactions"
+            );
+          }
+          const isAllowed = await setAllowed();
+          if (!isAllowed) {
+            return alert("Please allow the transaction in Freighter wallet");
+          }
+          const accountId = await getPublicKey();
+          const contract = new StellarSdk.Contract(contractAddress);
+          const account = await server.getAccount(accountId);
+          const fee = String(feeSetting.value);
+
+          const transaction = new StellarSdk.TransactionBuilder(account, {
+            fee,
+            networkPassphrase: StellarSdk.Networks.TESTNET,
+          })
+            .setTimeout(30)
+            .addOperation(
+              contract.call(
+                "extend_instance",
+                )
+              )
+            )
+            .build();
+
+          let preparedTransaction = await server.prepareTransaction(
+            transaction
+          );
+          let signedTransaction;
+
+          let signedXDR = await signTransaction(
+            preparedTransaction.toEnvelope().toXDR("base64")
+          );
+          signedTransaction = StellarSdk.TransactionBuilder.fromXDR(
+            signedXDR,
+           StellarSdk.Networks.TESTNET
+          );
+          // try to send the transaction
+          const res = await server.sendTransaction(signedTransaction);
+        }
+      } catch (error) {
+        console.error(error);
+        result.value = `Error sending transaction: ${error}`;
+      }
+    };
+```
+
+:::info
+
+The above code does the following
+
+- check for freighter wallet
+- Initiate a transaction call to the contract address for the `extend_instance` method.
+- Prepare the transaction
+- Sign the transaction with freighter wallet
+- Send the transaction
+
+:::
+
+### 2. Restoring Archived Data
+
+When data is archived, it becomes inaccessible, and the contract instance is archived. To restore the data, you need to call the `restore()` method from the smart contract. This method restores the contract instance and its associated data, making them accessible again.
+
+```rust
+
+```
