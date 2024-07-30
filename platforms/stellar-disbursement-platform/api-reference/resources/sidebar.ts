@@ -240,6 +240,12 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
+          id: "stellar-disbursement-platform/api-reference/resources/patch-organization-circle",
+          label: "Circle Account Setup",
+          className: "api-method patch",
+        },
+        {
+          type: "doc",
           id: "stellar-disbursement-platform/api-reference/resources/get-all-countries",
           label: "Get All Countries",
           className: "api-method get",
@@ -345,6 +351,30 @@ const sidebar: SidebarsConfig = {
           id: "stellar-disbursement-platform/api-reference/resources/default-tenant",
           label: "Default Tenant",
           className: "api-method post",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "Circle",
+      items: [
+        {
+          type: "doc",
+          id: "stellar-disbursement-platform/api-reference/resources/patch-organization-circle",
+          label: "Circle Account Setup",
+          className: "api-method patch",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "Balances",
+      items: [
+        {
+          type: "doc",
+          id: "stellar-disbursement-platform/api-reference/resources/get-organization-circle-balances",
+          label: "Get Organization (Circle) Balances",
+          className: "api-method get",
         },
       ],
     },

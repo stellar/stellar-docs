@@ -3,6 +3,7 @@ id: single-tenant-to-multi-tenant-migration
 title: 1.x to 2.x Migration Guide
 description: Single-tenant to multi-tenant migration guide.
 keywords: [migration, single-tenant, multi-tenant, SDP, 1.x, 2.x]
+sidebar_position: 70
 ---
 
 import { CodeExample } from "@site/src/components/CodeExample";
@@ -17,9 +18,13 @@ New features and fixes will only be published to the multi-tenant version.
 
 The multi-tenant version also suits single-tenant scenarios, through a simplified configuration that will be described later in this document.
 
-> **DISCLAIMER**: this guide was prepared and tested with `1.1.6 -> 2.0.0-rc1` code bases. If you're in a later version, it's possible that the new database migrations cause an error when following these steps.
-> 
-> You have the option of using the `2.0.0-rc1` version to perform this migration, and then upgrade to the latest version after the migration is completed.
+:::caution
+
+This guide was prepared and tested with `1.1.7 -> 2.1.0` code bases. If you're in a later version, it's possible that the new database migrations cause an error when following these steps.
+
+You have the option of using the `2.1.0` version to perform this migration, and then upgrade to the latest version after the migration is completed.
+
+:::
 
 ## Preparing for the Migrations
 
@@ -119,8 +124,7 @@ General environment variables:
 Stellar accounts configuration environment variables:
 
 - `CHANNEL_ACCOUNT_ENCRYPTION_PASSPHRASE`: A Stellar-compliant ed25519 private key used to encrypt/decrypt the channel accounts' private keys. When not set, it will default to the value of the 'distribution-seed' option, which was used in the single-tenant version. **Attention**, when migrating from the single-tenant, setting this config to something different from the old `DISTRIBUTION_SEED` will prevent the code from being able to decrypt the channel accounts.
-- `DISTRIBUTION_SIGNER_TYPE`: The type of signer used to sign Stellar transactions for the tenants' distribution accounts. Options: `DISTRIBUTION_ACCOUNT_DB` (recommended), `DISTRIBUTION_ACCOUNT_ENV` (same as the single-tenant version).
-- `DISTRIBUTION_ACCOUNT_ENCRYPTION_PASSPHRASE`: A Stellar-compliant ed25519 private key used to encrypt/decrypt the in-memory distribution accounts' private keys. It's mandatory when the distribution-signer-type is set to `DISTRIBUTION_ACCOUNT_DB`.
+- `DISTRIBUTION_ACCOUNT_ENCRYPTION_PASSPHRASE`: A Stellar-compliant ed25519 private key used to encrypt/decrypt the in-memory distribution accounts' private keys.
 
 Event broker configuration environment variables:
 
@@ -147,9 +151,7 @@ On the Anchor Platform side, we must set the following envs:
 
 ### Seggregation of Funds
 
-In the multi-tenant version, we support the segregation of funds between tenants by configuring the `DISTRIBUTION_SIGNER_TYPE`:
-- When set to `DISTRIBUTION_ACCOUNT_ENV`, the distribution account private key is read from the environment variable `DISTRIBUTION_SEED` and the funds are not seggregated.
-- When set to `DISTRIBUTION_ACCOUNT_DB`, the distribution account private key is stored in the database and the funds are seggregated between tenants. The secret is encrypted using the `DISTRIBUTION_ACCOUNT_ENCRYPTION_PASSPHRASE` environment variable.
+In the multi-tenant version, tenants funds are isolated from each other **unless the tenant is created with `"distribution_account_type": "DISTRIBUTION_ACCOUNT.STELLAR.ENV"`**. For more information on the distribution account types, please refer to the [Tenant Provisioning](tenant-provisioning#creating-tenants) section.
 
 The channel accounts on the other hand are shared between tenants, and they are created by the HOST distribution account, set in the `DISTRIBUTION_SEED` environment variable. The channel accounts are encrypted using the `CHANNEL_ACCOUNT_ENCRYPTION_PASSPHRASE` environment variable, or the `DISTRIBUTION_SEED` if the former is not set. In the single-tenant version, the channel accounts were encrypted by the `DISTRIBUTION_SEED`.
 
@@ -214,7 +216,11 @@ These changes allow for the isolation of tenant data per schema, ensuring that e
 
 ## Step-by-Step Migration Guide
 
-> EDIT: the code contains a helper script called [`./dev/migrate_1.1.6_to_2.0.0.sh`](https://github.com/stellar/stellar-disbursement-platform-backend/pull/267) that does most of the below steps automatically for you. Keep in mind that you'll need to edit the script with values such as your database DSN, and your tenant name. If you see any errors, you may still need to resort to the steps below to incrementally execute the migration manually.
+:::tip
+
+The project has a [script](https://github.com/stellar/stellar-disbursement-platform-backend/blob/4420bba6628546918dfcca027ac504898121fed9/internal/integrationtests/scripts/singletenant_to_multitenant_db_migration_test.sh) that performs these steps, as well as a [CI](https://github.com/stellar/stellar-disbursement-platform-backend/blob/4420bba6628546918dfcca027ac504898121fed9/.github/workflows/singletenant_to_multitenant_db_migration_test.yml) that ensures these steps are working. You can use them as a reference.
+
+:::
 
 Using the new database created from the single-tenant database dump as a starting point (as described in the [Database Backup & Setup](#database-backup--setup-) section), we can now proceed with the migration steps below.
 
@@ -276,6 +282,8 @@ tenant="bluecorp"
 baseURL="http://$tenant.stellar.local:8000"
 sdpUIBaseURL="http://$tenant.stellar.local:3000"
 ownerEmail="owner@$tenant.org"
+# NOTE: please refer to the distribution_account_type values in the API reference
+distributionAccountType="DISTRIBUTION_ACCOUNT.STELLAR.DB_VAULT"
 
 curl -X POST http://localhost:8003/tenants \
      -H "Content-Type: application/json" \
@@ -287,13 +295,12 @@ curl -X POST http://localhost:8003/tenants \
             "sdp_ui_base_url": "'"$sdpUIBaseURL"'",
             "owner_email": "'"$ownerEmail"'",
             "owner_first_name": "john",
-            "owner_last_name": "doe"
+            "owner_last_name": "doe",
+            "distribution_account_type": "'"$distributionAccountType"'"
      }'
 ```
 
 </CodeExample>
-
-> TODO: check if `base_url` and `sdp_ui_base_url` should be removed after https://stellarorg.atlassian.net/browse/SDP-1148 is done.
 
 In the SDP Multi-tenant, certain configurations previously managed through environment variables in the single-tenant setup are now stored within the **tenants** table in the admin schema. This change allows each tenant to have its own custom configuration. 
 
@@ -310,122 +317,13 @@ Please notice that the following tables don't need to be copied:
 - **_countries_**
 - **_organizations_**
 
-To import your data from the single-tenant structure, we'll start by removing pre-existing multi-tenant entries that were automatically added when provisioning the tenant:
+To help with the import process, we added a function to the `admin` schema that will copy the data from the v1 tables located in the public schema to the new tenant schema. The function is called `import_tenant_data_from_v1_to_v2` and it receives the tenant name as a parameter. Tenant name needs to be the same as the `$name` used in the tenant creation API call.
 
 <CodeExample>
 
 ```sql
-BEGIN TRANSACTION;
-
-DELETE FROM sdp_<tenant name>.auth_users;
-DELETE FROM sdp_<tenant name>.wallets_assets;
-DELETE FROM sdp_<tenant name>.assets;
-DELETE FROM sdp_<tenant name>.wallets;
-
-COMMIT;
+    SELECT admin.migrate_tenant_data_from_v1_to_v2('tenant_name')
 ```
-
-</CodeExample>
-
-Now we can import the data for the remaining tenant tables. Please notice that some tables cannot be imported directly due to a custom-type conflict. For instance, the `status` column in the `public.payments` table depends on `public.payment_status` enum type, while the one in the `sdp_<tenant name>.payments` table depends on the `sdp_<tenant name>.payment_status` enum type. To solve this, we update the type in the source table to match the destination table type:
-
-<CodeExample>
-
-```sql
--- INSERT new data:
-BEGIN TRANSACTION;
-
--- These tables can be copied without changing any types in the source table columns:
-INSERT INTO sdp_<tenant name>.wallets SELECT * FROM public.wallets;
-INSERT INTO sdp_<tenant name>.assets SELECT * FROM public.assets;
-INSERT INTO sdp_<tenant name>.wallets_assets SELECT * FROM public.wallets_assets;
-INSERT INTO sdp_<tenant name>.auth_users SELECT * FROM public.auth_users;
-INSERT INTO sdp_<tenant name>.receivers SELECT * FROM public.receivers;
-INSERT INTO sdp_<tenant name>.auth_user_mfa_codes SELECT * FROM public.auth_user_mfa_codes;
-INSERT INTO sdp_<tenant name>.auth_user_password_reset SELECT * FROM public.auth_user_password_reset;
-
--- These tables need to have the type of some columns changed, we do that with the `ALTER TABLE` directives:
--- NOTE: we're not reverting the types back to the original ones, as the source tables will be dropped after the migration.
-ALTER TABLE public.receiver_wallets
-	ALTER COLUMN status DROP DEFAULT,
-	ALTER COLUMN status TYPE sdp_<tenant name>.receiver_wallet_status
-		USING status::text::sdp_<tenant name>.receiver_wallet_status;
-INSERT INTO sdp_<tenant name>.receiver_wallets SELECT * FROM public.receiver_wallets;
-
-ALTER TABLE public.receiver_verifications
-	ALTER COLUMN verification_field TYPE sdp_<tenant name>.verification_type
-		USING verification_field::text::sdp_<tenant name>.verification_type;
-INSERT INTO sdp_<tenant name>.receiver_verifications SELECT * FROM public.receiver_verifications;
-
-ALTER TABLE public.disbursements
-	ALTER COLUMN status DROP DEFAULT,
-	ALTER COLUMN status TYPE sdp_<tenant name>.disbursement_status
-		USING status::text::sdp_<tenant name>.disbursement_status;
-ALTER TABLE public.disbursements
-	ALTER COLUMN verification_field DROP DEFAULT,
-	ALTER COLUMN verification_field TYPE sdp_<tenant name>.verification_type
-		USING verification_field::text::sdp_<tenant name>.verification_type;
-INSERT INTO sdp_<tenant name>.disbursements SELECT * FROM public.disbursements;
-
-ALTER TABLE public.payments
-	ALTER COLUMN status DROP DEFAULT,
-	ALTER COLUMN status TYPE sdp_<tenant name>.payment_status
-		USING status::text::sdp_<tenant name>.payment_status;
-INSERT INTO sdp_<tenant name>.payments SELECT * FROM public.payments;
-
-ALTER TABLE public.messages
-	ALTER COLUMN status DROP DEFAULT,
-	ALTER COLUMN status TYPE sdp_<tenant name>.message_status
-		USING status::text::sdp_<tenant name>.message_status;
-ALTER TABLE public.messages
-	ALTER COLUMN type TYPE sdp_<tenant name>.message_type
-		USING type::text::sdp_<tenant name>.message_type;
-INSERT INTO sdp_<tenant name>.messages SELECT * FROM public.messages;
-
-COMMIT;
-```
-
-</CodeExample>
-
-This concludes the SDP **tenant data** import, so the next step will be to import the Transaction Submitter Service (TSS) data. As a pre-requisite for that, make sure you have exactly one result in from this query and that no fields are empty:
-
-<CodeExample>
-
-```sql
-SELECT id, name, distribution_account_address FROM admin.tenants;
-```
-
-</CodeExample>
-
-Now we can use these fields to import the TSS data:
-
-<CodeExample>
-
-```sql
-BEGIN TRANSACTION;
-
----- 1. add new columns to the transaction_submitter table and populate them
-ALTER TABLE public.submitter_transactions
-    ADD COLUMN tenant_id VARCHAR(36),
-    ADD COLUMN distribution_account_address VARCHAR(56);
-WITH SelectedTenant AS (
-    SELECT id AS tenant_id, distribution_account_address
-    FROM admin.tenants
-    LIMIT 1
-)
-UPDATE public.submitter_transactions SET tenant_id = (SELECT tenant_id FROM SelectedTenant), distribution_account_address = (SELECT distribution_account_address FROM SelectedTenant);
-
----- 2. copy values to the new table
-INSERT INTO tss.submitter_transactions 
-SELECT
-    id, external_id,
-    status::text::tss.transaction_status AS status,
-    status_history, status_message, asset_code, asset_issuer, amount, destination, created_at, updated_at, locked_at, started_at, sent_at, completed_at, synced_at, locked_until_ledger_number, stellar_transaction_hash, attempts_count, xdr_sent, xdr_received, tenant_id, distribution_account_address
-FROM public.submitter_transactions;
-
-COMMIT;
-```
-
 </CodeExample>
 
 This concludes the migration of the SDP data to the multi-tenant version. The next step is to drop the old tables that are no longer needed.
