@@ -268,6 +268,12 @@ const sidebar: SidebarsConfig = {
               label: "List All Payments",
               className: "api-method get",
             },
+            {
+              type: "doc",
+              id: "data/horizon/api-reference/retrieve-a-transactions-payments",
+              label: "Retrieve a Transaction's Payments",
+              className: "api-method get",
+            },
           ],
         },
         {
