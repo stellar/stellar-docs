@@ -1,56 +1,81 @@
 import fs from 'fs';
 import path from 'path';
+import glob from 'glob';
 
 // Define the list of language codes
 const languages = ['es'];
 
 // Define the ignored files path (as per crowdin.yml configuration)
-const ignoredPaths = ['/docs/data/horizon/api-reference/resources/**/*', '/docs/data/horizon/api-reference/errors/**/*'];
+const ignoredPaths = [
+    '/docs/data/horizon/api-reference/resources/**/*',
+    '/docs/data/horizon/api-reference/errors/**/*',
+    '/docs/**/*.api.mdx',
+    '/docs/**/*.json',
+    '/platforms/anchor-platform/api-reference/resources/**/*',
+    '/platforms/**/*.api.mdx',
+    '/platforms/**/*.json'
+];
 
-// Function to copy files recursively
-function copyFilesRecursively(src, dest) {
-    if (!fs.existsSync(src)) {
-        console.log(`Source directory ${src} does not exist.`);
-        return;
-    }
+/**
+ * Logs a message to the console with a timestamp.
+ * @param {string} message - The message to log.
+ */
+function logMessage(message) {
+    console.log(`[${new Date().toISOString()}] ${message}`);
+}
 
-    fs.mkdirSync(dest, { recursive: true });
-    const entries = fs.readdirSync(src, { withFileTypes: true });
+/**
+ * Copies a file or directory from source to destination.
+ * @param {string} src - The source path.
+ * @param {string} dest - The destination path.
+ */
+function copyFileOrDirectory(src, dest) {
+    const destDir = path.dirname(dest);
+    fs.mkdirSync(destDir, { recursive: true });
 
-    for (let entry of entries) {
-        const srcPath = path.join(src, entry.name);
-        const destPath = path.join(dest, entry.name);
-
-        if (entry.isDirectory()) {
-            copyFilesRecursively(srcPath, destPath);
-        } else {
-            fs.copyFileSync(srcPath, destPath);
-        }
+    const stat = fs.statSync(src);
+    if (stat.isDirectory()) {
+        fs.cpSync(src, dest, { recursive: true });
+        logMessage(`Successfully copied directory ${src} to ${dest}`);
+    } else {
+        fs.copyFileSync(src, dest);
+        logMessage(`Successfully copied file ${src} to ${dest}`);
     }
 }
 
-// Function to copy ignored files for each language
+/**
+ * Copies ignored files for each language based on the patterns.
+ */
 function copyIgnoredFilesForLanguages() {
-    ignoredPaths.forEach(ignoredPath => {
-        // Strip the leading and trailing slashes and wildcard for the source path
-        const srcPath = ignoredPath.replace('/**/*', '').replace(/^\//, '');
+    ignoredPaths.forEach(ignoredPattern => {
+        // Strip the leading slash for the source path
+        const srcPattern = ignoredPattern.replace(/^\//, '');
 
-        languages.forEach(languageCode => {
-            const destPath = ignoredPath
-                .replace('/docs', `i18n/${languageCode}/docusaurus-plugin-content-docs/current`)
-                .replace('/**/*', '')
-                .replace(/^\//, '');
+        glob(srcPattern, (err, files) => {
+            if (err) {
+                logMessage(`Error processing pattern ${srcPattern}: ${err.message}`);
+                return;
+            }
 
-            copyFilesRecursively(srcPath, destPath);
-            console.log(`Copied ignored files from ${srcPath} to ${destPath}`);
+            files.forEach(srcPath => {
+                languages.forEach(languageCode => {
+                    const destPath = srcPath
+                        .replace(/^docs/, `i18n/${languageCode}/docusaurus-plugin-content-docs/current`)
+                        .replace(/^platforms/, `i18n/${languageCode}/docusaurus-plugin-content-docs-platforms/current`);
+
+                    copyFileOrDirectory(srcPath, destPath);
+                });
+            });
         });
     });
 }
 
-// Main function to execute the workflow
+/**
+ * Main function to execute the workflow.
+ */
 function main() {
     copyIgnoredFilesForLanguages();
-    console.log('Ignored files copied for all specified languages.');
+    logMessage('Ignored files copied for all specified languages.');
 }
 
 // Execute the main function
