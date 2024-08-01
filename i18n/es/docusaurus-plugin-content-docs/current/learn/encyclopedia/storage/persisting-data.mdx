@@ -1,0 +1,98 @@
+---
+sidebar_position: 10
+title: Persisting Data
+description: Store and access smart contract data.
+---
+
+<head>
+  <title>Store and access smart contract data.</title>
+  <meta charSet="utf-8" />
+  <meta property="og:title" content="Store and access smart contract data." />
+  <meta
+    property="og:description"
+    content="Store and access smart contract data."
+  />
+</head>
+
+## Ledger entries
+
+Contracts can access ledger entries of type `CONTRACT_DATA`. Host functions are provided to probe, read, write, and delete `CONTRACT_DATA` ledger entries.
+
+Each `CONTRACT_DATA` ledger entry is keyed in the ledger by the contract ID that owns it, its storage type (`Persistent`, `Temporary`, `Instance`) as well as a single user-chosen value, of the standard value type. This means that the user-chosen key may be a simple value such as a symbol, number or binary blob, or it may be a more complex structured value like a vector or map with multiple sub-values.
+
+Each `CONTRACT_DATA` ledger entry also holds (in addition to its key) a single value associated with the key. Again, this value may be simple like a symbol or number, or may be complex like a vector or map with many sub-values.
+
+No serialization or deserialization is required in contract code when accessing `CONTRACT_DATA` ledger entries: the host automatically serializes and deserializes any ledger entries accessed, exchanging them with the contract as deserialized values. If a contract wishes to use a custom serialization format, it can store a binary-valued `CONTRACT_DATA` ledger entry and provide its own code to serialize and deserialize, but Soroban has been designed with the intent to minimize the need for contracts to ever do this.
+
+## Access Control
+
+Contracts are only allowed to read and write `CONTRACT_DATA` ledger entries owned by the contract: those keyed by the same contract ID as the contract performing the read or write. Attempting to access other `CONTRACT_DATA` ledger entries will cause a transaction to fail.
+
+There is no access control for TTL extension operations. Any user may invoke `ExtendFootprintTTLOp` on any LedgerEntry.
+
+## Granularity
+
+A `CONTRACT_DATA` ledger entry is read or written from the ledger in its entirety; there is no way to read or write "only a part" of a `CONTRACT_DATA` ledger entry. There is also a fixed overhead cost to accessing any `CONTRACT_DATA` ledger entry. Contracts are therefore responsible for dividing logically "large" data structures into "pieces" with an appropriate size granularity, to use for reading and writing. If pieces are too large there may be unnecessary costs paid for reading and writing unused data, as well as unnecessary contention in parallel execution; but if pieces are too small there may be unnecessary costs paid for the fixed overhead of each entry.
+
+## Footprints and parallel contention
+
+Contracts are only allowed to access ledger entries specified in the footprint of their transaction. Transactions with overlapping footprints are said to contend, and will only execute sequentially with respect to one another, on a single thread. Transactions with non-overlapping footprints may execute in parallel. This means that a finer granularity of `CONTRACT_DATA` ledger entries may reduce artificial contention among transactions using a contract, and thereby increase parallelism.
+
+## Contract Data Best Practices
+
+### Account State vs. Shared State
+
+While there is no distinction between "account" state and "shared" state at the protocol level, it can be helpful to think of data in these terms when deciding what storage type and TTL Extension strategy to use for a given use case. As a guideline, account and shared state can be described as follows:
+
+- Most contract state can either be associated with a specific account or shared between multiple stakeholders (“public good”)
+  - Account specific state
+    - Balances, positions, allowances, etc.
+  - Shared state
+    - Admin entry, pool values, etc.
+- There are two subcategories of shared state
+  - "Global" state shared by all contract users
+    - Contract instance, contract wasm, or a global admin
+  - State shared by only a specific subset of users
+    - AMM pool values In an AMM monolith contract (Uniswap V4 style)
+- Note: Sometimes account and shared state can merge when the contract scope is small
+  - I.e. smart wallet or a single nft, where a new contract instance is generated for each account
+
+### Owned Contracts vs. Autonomous Contracts
+
+In addition to the types of state, it is also helpful to consider the type of contract instance being used. Again, these types are not enforced at the protocol level, but can be helpful.
+
+- Owned contracts
+  - Contract instances that have a clear owner
+    - A smart wallet or a single nft, where a new contract instance is generated for each account
+    - Custom reserve backed assets (USDC, etc)
+- Autonomous contracts
+  - Contract instance that have not clear owner, or have a decentralized group of owners
+    - Most DeFi protocols, especially non-upgradable ones
+
+### Best Practices
+
+- Prefer `Temporary` over `Persistent` and `Instance` storage
+  - Anything that can have a timeout should be `Temporary` with TTL set to the timeout. See the [resource limits table](../../../networks/resource-limits-fees.mdx) for the current maximum TTL/timeout.
+  - Ideally, `Temporary` entries should be associated with an absolute ledger boundary and thus never need a TTL extension
+    - Example: Soroban Auth signatures have an absolute expiration ledger, so nonces can be stored in `Temporary` entries without security risks
+    - Example: SAC allowance that lives only until a given ledger (so that some old allowance signature can not be used in the future if not exhausted)
+- All global state that cannot be `Temporary` should be in `Instance` storage
+  - This guarantees that the TTL of the contract instance and all relevant globals are tied together
+  - Since global state is used often, this ensures that global state will never need to be restored, leading to cheaper and more efficient contract invocations
+- Autonomous contracts should extend the TTL of any shared state touched by an invocation via the `extend_ttl()` host function
+  - Given that these contracts have no owners, leaving TTL extensions to benevolent clients might lead to a “tragedy of the commons” situation
+  - Most users do not extend the TTL because it is not required, but still benefit from the benevolent client who does extend the TTL
+- Owners of owned contracts should subsidize shared state TTL extension fees by manually submitting extend operations
+  - Owners should keep track of TTLs for all shared state
+  - This could be implemented via something like a cron job where a `ExtendFootprintTTLOp` for all relevant shared state is submitted periodically (i.e. once a month)
+  - Alternatively, this could also be implemented via an admin smart contract function routinely called by the owner
+- Clients (Wallets/Dapps) should identify the state that relates to their respective account, present TTL info to the users, and suggest TTL extensions when necessary
+- TTL extensions should never be relied on for functionality or safety
+  - Unsafe example: An entry must be permanent, but instead of using `Persistent` storage, a contract uses `Temporary` storage but will continually extend the entry so it is always live
+    - Because there is no automatic TTL extension interface, and every TTL extension must come from either a smart contract invocation or `ExtendFootprintTTLOp`, it must be assumed that an entry's TTL can go to 0 and the entry be deleted
+    - TTL extension fees are variable, and it may become too expensive to extend the TTL of pseudo “persistent” `Temporary` entries if fees increase unexpectedly
+    - If the TTL extension process is automated (i.e. a cron job) the account automatically sending `ExtendFootprintTTLOps` may run out of funds unexpectedly should TTL extension fees increase, causing the `Temporary` entry to exhaust its TTL and be permanently deleted
+- Entry TTL exhaustion should never be relied on for functionality or safety
+  - Unsafe example: a nonce should expire in 7 days, so a contract creates a `Temporary` entry and extends the TTL to 7 days with no other lifetime enforcement in place.
+  - Anyone can submit a TTL extension operation on any entry without authorization, meaning that the nonce can have its TTL extended indefinitely by any user
+  - If an entry needs to be invalidated after a certain time period, this must be implemented manually by the contract

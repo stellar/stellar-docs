@@ -1,0 +1,355 @@
+---
+title: Invoke a contract function in a Stellar transaction using SDKs
+hide_table_of_contents: true
+description: Use the Stellar SDK to create, simulate, and assemble a transaction.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+This is a simple example using the Stellar SDK to create, simulate, and then assemble a Stellar transaction which invokes an `increment` function of the [auth example contract](../../smart-contracts/example-contracts/auth.mdx).
+
+<Tabs>
+<TabItem value="js" label="JavaScript">
+
+:::tip
+
+Please go to [the project homepage](https://github.com/stellar/js-stellar-sdk) of JavaScript SDK to learn how to install it.
+
+:::
+
+```javascript
+(async () => {
+  const {
+    Keypair,
+    Contract,
+    SorobanRpc,
+    TransactionBuilder,
+    Networks,
+    BASE_FEE,
+    nativeToScVal,
+    Address,
+  } = require("@stellar/stellar-sdk");
+
+  // The source account will be used to sign and send the transaction.
+  // GCWY3M4VRW4NXJRI7IVAU3CC7XOPN6PRBG6I5M7TAOQNKZXLT3KAH362
+  const sourceKeypair = Keypair.fromSecret(
+    "SCQN3XGRO65BHNSWLSHYIR4B65AHLDUQ7YLHGIWQ4677AZFRS77TCZRB",
+  );
+
+  // Configure SorobanClient to use the `soroban-rpc` instance of your
+  // choosing.
+  const server = new SorobanRpc.Server(
+    "https://soroban-testnet.stellar.org:443",
+  );
+
+  // Here we will use a deployed instance of the `increment` example contract.
+  const contractAddress =
+    "CCTAMZGXBVCQJJCX64EVYTM6BKW5BXDI5PRCXTAYT6DVEDXKGS347HWU";
+  const contract = new Contract(contractAddress);
+
+  // Transactions require a valid sequence number (which varies from one
+  // account to another). We fetch this sequence number from the RPC server.
+  const sourceAccount = await server.getAccount(sourceKeypair.publicKey());
+
+  // The transaction begins as pretty standard. The source account, minimum
+  // fee, and network passphrase are provided.
+  let builtTransaction = new TransactionBuilder(sourceAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    // The invocation of the `increment` function of our contract is added
+    // to the transaction.
+    .addOperation(
+      contract.call(
+        "increment",
+        nativeToScVal(Address.fromString(sourceKeypair.publicKey())),
+        nativeToScVal(5, { type: "u32" }),
+      ),
+    )
+    // This transaction will be valid for the next 30 seconds
+    .setTimeout(30)
+    .build();
+
+  console.log(`builtTransaction=${builtTransaction.toXDR()}`);
+
+  // We use the RPC server to "prepare" the transaction. This simulating the
+  // transaction, discovering the storage footprint, and updating the
+  // transaction to include that footprint. If you know the footprint ahead of
+  // time, you could manually use `addFootprint` and skip this step.
+  let preparedTransaction = await server.prepareTransaction(builtTransaction);
+
+  // Sign the transaction with the source account's keypair.
+  preparedTransaction.sign(sourceKeypair);
+
+  // Let's see the base64-encoded XDR of the transaction we just built.
+  console.log(
+    `Signed prepared transaction XDR: ${preparedTransaction
+      .toEnvelope()
+      .toXDR("base64")}`,
+  );
+
+  // Submit the transaction to the Soroban-RPC server. The RPC server will
+  // then submit the transaction into the network for us. Then we will have to
+  // wait, polling `getTransaction` until the transaction completes.
+  try {
+    let sendResponse = await server.sendTransaction(preparedTransaction);
+    console.log(`Sent transaction: ${JSON.stringify(sendResponse)}`);
+
+    if (sendResponse.status === "PENDING") {
+      let getResponse = await server.getTransaction(sendResponse.hash);
+      // Poll `getTransaction` until the status is not "NOT_FOUND"
+      while (getResponse.status === "NOT_FOUND") {
+        console.log("Waiting for transaction confirmation...");
+        // See if the transaction is complete
+        getResponse = await server.getTransaction(sendResponse.hash);
+        // Wait one second
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      console.log(`getTransaction response: ${JSON.stringify(getResponse)}`);
+
+      if (getResponse.status === "SUCCESS") {
+        // Make sure the transaction's resultMetaXDR is not empty
+        if (!getResponse.resultMetaXdr) {
+          throw "Empty resultMetaXDR in getTransaction response";
+        }
+        // Find the return value from the contract and return it
+        let transactionMeta = getResponse.resultMetaXdr;
+        let returnValue = transactionMeta.v3().sorobanMeta().returnValue();
+        console.log(`Transaction result: ${returnValue.value()}`);
+      } else {
+        throw `Transaction failed: ${getResponse.resultXdr}`;
+      }
+    } else {
+      throw sendResponse.errorResultXdr;
+    }
+  } catch (err) {
+    // Catch and report any errors we've thrown
+    console.log("Sending transaction failed");
+    console.log(JSON.stringify(err));
+  }
+})();
+```
+
+</TabItem>
+
+<TabItem value="py" label="Python">
+
+:::tip
+
+Please go to [the project homepage](https://github.com/StellarCN/py-stellar-base) of Python SDK to learn how to install it.
+
+In addition, Python provides a lot of example code, which you can find [here](https://github.com/StellarCN/py-stellar-base/tree/main/examples).
+
+:::
+
+```py
+import time
+
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
+from stellar_sdk import xdr as stellar_xdr
+from stellar_sdk.exceptions import PrepareTransactionException
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+
+secret = "SAAPYAPTTRZMCUZFPG3G66V4ZMHTK4TWA6NS7U4F7Z3IMUD52EK4DDEV"
+rpc_server_url = "https://soroban-testnet.stellar.org:443"
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+
+# Here we will use a deployed instance of the `increment` example contract.
+contract_id = "CDOGJBJMRVVXW5K3UJ5BGVJ5RSQXQB4UFVQYVFOIARC2UYXSEPF4YAVR"
+# The source account will be used to sign and send the transaction.
+source_keypair = Keypair.from_secret(secret)
+# Configure SorobanClient to use the `soroban-rpc` instance of your choosing.
+soroban_server = SorobanServer(rpc_server_url)
+# Transactions require a valid sequence number (which varies from one account to another).
+# We fetch this sequence number from the RPC server.
+source = soroban_server.load_account(source_keypair.public_key)
+
+tx = (
+    # The transaction begins as pretty standard. The source account, minimum fee,
+    # and network passphrase are provided.
+    TransactionBuilder(source, network_passphrase, base_fee=100)
+    # This transaction will be valid for the next 30 seconds
+    .set_timeout(30)
+    # The invocation of the `increment` function of our contract is added to the transaction.
+    .append_invoke_contract_function_op(
+        contract_id=contract_id,
+        function_name="increment",
+        parameters=[scval.to_address(source_keypair.public_key), scval.to_uint32(5)],
+    ).build()
+)
+
+print(f"builtTransaction: {tx.to_xdr()}")
+
+try:
+    # We use the RPC server to "prepare" the transaction. This simulating the
+    # transaction, discovering the soroban data, and updating the
+    # transaction to include that soroban data. If you know the soroban data ahead of
+    # time, you could manually use `set_soroban_data` and skip this step.
+    tx = soroban_server.prepare_transaction(tx)
+except PrepareTransactionException as e:
+    print(f"Prepare Transaction Failed: {e.simulate_transaction_response}")
+    raise e
+
+# Sign the transaction with the source account's keypair.
+tx.sign(source_keypair)
+
+# Let's see the base64-encoded XDR of the transaction we just built.
+print(f"Signed prepared transaction XDR: {tx.to_xdr()}")
+
+# Submit the transaction to the Soroban-RPC server. The RPC server will
+# then submit the transaction into the network for us. Then we will have to
+# wait, polling `get_transaction` until the transaction completes.
+send_transaction_data = soroban_server.send_transaction(tx)
+print(f"Sent transaction: {send_transaction_data}")
+if send_transaction_data.status != SendTransactionStatus.PENDING:
+    print(send_transaction_data.error_result_xdr)
+    raise Exception("Send transaction failed")
+
+while True:
+    print("Waiting for transaction to be confirmed...")
+    # Poll `get_transaction` until the status is not "NOT_FOUND"
+    get_transaction_data = soroban_server.get_transaction(send_transaction_data.hash)
+    if get_transaction_data.status != GetTransactionStatus.NOT_FOUND:
+        break
+    time.sleep(3)
+
+print(f"getTransaction response: {get_transaction_data}")
+
+if get_transaction_data.status == GetTransactionStatus.SUCCESS:
+    # The transaction was successful, so we can extract the `result_meta_xdr`
+    transaction_meta = stellar_xdr.TransactionMeta.from_xdr(
+        get_transaction_data.result_meta_xdr
+    )
+    result = transaction_meta.v3.soroban_meta.return_value
+    # Find the return value from the contract and return it
+    print(f"Transaction result: {scval.from_uint32(result)}")
+else:
+    # The transaction failed, so we can extract the `result_xdr`
+    print(f"Transaction failed: {get_transaction_data.result_xdr}")
+    raise Exception("Transaction failed")
+```
+
+</TabItem>
+
+<TabItem value="java" label="Java">
+
+:::tip
+
+Please go to [the project homepage](https://github.com/lightsail-network/java-stellar-sdk) of Java SDK to learn how to install it.
+
+:::
+
+```java
+import org.stellar.sdk.AccountNotFoundException;
+import org.stellar.sdk.InvokeHostFunctionOperation;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.PrepareTransactionException;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.requests.sorobanrpc.SorobanRpcErrorResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+import org.stellar.sdk.xdr.TransactionMeta;
+
+import java.io.IOException;
+import java.util.List;
+
+public class Example {
+    public static void main(String[] args) throws SorobanRpcErrorResponse, IOException, InterruptedException {
+        // The source account will be used to sign and send the transaction.
+        KeyPair sourceKeypair = KeyPair.fromSecretSeed("SAAPYAPTTRZMCUZFPG3G66V4ZMHTK4TWA6NS7U4F7Z3IMUD52EK4DDEV");
+
+        // Configure SorobanClient to use the `soroban-rpc` instance of your choosing.
+        SorobanServer sorobanServer = new SorobanServer("https://soroban-testnet.stellar.org");
+
+        // Here we will use a deployed instance of the `increment` example contract.
+        String contractAddress = "CDOGJBJMRVVXW5K3UJ5BGVJ5RSQXQB4UFVQYVFOIARC2UYXSEPF4YAVR";
+
+        // Transactions require a valid sequence number (which varies from one account to
+        // another). We fetch this sequence number from the RPC server.
+        TransactionBuilderAccount sourceAccount = null;
+        try {
+            sourceAccount = sorobanServer.getAccount(sourceKeypair.getAccountId());
+        } catch (AccountNotFoundException e) {
+            throw new RuntimeException("Account not found, please activate it first");
+        }
+
+        // The invocation of the `increment` function.
+        InvokeHostFunctionOperation operation = InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(contractAddress, "increment",
+                List.of(
+                        Scv.toAddress(sourceAccount.getAccountId()),
+                        Scv.toUint32(5)
+                )
+        ).build();
+
+        // Create a transaction with the source account and the operation we want to invoke.
+        Transaction transaction = new TransactionBuilder(sourceAccount, Network.TESTNET)
+                .addOperation(operation) // The invocation of the `increment` function of our contract is added to the transaction.
+                .setTimeout(30) // This transaction will be valid for the next 30 seconds
+                .setBaseFee(100)  // The base fee is 100 stroops (0.00001 XLM)
+                .build();
+
+        // We use the RPC server to "prepare" the transaction. This simulating the
+        // transaction, discovering the soroban data, and updating the
+        // transaction to include that soroban data. If you know the soroban data ahead of
+        // time, you could manually use `setSorobanData` and skip this step.
+        try {
+            transaction = sorobanServer.prepareTransaction(transaction);
+        } catch (PrepareTransactionException e) {
+            // You should handle the error here
+            System.out.println("Prepare Transaction Failed: " + e.getMessage());
+            throw new RuntimeException(e);
+        }
+
+        // Sign the transaction with the source account's keypair.
+        transaction.sign(sourceKeypair);
+
+        // Let's see the base64-encoded XDR of the transaction we just built.
+        System.out.println("Signed prepared transaction XDR: " + transaction.toEnvelopeXdrBase64());
+
+        // Submit the transaction to the Soroban-RPC server. The RPC server will then
+        // submit the transaction into the network for us. Then we will have to wait,
+        // polling `getTransaction` until the transaction completes.
+        SendTransactionResponse response = sorobanServer.sendTransaction(transaction);
+        if (!SendTransactionResponse.SendTransactionStatus.PENDING.equals(response.getStatus())) {
+            throw new RuntimeException("Sending transaction failed");
+        }
+
+        // Poll `getTransaction` until the status is not "NOT_FOUND"
+        GetTransactionResponse getTransactionResponse;
+        while (true) {
+            System.out.println("Waiting for transaction confirmation...");
+            // See if the transaction is complete
+            getTransactionResponse = sorobanServer.getTransaction(response.getHash());
+            if (!GetTransactionResponse.GetTransactionStatus.NOT_FOUND.equals(getTransactionResponse.getStatus())) {
+                break;
+            }
+            // Wait one second
+            Thread.sleep(1000);
+        }
+
+        System.out.println("Get transaction response: " + getTransactionResponse);
+
+        if (GetTransactionResponse.GetTransactionStatus.SUCCESS.equals(getTransactionResponse.getStatus())) {
+            // The transaction was successful, so we can extract the `resultMetaXdr`
+            TransactionMeta transactionMeta = TransactionMeta.fromXdrBase64(getTransactionResponse.getResultMetaXdr());
+            SCVal result = transactionMeta.getV3().getSorobanMeta().getReturnValue();
+            long parsedResult = Scv.fromUint32(result);
+            System.out.println("Transaction result: " + parsedResult);
+        } else {
+            // The transaction failed, so we can extract the `resultXdr`
+            System.out.println("Transaction failed: " + getTransactionResponse.getResultXdr());
+        }
+    }
+}
+```
+
+</TabItem>
+</Tabs>
