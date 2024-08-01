@@ -1,20 +1,25 @@
 import fs from 'fs';
 import path from 'path';
 import glob from 'glob';
+import yaml from 'js-yaml';
 
 // Define the list of language codes
 const languages = ['es'];
 
-// Define the ignored files path (as per crowdin.yml configuration)
-const ignoredPaths = [
-    '/docs/data/horizon/api-reference/resources/**/*',
-    '/docs/data/horizon/api-reference/errors/**/*',
-    '/docs/**/*.api.mdx',
-    '/docs/**/*.json',
-    '/platforms/anchor-platform/api-reference/resources/**/*',
-    '/platforms/**/*.api.mdx',
-    '/platforms/**/*.json'
-];
+/**
+ * Reads and parses the crowdin.yml file.
+ * @param {string} filePath - The path to the crowdin.yml file.
+ * @returns {Object} - The parsed configuration object.
+ */
+function readCrowdinConfig(filePath) {
+    try {
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        return yaml.load(fileContent);
+    } catch (err) {
+        logMessage(`Error reading or parsing the file ${filePath}: ${err.message}`);
+        process.exit(1);
+    }
+}
 
 /**
  * Logs a message to the console with a timestamp.
@@ -44,26 +49,50 @@ function copyFileOrDirectory(src, dest) {
 }
 
 /**
- * Copies ignored files for each language based on the patterns.
+ * Replaces placeholders in the translation path with actual values.
+ * @param {string} translationPath - The translation path template.
+ * @param {string} languageCode - The language code to replace placeholders.
+ * @param {string} srcPath - The source file path.
+ * @returns {string} - The translation path with placeholders replaced.
  */
-function copyIgnoredFilesForLanguages() {
-    ignoredPaths.forEach(ignoredPattern => {
-        // Strip the leading slash for the source path
-        const srcPattern = ignoredPattern.replace(/^\//, '');
+function getTranslationPath(translationPath, languageCode, srcPath) {
+    const sources = ['meeting-notes', 'platforms', 'docs', 'src/pages'];
+    let relativePath = srcPath;
 
-        glob(srcPattern, (err, files) => {
-            if (err) {
-                logMessage(`Error processing pattern ${srcPattern}: ${err.message}`);
-                return;
-            }
+    for (const source of sources) {
+        if (srcPath.startsWith(source)) {
+            relativePath = srcPath.replace(`${source}/`, '');
+            break;
+        }
+    }
 
-            files.forEach(srcPath => {
-                languages.forEach(languageCode => {
-                    const destPath = srcPath
-                        .replace(/^docs/, `i18n/${languageCode}/docusaurus-plugin-content-docs/current`)
-                        .replace(/^platforms/, `i18n/${languageCode}/docusaurus-plugin-content-docs-platforms/current`);
+    const destPath = translationPath
+        .replace('%two_letters_code%', languageCode)
+        .replace('%original_file_name%', path.basename(srcPath))
+        .replace('**', path.dirname(relativePath).replace(/\\/g, '/'));
 
-                    copyFileOrDirectory(srcPath, destPath);
+    return path.join(process.cwd(), destPath);
+}
+
+/**
+ * Copies ignored files for each language based on the configuration.
+ */
+function copyIgnoredFilesForLanguages(config) {
+    config.files.forEach(({ source, translation, ignore = [] }) => {
+        ignore.forEach(ignorePattern => {
+            const srcPattern = ignorePattern.replace(/^\//, ''); // Strip the leading slash for the source path
+
+            glob(srcPattern, (err, files) => {
+                if (err) {
+                    logMessage(`Error processing pattern ${srcPattern}: ${err.message}`);
+                    return;
+                }
+
+                files.forEach(srcPath => {
+                    languages.forEach(languageCode => {
+                        const destPath = getTranslationPath(translation, languageCode, srcPath);
+                        copyFileOrDirectory(srcPath, destPath);
+                    });
                 });
             });
         });
@@ -74,7 +103,8 @@ function copyIgnoredFilesForLanguages() {
  * Main function to execute the workflow.
  */
 function main() {
-    copyIgnoredFilesForLanguages();
+    const config = readCrowdinConfig('crowdin.yml');
+    copyIgnoredFilesForLanguages(config);
     logMessage('Ignored files copied for all specified languages.');
 }
 
