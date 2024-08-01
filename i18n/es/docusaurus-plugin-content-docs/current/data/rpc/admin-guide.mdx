@@ -1,0 +1,618 @@
+---
+sidebar_position: 10
+title: Admin Guide
+---
+
+The RPC service allows you to communicate directly with Soroban via a [JSON RPC interface](./README.mdx).
+
+For example, you can build an application and have it [send a transaction](./api-reference/methods/getTransaction.mdx), [get ledger](./api-reference/methods/getLedgerEntries.mdx) and [event data](./api-reference/methods/getEvents.mdx), or [simulate transactions](./api-reference/methods/simulateTransaction.mdx).
+
+Alternatively, you can use one of Soroban's [client SDKs](/docs/tools/sdks/library), such as the [@stellar/stellar-sdk](/docs/tools/sdks/library#javascript-sdk), which will need to communicate with an RPC instance to access the network.
+
+## Run Your Own Instance for Development
+
+For local development, we recommend [downloading](https://hub.docker.com/r/stellar/quickstart) and running a local instance via [Docker Quickstart](https://github.com/stellar/quickstart) and running a standalone network or communicating with a live development [Testnet].
+
+:::caution
+
+We don't recommend running the Quickstart image in production. See the [deploy your own RPC instance](#deploy-your-own-rpc-instance) section.
+
+:::
+
+The Quickstart image with the RPC service can run on a standard laptop with 8GB of RAM and has minimal storage and CPU requirements. It is a single container that runs everything you need to test against a fully featured network. It contains:
+
+- [Stellar Core] - Node software that runs the network, coordinates consensus, and finalizes ledgers.
+- [Soroban RPC] server - JSON RPC server for interacting with Soroban contracts.
+- [Horizon server] - HTTP API for accessing ledger state and historical transactions.
+- [Friendbot server] - HTTP API for creating and funding new accounts on test networks.
+
+[Stellar Core]: https://github.com/stellar/stellar-core
+[Soroban RPC]: https://github.com/stellar/soroban-rpc/tree/main/cmd/soroban-rpc
+[Horizon server]: https://github.com/stellar/go/tree/master/services/horizon
+[Friendbot server]: https://github.com/stellar/go/tree/master/services/friendbot
+
+### Standalone
+
+To run a local standalone network with the Stellar Quickstart Docker image, run the following command:
+
+```bash
+docker run --rm -it \
+    -p 8000:8000 \
+    --name stellar \
+    stellar/quickstart:testing \
+    --standalone \
+    --enable-soroban-rpc
+```
+
+Once the image is started, you can check its status by querying the Horizon API:
+
+```bash
+curl "http://localhost:8000"
+```
+
+You can interact with this local node using the Stellar CLI. First, add it as a configured network:
+
+```bash
+stellar network add standalone \
+    --rpc-url "http://localhost:8000/soroban/rpc" \
+    --network-passphrase "Standalone Network ; February 2017"
+```
+
+Then generate a unique identity (public/private keypair) and to fund it using:
+
+```bash
+stellar keys generate alice
+```
+
+:::tip Test-only Identities
+
+It's a good practice to never use the same keys for testing and development that you use for the public Stellar network. Generate new keys for testing and development and avoid using them for other purposes.
+
+:::
+
+Now that you have a configured network and a funded identity, you can use these within other Stellar CLI commands. For example, deploying a contract:
+
+```bash
+stellar contract deploy \
+    --wasm target/wasm32-unknown-unknown/release/[project_name].wasm \
+    --source alice \
+    --network standalone
+```
+
+Or invoking a contract:
+
+```bash
+stellar contract invoke \
+    --id C... \
+    --source alice \
+    --network standalone \
+    -- \
+    hello \
+    --to friend
+```
+
+When you're done with your Standalone node, you can close it with <kbd>ctrl</kbd><kbd>c</kbd> (not <kbd>cmd</kbd>). This will fully remove the container (that's what the `--rm` option to the `docker` command does), which means you will need to re-deploy your contract and re-fund your identity the next time you start it. If you work with local nodes often, you may want to create scripts to make these initialization steps easier. For example, see the [example dapp's `initialize.sh`](https://github.com/stellar/soroban-example-dapp/blob/abdac3afdb6c410cc426831ece93371c1a27347d/initialize.sh).
+
+[Testnet]: ../../networks/README.mdx
+
+### Testnet
+
+Running your own Testnet node works much the same way as running a Quickstart node, as described above. You will need minor modifications for a few commands. First, you need `--testnet` for the docker instance, rather than `--standalone`:
+
+```bash
+docker run --rm -it \
+    -p 8000:8000 \
+    --name stellar \
+    stellar/quickstart:testing \
+    --testnet \
+    --enable-soroban-rpc
+```
+
+And you'll want to configure it for use with the `--network` flag in Stellar CLI:
+
+```bash
+stellar network add testnet \
+    --rpc-url "http://localhost:8000/soroban/rpc" \
+    --network-passphrase "Test SDF Network ; September 2015"
+```
+
+Replace `testnet` in that command with the name of your choice if you want to leave the name `testnet` available for use with a public RPC provider (see below). Or make clever use of `--global` configs for public providers and local configs (made with the undecorated `network add` command above) for local nodes.
+
+Now you can replace `--network standalone` with `--network testnet` (or whatever you named it) in all your commands that need a network, like the `deploy` and `invoke` commands shown above.
+
+### Futurenet
+
+You can also develop your Soroban contracts against the Futurenet network. You may choose this if you want to test more bleeding-edge features that haven't made it to the Testnet yet. Running your own Futurenet node works just like running a Testnet node, as described above.
+
+```bash
+docker run --rm -it \
+    -p 8000:8000 \
+    --name stellar \
+    stellar/quickstart:soroban-dev \
+    --futurenet \
+    --enable-soroban-rpc
+```
+
+And you'll want to configure it for use with the `--network` flag in Stellar CLI:
+
+```bash
+stellar network add futurenet \
+    --rpc-url "http://localhost:8000/soroban/rpc" \
+    --network-passphrase "Test SDF Future Network ; October 2022"
+```
+
+Replace `futurenet` in that command with the name of your choice, if you want to leave the name `futurenet` available for use with a public RPC provider (see below). Or make clever use of `--global` configs for public providers and local configs (made with the undecorated `network add` command above) for local nodes.
+
+Now you can replace `--network standalone` with `--network futurenet` (or whatever you named it) in all your commands that need a network, like the `deploy` and `invoke` commands shown above.
+
+## Deploy Your Own RPC Instance
+
+We recommend the following ways to deploy your own RPC instance:
+
+1. Deploy to Kubernetes using [Helm](https://helm.sh/docs/intro/install/)
+2. Run the [soroban-rpc docker image](https://hub.docker.com/r/stellar/soroban-rpc) directly
+
+### Hardware Requirements
+
+For deployments expecting up to 1000 requests per second to Soroban RPC, we recommend at least 4GB of RAM and at least a dual core CPU with a 2.4GHz clock speed.
+
+For deployments expecting 1000-10000+ requests per second to Soroban RPC, we recommend at least 8GB of RAM and at least a quad core CPU with a 2.4GHz clock speed.
+
+For all deployments, we recommend at least 10GB of disk/storage space.
+
+| Node Type   | CPU    | RAM    | Disk                               | AWS SKU    | Google Cloud SKU |
+| ----------- | ------ | ------ | ---------------------------------- | ---------- | ---------------- |
+| Soroban RPC | 2 vCPU | 4-8 GB | 30 GB persistent volume >= 3K IOPS | [c5.large] | [n4-highcpu-2]   |
+
+_\* Assuming a 30-day retention window for data storage._
+
+### Kubernetes With Helm
+
+If your deployment environment includes Kubernetes infrastructure, this is the preferred way to deploy your RPC instance. Here’s what you need to do:
+
+1. Install the [Helm CLI tool](https://helm.sh/docs/intro/install/) (minimum version 3)
+
+2. Add the Stellar repo to the helm client's list of repos, update it to the latest published versions
+
+```bash
+helm repo add stellar https://helm.stellar.org/charts
+helm repo update stellar
+```
+
+3. Deploy the RPC instance to Kubernetes using [our Helm chart](https://github.com/stellar/helm-charts/blob/main/charts/soroban-rpc):
+
+```bash
+helm install my-rpc stellar/soroban-rpc \
+--namespace my-rpc-namespace-on-cluster \
+--set global.image.sorobanRpc.tag=20.0.0-rc4-40 \
+--set sorobanRpc.ingress.host=myrpc.example.org \
+--set sorobanRpc.persistence.enabled=true \
+--set sorobanRpc.persistence.storageClass=default \
+--set sorobanRpc.resources.limits.cpu=1 \
+--set sorobanRpc.resources.limits.memory=2560Mi
+```
+
+This example of Helm chart usage highlights some key aspects:
+
+- Set the `global.image.sorobanRpc.tag` to a tag from the [soroban-rpc dockerhub repo](https://hub.docker.com/r/stellar/soroban-rpc) for the image version you want to run. Refer to [the software versions page](/docs/networks/software-versions) to find the correct tag for the Soroban release you are running.
+
+- The RPC server stores a revolving window of recent data from network ledgers to disk. The size of that data varies depending on the network and its transaction volumes, but it has an estimated range between 10 to 100 MB. To ensure the RPC pod has consistent access to disk storage space and read/write throughput, this example demonstrates how to optionally enable the Helm chart deployment to use a `PersistentVolumeClaim` (PVC) of 100MB from `default` storage class on Kubernetes by enabling these persistence parameters:
+
+```bash
+--set sorobanRpc.persistence.enabled=true
+--set sorobanRpc.persistence.storageClass=default
+```
+
+By default, this is disabled (`sorobanRpc.persistence.enabled=false`) and the RPC deployment will use ephemeral pod storage via `emptyDir`, which will likely be adequate for `futurenet` and `testnet` transaction volumes. However, it's worth highlighting the trade-off of not having storage limitations of the cluster enforced (likely below 100MB).
+
+- Network presets are defined in [`values.yaml`](https://github.com/stellar/helm-charts/blob/main/charts/soroban-rpc/values.yaml), which currently sets network configuration specific to `futurenet`. You can override this default and use other "canned" `values.yaml` files which have been published for other networks. For example, there is a [`values-testnet.yaml`](https://github.com/stellar/helm-charts/blob/main/charts/soroban-rpc/values-testnet.yaml) file to configure the deployment of the RPC server with the `testnet` network. Include this `--values` parameter in your `helm install` to specify the desired network:
+
+```bash
+--values https://raw.githubusercontent.com/stellar/helm-charts/main/charts/soroban-rpc/values-testnet.yaml
+```
+
+- Configuring RPC to use other custom networks can be accomplished by downloading the [`values.yaml`](https://github.com/stellar/helm-charts/blob/main/charts/soroban-rpc/values.yaml) locally and updating settings under `sorobanRpc.sorobanRpcConfig` and `sorobanRpc.coreConfig`. This is applicable when connecting to specific networks other than the existing files like `values.yaml` available, such as your own standalone network. Include the local `values.yaml` in `helm install`:
+
+```bash
+--values my-custom-values.yaml
+```
+
+- Verify the `LimitRange` defaults in the target namespace in Kubernetes for deployment. `LimitRange` is optional on the cluster config. If defined, ensure that the defaults provide at least minimum RPC server resource limits of `2.5Gi` of memory and `1` CPU. Otherwise, include the limits explicitly on the `helm install` command via the `sorobanRpc.resources.limits.*` parameters:
+
+```bash
+--set sorobanRpc.resources.limits.cpu=1
+--set sorobanRpc.resources.limits.memory=2560Mi
+```
+
+Even if you're not deploying Soroban RPC using Kubernetes, the manifests generated by the charts may still be a good reference for showing how to configure and run Soroban RPC as a docker container. Just run the `helm template` command to print the container configuration to screen:
+
+```bash
+helm template my-rpc stellar/soroban-rpc
+```
+
+### Docker Image
+
+If using Kubernetes is not an option, this is the preferred way to deploy your own RPC instance.
+
+:::caution
+
+Although we have a [Quickstart Image](https://github.com/stellar/quickstart), it's for local development and testing only. It is not suitable for production-grade deployments.
+
+:::
+
+Here's how to run the [soroban-rpc docker image](https://hub.docker.com/r/stellar/soroban-rpc):
+
+1. Pull the image at the version you'd like to run from [the tags](https://hub.docker.com/r/stellar/soroban-rpc/tags):
+
+```bash
+docker pull stellar/soroban-rpc
+```
+
+2. Create a configuration file for [Stellar Core](https://github.com/stellar/stellar-core). Here is a sample configuration file for Testnet:
+
+```toml
+HTTP_PORT=11626
+PUBLIC_HTTP_PORT=false
+
+NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+
+DATABASE="sqlite3://stellar.db"
+
+# Stellar Testnet Validators
+[[HOME_DOMAINS]]
+HOME_DOMAIN="testnet.stellar.org"
+QUALITY="HIGH"
+
+[[VALIDATORS]]
+NAME="sdftest1"
+HOME_DOMAIN="testnet.stellar.org"
+PUBLIC_KEY="GDKXE2OZMJIPOSLNA6N6F2BVCI3O777I2OOC4BV7VOYUEHYX7RTRYA7Y"
+ADDRESS="core-testnet1.stellar.org"
+HISTORY="curl -sf http://history.stellar.org/prd/core-testnet/core_testnet_001/{0} -o {1}"
+
+[[VALIDATORS]]
+NAME="sdftest2"
+HOME_DOMAIN="testnet.stellar.org"
+PUBLIC_KEY="GCUCJTIYXSOXKBSNFGNFWW5MUQ54HKRPGJUTQFJ5RQXZXNOLNXYDHRAP"
+ADDRESS="core-testnet2.stellar.org"
+HISTORY="curl -sf http://history.stellar.org/prd/core-testnet/core_testnet_002/{0} -o {1}"
+
+[[VALIDATORS]]
+NAME="sdftest3"
+HOME_DOMAIN="testnet.stellar.org"
+PUBLIC_KEY="GC2V2EFSXN6SQTWVYA5EPJPBWWIMSD2XQNKUOHGEKB535AQE2I6IXV2Z"
+ADDRESS="core-testnet3.stellar.org"
+HISTORY="curl -sf http://history.stellar.org/prd/core-testnet/core_testnet_003/{0} -o {1}"
+```
+
+3. Run the image, making sure to [mount a volume](https://docs.docker.com/storage/volumes/) to your container where the above configuration is stored. An example for Testnet:
+
+```bash
+docker run -p 8001:8001 -p 8000:8000 \
+-v <STELLAR_CORE_CONFIG_FOLDER>:/config stellar/soroban-rpc \
+--captive-core-config-path="/config/<STELLAR_CORE_CONFIG_PATH>" \
+--captive-core-storage-path="/var/lib/stellar/captive-core" \
+--captive-core-use-db=true \
+--stellar-core-binary-path="/usr/bin/stellar-core" \
+--db-path="/var/lib/stellar/soroban-rpc-db.sqlite" \
+--stellar-captive-core-http-port=11626 \
+--friendbot-url="https://friendbot-testnet.stellar.org/" \
+--network-passphrase="Test SDF Network ; September 2015" \
+--history-archive-urls="https://history.stellar.org/prd/core-testnet/core_testnet_001" \
+--admin-endpoint="0.0.0.0:8001" \
+--endpoint="0.0.0.0:8000"
+```
+
+#### Configuration
+
+For production, we recommend running Soroban RPC with a [TOML](https://toml.io/en/) configuration file rather than CLI flags. This is similar to creating a configuration file for Stellar-Core as we did previously. For example, using [our docker image](https://hub.docker.com/r/stellar/soroban-rpc):
+
+```bash
+docker run -p 8001:8001 -p 8000:8000 \
+-v <CONFIG_FOLDER>:/config stellar/soroban-rpc \
+--config-path <RPC_CONFIG_FILENAME>
+```
+
+You can use Soroban RPC itself to generate a starter configuration file:
+
+```bash
+docker run stellar/soroban-rpc gen-config-file > soroban-rpc-config.toml
+```
+
+The resulting configuration should look like this:
+
+```toml
+# Admin endpoint to listen and serve on. WARNING: this should not be accessible
+# from the Internet and does not use TLS. "" (default) disables the admin server
+# ADMIN_ENDPOINT = "0.0.0.0:8001"
+
+# path to additional configuration for the Stellar Core configuration file used
+# by captive core. It must, at least, include enough details to define a quorum
+# set
+# CAPTIVE_CORE_CONFIG_PATH = ""
+
+# Storage location for Captive Core bucket data
+CAPTIVE_CORE_STORAGE_PATH = "/"
+
+# informs captive core to use on disk mode. the db will by default be created in
+# current runtime directory of soroban-rpc, unless DATABASE=<path> setting is
+# present in captive core config file.
+# CAPTIVE_CORE_USE_DB = false
+
+# establishes how many ledgers exist between checkpoints, do NOT change this
+# unless you really know what you are doing
+CHECKPOINT_FREQUENCY = 64
+
+# SQLite DB path
+DB_PATH = "soroban_rpc.sqlite"
+
+# Default cap on the amount of events included in a single getEvents response
+DEFAULT_EVENTS_LIMIT = 100
+
+# Endpoint to listen and serve on
+ENDPOINT = "0.0.0.0:8000"
+
+# configures the event retention window expressed in number of ledgers, the
+# default value is 17280 which corresponds to about 24 hours of history
+EVENT_RETENTION_WINDOW = 17280
+
+# The friendbot URL to be returned by getNetwork endpoint
+# FRIENDBOT_URL = ""
+
+# comma-separated list of stellar history archives to connect with
+HISTORY_ARCHIVE_URLS = []
+
+# Ingestion Timeout when bootstrapping data (checkpoint and in-memory
+# initialization) and preparing ledger reads
+INGESTION_TIMEOUT = "30m0s"
+
+# format used for output logs (json or text)
+# LOG_FORMAT = "text"
+
+# minimum log severity (debug, info, warn, error) to log
+LOG_LEVEL = "info"
+
+# Maximum amount of events allowed in a single getEvents response
+MAX_EVENTS_LIMIT = 10000
+
+# The maximum duration of time allowed for processing a getEvents request. When
+# that time elapses, the rpc server would return -32001 and abort the request's
+# execution
+MAX_GET_EVENTS_EXECUTION_DURATION = "10s"
+
+# The maximum duration of time allowed for processing a getHealth request. When
+# that time elapses, the rpc server would return -32001 and abort the request's
+# execution
+MAX_GET_HEALTH_EXECUTION_DURATION = "5s"
+
+# The maximum duration of time allowed for processing a getLatestLedger request.
+# When that time elapses, the rpc server would return -32001 and abort the
+# request's execution
+MAX_GET_LATEST_LEDGER_EXECUTION_DURATION = "5s"
+
+# The maximum duration of time allowed for processing a getLedgerEntries
+# request. When that time elapses, the rpc server would return -32001 and abort
+# the request's execution
+MAX_GET_LEDGER_ENTRIES_EXECUTION_DURATION = "5s"
+
+# The maximum duration of time allowed for processing a getNetwork request. When
+# that time elapses, the rpc server would return -32001 and abort the request's
+# execution
+MAX_GET_NETWORK_EXECUTION_DURATION = "5s"
+
+# The maximum duration of time allowed for processing a getTransaction request.
+# When that time elapses, the rpc server would return -32001 and abort the
+# request's execution
+MAX_GET_TRANSACTION_EXECUTION_DURATION = "5s"
+
+# maximum ledger latency (i.e. time elapsed since the last known ledger closing
+# time) considered to be healthy (used for the /health endpoint)
+MAX_HEALTHY_LEDGER_LATENCY = "30s"
+
+# The max request execution duration is the predefined maximum duration of time
+# allowed for processing a request. When that time elapses, the server would
+# return 504 and abort the request's execution
+MAX_REQUEST_EXECUTION_DURATION = "25s"
+
+# The maximum duration of time allowed for processing a sendTransaction request.
+# When that time elapses, the rpc server would return -32001 and abort the
+# request's execution
+MAX_SEND_TRANSACTION_EXECUTION_DURATION = "15s"
+
+# The maximum duration of time allowed for processing a simulateTransaction
+# request. When that time elapses, the rpc server would return -32001 and abort
+# the request's execution
+MAX_SIMULATE_TRANSACTION_EXECUTION_DURATION = "15s"
+
+# Network passphrase of the Stellar network transactions should be signed for.
+# Commonly used values are "Test SDF Future Network ; October 2022", "Test SDF
+# Network ; September 2015" and "Public Global Stellar Network ; September 2015"
+# NETWORK_PASSPHRASE = ""
+
+# Number of workers (read goroutines) used to compute preflights for the
+# simulateTransaction endpoint. Defaults to the number of CPUs.
+PREFLIGHT_WORKER_COUNT = 16
+
+# Maximum number of outstanding preflight requests for the simulateTransaction
+# endpoint. Defaults to the number of CPUs.
+PREFLIGHT_WORKER_QUEUE_SIZE = 16
+
+# Maximum number of outstanding GetEvents requests
+REQUEST_BACKLOG_GET_EVENTS_QUEUE_LIMIT = 1000
+
+# Maximum number of outstanding GetHealth requests
+REQUEST_BACKLOG_GET_HEALTH_QUEUE_LIMIT = 1000
+
+# Maximum number of outstanding GetLatestsLedger requests
+REQUEST_BACKLOG_GET_LATEST_LEDGER_QUEUE_LIMIT = 1000
+
+# Maximum number of outstanding GetLedgerEntries requests
+REQUEST_BACKLOG_GET_LEDGER_ENTRIES_QUEUE_LIMIT = 1000
+
+# Maximum number of outstanding GetNetwork requests
+REQUEST_BACKLOG_GET_NETWORK_QUEUE_LIMIT = 1000
+
+# Maximum number of outstanding GetTransaction requests
+REQUEST_BACKLOG_GET_TRANSACTION_QUEUE_LIMIT = 1000
+
+# Maximum number of outstanding requests
+REQUEST_BACKLOG_GLOBAL_QUEUE_LIMIT = 5000
+
+# Maximum number of outstanding SendTransaction requests
+REQUEST_BACKLOG_SEND_TRANSACTION_QUEUE_LIMIT = 500
+
+# Maximum number of outstanding SimulateTransaction requests
+REQUEST_BACKLOG_SIMULATE_TRANSACTION_QUEUE_LIMIT = 100
+
+# The request execution warning threshold is the predetermined maximum duration
+# of time that a request can take to be processed before a warning would be
+# generated
+REQUEST_EXECUTION_WARNING_THRESHOLD = "5s"
+
+# HTTP port for Captive Core to listen on (0 disables the HTTP server)
+STELLAR_CAPTIVE_CORE_HTTP_PORT = 11626
+
+# path to stellar core binary
+STELLAR_CORE_BINARY_PATH = "/usr/bin/stellar-core"
+
+# Timeout used when submitting requests to stellar-core
+STELLAR_CORE_TIMEOUT = "2s"
+
+# URL used to query Stellar Core (local captive core by default)
+# STELLAR_CORE_URL = ""
+
+# Enable strict toml configuration file parsing. This will prevent unknown
+# fields in the config toml from being parsed.
+# STRICT = false
+
+# configures the transaction retention window expressed in number of ledgers,
+# the default value is 1440 which corresponds to about 2 hours of history
+TRANSACTION_RETENTION_WINDOW = 1440
+```
+
+Note that the above generated configuration contains the default values and you need to substitute them with proper values to run the image.
+
+### Build From Source
+
+Instructions for building Soroban RPC from source can be found [here](https://github.com/stellar/soroban-rpc/blob/main/cmd/soroban-rpc/README.md).
+
+## Use the RPC Instance
+
+You can configure Stellar CLI to use a remote RPC endpoint:
+
+```bash
+stellar network add --global testnet \
+    --rpc-url https://soroban-testnet.stellar.org:443 \
+    --network-passphrase 'Test SDF Network ; September 2015'
+```
+
+And fund your accounts/identities with the publicly hosted Friendbot:
+
+```bash
+curl "https://friendbot.stellar.org/?addr=$(stellar keys address alice)"
+```
+
+See the tip above about command expansion (that's the note about `$(...)`) if you're not using a bash-based shell.
+
+:::caution
+
+When interacting with the network in production you should run your own soroban-rpc or use a third-party infrastructure provider.
+
+:::
+
+## Verify the RPC Instance
+
+After installation, it will be worthwhile to verify the installation of Soroban RPC is healthy. There are two methods:
+
+1. Access the health status endpoint of the JSON RPC service using an HTTP client
+2. Use our pre-built [System Test Docker image](https://hub.docker.com/r/stellar/system-test/tags) as a tool to run a set of live tests against Soroban RPC
+
+### Health Status Endpoint
+
+If you send a JSON RPC HTTP request to your running instance of Soroban RPC:
+
+```bash
+curl --location 'http://localhost:8000' \
+--header 'Content-Type: application/json' \
+--data '{
+"jsonrpc":"2.0",
+"id":2,
+"method":"getHealth"
+}'
+```
+
+You should get back an HTTP 200 status response if the instance is healthy:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "status": "healthy"
+  }
+}
+```
+
+### System Test Docker Image
+
+This test will compile, deploy, and invoke example contracts to the network to which your RPC instance is connected to. Here is an example for verifying your instance if it is connected to Testnet:
+
+```bash
+docker run --rm -t --name e2e_test \
+docker.io/stellar/system-test:soroban-preview11 \
+--VerboseOutput true \
+--TargetNetworkRPCURL <your rpc url here> \
+--TargetNetworkPassphrase "Test SDF Network ; September 2015" \
+--TargetNetworkTestAccountSecret <your test account StrKey encoded key here > \
+--TargetNetworkTestAccountPublic <your test account StrKey encoded pubkey here> \
+--SorobanExamplesGitHash v20.0.0
+```
+
+Make sure you configure the system test correctly:
+
+- Use a published [system test tag](https://hub.docker.com/r/stellar/system-test/tags) that aligns with the deployed Soroban RPC release version. For each release, there will be two tags published for different CPU architectures. Make sure to use the tag that matches your host machine's CPU architecture:
+  - `docker.io/stellar/system-test:<release name>` for machines with AMD/Intel-based CPUs
+  - `docker.io/stellar/system-test:<release name>-arm64` for machines with ARM CPUs
+- Set `--TargetNetworkRPCURL` to your RPC HTTP URL
+- Set `--TargetNetworkPassphrase` to the same network your RPC instance is connected to:
+  - `"Test SDF Network ; September 2015"` for Testnet
+  - `"Test SDF Future Network ; October 2022"` for Futurenet
+- Set `--SorobanExamplesGitHash` to the corresponding release tag on the [Soroban Examples repo](https://github.com/stellar/soroban-examples/tags)
+- Create and fund an account to be used for test purposes on the same network your RPC instance is connected to
+  - This account needs a small XLM balance to submit Soroban transactions
+  - Tests can be run repeatedly with the same account
+  - Set `--TargetNetworkTestAccountPublic` to the `StrKey` encoded public key of the account
+  - Set `--TargetNetworkTestAccountSecret` to the `StrKey` encoded secret for the account
+
+## Monitor the RPC Instance
+
+If you run Soroban RPC with the `--admin-endpoint` configured and [expose the port](https://docs.docker.com/engine/reference/commandline/run/#publish), you'll have access to the [Prometheus](https://prometheus.io/) metrics via the `/metrics` endpoint. For example, if the admin endpoint is `0.0.0.0:8001` and you're running the Soroban RPC Docker image:
+
+```bash
+curl localhost:8001/metrics
+```
+
+You will see many of the default Go and Process metrics (prefixed by `go_` and `process_` respectively) such as memory usage, CPU usage, number of threads, etc.
+
+We also expose metrics related to Soroban RPC (prefixed by `soroban_rpc`). There are many, but some notable ones are:
+
+- `soroban_rpc_transactions_count` - count of transactions ingested with a sliding window of 10m
+- `soroban_rpc_events_count` - count of events ingested with a sliding window of 10m
+- `soroban_rpc_ingest_local_latest_ledger` - latest ledger ingested
+- `soroban_rpc_db_round_trip_time_seconds` - time required to run `SELECT 1` query in the DATABASE
+
+Soroban RPC also provides logging to console for:
+
+- Startup activity
+- Ingesting, applying, and closing ledgers
+- Handling JSON RPC requests
+- Any errors
+
+The logs have the format:
+
+```
+time=<timestamp in YYYY-MM-DDTHH:MM:SS.000Z format> level=<debug|info|error> msg=<Actual message> pid=<process ID> subservice=<optional if coming from subservice>
+```
+
+[c5.large]: https://aws.amazon.com/ec2/instance-types/c5/
+[n4-highcpu-2]: https://cloud.google.com/compute/docs/general-purpose-machines#n4-highcpu
