@@ -22,6 +22,15 @@ function readCrowdinConfig(filePath) {
 }
 
 /**
+ * Extracts the sources array from the configuration object.
+ * @param {Object} config - The parsed configuration object.
+ * @returns {string[]} - The array of source paths.
+ */
+function extractSources(config) {
+    return config.files.map(file => file.source.replace(/\/\*\*\/\*$/, '').replace(/^\//, ''));
+}
+
+/**
  * Logs a message to the console with a timestamp.
  * @param {string} message - The message to log.
  */
@@ -53,10 +62,10 @@ function copyFileOrDirectory(src, dest) {
  * @param {string} translationPath - The translation path template.
  * @param {string} languageCode - The language code to replace placeholders.
  * @param {string} srcPath - The source file path.
+ * @param {string[]} sources - The array of source paths.
  * @returns {string} - The translation path with placeholders replaced.
  */
-function getTranslationPath(translationPath, languageCode, srcPath) {
-    const sources = ['meeting-notes', 'platforms', 'docs', 'src/pages'];
+function getTranslationPath(translationPath, languageCode, srcPath, sources) {
     let relativePath = srcPath;
 
     for (const source of sources) {
@@ -78,6 +87,8 @@ function getTranslationPath(translationPath, languageCode, srcPath) {
  * Copies ignored files for each language based on the configuration.
  */
 function copyIgnoredFilesForLanguages(config) {
+    const sources = extractSources(config);
+
     config.files.forEach(({ source, translation, ignore = [] }) => {
         ignore.forEach(ignorePattern => {
             const srcPattern = ignorePattern.replace(/^\//, ''); // Strip the leading slash for the source path
@@ -90,7 +101,7 @@ function copyIgnoredFilesForLanguages(config) {
 
                 files.forEach(srcPath => {
                     languages.forEach(languageCode => {
-                        const destPath = getTranslationPath(translation, languageCode, srcPath);
+                        const destPath = getTranslationPath(translation, languageCode, srcPath, sources);
                         copyFileOrDirectory(srcPath, destPath);
                     });
                 });
