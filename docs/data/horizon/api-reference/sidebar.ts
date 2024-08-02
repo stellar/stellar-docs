@@ -236,6 +236,48 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "category",
+          label: "Operations",
+          items: [
+            {
+              type: "doc",
+              id: "data/horizon/api-reference/retrieve-an-operation",
+              label: "Retrieve an Operation",
+              className: "api-method get",
+            },
+            {
+              type: "doc",
+              id: "data/horizon/api-reference/retrieve-an-operations-effects",
+              label: "Retrieve an Operation's Effects",
+              className: "api-method get",
+            },
+            {
+              type: "doc",
+              id: "data/horizon/api-reference/list-all-operations",
+              label: "List All Operations",
+              className: "api-method get",
+            },
+          ],
+        },
+        {
+          type: "category",
+          label: "Payments",
+          items: [
+            {
+              type: "doc",
+              id: "data/horizon/api-reference/list-all-payments",
+              label: "List All Payments",
+              className: "api-method get",
+            },
+            {
+              type: "doc",
+              id: "data/horizon/api-reference/retrieve-a-transactions-payments",
+              label: "Retrieve a Transaction's Payments",
+              className: "api-method get",
+            },
+          ],
+        },
+        {
+          type: "category",
           label: "Trades",
           items: [
             {
