@@ -1,4 +1,4 @@
-import Method from "@metamask/open-rpc-docs-react";
+import Method from "@ahalabs/open-rpc-docs-react";
 import React from "react";
 
 const CodeBlock = require('@theme/CodeBlock').default;
