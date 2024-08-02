@@ -1,311 +1,311 @@
 import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 const sidebar: SidebarsConfig = {
   apisidebar: [{
-    type: "category",
-    label: "Resources",
+    type: "categoría",
+    label: "Recursos",
     collapsible: true,
     collapsed: true,
     items: [{
       type: "doc",
-      id: "data/horizon/api-reference/horizon"
+      id: "datos/horizonte/api-referencia/horizonte"
     }, {
-      type: "category",
-      label: "Accounts",
+      type: "categoría",
+      label: "Cuentas",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/list-all-accounts",
-        label: "List all Accounts",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-all-accounts",
+        label: "Listar todas las cuentas",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-an-account",
-        label: "Retrieve an Account",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar-un-cuenta",
+        label: "Recuperar una cuenta",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-transactions-by-account-id",
-        label: "Retrieve an Account's Transactions",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/get-transactions-por-account-id",
+        label: "Recuperar las transacciones de una cuenta",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-operations-by-account-id",
-        label: "Retrieve an Account's Operations",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/get-operations-por-account-id",
+        label: "Recuperar las operaciones de una cuenta",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-payments-by-account-id",
-        label: "Retrieve an Account's Payments",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/get-payments-por-account-id",
+        label: "Recuperar los pagos de una cuenta",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-effects-by-account-id",
-        label: "Retrieve an Account's Effects",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/get-efectos-por-cuenta-id",
+        label: "Recuperar los efectos de una cuenta",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-offers-by-account-id",
-        label: "Retrieve an Account's Offers",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/get-offers-por-account-id",
+        label: "Recuperar ofertas de una cuenta",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-trades-by-account-id",
-        label: "Retrieve an Account's Trades",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/get-trades-por-account-id",
+        label: "Recuperar las operaciones de una cuenta",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-data-by-account-id",
-        label: "Retrieve an Account's Data",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/get-data-por-account-id",
+        label: "Recuperar los datos de una cuenta",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Assets",
+      type: "categoría",
+      label: "Activos",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/list-all-assets",
-        label: "List all Assets",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-all-assets",
+        label: "Listar todos los recursos",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Claimable Balances",
+      type: "categoría",
+      label: "Saldos reclamables",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/list-all-claimable-balances",
-        label: "List All Claimable Balances",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-all-claimable-balances",
+        label: "Listar todos los saldos reclamables",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-claimable-balance",
-        label: "Retrieve a Claimable Balance",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar-a-reclamable-balance",
+        label: "Recuperar un saldo reclamable",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/cb-retrieve-related-transactions",
-        label: "Retrieve Related Transactions",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/cb-recuperar-transacciones-relacionadas-de-datos",
+        label: "Recuperar transacciones relacionadas",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/cb-retrieve-related-operations",
-        label: "Retrieve Related Operations",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/cb-recuperar-operaciones-relacionadas-de-datos",
+        label: "Recuperar operaciones relacionadas",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Effects",
+      type: "categoría",
+      label: "Efectos",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/list-all-effects",
-        label: "List All Effects",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-all-effects",
+        label: "Listar todos los efectos",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Liquidity Pools",
+      type: "categoría",
+      label: "Piscinas de liquidez",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/list-liquidity-pools",
-        label: "List Liquidity Pools",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/list-liquidity-pools",
+        label: "Listar piscinas de liquidez",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-liquidity-pool",
-        label: "Retrieve a Liquidity Pool",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/recuperar-a-líquida-pool",
+        label: "Recuperar una herramienta de liquidez",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-related-effects",
-        label: "Retrieve Related Effects",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar-efectos-relacionados-de-datos",
+        label: "Recuperar efectos relacionados",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-related-trades",
-        label: "Retrieve Related Trades",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/recuperar-relacionados-de-intercambio",
+        label: "Recuperar operaciones relacionadas",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/lp-retrieve-related-transactions",
-        label: "Retrieve Related Transactions",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/lp-retrieve-related-transactions",
+        label: "Recuperar transacciones relacionadas",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/lp-retrieve-related-operations",
-        label: "Retrieve Related Operations",
-        className: "api-method get"
+        id: "data/horizon/api-reference/lp-retrieve-related operations",
+        label: "Recuperar operaciones relacionadas",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
+      type: "categoría",
       label: "Ledgers",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-ledger",
-        label: "Retrieve a Ledger",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar-a-ledger",
+        label: "Recuperar un Libro",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-ledgers-transactions",
-        label: "Retrieve a Ledger's Transactions",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/retrieve-a-ledgers-transactions",
+        label: "Recuperar transacciones de Ledger's",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
         id: "data/horizon/api-reference/retrieve-a-ledgers-payments",
-        label: "Retrieve a Ledger's Payments",
-        className: "api-method get"
+        label: "Recuperar pagos de un Ledger's",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-ledgers-operations",
-        label: "Retrieve a Ledger's Operations",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/retrieve-a-ledgers-operations",
+        label: "Recuperar las operaciones de un Ledger",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-ledgers-effects",
-        label: "Retrieve a Ledgers's Effects",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/retrieve-a-ledgers-effects",
+        label: "Recupera los efectos de un Ledger",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/list-all-ledgers",
-        label: "List All Ledgers",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-all-ledgers",
+        label: "Listar todos los Ledgers",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Offers",
+      type: "categoría",
+      label: "Ofertas",
       items: [{
         type: "doc",
         id: "data/horizon/api-reference/get-all-offers",
-        label: "List All Offers",
-        className: "api-method get"
+        label: "Listar todas las ofertas",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-offer-by-offer-id",
-        label: "Retrieve an Offer",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/get-offer-by-offer-id",
+        label: "Recuperar una oferta",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/get-trades-by-offer-id",
-        label: "Retrieve an Offer's Trades",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/get-trades-por-offer-id",
+        label: "Recuperar las Ofertas",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Operations",
+      type: "categoría",
+      label: "Operaciones",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-an-operation",
-        label: "Retrieve an Operation",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar-un-operación",
+        label: "Recuperar una Operación",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-an-operations-effects",
-        label: "Retrieve an Operation's Effects",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar-un-operations-effects",
+        label: "Recuperar los efectos de la operación",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/list-all-operations",
-        label: "List All Operations",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-all-operations",
+        label: "Listar todas las operaciones",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Payments",
+      type: "categoría",
+      label: "Pagos",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/list-all-payments",
-        label: "List All Payments",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-all-payments",
+        label: "Listar todos los pagos",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Trades",
+      type: "categoría",
+      label: "Operaciones",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/get-all-trades",
-        label: "List All Trades",
-        className: "api-method get"
+        id: "datos/horizonte/api-reference/get-all-trades",
+        label: "Listar todas las operaciones",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Transactions",
+      type: "categoría",
+      label: "Transacciones",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-transaction",
-        label: "Retrieve a Transaction",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar una transacción",
+        label: "Recuperar una transacción",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-transactions-operations",
-        label: "Retrieve a Transaction's Operations",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/retrieve-a-transactions-operations",
+        label: "Recuperar las operaciones de una transacción",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-a-transactions-effects",
-        label: "Retrieve a Transaction's Effects",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar-a-efectos-transacciones-",
+        label: "Recuperar los efectos de una transacción",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/list-all-transactions",
-        label: "List All Transactions",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-all-transactions",
+        label: "Listar todas las transacciones",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/submit-a-transaction",
-        label: "Submit a Transaction",
+        id: "datos/horizon/api-reference/submit-a-a-transaction",
+        label: "Enviar una transacción",
         className: "api-method post"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/submit-async-transaction",
-        label: "Submit a Transaction Asynchronously",
+        id: "datos/horizon/api-reference/submit-async-transaction",
+        label: "Enviar una transacción de forma asincrónica",
         className: "api-method post"
       }]
     }]
   }, {
-    type: "category",
-    label: "Aggregations",
+    type: "categoría",
+    label: "Agregaciones",
     collapsible: true,
     collapsed: true,
     items: [{
       type: "doc",
-      id: "data/horizon/api-reference/horizon"
+      id: "datos/horizonte/api-referencia/horizonte"
     }, {
-      type: "category",
-      label: "Fee Stats",
+      type: "categoría",
+      label: "Estadísticas de comisión",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-fee-stats",
-        label: "Retrieve Fee Stats",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/retrieve-fee-stats",
+        label: "Recuperar estadísticas de cuota",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Order Books",
+      type: "categoría",
+      label: "Libros de pedidos",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/retrieve-an-order-book",
-        label: "Retrieve an Order Book",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/recuperar-un-libro de órdenes",
+        label: "Recuperar un libro de pedidos",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Paths",
+      type: "categoría",
+      label: "Rutas",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/list-strict-receive-payment-paths",
-        label: "List Strict Receive Payment Paths",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-strict-receive-payment-paths",
+        label: "Listar rutas de pago estrictas",
+        className: "Obtener el método api-method"
       }, {
         type: "doc",
-        id: "data/horizon/api-reference/list-strict-send-payment-paths",
-        label: "List Strict Send Payment Paths",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-strict-send-payment-paths",
+        label: "Listar rutas de pago de envío estrictas",
+        className: "Obtener el método api-method"
       }]
     }, {
-      type: "category",
-      label: "Trade Aggregations",
+      type: "categoría",
+      label: "Agregaciones comerciales",
       items: [{
         type: "doc",
-        id: "data/horizon/api-reference/list-trade-aggregations",
-        label: "List Trade Aggregations",
-        className: "api-method get"
+        id: "datos/horizon/api-reference/list-trade-aggregations",
+        label: "Lista de Agregaciones de Comercio",
+        className: "Obtener el método api-method"
       }]
     }]
   }]

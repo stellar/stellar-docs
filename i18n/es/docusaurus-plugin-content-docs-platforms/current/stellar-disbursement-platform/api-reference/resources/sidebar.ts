@@ -4,278 +4,278 @@ const sidebar: SidebarsConfig = {
     type: "doc",
     id: "stellar-disbursement-platform/api-reference/resources/stellar-disbursement-platform-api"
   }, {
-    type: "category",
-    label: "Authentication",
+    type: "categoría",
+    label: "Autenticación",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/log-in",
-      label: "Log In",
+      label: "Iniciar sesión",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/refresh-token",
-      label: "Refresh Token",
+      label: "Actualizar token",
       className: "api-method post"
     }, {
       type: "doc",
-      id: "stellar-disbursement-platform/api-reference/resources/authenticate-mfa",
-      label: "Provide Multi-Factor Authentication",
+      id: "stellar-disbursement-platform/api-reference/resources/autenticate-mfa",
+      label: "Proporcionar autenticación de múltiples factores",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/forgot-password",
-      label: "Forgot Password",
+      label: "Olvidó la contraseña",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/reset-password",
-      label: "Reset Rassword",
+      label: "Restablecer Rassword",
       className: "api-method post"
     }]
   }, {
-    type: "category",
-    label: "Disbursements",
+    type: "categoría",
+    label: "Desembolsos",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/list-all-disbursements",
-      label: "List All Disbursements",
-      className: "api-method get"
+      label: "Listar todos los desembolsos",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/create-disbursement",
-      label: "Create Disbursement",
+      label: "Crear desembolso",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/retrieve-a-disbursement",
-      label: "Retrieve a Disbursement",
-      className: "api-method get"
+      label: "Recuperar un desembolso",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/list-all-disbursement-receivers",
-      label: "List All Disbursement Receivers",
-      className: "api-method get"
+      label: "Listar todos los receptores de desembolsos",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/upload-disbursement-instructions",
-      label: "Upload Disbursement Instructions",
+      label: "Subir Instrucciones de Desembolso",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/download-disbursement-instructions",
-      label: "Download Disbursement Instructions",
-      className: "api-method get"
+      label: "Descargar instrucciones de desembolso",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/update-a-disbursement-status",
-      label: "Update a Disbursement Status",
-      className: "api-method patch"
+      label: "Actualizar un estado de desembolso",
+      className: "Parche de api-method"
     }]
   }, {
-    type: "category",
-    label: "Payments",
+    type: "categoría",
+    label: "Pagos",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/list-all-payments",
-      label: "List All Payments",
-      className: "api-method get"
+      label: "Listar todos los pagos",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/retrieve-a-payment",
-      label: "Retrieve a Payment",
-      className: "api-method get"
+      label: "Recuperar un pago",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
-    label: "Receivers",
+    type: "categoría",
+    label: "Receptores",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/list-all-receivers",
-      label: "List All Receivers",
-      className: "api-method get"
+      label: "Listar todos los receptores",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/retrieve-a-receiver",
-      label: "Retrieve a Receiver",
-      className: "api-method get"
+      label: "Recuperar un receptor",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/update-a-receiver",
-      label: "Update a Receiver",
-      className: "api-method patch"
+      label: "Actualizar un receptor",
+      className: "Parche de api-method"
     }]
   }, {
-    type: "category",
-    label: "Statistics",
+    type: "categoría",
+    label: "Estadísticas",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/retrieve-all-statistics",
-      label: "Retrieve All Statistics",
-      className: "api-method get"
+      label: "Recuperar todas las estadísticas",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/retrieve-disbursement-statistics",
-      label: "Retrieve Disbursement Statistics",
-      className: "api-method get"
+      label: "Recuperar estadísticas de desembolso",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
-    label: "Registration",
+    type: "categoría",
+    label: "Registro",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/start-wallet-registration",
-      label: "Start Wallet Registration",
-      className: "api-method get"
+      label: "Iniciar registro de cartera",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/send-one-time-passcode",
-      label: "Send One-Time Passcode",
+      label: "Enviar contraseña de una sola vez",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/verify-receiver-registration",
-      label: "Verify Receiver Registration",
+      label: "Verificar el registro del receptor",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/retrieve-stellar-info-file",
-      label: "Retrieve Stellar Info File",
-      className: "api-method get"
+      label: "Recuperar archivo de información estelar",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/request-challenge-transaction",
-      label: "Request Challenge Transaction",
-      className: "api-method get"
+      label: "Solicitar transacción de desafío",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/provide-signed-challenge-transaction",
-      label: "Provide Signed Challenge Transaction",
+      label: "Proporcionar transacción de desafío firmado",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/request-registration-url",
-      label: "Request Registration URL",
+      label: "Solicitar URL de registro",
       className: "api-method post"
     }]
   }, {
-    type: "category",
-    label: "Profile",
+    type: "categoría",
+    label: "Perfil",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-profile",
-      label: "Get Profile",
-      className: "api-method get"
+      label: "Obtener perfil",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/update-user-profile",
-      label: "Update User Profile",
-      className: "api-method patch"
+      label: "Actualizar perfil de usuario",
+      className: "Parche de api-method"
     }]
   }, {
-    type: "category",
-    label: "Organization",
+    type: "categoría",
+    label: "Organización",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-organization-info",
-      label: "Get Organization Info",
-      className: "api-method get"
+      label: "Obtener información de la organización",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/update-organization-profile",
-      label: "Update Organization Profile",
-      className: "api-method patch"
+      label: "Actualizar perfil de la organización",
+      className: "Parche de api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-organization-logo",
-      label: "Retrieve Organization Logo",
-      className: "api-method get"
+      label: "Recuperar logo de la organización",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-all-countries",
-      label: "Get All Countries",
-      className: "api-method get"
+      label: "Obtener todos los países",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-all-assets",
-      label: "Get All Assets",
-      className: "api-method get"
+      label: "Obtener todos los activos",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/create-asset",
-      label: "Create Asset",
+      label: "Crear Activo",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/delete-asset",
-      label: "Delete Asset",
-      className: "api-method delete"
+      label: "Eliminar Activo",
+      className: "Borrar método de api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-all-wallets",
-      label: "Get All Wallets",
-      className: "api-method get"
+      label: "Obtener todas las carteras",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
-    label: "Users",
+    type: "categoría",
+    label: "Usuarios",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-all-users",
-      label: "Get All Users",
-      className: "api-method get"
+      label: "Obtener todos los usuarios",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/create-user",
-      label: "Create User",
+      label: "Crear usuario",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/update-user-activation-status",
-      label: "Update User Activation Status",
-      className: "api-method patch"
+      label: "Actualizar estado de activación del usuario",
+      className: "Parche de api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-all-roles",
-      label: "Get All Roles",
-      className: "api-method get"
+      label: "Obtener todos los roles",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/update-user-role",
-      label: "Update User Role",
-      className: "api-method patch"
+      label: "Actualizar rol de usuario",
+      className: "Parche de api-method"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "Admin",
     items: [{
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/get-all-tenants",
-      label: "Get All Tenants",
-      className: "api-method get"
+      label: "Obtener todos los inquilinos",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/create-tenant",
-      label: "Create Tenant",
+      label: "Crear arrendatario",
       className: "api-method post"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/retrieve-a-tenant",
-      label: "Retrieve a Tenant",
-      className: "api-method get"
+      label: "Recuperar un inquilino",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "stellar-disbursement-platform/api-reference/resources/soft-delete-a-tenant",
-      label: "Soft delete a Tenant",
-      className: "api-method delete"
+      id: "stellar-disbursement-platform/api-reference/resources/soft-delete-a-un tenant",
+      label: "Suprimir un Cliente",
+      className: "Borrar método de api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/update-a-tenant",
-      label: "Update a Tenant",
-      className: "api-method patch"
+      label: "Actualizar un inquilino",
+      className: "Parche de api-method"
     }, {
       type: "doc",
       id: "stellar-disbursement-platform/api-reference/resources/default-tenant",
-      label: "Default Tenant",
+      label: "Inquilino por defecto",
       className: "api-method post"
     }]
   }]

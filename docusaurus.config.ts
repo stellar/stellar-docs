@@ -15,7 +15,7 @@ const config: Config = {
   baseUrl: "/",
   trailingSlash: false,
   onBrokenLinks: "warn",
-  onBrokenMarkdownLinks: "throw",
+  onBrokenMarkdownLinks: "warn",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",

@@ -4,60 +4,60 @@ const sidebar: SidebarsConfig = {
     type: "doc",
     id: "anchor-platform/api-reference/resources/platform-api"
   }, {
-    type: "category",
-    label: "Transactions",
+    type: "categoría",
+    label: "Transacciones",
     items: [{
       type: "doc",
       id: "anchor-platform/api-reference/resources/get-transactions",
-      label: "Retrieve a List of Transactions",
-      className: "api-method get"
+      label: "Recuperar una lista de transacciones",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/resources/get-transaction",
-      label: "Retrieve a Transaction",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/resources/get-transaction",
+      label: "Recuperar una transacción",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "SEP-6",
     items: [{
       type: "doc",
       id: "anchor-platform/api-reference/resources/get-transactions",
-      label: "Retrieve a List of Transactions",
-      className: "api-method get"
+      label: "Recuperar una lista de transacciones",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/resources/get-transaction",
-      label: "Retrieve a Transaction",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/resources/get-transaction",
+      label: "Recuperar una transacción",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "SEP-24",
     items: [{
       type: "doc",
       id: "anchor-platform/api-reference/resources/get-transactions",
-      label: "Retrieve a List of Transactions",
-      className: "api-method get"
+      label: "Recuperar una lista de transacciones",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/resources/get-transaction",
-      label: "Retrieve a Transaction",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/resources/get-transaction",
+      label: "Recuperar una transacción",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "SEP-31",
     items: [{
       type: "doc",
       id: "anchor-platform/api-reference/resources/get-transactions",
-      label: "Retrieve a List of Transactions",
-      className: "api-method get"
+      label: "Recuperar una lista de transacciones",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/resources/get-transaction",
-      label: "Retrieve a Transaction",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/resources/get-transaction",
+      label: "Recuperar una transacción",
+      className: "Obtener el método api-method"
     }]
   }]
 };

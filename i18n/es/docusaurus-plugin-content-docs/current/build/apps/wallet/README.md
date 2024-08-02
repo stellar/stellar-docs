@@ -1,86 +1,86 @@
-## Contributing guide
+## Guía de contribución
 
-Thank you for contributing to the Stellar Wallet documentation! To get started,
-please first read [main README](../../../README.md) guide.
+¡Gracias por contribuir a la documentación de la Cartera Stellar! Para empezar,
+por favor lee primero la guía [main README](../../../README.md.
 
-This documentation is mainly for the Wallet SDK and it's usages to integrate
-with various SEPs.
+Esta documentación es principalmente para el SDK de Wallet y se utiliza para integrar
+con varios SEP.
 
-The document is structured to be language-agnostic, but with the components
-listed below we can add language-specific logic into the document.
+El documento está estructurado para ser agnóstico de idioma, pero con los componentes
+listados a continuación podemos añadir lógica específica del idioma al documento.
 
-Generally, text should be applicable to all of supported programming languages,
-but for differences special `<LanguageSpecific/>` component can be used (read
-more below)
+Generalmente, el texto debe ser aplicable a todos los lenguajes de programación soportados,
+pero para diferencias el componente especial `<LanguageSpecific/>` puede ser usado (lea
+más abajo)
 
-### Wallet guide components
+### Componentes guía de cartera
 
-#### Header
+#### Cabecera
 
-Header is a special .mdx file that should be included on all pages. It contains:
+Header es un archivo .mdx especial que debe incluirse en todas las páginas. Contiene:
 
-- Language buttons
-- A general guide on using this buttons
-- Optional warning for languages in progress
+- Botones de idioma
+- Una guía general sobre el uso de estos botones
+- Advertencia opcional para los idiomas en curso
 
-On all new pages, Header should be the first element. Optionally, provide list
-of languages that are work in progress:
+En todas las páginas nuevas, el Header debe ser el primer elemento. Opcionalmente, proporciona una lista
+de idiomas que funcionan en curso:
 
 ```mdxjs
 <Header WIPLangs={["ts", "dart"]}/>
 ```
 
-#### LanguageButtons
+#### Botones de idioma
 
-This component is a part of the header. It allows to switch between programming
-languages. Current language is stored as a cookie.
+Este componente es parte del encabezado. Permite cambiar entre la programación
+lenguajes. El idioma actual se almacena como una cookie.
 
-#### WalletGuideWarn
+#### Advertencia de cartera
 
-This component puts a warning if language is in progress for this section.
-Please use `WIPLangs` property to enable it for a language for the page.
+Este componente pone una advertencia si el idioma está en progreso para esta sección.
+Por favor, utiliza la propiedad `WIPLangs` para activarla para un idioma de la página.
 
-#### WalletCodeExample
+#### Ejemplo de código de cartera
 
-This is improved `CodeExample` component. It currently supports dynamic
+Se ha mejorado el componente `CodeExample`. It currently supports dynamic
 switching between TypeScript, Kotlin and Flutter code snippets (depending on the
 user selected language). It will also generate placeholder if code snippet is
-missing. Here's an example on how to use it:
+missing. Aquí hay un ejemplo de cómo usarlo:
 
 ````mdxjs
 <CodeExample>
 
-​```kotlin
-// Kotlin example here
+```kotlin
+// Ejemplo de Kotlin aquí
 ​```
 
 
-​```ts
-// TypeScript example here
-​```
+```ts
+// Ejemplo de TypeScript aquí
+```
 
-// Flutter example is replaced with an auto-generated notice
+// Ejemplo de Flutter se reemplaza con un aviso autogenerado
 
 </CodeExample>
 ````
 
-For a regular code examples (non Wallet SDK) please use vanilla `CodeExample`
-component.
+Para ejemplos de código regulares (no Wallet SDK) por favor utilice el componente `CodeExample`
+de vanilla.
 
-#### LanguageSpecific
+#### Idioma específico
 
-This component allows to render parts of documentation based on selected code.
-To get started, crete 2 files in `component` directory:
+Este componente permite representar partes de la documentación basándose en el código seleccionado.
+Para empezar, crea 2 archivos en el directorio `component`:
 
 ```md
 // ./component/kt/hello.mdx Hello, Kotlin!
 ```
 
 ```md
-// ./component/ts/hello.mdx Hello, TypeScript!
+// ./component/ts/hello.mdx Hola, TypeScript!
 ```
 
-Then, in the main document import both files and LanguageSpecific component:
+Luego, en el documento principal importar tanto archivos como componente LanguageSpecific :
 
 ```mdxjs
 // main.mdx
@@ -91,6 +91,6 @@ import TsHello from "./component/ts/hello.mdx";
 <LanguageSpecific kt={<KtHello/>} ts={<TsHello/>} /
 ```
 
-When user selects Kotlin, "Hello, Kotlin!" is going to be rendered, when
-TypeScript is selected — "Hello, TypeScript!". Finally, for Flutter, nothing
-would be rendered.
+Cuando el usuario selecciona Kotlin, "Hola, Kotlin!" va a ser renderizado, cuando
+TypeScript es seleccionado — "Hola, TypeScript!". Finalmente, para Flutter, nada
+sería renderizado.

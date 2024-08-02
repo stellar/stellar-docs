@@ -2,160 +2,160 @@ import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 const sidebar: SidebarsConfig = {
   apisidebar: [{
     type: "doc",
-    id: "anchor-platform/api-reference/callbacks/synchronous-callbacks-api"
+    id: "anchor-plataforma/api-reference/callbacks/synchronous-callbacks-api"
   }, {
-    type: "category",
-    label: "Unique Address",
+    type: "categoría",
+    label: "Dirección única",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/gen-address",
-      label: "Generate Unique Address",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/gen-address",
+      label: "Generar dirección única",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
-    label: "Fees",
+    type: "categoría",
+    label: "Cuotas",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-fee",
-      label: "Retrieve Fees",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-fee",
+      label: "Recuperar cuotas",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
-    label: "Rates",
+    type: "categoría",
+    label: "Tarifas",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-rates",
-      label: "Retrieve Rates",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-rates",
+      label: "Recuperar tarifas",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
-    label: "Customers",
+    type: "categoría",
+    label: "Clientes",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-customer",
-      label: "Retrieve Customer's Info",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-customer",
+      label: "Recuperar información del cliente",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/put-customer",
-      label: "Create or Update Customer Info",
-      className: "api-method put"
+      id: "anchor-plataforma/api-reference/callbacks/put-customer",
+      label: "Crear o actualizar información del cliente",
+      className: "Api metodo poner"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/del-customer",
-      label: "Delete Customer Data",
-      className: "api-method delete"
+      id: "anchor-plataforma/api-reference/callbacks/del-customer",
+      label: "Eliminar datos del cliente",
+      className: "Borrar método de api-method"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "SEP-31",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/gen-address",
-      label: "Generate Unique Address",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/gen-address",
+      label: "Generar dirección única",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-fee",
-      label: "Retrieve Fees",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-fee",
+      label: "Recuperar cuotas",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-rates",
-      label: "Retrieve Rates",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-rates",
+      label: "Recuperar tarifas",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-customer",
-      label: "Retrieve Customer's Info",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-customer",
+      label: "Recuperar información del cliente",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/put-customer",
-      label: "Create or Update Customer Info",
-      className: "api-method put"
+      id: "anchor-plataforma/api-reference/callbacks/put-customer",
+      label: "Crear o actualizar información del cliente",
+      className: "Api metodo poner"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/del-customer",
-      label: "Delete Customer Data",
-      className: "api-method delete"
+      id: "anchor-plataforma/api-reference/callbacks/del-customer",
+      label: "Eliminar datos del cliente",
+      className: "Borrar método de api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/post-event",
-      label: "Receive an Event",
+      id: "anchor-plataforma/api-reference/callbacks/post-event",
+      label: "Recibir un evento",
       className: "api-method post"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "SEP-38",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-rates",
-      label: "Retrieve Rates",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-rates",
+      label: "Recuperar tarifas",
+      className: "Obtener el método api-method"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "SEP-6",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-customer",
-      label: "Retrieve Customer's Info",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-customer",
+      label: "Recuperar información del cliente",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/put-customer",
-      label: "Create or Update Customer Info",
-      className: "api-method put"
+      id: "anchor-plataforma/api-reference/callbacks/put-customer",
+      label: "Crear o actualizar información del cliente",
+      className: "Api metodo poner"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/post-event",
-      label: "Receive an Event",
+      id: "anchor-plataforma/api-reference/callbacks/post-event",
+      label: "Recibir un evento",
       className: "api-method post"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "SEP-12",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/get-customer",
-      label: "Retrieve Customer's Info",
-      className: "api-method get"
+      id: "anchor-plataforma/api-reference/callbacks/get-customer",
+      label: "Recuperar información del cliente",
+      className: "Obtener el método api-method"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/put-customer",
-      label: "Create or Update Customer Info",
-      className: "api-method put"
+      id: "anchor-plataforma/api-reference/callbacks/put-customer",
+      label: "Crear o actualizar información del cliente",
+      className: "Api metodo poner"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/del-customer",
-      label: "Delete Customer Data",
-      className: "api-method delete"
+      id: "anchor-plataforma/api-reference/callbacks/del-customer",
+      label: "Eliminar datos del cliente",
+      className: "Borrar método de api-method"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "SEP-24",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/put-customer",
-      label: "Create or Update Customer Info",
-      className: "api-method put"
+      id: "anchor-plataforma/api-reference/callbacks/put-customer",
+      label: "Crear o actualizar información del cliente",
+      className: "Api metodo poner"
     }, {
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/post-event",
-      label: "Receive an Event",
+      id: "anchor-plataforma/api-reference/callbacks/post-event",
+      label: "Recibir un evento",
       className: "api-method post"
     }]
   }, {
-    type: "category",
-    label: "Events",
+    type: "categoría",
+    label: "Eventos",
     items: [{
       type: "doc",
-      id: "anchor-platform/api-reference/callbacks/post-event",
-      label: "Receive an Event",
+      id: "anchor-plataforma/api-reference/callbacks/post-event",
+      label: "Recibir un evento",
       className: "api-method post"
     }]
   }]
