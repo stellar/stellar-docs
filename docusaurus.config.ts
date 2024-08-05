@@ -66,13 +66,13 @@ const config: Config = {
             template: "src/template.mustache",
           } satisfies OpenApiPlugin.Options,
           stellar_disbursement_platform: {
-            specPath: "openapi/stellar-disbursement-platform/bundled.yaml", // Path to designated spec file
-            outputDir: "platforms/stellar-disbursement-platform/api-reference", // Output directory for generated .mdx docs
+            specPath: "openapi/stellar-disbursement-platform/bundled.yaml",
+            outputDir: "platforms/stellar-disbursement-platform/api-reference",
             sidebarOptions: {
               groupPathsBy: "tag",
               categoryLinkSource: 'tag',
             },
-            template: "src/template.mustache", // Customize API MDX with mustache template
+            template: "src/template.mustache",
           } satisfies OpenApiPlugin.Options,
         } satisfies Plugin.PluginOptions,
       },
@@ -85,7 +85,6 @@ const config: Config = {
         routeBasePath: "/platforms",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsPlatforms.js"),
-        // sidebarItemsGenerator: require("./src/sidebar-platforms-generator"),
         editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         exclude: ['**/component/**', '**/README.md'],
         showLastUpdateTime: true,
