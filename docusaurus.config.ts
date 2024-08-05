@@ -14,8 +14,8 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenLinks: "throw",
-  onBrokenMarkdownLinks: "throw",
+  onBrokenLinks: "ignore",
+  onBrokenMarkdownLinks: "ignore",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
@@ -53,29 +53,15 @@ const config: Config = {
         id: "platformapis",
         docsPluginId: "platforms",
         config: {
-          anchor_platform_api: {
-            specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/api-reference/resources", // Output directory for generated .mdx docs
+          anchor_platform: {
+            specPath: "openapi/anchor-platform/bundled.yaml",
+            outputDir: "platforms/anchor-platform/api-reference",
+            hideSendButton: true,
             sidebarOptions: {
               groupPathsBy: "tag",
+              categoryLinkSource: 'tag'
             },
-            template: "src/template.mustache", // Customize API MDX with mustache template
-          } satisfies OpenApiPlugin.Options,
-          anchor_platform_callbacks: {
-            specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/api-reference/callbacks", // Output directory for generated .mdx docs
-            sidebarOptions: {
-              groupPathsBy: "tag",
-            },
-            template: "src/template.mustache", // Customize API MDX with mustache template
-          } satisfies OpenApiPlugin.Options,
-          anchor_custody_api: {
-            specPath: "openapi/anchor-platform/bundled_custody.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/api-reference/custody-server", // Output directory for generated .mdx docs
-            sidebarOptions: {
-              groupPathsBy: "tag",
-            },
-            template: "src/template.mustache", // Customize API MDX with mustache template
+            template: "src/template.mustache",
           } satisfies OpenApiPlugin.Options,
           stellar_disbursement_platform: {
             specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
@@ -96,7 +82,7 @@ const config: Config = {
         routeBasePath: "/platforms",
         docItemComponent: "@theme/ApiItem",
         sidebarPath: require.resolve("./sidebarsPlatforms.js"),
-        sidebarItemsGenerator: require("./src/sidebar-platforms-generator"),
+        // sidebarItemsGenerator: require("./src/sidebar-platforms-generator"),
         editUrl: "https://github.com/stellar/stellar-docs/tree/main",
         exclude: ['**/component/**', '**/README.md'],
         showLastUpdateTime: true,

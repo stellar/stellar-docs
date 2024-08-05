@@ -1,109 +1,96 @@
-import fs from "fs";
-import path from "path";
+// import fs from "fs";
+// import path from "path";
 
 module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
-  const docs = args.docs.filter(
-    (item) =>
-      !item.source.includes(".api.mdx") &&
-      !item.source.includes(".tag.mdx") &&
-      item.source !== "@site/api/READ_FIRST.md",
-  );
+  // const docs = args.docs.filter(
+  //   (item) =>
+  //     !item.source.includes(".api.mdx") &&
+  //     !item.source.includes(".tag.mdx") &&
+  //     item.source !== "@site/api/READ_FIRST.md",
+  // );
 
-  const sidebarItems = await defaultSidebarItemsGenerator({ ...args, docs });
+  const sidebarItems = await defaultSidebarItemsGenerator({ ...args });
+  // console.log('sidebarItems', sidebarItems)
 
-  const apiReference = sidebarItems.find(
-    (item) =>
-      item.type === "category" && item.label.toLowerCase() === 'api reference',
-  );
+  // const apiReference = sidebarItems.find(
+  //   (item) =>
+  //     item.type === "category" && item.label.toLowerCase() === 'api reference',
+  // );
 
-  if (apiReference) {
-    const resources = apiReference.items.find(
-      (item) =>
-        item.type === "category" && item.label.toLowerCase() === "resources",
-    );
+  // if (apiReference) {
+  //   const resources = apiReference.items.find(
+  //     (item) =>
+  //       item.type === "category" && item.label.toLowerCase() === "resources",
+  //   );
+  //   const callbacks = apiReference.items.find(
+  //     (item) =>
+  //       item.type === "category" && item.label.toLowerCase() === "callbacks",
+  //   );
+  //   const custody = apiReference.items.find(
+  //     (item) =>
+  //       item.type === "category" && item.label.toLowerCase() === "custody",
+  //   );
 
-    const sidebarPath = path.join(
-      args.version.contentPath,
-      args.item.dirName,
-      "./api-reference/resources/sidebar.ts",
-    );
+  //   const sidebarPath = path.join(
+  //     args.version.contentPath,
+  //     args.item.dirName,
+  //     "./api-reference/sidebar.ts",
+  //   );
 
-    if (resources && fs.existsSync(sidebarPath)) {
-      const generatedApiSidebar = require(sidebarPath);
+  //   if (resources && fs.existsSync(sidebarPath)) {
+  //     const generatedApiSidebar = require(sidebarPath)[0];
 
-      const categories = resources.items.filter(
-        (item) => item.type === "category",
-      );
+  //     const categories = resources.items.filter(
+  //       (item) => item.type === "category",
+  //     );
 
-      categories.forEach((category) => {
-        const generatedCategory = generatedApiSidebar.find(
-          (item) => item.type === "category" && item.label === category.label,
-        );
+  //     categories.forEach((category) => {
+  //       const generatedCategory = generatedApiSidebar.items.find(
+  //         (item) => item.type === "category" && item.label === category.label,
+  //       );
 
-        if (generatedCategory) {
-          category.items = [...category.items, ...generatedCategory.items];
-        }
-      });
-    }
+  //       if (generatedCategory) {
+  //         category.items = [...category.items, ...generatedCategory.items];
+  //       }
+  //     });
+  //   }
 
-    const resources2 = apiReference.items.find(
-        (item) =>
-            item.type === "category" && item.label.toLowerCase() === "callbacks",
-    );
+  //   if (callbacks && fs.existsSync(sidebarPath)) {
+  //     const generatedApiSidebar = require(sidebarPath)[1];
 
-    const sidebarPath2 = path.join(
-        args.version.contentPath,
-        args.item.dirName,
-        "./api-reference/callbacks/sidebar.ts",
-    );
+  //     const categories = callbacks.items.filter(
+  //         (item) => item.type === "category",
+  //     );
 
-    if (resources2 && fs.existsSync(sidebarPath2)) {
-      const generatedApiSidebar = require(sidebarPath2);
+  //     categories.forEach((category) => {
+  //       const generatedCategory = generatedApiSidebar.items.find(
+  //           (item) => item.type === "category" && item.label === category.label,
+  //       );
 
-      const categories = resources2.items.filter(
-          (item) => item.type === "category",
-      );
+  //       if (generatedCategory) {
+  //         category.items = [...category.items, ...generatedCategory.items];
+  //       }
+  //     });
+  //   }
 
-      categories.forEach((category) => {
-        const generatedCategory = generatedApiSidebar.find(
-            (item) => item.type === "category" && item.label === category.label,
-        );
+  //   if (custody && fs.existsSync(sidebarPath)) {
+  //     const generatedApiSidebar = require(sidebarPath)[2];
 
-        if (generatedCategory) {
-          category.items = [...category.items, ...generatedCategory.items];
-        }
-      });
-    }
+  //     const categories = custody.items.filter(
+  //         (item) => item.type === "category",
+  //     );
 
-    const resources3 = apiReference.items.find(
-        (item) =>
-            item.type === "category" && item.label.toLowerCase() === "custody server",
-    );
+  //     categories.forEach((category) => {
+  //       const generatedCategory = generatedApiSidebar.items.find(
+  //           (item) => item.type === "category" && item.label === category.label,
+  //       );
 
-    const sidebarPath3 = path.join(
-        args.version.contentPath,
-        args.item.dirName,
-        "./api-reference/custody-server/sidebar.ts",
-    );
-
-    if (resources3 && fs.existsSync(sidebarPath3)) {
-      const generatedApiSidebar = require(sidebarPath3);
-
-      const categories = resources3.items.filter(
-          (item) => item.type === "category",
-      );
-
-      categories.forEach((category) => {
-        const generatedCategory = generatedApiSidebar.find(
-            (item) => item.type === "category" && item.label === category.label,
-        );
-
-        if (generatedCategory) {
-          category.items = [...category.items, ...generatedCategory.items];
-        }
-      });
-    }
-  }
+  //       if (generatedCategory) {
+  //         category.items = [...category.items, ...generatedCategory.items];
+  //       }
+  //     });
+  //   }
+  // }
 
   return sidebarItems;
 };
