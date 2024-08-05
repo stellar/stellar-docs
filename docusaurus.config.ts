@@ -14,6 +14,8 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
+  // onBrokenLinks: "throw",
+  // onBrokenMarkdownLinks: "throw",
   onBrokenLinks: "ignore",
   onBrokenMarkdownLinks: "ignore",
   favicon: "img/favicon-96x96.png",
