@@ -14,10 +14,8 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  // onBrokenLinks: "throw",
-  // onBrokenMarkdownLinks: "throw",
-  onBrokenLinks: "ignore",
-  onBrokenMarkdownLinks: "ignore",
+  onBrokenLinks: "throw",
+  onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
@@ -40,8 +38,8 @@ const config: Config = {
         docsPluginId: "classic",
         config: {
           horizon: {
-            specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
-            outputDir: "docs/data/horizon/api-reference", // Output directory for generated .mdx docs
+            specPath: "openapi/horizon/bundled.yml",
+            outputDir: "docs/data/horizon/api-reference",
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
