@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import Layout from "@theme/Layout";
 import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
-import { toast } from "react-toastify";
+// import { toast } from "react-toastify";
 import {
   LeaderboardParams,
   fetchLeaderboard,
@@ -13,7 +13,7 @@ import {
   fetchUserProgress,
   resetUserProgress,
 } from "@site/src/services/challenges";
-import useAuth from "@site/src/hooks/useAuth";
+// import useAuth from "@site/src/hooks/useAuth";
 import DashboardHeader from "@site/src/components/atoms/dashboard-header";
 import Leaderboard from "@site/src/components/molecules/leaderboard";
 import ChallengesList from "@site/src/components/atoms/challenges-list";
@@ -25,7 +25,7 @@ import {
 } from "@site/src/interfaces/challenge";
 
 export default function Dashboard() {
-  const { address, isConnected, connect } = useAuth();
+  // const { address, isConnected, connect } = useAuth();
 
   const [availableChallenges, setAvailableChallenges] = useState<Challenge[]>(
     [],
@@ -41,12 +41,15 @@ export default function Dashboard() {
   const fetchUserChallenges = async () => {
     setIsLoading(true);
     try {
-      const result = await fetchUserProgress(address);
-      setUserChallenges(result.data?.challenges || []);
-      setTotalCompleted(result.data?.completedChallenges || 0);
-      setRanking(result.data?.ranking || null);
+      // const result = await fetchUserProgress(address);
+      // setUserChallenges(result.data?.challenges || []);
+      // setTotalCompleted(result.data?.completedChallenges || 0);
+      // setRanking(result.data?.ranking || null);
+      setUserChallenges([]);
+      setTotalCompleted(0);
+      setRanking(null);
     } catch (e) {
-      toast("Something went wrong! Please reload", {
+      console.error("Something went wrong! Please reload", {
         type: "error",
         hideProgressBar: true,
         position: "top-center",
@@ -63,7 +66,7 @@ export default function Dashboard() {
       const result = await fetchLeaderboard(params);
       setLeaderboard(result?.data);
     } catch (e) {
-      toast("Something went wrong! Please reload", {
+      console.error("Something went wrong! Please reload", {
         type: "error",
         hideProgressBar: true,
         position: "top-center",
@@ -77,9 +80,9 @@ export default function Dashboard() {
   const onReset = async () => {
     try {
       setIsLoading(true);
-      await resetUserProgress(address);
+      await resetUserProgress("");
     } catch (error) {
-      toast("Something went wrong! Please try again", {
+      console.error("Something went wrong! Please try again", {
         type: "error",
         hideProgressBar: true,
         position: "top-center",
@@ -98,7 +101,7 @@ export default function Dashboard() {
         const result = await Promise.allSettled([
           fetchInitialChallenges(),
           fetchLeaderboard({}),
-          fetchUserProgress(address),
+          fetchUserProgress(""),
         ]);
 
         if (result[0].status === "fulfilled") {
@@ -123,7 +126,7 @@ export default function Dashboard() {
         setIsLoading(false);
       } catch (error) {
         setIsLoading(false);
-        toast("Something went wrong! Please reload", {
+        console.error("Something went wrong! Please reload", {
           type: "error",
           hideProgressBar: true,
           position: "top-center",
@@ -132,17 +135,17 @@ export default function Dashboard() {
       }
     };
     fetchData();
-  }, [address]);
+  }, []);
 
   return (
     <Layout>
       <div className={styles.dashboard}>
-        {isConnected && address ? (
+        {/* {isConnected && address ? (
           <DashboardHeader
             totalCompleted={totalCompleted}
             ranking={ranking || 0} // Set ranking to 0 if it's not available
           />
-        ) : null}
+        ) : null} */}
 
         <div className={styles.dashboardContent}>
           {isLoading ? (
@@ -159,7 +162,7 @@ export default function Dashboard() {
               </TabItem>
               <TabItem value="Leaderboard">
                 <Leaderboard
-                  userId={address}
+                  userId={""}
                   list={leaderboard}
                   onLoad={fetchOnlyLeaderboard}
                   isLoading={isLeaderboardLoading}
@@ -168,15 +171,6 @@ export default function Dashboard() {
             </Tabs>
           )}
         </div>
-
-        {!isConnected || !address ? (
-          <div className={styles.dashboardFooter}>
-            <strong>Want to take part in our challenges?</strong>
-            <button className={styles.loginButton} onClick={connect}>
-              Log in
-            </button>
-          </div>
-        ) : null}
       </div>
     </Layout>
   );
