@@ -21,7 +21,7 @@ const config: Config = {
   projectName: "stellar-docs",
   i18n: {
     defaultLocale: "en",
-    locales: ["en"],
+    locales: ["en", "es"],
   },
   plugins: [
     "docusaurus-plugin-sass",
@@ -178,6 +178,10 @@ const config: Config = {
         href: "/",
       },
       items: [
+        {
+          type: 'localeDropdown',
+          position: 'left',
+        },
         {
           type: 'docSidebar',
           sidebarId: 'build',
