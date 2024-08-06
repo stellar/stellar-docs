@@ -6,8 +6,6 @@ export const CODE_LANGS = {
     flutter: 'Flutter',
     docker: 'Dockerfile',
     go: 'Go',
-    rust: 'Rust',
-    php: 'PHP',
     html: 'html',
     kotlin: 'Kotlin',
     kt: 'Kotlin',
@@ -19,14 +17,16 @@ export const CODE_LANGS = {
     python: 'Python',
     scss: 'SCSS',
     sql: 'SQL',
+    rust: 'Rust',
+    php: 'PHP',
     toml: 'TOML',
     ts: 'TypeScript',
     tsx: 'TSX',
     typescript: 'TypeScript',
     yaml: 'YAML',
-};
-
-export const FUTURENET_DETAILS = {
+  };
+  
+  export const FUTURENET_DETAILS = {
     network: "FUTURENET",
     networkUrl: "https://horizon-futurenet.stellar.org",
     networkPassphrase: "Test SDF Future Network ; October 2022",
