@@ -83,7 +83,6 @@ def establishTrustline(recipient, key):
   tx = buildTx(recipient, key, [
     Operation.change_trust(
       asset=AstroToken,
-      limit="5000"
     )
   ])
   return server.submit_transaction(tx)
@@ -100,22 +99,29 @@ def preamble():
 def buildTx(source, signer, ops):
   tx = TransactionBuilder(
     source,
-    network_passphrase=Network.TESTNET,
-    base_fee=Network.BASE_FEE
+    network_passphrase = Network.TESTNET,
+    base_fee = Network.BASE_FEE
   )
   for op in ops:
     tx.append_operation(op)
-  tx.set_timeout(30)
+  tx.set_timeout(3600)
   tx = tx.build()
   tx.sign(signer)
   return tx
 
 def showBalances(accounts):
   for accs in accounts:
-    print(f"{accs.account_id[:5]}: {getBalance(acc)}")
+    print(f"{accs.account_id}: {getBalance(accs)}")
 
 def getBalance(account):
-  return account.balances[0].balance
+  for balance in account.balances:
+    if(
+      balance["asset_type"] != "native" and
+      balance["asset_code"] == AstroToken.code and
+      balance["asset_issuer"] == AstroToken.issuer
+    ):
+      return balance["balance"]
+  return "0"
 ```
 
 ```js
@@ -153,7 +159,6 @@ const establishTrustline = function (recipient, key) {
     buildTx(recipient, key, [
       sdk.Operation.changeTrust({
         asset: AstroToken,
-        limit: "5000", // arbitrary
       }),
     ]),
   );
@@ -188,7 +193,7 @@ function buildTx(source, signer, ops) {
     networkPassphrase: StellarSdk.Networks.TESTNET,
   });
   ops.forEach((op) => tx.addOperation(op));
-  tx = tx.setTimeout(30).build();
+  tx = tx.setTimeout(3600).build();
   tx.sign(signer);
   return tx;
 }
@@ -196,17 +201,244 @@ function buildTx(source, signer, ops) {
 // Prints the balances of a list of accounts.
 function showBalances(accounts) {
   accounts.forEach((acc) => {
-    console.log(`${acc.accountId().substring(0, 5)}: ${getBalance(acc)}`);
+    console.log(`${acc.accountId()}: ${getBalance(acc)}`);
   });
+}
+
+// Retrieves the balance of AstroToken in `account`.
+function getBalance(account) {
+  const balances = account.balances.filter((balance) => {
+    return (
+      balance.asset_code == AstroToken.code &&
+      balance.asset_issuer == AstroToken.issuer
+    );
+  });
+  return balances.length > 0 ? balances[0].balance : "0";
 }
 ```
 
 ```java
+import org.stellar.sdk.*;
+import org.stellar.sdk.requests.RequestBuilder;
+import org.stellar.sdk.responses.AccountResponse;
+import org.stellar.sdk.responses.SubmitTransactionResponse;
 
+public class Clawback {
+
+  private static final Server server = new Server("https://horizon-testnet.stellar.org");
+  private static final KeyPair A = KeyPair.fromSecretSeed("SAQLZCQA6AYUXK6JSKVPJ2MZ5K5IIABJOEQIG4RVBHX4PG2KMRKWXCHJ");
+  private static final KeyPair B = KeyPair.fromSecretSeed("SAAY2H7SANIS3JLFBFPLJRTYNLUYH4UTROIKRVFI4FEYV4LDW5Y7HDZ4");
+  private static final KeyPair C = KeyPair.fromSecretSeed("SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4");
+  private static final Asset AstroToken = Asset.createNonNativeAsset("ClawbackCoin", A.getAccountId());
+
+  public static void main(String[] args) throws IOException {
+    AccountResponse[] accounts = getAccounts();
+    AccountResponse accountA = accounts[0];
+    AccountResponse accountB = accounts[1];
+    AccountResponse accountC = accounts[2];
+
+    enableClawback(accountA, A);
+    establishTrustline(accountB, B);
+    establishTrustline(accountC, C);
+  }
+
+  // Enables AuthClawbackEnabledFlag on an account.
+  private static void enableClawback(AccountResponse account, KeyPair keys) throws IOException {
+    Transaction transaction = buildTx(account, keys, new Operation[]{
+      new SetOptionsOperation.Builder()
+        .setSetFlags(AccountFlag.AUTH_CLAWBACK_ENABLED_FLAG | AccountFlag.AUTH_REVOCABLE_FLAG)
+        // Also add `revocable` for control over who can hold the asset.
+        .build()
+    });
+    SubmitTransactionResponse response = server.submitTransaction(transaction);
+    System.out.println("Clawback enabled: " + response);
+  }
+
+  // Establishes a trustline for `recipient` for AstroToken (from above).
+  private static void establishTrustline(AccountResponse recipient, KeyPair key) throws IOException {
+    Transaction transaction = buildTx(recipient, key, new Operation[]{
+      new ChangeTrustOperation.Builder(AstroToken, "922337203685.4775807").build()
+    });
+    SubmitTransactionResponse response = server.submitTransaction(transaction);
+    System.out.println("Trustline established: " + response);
+  }
+
+  // Retrieves latest account info for all accounts.
+  private static AccountResponse[] getAccounts() throws IOException {
+    AccountResponse accountA = server.accounts().account(A.getAccountId());
+    AccountResponse accountB = server.accounts().account(B.getAccountId());
+    AccountResponse accountC = server.accounts().account(C.getAccountId());
+    return new AccountResponse[]{accountA, accountB, accountC};
+  }
+
+  // Helper method to build and sign a transaction
+  private static Transaction buildTx(AccountResponse source, KeyPair signer, Operation[] ops) {
+    Transaction.Builder txBuilder = new Transaction.Builder(source, Network.TESTNET)
+      .setTimeout(3600)
+      .setBaseFee(Transaction.MIN_BASE_FEE);
+
+    for (Operation op : ops) {
+      txBuilder.addOperation(op);
+    }
+
+    Transaction transaction = txBuilder.build();
+    transaction.sign(signer);
+    return transaction;
+  }
+
+  // Prints the balances of a list of accounts.
+  private static void showBalances(AccountResponse[] accounts) throws IOException {
+    for (AccountResponse account : accounts) {
+      System.out.println(
+        account.getAccountId() +
+        ": " +
+        getBalance(account)
+      );
+    }
+  }
+
+  // Retrieves the balance of AstroToken in `account`.
+  private static String getBalance(AccountResponse account) {
+    for (AccountResponse.Balance balance : account.getBalances()) {
+      if (!balance.getAssetType().equals("native") &&
+          balance.getAssetCode().equals(AstroToken.getCode()) &&
+          balance.getAssetIssuer().equals(AstroToken.getIssuer())) {
+        return balance.getBalance();
+      }
+    }
+    return "0";
+  }
+}
 ```
 
 ```go
+package main
 
+import (
+  "fmt"
+  "github.com/stellar/go/build"
+  "github.com/stellar/go/clients/horizonclient"
+  "github.com/stellar/go/keypair"
+  "github.com/stellar/go/network"
+  "github.com/stellar/go/protocols/horizon"
+  "github.com/stellar/go/txnbuild"
+)
+
+var client = horizonclient.DefaultTestNetClient
+
+var (
+  A = keypair.MustParseFull("SAQLZCQA6AYUXK6JSKVPJ2MZ5K5IIABJOEQIG4RVBHX4PG2KMRKWXCHJ")
+  B = keypair.MustParseFull("SAAY2H7SANIS3JLFBFPLJRTYNLUYH4UTROIKRVFI4FEYV4LDW5Y7HDZ4")
+  C = keypair.MustParseFull("SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4")
+
+  AstroToken = txnbuild.CreditAsset{Code: "ClawbackCoin", Issuer: A.Address()}
+)
+
+// Enables AuthClawbackEnabledFlag on an account.
+func enableClawback(account horizon.Account, keys *keypair.Full) {
+  tx, err := buildTx(account, keys, []txnbuild.Operation{
+    &txnbuild.SetOptions{
+      SetFlags: []txnbuild.AccountFlag{
+        txnbuild.AuthClawbackEnabled,
+        txnbuild.AuthRevocable,
+        // Also add `revocable` for control over who can hold the asset.
+      },
+    },
+  })
+  check(err)
+  resp, err := client.SubmitTransaction(tx)
+  check(err)
+  fmt.Println("Clawback enabled:", resp)
+}
+
+// Establishes a trustline for `recipient` for AstroToken (from above).
+func establishTrustline(recipient horizon.Account, key *keypair.Full) {
+  tx, err := buildTx(recipient, key, []txnbuild.Operation{
+    &txnbuild.ChangeTrust{
+      Line: AstroToken,
+    },
+  })
+  check(err)
+  resp, err := client.SubmitTransaction(tx)
+  check(err)
+  fmt.Println("Trustline established:", resp)
+}
+
+// Retrieves latest account info for all accounts.
+func getAccounts() ([]horizon.Account, error) {
+  accountA, err := client.AccountDetail(
+    horizonclient.AccountRequest{
+      AccountID: A.Address(),
+    },
+  )
+  check(err)
+  accountB, err := client.AccountDetail(
+    horizonclient.AccountRequest{
+      AccountID: B.Address(),
+    },
+  )
+  check(err)
+  accountC, err := client.AccountDetail(
+    horizonclient.AccountRequest{
+      AccountID: C.Address(),
+    },
+  )
+  check(err)
+  return []horizon.Account{accountA, accountB, accountC}, nil
+}
+
+// Helper method to build and sign a transaction.
+func buildTx(source horizon.Account, signer *keypair.Full, ops []txnbuild.Operation) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(
+    txnbuild.TransactionParams{
+      SourceAccount:        &source,
+      IncrementSequenceNum: true,
+      BaseFee:              txnbuild.MinBaseFee,
+      Operations:           ops,
+      Timebounds:           txnbuild.NewTimeout(3600),
+    },
+  )
+  check(err)
+  tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+  check(err)
+  return tx, nil
+}
+
+// Enables clawback on A, and establishes trustlines from C, B -> A.
+func main() {
+  accounts, err := getAccounts()
+  check(err)
+  accountA := accounts[0]
+  accountB := accounts[1]
+  accountC := accounts[2]
+
+  enableClawback(accountA, A)
+  establishTrustline(accountB, B)
+  establishTrustline(accountC, C)
+}
+
+// Prints the balances of a list of accounts.
+func showBalances(accounts []horizon.Account) {
+  for _, acc := range accounts {
+    fmt.Printf(
+      "%s: %s\n",
+      acc.AccountID,
+      getBalance(acc),
+    )
+  }
+}
+
+// Retrieves the balance of AstroToken in `account`.
+func getBalance(account horizon.Account) string {
+  for _, balance := range account.Balances {
+    if balance.Asset.Type != "native" &&
+      balance.Asset.Code == AstroToken.GetCode() &&
+      balance.Asset.Issuer == AstroToken.GetIssuer() {
+      return balance.Balance
+    }
+  }
+  return "0"
+}
 ```
 
 </CodeExample>
@@ -244,17 +476,6 @@ function doClawback(byAccount, byKey, fromAccount, amount) {
       }),
     ]),
   );
-}
-
-// Retrieves the balance of AstroToken in `account`.
-function getBalance(account) {
-  const balances = account.balances.filter((balance) => {
-    return (
-      balance.asset_code == AstroToken.code &&
-      balance.asset_issuer == AstroToken.issuer
-    );
-  });
-  return balances.length > 0 ? balances[0].balance : "0";
 }
 ```
 
