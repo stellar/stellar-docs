@@ -6,6 +6,8 @@ export const CODE_LANGS = {
     flutter: 'Flutter',
     docker: 'Dockerfile',
     go: 'Go',
+    rust: 'Rust',
+    php: 'PHP',
     html: 'html',
     kotlin: 'Kotlin',
     kt: 'Kotlin',
