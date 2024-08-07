@@ -18,63 +18,73 @@ function sortByMethodName(methods) {
 async function buildSpecFile(serviceName) {
   let methods = [];
   let methodsBase = `openrpc/src/${serviceName}/methods/`
-  let methodFiles = fs.readdirSync(methodsBase);
-  methodFiles.forEach(file => {
-    let raw = fs.readFileSync(methodsBase + file);
-    let parsed = JSON.parse(raw);
-    methods = [
-      ...methods,
-      parsed,
-    ];
-  });
+  if (fs.existsSync(methodsBase)) {
+    let methodFiles = fs.readdirSync(methodsBase);
+    methodFiles.forEach(file => {
+      let raw = fs.readFileSync(methodsBase + file);
+      let parsed = JSON.parse(raw);
+      methods = [
+        ...methods,
+        parsed,
+      ];
+    });
+  }
 
   let contentDescriptors = {};
   let cdBase = `openrpc/src/${serviceName}/contentDescriptors/`
-  let cdFiles = fs.readdirSync(cdBase);
-  cdFiles.forEach(file => {
-    let raw = fs.readFileSync(cdBase + file);
-    let parsed = JSON.parse(raw);
-    contentDescriptors = {
-      ...contentDescriptors,
-      ...parsed,
-    };
-  });
+  if (fs.existsSync(cdBase)) {
+    let cdFiles = fs.readdirSync(cdBase);
+    cdFiles.forEach(file => {
+      let raw = fs.readFileSync(cdBase + file);
+      let parsed = JSON.parse(raw);
+      contentDescriptors = {
+        ...contentDescriptors,
+        ...parsed,
+      };
+    });
+  }
 
   let schemas = {};
   let schemasBase = `openrpc/src/${serviceName}/schemas/`
-  let schemaFiles = fs.readdirSync(schemasBase);
-  schemaFiles.forEach(file => {
-    let raw = fs.readFileSync(schemasBase + file);
-    let parsed = JSON.parse(raw);
-    schemas = {
-      ...schemas,
-      ...parsed,
-    };
-  });
+  if (fs.existsSync(schemasBase)) {
+    let schemaFiles = fs.readdirSync(schemasBase);
+    schemaFiles.forEach(file => {
+      let raw = fs.readFileSync(schemasBase + file);
+      let parsed = JSON.parse(raw);
+      schemas = {
+        ...schemas,
+        ...parsed,
+      };
+    });
+  }
 
   let examples = {}
   let examplesBase = `openrpc/src/${serviceName}/examples/`
-  let examplesFiles = fs.readdirSync(examplesBase)
-  examplesFiles.forEach(file => {
-    let raw = fs.readFileSync(examplesBase + file)
-    let parsed = JSON.parse(raw)
-    examples = {
-      ...examples,
-      ...parsed,
-    }
-  })
+  if (fs.existsSync(examplesBase)) {
+    let examplesFiles = fs.readdirSync(examplesBase)
+    examplesFiles.forEach(file => {
+      let raw = fs.readFileSync(examplesBase + file)
+      let parsed = JSON.parse(raw)
+      examples = {
+        ...examples,
+        ...parsed,
+      }
+    })
+  }
 
   let examplePairingObjects = {}
   let epoBase = `openrpc/src/${serviceName}/examplePairingObjects/`
-  let epoFiles = fs.readdirSync(epoBase)
-  epoFiles.forEach(file => {
-    let raw = fs.readFileSync(epoBase + file)
-    let parsed = JSON.parse(raw)
-    examplePairingObjects = {
-      ...examplePairingObjects,
-      ...parsed,
-    }
-  })
+  if (fs.existsSync(epoBase)) {
+    let epoFiles = fs.readdirSync(epoBase)
+    epoFiles.forEach(file => {
+      let raw = fs.readFileSync(epoBase + file)
+      let parsed = JSON.parse(raw)
+      examplePairingObjects = {
+        ...examplePairingObjects,
+        ...parsed,
+      }
+    })
+  }
 
   const doc = {
     ...services[serviceName].starterFile,
