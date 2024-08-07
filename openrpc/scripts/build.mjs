@@ -77,49 +77,19 @@ async function buildSpecFile(serviceName) {
   })
 
   const doc = {
-    openrpc: "1.2.4",
-    info: {
-      title: "Soroban RPC",
-      description: "Soroban-RPC allows you to communicate directly with Soroban via a JSON RPC interface.",
-      termsOfService: "https://stellar.org/terms-of-service",
-      contact: {
-        name: "Stellar Development Foundation",
-        url: "https://stellar.org/connect",
-        email: "hello@stellar.org"
-      },
-      license: {
-        name: "Apache 2.0",
-        url: "https://www.apache.org/licenses/LICENSE-2.0.html"
-      },
-      version: "20.1.0"
-    },
-    servers: [
-      {
-        name: "Testnet",
-        url: "https://soroban-testnet.stellar.org:443",
-        summary: "Publicly available RPC server maintained by SDF, operating on the Testnet test network.",
-        description: "Testnet is meant to be a stable network that runs a production (or near-production) version of the Stellar network."
-      },
-      {
-        name: "Futurenet",
-        url: "https://rpc-futurenet.stellar.org:443",
-        summary: "Publicly available RPC server maintained by SDF, operating on the Futurenet test network.",
-        description: "Futurenet is meant to be a bleeding-edge, experimental network that runs an early, test version of the Stellar network."
-      }
-    ],
+    ...services[serviceName].starterFile,
     methods: sortByMethodName(methods),
     components: {
-      contentDescriptors: contentDescriptors,
-      schemas: schemas,
-      examples: examples,
-      examplePairingObjects: examplePairingObjects,
+      contentDescriptors,
+      schemas,
+      examples,
+      examplePairingObjects,
     },
   }
 
   fs.writeFileSync(`openrpc/${serviceName}.refs-openrpc.json`, JSON.stringify(doc, null, 2));
 
   let spec = await dereferenceDocument(doc, defaultResolver.default)
-
   spec.components = {};
 
   // Merge instances of `allOf` in methods.
@@ -132,12 +102,77 @@ async function buildSpecFile(serviceName) {
 
   let data = JSON.stringify(spec, null, 2);
   fs.writeFileSync(`openrpc/${serviceName}.openrpc.json`, data);
-  fs.writeFileSync(`static/${serviceName}.openrpc.json`, data);
+  fs.writeFileSync(`${services[serviceName].saveDir ?? 'static'}/${serviceName}.openrpc.json`, data);
 
-  console.log();
-  console.log("Build successful.");
+  console.log(`Built ${serviceName} specfile successfully.`);
 }
 
-await Promise.all([
-  buildSpecFile("stellar-rpc")
-])
+const services = {
+  'stellar-rpc': {
+    starterFile: {
+      openrpc: "1.2.6",
+      info: {
+        title: "Soroban RPC",
+        description: "Soroban-RPC allows you to communicate directly with Soroban via a JSON RPC interface.",
+        termsOfService: "https://stellar.org/terms-of-service",
+        contact: {
+          name: "Stellar Development Foundation",
+          url: "https://stellar.org/connect",
+          email: "hello@stellar.org"
+        },
+        license: {
+          name: "Apache 2.0",
+          url: "https://www.apache.org/licenses/LICENSE-2.0.html"
+        },
+        version: "20.1.0"
+      },
+      servers: [
+        {
+          name: "Testnet",
+          url: "https://soroban-testnet.stellar.org:443",
+          summary: "Publicly available RPC server maintained by SDF, operating on the Testnet test network.",
+          description: "Testnet is meant to be a stable network that runs a production (or near-production) version of the Stellar network."
+        },
+        {
+          name: "Futurenet",
+          url: "https://rpc-futurenet.stellar.org:443",
+          summary: "Publicly available RPC server maintained by SDF, operating on the Futurenet test network.",
+          description: "Futurenet is meant to be a bleeding-edge, experimental network that runs an early, test version of the Stellar network."
+        }
+      ],
+    },
+  },
+  'anchor-platform': {
+    saveDir: "platforms/anchor-platform",
+    starterFile: {
+      openrpc: "1.2.6",
+      info: {
+        title: "Anchor Platform",
+        description: "The Anchor Platform is a set of tools and APIs that enable developers and businesses to build their own on and off-ramp services for the Stellar network. It provides a standardized interface, including the implementation of several Stellar Ecosystem Proposals (SEPs), to make it easy for businesses to integrate with Stellar-based wallets and exchanges.",
+        termsOfService: "https://stellar.org/terms-of-service",
+        contact: {
+          name: "Stellar Development Foundation",
+          url: "https://stellar.org/connect",
+          email: "hello@stellar.org"
+        },
+        license: {
+          name: "Apache 2.0",
+          url: "https://www.apache.org/licenses/LICENSE-2.0.html"
+        },
+        version: "2.8.4"
+      },
+      servers: [
+        {
+          name: "Platform API",
+          url: "https://platform-server.exampleanchor.com",
+          summary: "Example URL endpoint for the Platform Server.",
+          description: "Example URL endpoint for the Platform Server. Note: This is an example URL only, you must configure your own Platform Server.",
+        }
+      ]
+    }
+  }
+};
+
+Object.keys(services).forEach(async (service) => {
+  await buildSpecFile(service)
+})
