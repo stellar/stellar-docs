@@ -2,6 +2,7 @@
 
 ## Table of Contents <!-- omit in toc -->
 
+- [TL;DR](#tldr)
 - [JSON-RPC](#json-rpc)
   - [Building](#building)
   - [Testing](#testing)
@@ -13,17 +14,58 @@
   - [Examples (`/openrpc/src/examples/*`)](#examples-openrpcsrcexamples)
   - [Example Pairings (`/openrpc/src/examplePairingObjects/*`)](#example-pairings-openrpcsrcexamplepairingobjects)
 
+## TL;DR
+
+If you're here to add a new method to one of the specfiles, you'll want to:
+
+1. Create a new `<method_name>.json` file in the relevant
+   `/openrpc/src/{stellar-rpc,anchor-platform}/methods` directory. Follow the
+   OpenRPC specification concerning [method objects] for defining this file.
+2. Feel free to use any existing (or create new) `$ref` objects along the way.
+   More about them [later on](#json-refs).
+3. Once your method is defined the way you want it, run the [build](#building)
+   and [validate](#testing) scripts to generate updated "bundled" specfiles.
+4. Create a new Docusaurus page for the method. You can use one of the existing
+   files for inspiration, but the short version looks like this:
+
+   ```jsx title="/path/to/<method_name>.mdx
+   ---
+   title: method_name
+   hide_title: true
+   description: Returns or does something.
+   ---
+
+   import { RpcMethod } from "@site/src/components/RpcMethod";
+   // this specfile for stellar-rpc
+   import rpcSpec from "@site/static/stellar-rpc.openrpc.json";
+   // this specfile for anchor-platform
+   // import rpcSpec from "../anchor-platform.openrpc.json";
+
+   <RpcMethod
+     method={rpcSpec.methods.filter((meth) => meth.name === "method_name")[0]}
+   />
+   ```
+
+   These files should be placed in:
+
+     - For stellar-rpc: `/docs/data/rpc/api-reference/methods`
+     - For anchor-platform:
+       `/platforms/anchor-platform/api-reference/rpc/methods`
+
 ## JSON-RPC
 
-This is a specification of the API presented by Soroban RPC.
+These are specifications of the APIs presented by Stellar RPC and the Platform
+Server component of the Anchor Platform.
 
 ### Building
 
-> _Note:_ The build process will provide an output file at
-> `/static/openrpc.json`. This file should be included in any commits. However,
-> this build process is re-run as part of our docusaurus deployment. So, it's
-> necessary to update the actual source JSON files, and not just this built file
-> as it will be overwritten at deploy time.
+> _Note:_ The build process will provide output files at
+> `/static/stellar-rpc.openrpc.json` and
+> `/platforms/anchor-platform/api-reference/rpc/anchor-platform.openrpc.json`.
+> These files _should_ be included in any commits. However, this build process
+> is re-run as part of our Docusaurus deployment. So, it's necessary to update
+> the actual source JSON files, and not just these built files, as they will be
+> overwritten at deploy-time.
 
 The specification is split into multiple files to improve readability. The
 complete spec can be compiled into a single document as follows. (Run this
@@ -34,8 +76,9 @@ yarn rpcspec:build
 # Build successful.
 ```
 
-This will output the file to `/static/openrpc.json`. This file will have all
-schema `$ref`s resolved.
+This will output the files to `/static/stellar-rpc.openrpc.json` and
+`/platforms/anchor-platform/api-reference/rpc/anchor-platform.openrpc.json`.
+These files will have all schema `$ref`s resolved.
 
 ### Testing
 
@@ -57,20 +100,20 @@ something in the specification, you will need to use the following format:
 
 The items broken out into objects that will be referenced are not held
 individually in their own files. Instead, they are grouped into similar and
-related files. For example: `/src/examples/Transactions.json` hold several
+related files. For example: `/src/examples/Transactions.json` holds several
 `example` components that are related to transactions, such as transaction
 hashes, results from the `getTransaction` or `sendTransaction` methods,
 transactions parameters that were sent using the `sendTransaction` method, etc.
 
 ## Keeping Things Up-to-Date
 
-**Don't making any changes to `openrpc.json` or `refs-openrpc.json`!** Any
-changes you make there, will not be actually reflected in the generated
-specification file. Instead, any changes should be made in the files contained
-in the `/openrpc/src` directory.
+**Don't making any changes to `*.openrpc.json` or `*.refs-openrpc.json`!** Any
+changes you make there, will not be reflected in the generated specification
+files. Instead, any changes should be made in the files contained in the
+`/openrpc/src/{stellar-rpc,anchor-platform}` directories.
 
-This directory follows a structure similar to the schema defined in the OpenRPC
-specification. Here are the pieces you'll need to know about:
+These directories follow a structure similar to the schema defined in the
+OpenRPC specification. Here are the pieces you'll need to know about:
 
 ### Methods (`/openrpc/src/methods/*`)
 
