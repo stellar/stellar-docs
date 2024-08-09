@@ -1,0 +1,273 @@
+---
+title: Workspace
+description: Develop multiple contracts side-by-side.
+sidebar_position: 170
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import { getPlatform } from "@site/src/helpers/getPlatform";
+
+The [workspace example] demonstrates how multiple smart contracts can be developed, tested, and built side-by-side in the same Rust workspace.
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
+
+[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/main
+[workspace example]: https://github.com/stellar/soroban-examples/tree/main/workspace
+
+## Run the Example
+
+First go through the [Setup] process to get your development environment configured, then clone the `soroban-examples` repository:
+
+[Setup]: ../getting-started/setup.mdx
+
+```shell
+git clone https://github.com/stellar/soroban-examples
+```
+
+Or, skip the development environment setup and open this example in [Gitpod][oigp].
+
+To run the tests for the example use `cargo test`.
+
+```shell
+cd workspace
+cargo test
+```
+
+You should see three sets of output, one for `contract_a`, `contract_a_interface`, and `contract_b`. The first two crates in the workspace contain no tests, but the third crate should give you the following output:
+
+```text
+running 1 test
+test test::test_token_auth ... ok
+```
+
+## Code
+
+<Tabs>
+<TabItem value="Contract A Interface" default>
+
+```rust title="workspace/contract_a_interface/src/lib.rs"
+#![no_std]
+
+use soroban_sdk::contractclient;
+
+#[contractclient(name = "ContractAClient")]
+pub trait ContractAInterface {
+    fn add(x: u32, y: u32) -> u32;
+}
+```
+
+</TabItem>
+<TabItem value="Contract A">
+
+```rust title="workspace/contract_a/src/lib.rs"
+#![no_std]
+
+use soroban_sdk::{contract, contractimpl};
+use soroban_workspace_contract_a_interface::ContractAInterface;
+
+#[contract]
+pub struct ContractA;
+
+#[contractimpl]
+impl ContractAInterface for ContractA {
+    fn add(x: u32, y: u32) -> u32 {
+        x.checked_add(y).expect("no overflow")
+    }
+}
+```
+
+</TabItem>
+<TabItem value="Contract B">
+
+```rust title="workspace/contract_b/src/lib.rs"
+#![no_std]
+
+use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_workspace_contract_a_interface::ContractAClient;
+
+#[contract]
+pub struct ContractB;
+
+#[contractimpl]
+impl ContractB {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        let client = ContractAClient::new(&env, &contract);
+        client.add(&x, &y)
+    }
+}
+
+mod test;
+```
+
+</TabItem>
+<TabItem value="Contract B Test">
+
+```rust title="workspace/src/contract_b/src/test.rs"
+#![cfg(test)]
+
+use soroban_sdk::Env;
+
+use crate::{ContractB, ContractBClient};
+
+use soroban_workspace_contract_a::ContractA;
+
+#[test]
+fn test() {
+    let env = Env::default();
+
+    // Register contract A using the native contract imported.
+    let contract_a_id = env.register_contract(None, ContractA);
+
+    // Register contract B defined in this crate.
+    let contract_b_id = env.register_contract(None, ContractB);
+
+    // Create a client for calling contract B.
+    let client = ContractBClient::new(&env, &contract_b_id);
+
+    // Invoke contract B via its client. Contract B will invoke contract A.
+    let sum = client.add_with(&contract_a_id, &5, &7);
+    assert_eq!(sum, 12);
+}
+```
+
+</TabItem>
+</Tabs>
+
+Ref: https://github.com/stellar/soroban-examples/tree/main/workspace
+
+## How It Works
+
+The structure of this example Rust workspace is easy enough to understand. There are three crates that are part of the workspace.
+
+1. `contract_a_interface` contains a trait, `ContractAInterface`, that only serves as a place to define our interface trait.
+2. `contract_a` contains a smart contract, `ContractA`, that implements logic, and conforms to the `ContractAInterface` trait.
+3. `contract_b` is another smart contract, implementing a different interface, and makes a call to `ContractA`, and cross-calls the `contract_a` function. This is also the only crate in the workspace with defined tests.
+
+Let's take a look at each crate, and see how they all work together.
+
+### Contract A Interface: The Trait
+
+The `contract_a_interface` crate defines a trait containing function footprint(s), which will need to be further fleshed out in the `contract_a` crate. This interface is defined here, separate from any business logic and only defines what functions should exist in a contract, as well as that function's parameter(s) and return type(s).
+
+You can see our interface defines `add` as the only function our contract will contain. This `add` function, then requires two inputs, `x` and `y`, both of which will be `u32` integers. Finally, the function should return a `u32` integer as well.
+
+The use of `contractclient` as an attribute macro on `ContractAInterface` means a client will be created, conforming to this interface, that can be used by contracts existing outside of the `contract_a_interface` crate. As you'll see later, we use this client, `ContractAClient`, in the `contract_b` crate to call the `add` function.
+
+### Contract A: The Logic
+
+If the `contract_a_interface` crate is only present to define which functions, inputs, and outputs should be part of our contract, the `contract_a` crate is only present to actually code what the interface function(s) should actually _do_ to return the correct type of response.
+
+You can see our contract implementation of the `ContractAInterface` takes the value of `x`, along with the value of `y`, and performs a `checked_add`, returning the sum of both numbers (while avoiding an overflow error).
+
+:::info
+
+You may have noticed this contract doesn't require an `Env` argument. That's totally fine! `Env` has a ton of useful features that are available to your smart contracts, if you need them. But, you're not at all required to use it, if you don't.
+
+:::
+
+All that is required to make use of the previously defined `ContractAInterface` is to `use` the interface, define a `ContractA` struct, and then `impl` the interface on top of that struct.
+
+This crate uses the `contractimpl` attribute macro on the `ContractA` implementation, making the `add` function public and invocable by others on the Stellar network.
+
+### Contract B: The Invocation
+
+Now that we've created a trait in `contract_a_interface`, and implemented it in `contract_a`, we can use the `contract_b` crate to actually invoke the `add` function and get the sum of our integers.
+
+We're creating and implementing an entirely new contract, `ContractB`. We're skipping the trait, and getting right to the contract itself. We're making a function, `add_with`, which will run inside the Soroban environment. When it is invoked, it requires three arguments:
+
+- `contract: Address` - The address of a contract which implements that required client interface, `ContractAClient`.
+- `x: u32` and `y: u32` - The two numbers we want to (safely) compute the sum of.
+
+`ContractB` then invokes the `add` function from the deployed `ContractA`, returning its value back to the original invoker. It's a bit of a long round-trip for this simple example, but it illustrates a really powerful way you can separate out interface/trait definitions from contract logic in a way that allows crates to be reusable in a very powerful way.
+
+## Practical Use-Case Examples
+
+Outside the world of adding two integers together, this technique is far more versatile and useful in the real world. For example, this strategy could be used to:
+
+- Create and reference a standardized, consistent token interface?
+- Reuse a single interface that you want to incorporate across many different contracts?
+- Other things, too?
+
+## Build the Contracts
+
+To build the contract into a set of `.wasm` files, use the `stellar contract build` command. Both `workspace/contract_a` and `workspace/contract_b` must be built, and you can use a single command, since our workspace defines its `members` in the `Cargo.toml` file:
+
+```shell
+stellar contract build
+```
+
+Two `.wasm` files should be found in the `workspace/target` directory:
+
+```text
+target/wasm32-unknown-unknown/release/soroban_workspace_contract_a.wasm
+target/wasm32-unknown-unknown/release/soroban_workspace_contract_b.wasm
+```
+
+Since the `contract_a_interface` doesn't make use of the `contract` attribute macro, the Stellar CLI knows there's nothing to build, so it doesn't even bother. Nice!
+
+## Run the Contract
+
+If you have [`stellar-cli`] installed, you can invoke contract the functions. Both contracts must be deployed.
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+<TabItem value="unix" label="macOS/Linux">
+
+```shell
+stellar contract deploy \
+    --wasm target/wasm32-unknown-unknown/release/soroban_workspace_contract_a.wasm \
+```
+
+```shell
+stellar contract deploy \
+    --wasm target/wasm32-unknown-unknown/release/soroban_workspace_contract_b.wasm \
+```
+
+</TabItem>
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+stellar contract deploy `
+    --wasm target/wasm32-unknown-unknown/release/soroban_workspace_contract_a.wasm `
+```
+
+```powershell
+stellar contract deploy `
+    --wasm target/wasm32-unknown-unknown/release/soroban_workspace_contract_b.wasm `
+```
+
+</TabItem>
+</Tabs>
+
+Invoke `ContractB`'s `add_with` function, passing in `ContractA`'s address for `contract`, and integer values for `x` and `y` (e.g. as `5` and `7`).
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+<TabItem value="unix" label="macOS/Linux">
+
+```shell
+stellar contract invoke \
+    --id CONTRACT_B_ADDRESS \
+    -- \
+    add_with \
+    --contract CONTRACT_A_ADDRESS \
+    --x 5 \
+    --y 7
+```
+
+</TabItem>
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+stellar contract invoke `
+    --id CONTRACT_B_ADDRESS `
+    -- `
+    add_with `
+    --contract CONTRACT_A_ADDRESS `
+    --x 5 `
+    --y 7
+```
+
+</TabItem>
+</Tabs>
+
+[`stellar-cli`]: ../getting-started/setup.mdx#install-the-stellar-cli
