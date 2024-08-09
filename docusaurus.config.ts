@@ -39,9 +39,9 @@ const config: Config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
-            outputDir: "docs/data/horizon/api-reference/resources", // Output directory for generated .mdx docs
+            outputDir: "docs/data/horizon/api-reference", // Output directory for generated .mdx docs
             sidebarOptions: {
-              groupPathsBy: "tag",
+              groupPathsBy: "tagGroup",
             },
           },
         },
@@ -253,8 +253,8 @@ const config: Config = {
         },
         {
           type: 'docSidebar',
-          sidebarId: 'reference',
-          label: 'Reference',
+          sidebarId: 'networks',
+          label: 'Networks',
           position: 'left',
         },
         {
