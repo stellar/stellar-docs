@@ -5,7 +5,7 @@ const YouTube = ({ ID }) => (
   <div style={{
     position: "relative",
     width: "100%",
-    paddingBottom: "56.25%",
+    paddingBottom: "56.25%", // Make 16 x 9
     height: 0,
     marginBottom: "23px"
   }}>
