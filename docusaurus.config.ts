@@ -394,6 +394,7 @@ const config: Config = {
         "log",
         "nginx",
         "powershell",
+        "php",
         "python",
         "rust",
         "scala",
