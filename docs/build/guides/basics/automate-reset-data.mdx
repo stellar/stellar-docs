@@ -22,7 +22,7 @@ Stellar operates two primary testing environments: the [Testnet and the Futurene
 
 ## What is the Testnet and Futurenet reset?
 
-Testnet and Futurenet are reset periodically to the genesis ledger to declutter the network, remove spam, reduce the time needed to catch up on the latest ledger, and help maintain the system. Resets clear all ledger entries (accounts, trustlines, offers, smart contract data, etc.), transactions, and historical data from Stellar Core, Horizon, and the Soroban RPC, which is why developers should not rely on the persistence of accounts or the state of any balances when using Testnet or Futurenet.
+Testnet and Futurenet are reset periodically to the genesis ledger to declutter the network, remove spam, reduce the time needed to catch up on the latest ledger, and help maintain the system. These resets take place approximately quarterly. Resets clear all ledger entries (accounts, trustlines, offers, smart contract data, etc.), transactions, and historical data from Stellar Core, Horizon, and the Soroban RPC, which is why developers should not rely on the persistence of accounts or the state of any balances when using Testnet or Futurenet.
 
 You can check current reset dates [here](../../../learn/fundamentals/networks.mdx#testnet-and-futurenet-data-reset).
 
@@ -35,32 +35,21 @@ You can check current reset dates [here](../../../learn/fundamentals/networks.md
 
 ## Data automation on Testnet and Futurenet
 
-Automating data operations on Stellar's Testnet and Futurenet can streamline development workflows, ensuring that you can consistently test and validate your applications in these environments.
+Automating blockchain state on Stellar's Testnet and Futurenet can streamline development workflows, ensuring that you can consistently test and validate your applications in these environments.
 
 ### Code walkthrough
 
 ### Prerequisites:
 
-- [Node.js ](https://nodejs.org/en) and npm installed.
-- Stellar SDK for [JavaScript](https://www.npmjs.com/package/@stellar/stellar-sdk) installed
+- [Node.js ](https://nodejs.org/en) and `npm` installed.
+- Stellar SDK for [JavaScript](https://www.npmjs.com/package/@stellar/stellar-sdk) and `fs` installed
 
 ### Code
 
 ```javascript
 import * as StellarSdk from "@stellar/stellar-sdk";
-async function checkNetworkStatus(server) {
-  try {
-    const rootInfo = await server.getNetwork();
-    console.log("Network status:", rootInfo);
-    console.log("Passphrase:", rootInfo.passphrase);
-    console.log(" Protocol version:", rootInfo.protocolVersion);
-    console.log("FriendBot", rootInfo.friendbotUrl);
-    // return rootInfo;
-  } catch (error) {
-    console.error("Error checking network status:", error);
-    throw error;
-  }
-}
+import fs from "fs";
+
 async function createAccount(networkURL) {
   try {
     // Generate a keypair
@@ -86,17 +75,41 @@ async function issueAsset(
   server,
   networkParaphrase,
   SourceKeypair,
-  DestinationAccount,
+  DestinationKeypair,
 ) {
   try {
     const sourceAccount = await server.getAccount(SourceKeypair.publicKey());
-    const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+    const destinationAccount = await server.getAccount(
+      DestinationKeypair.publicKey(),
+    );
+
+    // First, the receiving account must trust the asset
+    let transaction = new StellarSdk.TransactionBuilder(destinationAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: networkParaphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.changeTrust({
+          asset: StellarSdk.Asset.native(),
+          amount: "400",
+        }),
+      )
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(DestinationKeypair);
+
+    const result = await server.sendTransaction(transaction);
+    console.log(result, "Transaction Result of ChangeTrust");
+
+    // Second, the issuing account actually sends a payment using the asset
+    transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: StellarSdk.BASE_FEE,
       networkPassphrase: networkParaphrase,
     })
       .addOperation(
         StellarSdk.Operation.payment({
-          destination: DestinationAccount,
+          destination: DestinationKeypair.publicKey(),
           asset: StellarSdk.Asset.native(),
           amount: "20",
         }),
@@ -130,6 +143,144 @@ async function issueAsset(
   }
 }
 
+async function createLiquidityPool(
+  server,
+  accountKeypair,
+  nativeAsset,
+  customAsset,
+  networkParaphrase,
+) {
+  try {
+    const account = await server.getAccount(accountKeypair.publicKey());
+
+    // Ensure the account has a trustline for the custom asset
+    const trustlineOps = [
+      StellarSdk.Operation.changeTrust({
+        asset: customAsset,
+        limit: "10000", // Set an appropriate limit
+      }),
+    ];
+
+    // Create the liquidity pool
+    const poolId = new StellarSdk.LiquidityPoolAsset(
+      nativeAsset,
+      customAsset,
+      StellarSdk.LiquidityPoolFeeV18,
+    ).toString();
+
+    // .toString();
+
+    const poolAsset = new StellarSdk.LiquidityPoolAsset(
+      nativeAsset,
+      customAsset,
+      StellarSdk.LiquidityPoolFeeV18,
+    );
+    const poolIdHash = poolId.split(":")[1];
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: networkParaphrase,
+    })
+      // Add trustline operations if needed
+      .addOperation(trustlineOps[0])
+      // Create trustline for the pool share asset
+      .addOperation(
+        StellarSdk.Operation.changeTrust({
+          asset: poolAsset,
+          limit: "100000", // Set an appropriate limit
+        }),
+      )
+      // Deposit assets into the pool
+      .addOperation(
+        StellarSdk.Operation.liquidityPoolDeposit({
+          liquidityPoolId: poolIdHash,
+          maxAmountA: "1000", // Amount of asset A to deposit
+          maxAmountB: "1000", // Amount of asset B to deposit
+          minPrice: "0.9", // Minimum price ratio
+          maxPrice: "1.1", // Maximum price ratio
+        }),
+      )
+      .setTimeout(30)
+      .build();
+
+    console.log("Transaction", transaction);
+    transaction.sign(accountKeypair);
+    const sendResponse = await server.sendTransaction(transaction);
+    console.log("Transaction Result", sendResponse);
+
+    if (sendResponse.status === "PENDING") {
+      let getResponse;
+      do {
+        await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait for 2 seconds
+        getResponse = await server.getTransaction(sendResponse.hash);
+        console.log("Transaction status:", getResponse.status);
+      } while (getResponse.status === "NOT_FOUND");
+
+      if (getResponse.status === "SUCCESS") {
+        console.log("Transaction successful:", getResponse);
+      } else {
+        console.error("Transaction failed:", getResponse);
+      }
+    } else {
+      console.error("Transaction submission failed:", sendResponse);
+    }
+  } catch (error) {
+    console.error("Error creating liquidity pool:", error);
+    throw error;
+  }
+}
+
+async function deployContract(
+  server,
+  accountOne,
+  networkParaphrase,
+  contractWasmFilePath,
+) {
+  try {
+    // reads the compiled Wasm file to buffer
+    const bytecode = fs.readFileSync(filePath);
+    // retrieves account details from the network
+    const account = await server.getAccount(accountOne.publicKey());
+
+    // Create the contract deployment transaction
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: networkParaphrase,
+    })
+      .addOperation(StellarSdk.Operation.uploadContractWasm({ wasm: bytecode }))
+      .setTimeout(30)
+      .build();
+
+    // Sign and submit the transaction
+    const tx = await server.prepareTransaction(transaction);
+    tx.sign(accountOne);
+
+    console.log("Submitting transaction...");
+    let response = await server.sendTransaction(tx);
+    const hash = response.hash;
+    console.log(`Transaction hash: ${hash}`);
+    console.log("Awaiting confirmation...");
+
+    while (true) {
+      response = await server.getTransaction(hash);
+      if (response.status !== "NOT_FOUND") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    if (response.status === "SUCCESS") {
+      console.log("Transaction successful.");
+      return response;
+    } else {
+      console.log("Transaction failed.");
+      throw new Error("Transaction failed");
+    }
+  } catch (error) {
+    console.error("Error deploying contract:", error);
+    throw error;
+  }
+}
 async function automateSetup() {
   try {
     // const networkRPC = "USE EITHER FUTERNET OR TESTNET RPC"
@@ -143,7 +294,9 @@ async function automateSetup() {
     const server = new StellarSdk.SorobanRpc.Server(networkRPC);
 
     //Check Network Status
-    await checkNetworkStatus(server);
+    console.log("Checking network health...");
+    const health = await server.getHealth();
+    console.log("Network health:", health);
 
     // const networkURL = "USE EITHER FUTERNET OR TESTNET URL"
     const networkURL = "https://friendbot.stellar.org";
@@ -161,22 +314,52 @@ async function automateSetup() {
     // FOR TESTNET -  StellarSdk.Networks.TESTNET
 
     // Issue assets to these accounts
-    await issueAsset(
-      server,
-      networkParaphrase,
-      accountOne,
-      accountTwo.publicKey(),
+    await issueAsset(server, networkParaphrase, accountOne, accountTwo);
+
+    // Create liquidity pool
+    console.log("Creating liquidity pool...");
+    const nativeAsset = StellarSdk.Asset.native();
+    //  Use a Custom Asset of your choice
+    const customAsset = new StellarSdk.Asset(
+      "USDC",
+      "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
     );
+    await createLiquidityPool(
+      server,
+      accountTwo,
+      nativeAsset,
+      customAsset,
+      networkParaphrase,
+    );
+
+    // Deploy a contract
+    console.log("Deploying contract...");
+    // Ensure you have the contract Wasm file compiled and saved in the specified path.
+    // Adjust this path as necessary
+    const contractWasmFilePath =
+      "../target/wasm32-unknown-unknown/release/hello_world.wasm";
+
+    const deployedResponse = await deployContract(
+      server,
+      accountOne,
+      networkParaphrase,
+      contractWasmFilePath,
+    );
+
+    const byteArray = deployedResponse.returnValue.bytes();
+    const wasmHash = byteArray.toString("hex");
+    console.log(`Wasm hash: ${wasmHash}`);
   } catch (error) {
     console.error("An error occurred:", error);
   }
 }
+
 automateSetup();
 ```
 
 The code defines several asynchronous functions:
 
-1. `checkNetworkStatus(server)`:
+1. `const health = await server.getHealth();`:
 
 Retrieves network information using the provided server. Logs network status, passphrase, protocol version, and FriendBot URL. Handles and logs any errors.
 
@@ -184,11 +367,19 @@ Retrieves network information using the provided server. Logs network status, pa
 
 Generates a new Stellar keypair (public and secret keys). Uses FriendBot to fund the new account on the test network. Returns the created keypair.
 
-3. `issueAsset(server, networkParaphrase, SourceKeypair, DestinationAccount)`:
+3. `issueAsset(server, networkParaphrase, SourceKeypair, DestinationKeypair)`:
 
 Creates and submits a transaction to issue assets (in this case, 20 units of the native asset) from the source account to the destination account. Adds a memo to the transaction. Signs and sends the transaction, then logs the result.
 
-4. `automateSetup()`:
+4. `createLiquidityPool(server, accountKeypair, nativeAsset, customAsset, networkParaphrase)`:
+
+Establishes a trustline for a custom asset, Creates a liquidity pool with the native asset and the custom asset and Deposits assets into the newly created pool.
+
+5. `deployContract(server, accountOne, networkParaphrase, contractWasmFilePath)` :
+
+Reads a compiled WebAssembly (Wasm) contract file, Creates and submits a transaction to deploy the contract and Monitors the transaction status and returns the result.
+
+6. `automateSetup()`:
 
 Sets up the Stellar network connection (using either Futurenet or Testnet). Checks the network status. Creates two new accounts. Issues assets from one account to the other.
 
