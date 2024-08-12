@@ -38,4 +38,4 @@ description: This document contains the cookbook content for the stellar command
 ${text}
 `;
 
-fs.writeFileSync("docs/tools/stellar-cli-cookbook.mdx", text);
+fs.writeFileSync("docs/tools/developer-tools/cli/stellar-cli-cookbook.mdx", text);
