@@ -23,3 +23,19 @@ ${text}
 `;
 
 fs.writeFileSync("docs/tools/stellar-cli.mdx", text);
+
+result = await fetch(
+  `https://github.com/stellar/stellar-cli/raw/main/Cookbook.md`,
+  { headers },
+);
+text = await result.text();
+
+text = `---
+sidebar_position: 40
+description: This document contains the cookbook content for the stellar command-line program.
+---
+
+${text}
+`;
+
+fs.writeFileSync("docs/tools/stellar-cli-cookbook.mdx", text);
