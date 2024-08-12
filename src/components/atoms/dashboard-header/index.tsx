@@ -1,5 +1,5 @@
 import React , { useState }from "react";
-import { toast } from "react-toastify";
+// import { toast } from "react-toastify";
 import { Ranking } from "interfaces/challenge";
 import styles from "./style.module.css";
 import useAuth from "../../../hooks/useAuth";
@@ -20,11 +20,11 @@ const DashboardHeader: React.FC<Props> = ({ totalCompleted, ranking }) => {
   const copyUserAddress = () => {
     navigator.clipboard.writeText(address);
 
-    toast("Copied to clipboard!", {
-      hideProgressBar: true,
-      position: "top-center",
-      autoClose: 2000,
-    });
+    // toast("Copied to clipboard!", {
+    //   hideProgressBar: true,
+    //   position: "top-center",
+    //   autoClose: 2000,
+    // });
   };
   return (
     <div className={styles.dashboardHeader}>
