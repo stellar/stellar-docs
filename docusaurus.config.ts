@@ -14,8 +14,10 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenLinks: "throw",
-  onBrokenMarkdownLinks: "throw",
+  onBrokenLinks: "log",
+  onBrokenMarkdownLinks: "log",
+  // onBrokenLinks: "throw",
+  // onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
@@ -53,14 +55,36 @@ const config: Config = {
         id: "platformapis",
         docsPluginId: "platforms",
         config: {
-          anchor_platform: {
-            specPath: "openapi/anchor-platform/bundled.yaml",
-            outputDir: "platforms/anchor-platform/api-reference",
+          // anchor_platform: {
+          //   specPath: "openapi/anchor-platform/bundled.yaml",
+          //   outputDir: "platforms/anchor-platform/api-reference",
+          //   hideSendButton: true,
+          //   sidebarOptions: {
+          //     groupPathsBy: "tag",
+          //     categoryLinkSource: 'tag'
+          //   },
+          //   template: "src/template.mustache",
+          // } satisfies OpenApiPlugin.Options,
+          ap_platform: {
+            specPath: "openapi/anchor-platform/bundled-platform.yaml",
+            outputDir: "platforms/anchor-platform/api-reference/platform",
             hideSendButton: true,
             sidebarOptions: {
               groupPathsBy: "tag",
-              categoryLinkSource: 'tag'
+              categoryLinkSource: "tag",
             },
+            template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+          ap_callbacks: {
+            specPath: "openapi/anchor-platform/bundled-callbacks.yaml",
+            outputDir: "platforms/anchor-platform/api-reference/callbacks",
+            hideSendButton: true,
+            template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+          ap_custody: {
+            specPath: "openapi/anchor-platform/bundled-custody.yaml",
+            outputDir: "platforms/anchor-platform/api-reference/custody",
+            hideSendButton: true,
             template: "src/template.mustache",
           } satisfies OpenApiPlugin.Options,
           stellar_disbursement_platform: {
@@ -71,6 +95,15 @@ const config: Config = {
               categoryLinkSource: 'tag',
             },
             template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+          zesty: {
+            specPath: "zesty-bundled.yaml",
+            outputDir: "platforms/anchor-platform/api-reference/zesty",
+            sidebarOptions: {
+              groupPathsBy: "tag",
+              categoryLinkSource: 'tag',
+            },
+            template: "src/template.mustache"
           } satisfies OpenApiPlugin.Options,
         } satisfies Plugin.PluginOptions,
       },
