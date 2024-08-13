@@ -30,5 +30,5 @@ async function buildAndValidate(filename) {
 
 await Promise.all([
   buildAndValidate("openrpc/stellar-rpc.openrpc.json"),
-  buildAndValidate("platforms/anchor-platform/api-reference/rpc/anchor-platform.openrpc.json")
+  buildAndValidate("platforms/anchor-platform/api-reference/platform/rpc/anchor-platform.openrpc.json")
 ])
