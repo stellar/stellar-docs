@@ -55,24 +55,10 @@ const config: Config = {
         id: "platformapis",
         docsPluginId: "platforms",
         config: {
-          // anchor_platform: {
-          //   specPath: "openapi/anchor-platform/bundled.yaml",
-          //   outputDir: "platforms/anchor-platform/api-reference",
-          //   hideSendButton: true,
-          //   sidebarOptions: {
-          //     groupPathsBy: "tag",
-          //     categoryLinkSource: 'tag'
-          //   },
-          //   template: "src/template.mustache",
-          // } satisfies OpenApiPlugin.Options,
           ap_platform: {
             specPath: "openapi/anchor-platform/bundled-platform.yaml",
-            outputDir: "platforms/anchor-platform/api-reference/platform",
+            outputDir: "platforms/anchor-platform/api-reference/platform/transactions",
             hideSendButton: true,
-            sidebarOptions: {
-              groupPathsBy: "tag",
-              categoryLinkSource: "tag",
-            },
             template: "src/template.mustache",
           } satisfies OpenApiPlugin.Options,
           ap_callbacks: {
@@ -95,15 +81,6 @@ const config: Config = {
               categoryLinkSource: 'tag',
             },
             template: "src/template.mustache",
-          } satisfies OpenApiPlugin.Options,
-          zesty: {
-            specPath: "zesty-bundled.yaml",
-            outputDir: "platforms/anchor-platform/api-reference/zesty",
-            sidebarOptions: {
-              groupPathsBy: "tag",
-              categoryLinkSource: 'tag',
-            },
-            template: "src/template.mustache"
           } satisfies OpenApiPlugin.Options,
         } satisfies Plugin.PluginOptions,
       },
