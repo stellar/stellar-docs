@@ -83,7 +83,7 @@ const config: Config = {
             require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
           ]],
           rehypePlugins: [rehypeKatex],
-          sidebarPath: require.resolve("./sidebars.js"),
+          sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
           exclude: ['**/component/**', '**/README.md'],
