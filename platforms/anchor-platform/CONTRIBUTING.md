@@ -13,7 +13,12 @@ documentation. Let's start off with a bit of Docusaurus vocabulary, shall we?
 
 ## TL;DR
 
-Something
+- For _unreleased_ versions of Anchor Platform:
+  - Add and edit docs in `/platforms/anchor-platform`
+  - Update and regenerate API docs in `/openapi/anchor-platform/main-*.yaml`
+- For _released_ versions of Anchor Platform:
+  - Update and change docs in `/ap_versioned_docs`
+  - Update and regenerate API docs in `/openapi/anchor-platform/versions/*.yaml`
 
 ## Table of Contents <!-- omit in toc -->
 
