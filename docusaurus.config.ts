@@ -211,6 +211,12 @@ const config: Config = {
           position: 'left',
         },
         {
+          type: 'docsVersionDropdown',
+          docsPluginId: 'ap',
+          dropdownActiveClassDisabled: true,
+          position: 'right',
+        },
+        {
           to: '/meetings',
           label: 'Meetings',
           position: 'right',
