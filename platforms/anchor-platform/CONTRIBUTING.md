@@ -1,3 +1,7 @@
+---
+draft: true
+---
+
 # Welcome to Anchor Platform Madness <!-- omit in toc -->
 
 Hello, and welcome to the newly versioned home of the Anchor Platform
