@@ -14,18 +14,51 @@ export const anchorPlatformPluginInstances: PluginConfig[] = [
                     outputDir: "platforms/anchor-platform/api-reference/platform/transactions",
                     hideSendButton: true,
                     template: "src/template.mustache",
+                    version: "3.0.0",
+                    label: "v3.0.0",
+                    baseUrl: '/platforms/anchor-platform/next/api-reference/platform/transactions',
+                    versions: {
+                        "2.8.4": {
+                            specPath: "openapi/anchor-platform/versions/platform-2.8.4.yaml",
+                            outputDir: "ap_versioned_docs/version-2.8.4/api-reference/platform/transactions",
+                            label: "v2.8.4",
+                            baseUrl: "/platforms/anchor-platform/api-reference/platform/transactions"
+                        }
+                    }
                 } satisfies OpenApiPlugin.Options,
                 ap_callbacks: {
                     specPath: "openapi/anchor-platform/bundled-callbacks.yaml",
                     outputDir: "platforms/anchor-platform/api-reference/callbacks",
                     hideSendButton: true,
                     template: "src/template.mustache",
+                    version: "3.0.0",
+                    label: "v3.0.0",
+                    baseUrl: "/platforms/anchor-platform/next/api-reference/callbacks",
+                    versions: {
+                        "2.8.4": {
+                            specPath: "openapi/anchor-platform/versions/callbacks-2.8.4.yaml",
+                            outputDir: "ap_versioned_docs/version-2.8.4/api-reference/callbacks",
+                            label: "v2.8.4",
+                            baseUrl: "/platforms/anchor-platform/api-reference/callbacks"
+                        }
+                    }
                 } satisfies OpenApiPlugin.Options,
                 ap_custody: {
                     specPath: "openapi/anchor-platform/bundled-custody.yaml",
                     outputDir: "platforms/anchor-platform/api-reference/custody",
                     hideSendButton: true,
                     template: "src/template.mustache",
+                    version: "3.0.0",
+                    label: "v3.0.0",
+                    baseUrl: "/platforms/anchor-platform/next/api-reference/custody",
+                    versions: {
+                        "2.8.4": {
+                            specPath: "openapi/anchor-platform/versions/custody-2.8.4.yaml",
+                            outputDir: "ap_versioned_docs/version-2.8.4/api-reference/custody",
+                            label: "v2.8.4",
+                            baseUrl: "/platforms/anchor-platform/api-reference/custody"
+                        }
+                    }
                 } satisfies OpenApiPlugin.Options,
             } satisfies Plugin.PluginOptions,
         },
