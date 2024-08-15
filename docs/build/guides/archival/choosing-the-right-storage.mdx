@@ -1,0 +1,151 @@
+---
+title: How to choose the right storage type for your use case
+hide_table_of_contents: true
+description: This guide walks you through choosing the most suitable storage type for your use case and how to implement it
+---
+
+State archival refers to how data on the network is stored. This data includes all information that comprises the network's current and historical state. Storage is managed by keeping the important data active and archiving the rest in order to help keep the network fast and cheap. Read more about state archival [here](../../../learn/encyclopedia/storage/state-archival.mdx).
+
+State archival is vital for several reasons including:
+
+- It ensures that data is preserved efficiently and can be accessed when needed or restored if it becomes archived;
+- It optimizes cost for users based on the data's importance and longevity;
+- It helps maintain optimal performance and throughput on the network.
+
+## Storage types
+
+When a smart contract is deployed on the Stellar network, the uploaded Wasm bytecode is stored as a `CONTRACT_DATA` entry on the ledger. Each entry has a stipulated time it can be accessed on the ledger before it is either archived or permanently deleted from the network; this is known as the entry's time to live (TTL). The TTL is measured in ledgers. That is, if an entry's TTL is 50, the entry will be available for the next 50 ledgers. When the entry's TTL reaches zero, it is either deleted or archived based on the type of storage used.
+
+There are three types of storage available on the Stellar network:
+
+- Temporary storage
+- Persistent storage
+- Instance storage
+
+### Temporary storage
+
+As the name implies, temporary storage stores data for a short period. It is suitable for contracts that only require their data for a short while and can afford for the data to be discarded afterward without any consequences. Here, once the TTL reaches zero, the data will be deleted from the ledger and cannot be restored. Temporary storage has unlimited storage space and the cheapest fees among all the storage types.
+
+Temporary storage is best suited for contracts with easily replaceable data and contracts that are only relevant within a certain period. For example, a contract that issues session tokens that provide temporary access to a service may use temporary storage to keep track of these access tokens since once the tokens expire, they are no longer needed. Let's look how temporary storage may be implemented in a time-bound auction contract where users can place bids, which only need to be kept for the duration of the auction.
+
+```rust
+use soroban_sdk::{Env, Symbol};
+
+// This function lets a user place a bid
+pub fn place_bid(env: Env, user: Symbol, bid_amount: i64) {
+    let bid_key = Symbol::short("bid").append_symbol(user);
+    env.storage().temporary().set(&bid_key, bid_amount);
+}
+
+// This function returns a user's bid or 0 if the auction is over
+pub fn get_bid(env: Env, user: Symbol) -> i64 {
+    let bid_key = Symbol::short("bid").append_symbol(user);
+    env.storage().temporary().get(&bid_key).unwrap_or(0)
+}
+```
+
+### Persistent storage
+
+This storage type is used for storing data on the network over a long period.
+
+For persistent storage, when the TTL reaches zero, the entry is archived rather than deleted, and can be restored when needed using the `RestoreFootprintOp` operation. This allows for the long-term management and retrieval of historical contract states and user data.
+
+Like temporary storage, persistent storage also has an unlimited amount of storage space. However, it is expensive since the data is stored on the network for a longer time.
+
+Examples of data that may be stored on persistent storage include user balances, token metadata, voting and governance decisions, and all data that need to remain accessible across multiple contract invocations and potentially long durations.
+
+Let's look at a contract for a loyalty points system where users can accumulate points and redeem them for rewards. Each user's point balance will be stored in persistent storage.
+
+```rust
+use soroban_sdk::{contractimpl, contracttype, Address, Env};
+
+#[contracttype]
+pub enum DataKey {
+    Points(Address),
+}
+
+#[contract]
+pub struct LoyaltyPointsContract;
+
+#[contractimpl]
+impl LoyaltyPointsContract {
+    // This function adds points to the user's balance
+    pub fn add_points(env: Env, user: Address, points: u64) {
+        let key = DataKey::Points(user.clone());
+        let current_points: u64 = env.storage().persistent().get(&key).unwrap_or(0);
+        let new_points = current_points + points;
+        env.storage().persistent().set(&key, &new_points);
+    }
+
+    // This function retrieves the user's points balance
+    pub fn get_points(env: Env, user: Address) -> u64 {
+        let key = DataKey::Points(user);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    // This function redeems points according to the user's balance
+    pub fn redeem_points(env: Env, user: Address, points: u64) -> bool {
+        let key = DataKey::Points(user.clone());
+        let current_points: u64 = env.storage().persistent().get(&key).unwrap_or(0);
+
+        if current_points >= points {
+            let new_points = current_points - points;
+            env.storage().persistent().set(&key, &new_points);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+```
+
+### Instance storage
+
+Instance storage is a type of persistent storage that is used for storing data associated with the contract instance itself; data that only needs to be accessed while the contract is active.
+
+Here, the ledger entry shares the same TTL as the contract instance. Therefore once the contract instance is no longer active, the data is archived. However, it can also be restored using the `RestoreFootprintOp` operation.
+
+Like persistent storage, instance storage stores data permanently and for the same fees as persistent storage. The key difference is that instance storage allocates a limited storage space.
+
+Instance storage is best suited for data that only needs to be accessed during the lifespan of the contract instance. For example, contract admin settings that can be modified by authorized users.
+
+Let's look at a voting system where each contract instance represents a unique vote with a specific set of candidates. Instance storage will be used for storing and retrieving votes for a set of candidates within a voting instance.
+
+```rust
+use soroban_sdk::{contractimpl, contracttype, Address, Env, Symbol};
+
+#[contracttype]
+pub enum DataKey {
+    Votes(Symbol),
+}
+
+#[contract]
+pub struct VotingContract;
+
+#[contractimpl]
+impl VotingContract {
+    // This function initializes the voting contract with candidates
+    pub fn initialize(env: Env, candidates: Vec<Symbol>) {
+        for candidate in candidates {
+            let key = DataKey::Votes(candidate.clone());
+            env.storage().instance().set(&key, &0u64);
+        }
+    }
+
+    // This function casts a vote for a candidate
+    pub fn vote(env: Env, candidate: Symbol) {
+        let key = DataKey::Votes(candidate.clone());
+        let current_votes: u64 = env.storage().instance().get(&key).unwrap_or(0);
+        let new_votes = current_votes + 1;
+        env.storage().instance().set(&key, &new_votes);
+    }
+
+    // This function retrieves the vote count for a candidate
+    pub fn get_votes(env: Env, candidate: Symbol) -> u64 {
+        let key = DataKey::Votes(candidate);
+        env.storage().instance().get(&key).unwrap_or(0)
+    }
+}
+
+```
