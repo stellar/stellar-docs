@@ -335,4 +335,9 @@ Then, regenerate the MDX pages:
 yarn docusaurus gen-api-docs:version -p ap-apis:2.8.4
 ```
 
+> _Note:_ You can use a yarn script to automatically regenerate API docs for
+> **all** released versions: `yarn ap:versions:regen`. This does indeed
+> regenerate all versions, so you may want to be choosy about which files you
+> add to the commit.
+
 Commit the changes, and you're off to the races.
