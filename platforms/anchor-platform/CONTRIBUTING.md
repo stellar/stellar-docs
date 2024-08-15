@@ -20,6 +20,24 @@ documentation. Let's start off with a bit of Docusaurus vocabulary, shall we?
   - Update and change docs in `/ap_versioned_docs`
   - Update and regenerate API docs in `/openapi/anchor-platform/versions/*.yaml`
 
+Release a **new version** using the following yarn script:
+
+```bash
+# replace `3.0.0` with the needed version
+VERSION=3.0.0 yarn ap:versions:new
+```
+
+> _Note:_ I think the above yarn command is currently incompatible with Windows,
+> though I could be wrong.
+
+Regenerate API docs for **already released** versions using the following yarn
+script. This regenerates API docs for **all** the released versions, so you may
+want to be judicious about which files you add to your commit.
+
+```bash
+yarn ap:versions:regen
+```
+
 ## Table of Contents <!-- omit in toc -->
 
 - [TL;DR](#tldr)
@@ -219,6 +237,10 @@ versioned AP documentation.
 
 ## Making New Versions
 
+As noted in the [TL;DR](#tldr), this process is automated with the
+`VERSION=3.0.0 yarn ap:versions:new` script. However, here's what's happening
+under the hood of that script.
+
 ### Use Docusaurus to "Tag" a New Release
 
 It's actually pretty simple! Use the Docusaurus CLI to make a new release:
@@ -253,6 +275,12 @@ cp openapi/anchor-platform/bundled-custody.yaml openapi/anchor-platform/versions
 > sure the versioned file contains everything it needs.
 
 #### Add Configuration to the OpenAPI Plugin Instance
+
+> _Note_: These `versions` parts of the configuration are now generated
+> dynamically, using a `makeVersions()` function, so these manual config steps
+> shouldn't need to be done. You _may_ want to advance/adjust the
+> `anchorPlatformNextVersion` string in the config file, when you release a new
+> version of docs, though.
 
 In order to be able to use the plugin's CLI to update already-released versions,
 we have to update the configuration in `/config/anchorPlatform.config.ts`. Make
