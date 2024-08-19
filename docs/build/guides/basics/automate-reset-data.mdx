@@ -50,8 +50,32 @@ Automating blockchain state on Stellar's Testnet and Futurenet can streamline de
 import * as StellarSdk from "@stellar/stellar-sdk";
 import fs from "fs";
 
+//GLOBAL VARIABLES
+
+// const networkRPC = "USE EITHER FUTERNET OR TESTNET RPC"
+const networkRPC = "https://soroban-testnet.stellar.org";
+// Example
+// FOR FUTERENET - https://rpc-futurenet.stellar.org
+// FOR TESTNET - https://soroban-testnet.stellar.org
+
+//Initiate Server
+
+const server = new StellarSdk.SorobanRpc.Server(networkRPC);
+
+// const networkURL = "USE EITHER FUTERNET OR TESTNET URL"
+const networkURL = "https://friendbot.stellar.org";
+// Example
+// FOR FUTERENET - https://friendbot-futurenet.stellar.org
+// FOR TESTNET - https://friendbot.stellar.org
+
+// const networkParaphrase = "USE EITHER FUTERNET OR TESTNET Paraphrase"
+const networkPassPhrase = StellarSdk.Networks.TESTNET;
+// Example
+// FOR FUTERENET - StellarSdk.Networks.FUTURENET
+// FOR TESTNET -  StellarSdk.Networks.TESTNET
+
 // This Functions Submits a transactions and then polls for its status until a timeout is reached.
-async function yeetTx(feedback, server) {
+async function yeetTx(feedback, message) {
   try {
     if (feedback.status !== "PENDING") {
       throw feedback;
@@ -60,30 +84,27 @@ async function yeetTx(feedback, server) {
     let status;
     let attempts = 0;
     while (attempts++ < 20) {
-      // Increased max attempts
+      // A maximum of 20 polls of transaction status
       const tmpStatus = await server.getTransaction(feedback.hash);
       switch (tmpStatus.status) {
         case "FAILED":
           throw tmpStatus;
         case "NOT_FOUND":
-          await sleep(1000); // Increased sleep time
+          await sleep(1000); //  Wait for one minute
           continue;
         case "SUCCESS":
           status = tmpStatus;
+          console.log(`${message}: Transaction succeeded`, status);
           break;
       }
       if (status) break;
     }
-
     if (attempts >= 20 || !status) {
-      // Updated max attempts check
       throw new Error(
         `Failed to find transaction ${feedback.hash} after ${attempts} attempts.`,
       );
     }
-
     return status;
-    // console.log("Transaction succeeded:", reply);
   } catch (error) {
     console.error("Transaction failed:", error);
     throw error;
@@ -92,46 +113,37 @@ async function yeetTx(feedback, server) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-const getTxsReports = async (feedback, message, server) => {
-  try {
-    const result = await yeetTx(feedback, server);
-    console.log(`${message}: Transaction succeeded`, result);
-    return result;
-  } catch (error) {
-    console.error(`${message}: Transaction failed`, error);
-  }
-};
 
 //Create an Account
-async function createAccount(networkURL) {
-  try {
-    // Generate a keypair
-    const pair = StellarSdk.Keypair.random();
-    console.log("Public Key:", pair.publicKey());
-    console.log("Secret Key:", pair.secret());
-    console.log("Pairs:", pair);
+async function createAccount(networkURL, SecretKey) {
+  if (SecretKey === undefined || null) {
+    try {
+      // Generate a keypair
+      const pair = StellarSdk.Keypair.random();
+      // Fund the new account using Friendbot
+      const response = await fetch(
+        `${networkURL}?addr=${encodeURIComponent(pair.publicKey())}`,
+      );
+      const responseJSON = await response.json();
+      console.log("Account created:", responseJSON);
 
-    // Fund the new account using Friendbot
-    const response = await fetch(
-      `${networkURL}?addr=${encodeURIComponent(pair.publicKey())}`,
-    );
-    const responseJSON = await response.json();
-    console.log("Account created:", responseJSON);
-
-    return pair;
-  } catch (error) {
-    console.error("Error creating account:", error);
+      return pair;
+    } catch (error) {
+      console.error("Error creating account:", error);
+    }
+  } else {
+    try {
+      const pair = StellarSdk.Keypair.fromSecret(SecretKey);
+      console.log("Account Restored:", pair);
+      return pair;
+    } catch (error) {
+      console.error("Error restoring account:", error);
+    }
   }
 }
 
 // Issues an Asset
-async function issueAsset(
-  server,
-  networkPassPhrase,
-  issuerKeys,
-  receivingKeys,
-  customAsset,
-) {
+async function issueAsset(issuerKeys, receivingKeys, customAsset) {
   try {
     // First, the receiving account must trust the asset
     const receiver = await server.getAccount(receivingKeys.publicKey());
@@ -142,7 +154,7 @@ async function issueAsset(
       .addOperation(
         StellarSdk.Operation.changeTrust({
           asset: customAsset,
-          limit: "1000",
+          limit: "100000",
         }),
       )
       // setTimeout is required for a transaction
@@ -150,11 +162,7 @@ async function issueAsset(
       .build();
     transaction.sign(receivingKeys);
     const result = await server.sendTransaction(transaction);
-    await getTxsReports(
-      result,
-      `Receiver Trusting ${customAsset.code} Asset......`,
-      server,
-    );
+    await yeetTx(result, `Receiver Trusting ${customAsset.code} Asset......`);
 
     // Second, the issuing account actually sends a payment using the asset
     const issuer = await server.getAccount(issuerKeys.publicKey());
@@ -166,7 +174,7 @@ async function issueAsset(
         StellarSdk.Operation.payment({
           destination: receivingKeys.publicKey(),
           asset: customAsset,
-          amount: "800", // change to desired amount you want to pay
+          amount: "1000", // change to desired amount you want to pay
         }),
       )
       // setTimeout is required for a transaction
@@ -174,12 +182,11 @@ async function issueAsset(
       .build();
     transaction.sign(issuerKeys);
     const resultFeeback = await server.sendTransaction(transaction);
-    await getTxsReports(
+    await yeetTx(
       resultFeeback,
       `Issuer Payment using ${
         customAsset.code
       } to  ${receivingKeys.publicKey()}`,
-      server,
     );
   } catch (e) {
     console.error("An error occurred while issuing assets:", e);
@@ -187,13 +194,7 @@ async function issueAsset(
 }
 
 //Create Liquidity Pool
-async function createLiquidityPool(
-  server,
-  accountKeypair,
-  nativeAsset,
-  customAsset,
-  networkPassphrase,
-) {
+async function createLiquidityPool(accountKeypair, nativeAsset, customAsset) {
   try {
     const account = await server.getAccount(accountKeypair.publicKey());
 
@@ -207,21 +208,21 @@ async function createLiquidityPool(
 
     const transaction = new StellarSdk.TransactionBuilder(account, {
       fee: StellarSdk.BASE_FEE,
-      networkPassphrase: networkPassphrase,
+      networkPassphrase: networkPassPhrase,
     })
       .addOperation(
         StellarSdk.Operation.changeTrust({
           asset: poolIdAsset,
-          limit: "10000", // Set an appropriate limit
+          limit: "100000", // Set an appropriate limit
         }),
       )
       .addOperation(
         StellarSdk.Operation.liquidityPoolDeposit({
           liquidityPoolId: poolId,
           maxAmountA: "1000", // Amount of asset A to deposit
-          maxAmountB: "1000", // Amount of asset B to deposit
-          minPrice: "0.9", // Minimum price ratio
-          maxPrice: "1.1", // Maximum price ratio
+          maxAmountB: "500", // Amount of asset B to deposit
+          minPrice: "0.5", // Minimum price ratio
+          maxPrice: "2.0", // Maximum price ratio
         }),
       )
       .setTimeout(30)
@@ -229,10 +230,9 @@ async function createLiquidityPool(
     transaction.sign(accountKeypair);
     const resultFeeback = await server.sendTransaction(transaction);
 
-    await getTxsReports(
+    await yeetTx(
       resultFeeback,
       `Creating Liquidity Pool for ${nativeAsset.code} and ${customAsset.code} `,
-      server,
     );
   } catch (error) {
     console.error("Error creating liquidity pool:", error);
@@ -240,13 +240,7 @@ async function createLiquidityPool(
   }
 }
 //Deploy and Invoke Contract
-async function deployAndInvokeContract(
-  server,
-  deployer,
-  networkPassphrase,
-  contractWasmFilePath,
-  salt,
-) {
+async function deployAndInvokeContract(deployer, contractWasmFilePath, salt) {
   try {
     // Step 1: Upload WASM
     const bytecode = fs.readFileSync(contractWasmFilePath);
@@ -254,7 +248,7 @@ async function deployAndInvokeContract(
 
     const uploadTransaction = new StellarSdk.TransactionBuilder(account, {
       fee: StellarSdk.BASE_FEE,
-      networkPassphrase: networkPassphrase,
+      networkPassphrase: networkPassPhrase,
     })
       .addOperation(StellarSdk.Operation.uploadContractWasm({ wasm: bytecode }))
       .setTimeout(30)
@@ -265,11 +259,7 @@ async function deployAndInvokeContract(
 
     console.log("Submitting WASM upload transaction...");
     let uploadResponse = await server.sendTransaction(uploadTx);
-    const result = await getTxsReports(
-      uploadResponse,
-      `WASM upload transaction...`,
-      server,
-    );
+    const result = await yeetTx(uploadResponse, `WASM upload transaction...`);
     const wasmHash = result.returnValue._value;
     const saltBuffer = Buffer.from(salt, "hex");
 
@@ -280,7 +270,7 @@ async function deployAndInvokeContract(
       account,
       {
         fee: StellarSdk.BASE_FEE,
-        networkPassphrase: networkPassphrase,
+        networkPassphrase: networkPassPhrase,
       },
     )
       .addOperation(
@@ -298,12 +288,11 @@ async function deployAndInvokeContract(
     );
     createContractTx.sign(deployer);
     let createContractResponse = await server.sendTransaction(createContractTx);
-    const returnContractResponse = await getTxsReports(
+    const returnContractResponse = await yeetTx(
       createContractResponse,
       `Contract Deployed...`,
-      server,
     );
-    const contractBuffer = returnContractResponse.returnValue._value._value;
+    const contractBuffer = returnContractResponse.returnValue?._value?._value;
     const contractId = StellarSdk.StrKey.encodeContract(contractBuffer);
     const contract = new StellarSdk.Contract(contractId);
 
@@ -312,7 +301,7 @@ async function deployAndInvokeContract(
       account,
       {
         fee: StellarSdk.BASE_FEE,
-        networkPassphrase: networkPassphrase,
+        networkPassphrase: networkPassPhrase,
       },
     )
       .addOperation(
@@ -326,10 +315,9 @@ async function deployAndInvokeContract(
     );
     invokeContractTx.sign(deployer);
     let invokeContractResponse = await server.sendTransaction(invokeContractTx);
-    const returnInvokeContractResponse = await getTxsReports(
+    const returnInvokeContractResponse = await yeetTx(
       invokeContractResponse,
       `Invoke Contract.`,
-      server,
     );
 
     const functionValues = returnInvokeContractResponse.returnValue._value
@@ -348,57 +336,27 @@ async function deployAndInvokeContract(
 
 async function automateSetup() {
   try {
-    // const networkRPC = "USE EITHER FUTERNET OR TESTNET RPC"
-    const networkRPC = "https://soroban-testnet.stellar.org";
-    // Example
-    // FOR FUTERENET - https://rpc-futurenet.stellar.org
-    // FOR TESTNET - https://soroban-testnet.stellar.org
-
-    //Initiate Server
-
-    const server = new StellarSdk.SorobanRpc.Server(networkRPC);
-
     //Check Network Status
     console.log("Checking network health...");
     const health = await server.getHealth();
     console.log("Network health:", health);
 
-    // const networkURL = "USE EITHER FUTERNET OR TESTNET URL"
-    const networkURL = "https://friendbot.stellar.org";
-    // Example
-    // FOR FUTERENET - https://friendbot-futurenet.stellar.org
-    // FOR TESTNET - https://friendbot.stellar.org
+    // Flexible Account Configuration
+    const secretkey =
+      "SBGGNMUPVF2SDN4KZOJQFVFX7VDR4Q4NK3FMEFRQC64D3UBMFELKF5GC"; // This is an example of a user's secret key
 
-    const accountOne = await createAccount(networkURL);
+    const accountOne = await createAccount(networkURL, secretkey);
     const accountTwo = await createAccount(networkURL);
-
-    // const networkParaphrase = "USE EITHER FUTERNET OR TESTNET Paraphrase"
-    const networkPassPhrase = StellarSdk.Networks.TESTNET;
-    // Example
-    // FOR FUTERENET - StellarSdk.Networks.FUTURENET
-    // FOR TESTNET -  StellarSdk.Networks.TESTNET
 
     console.log("Issuing an Asset...");
     // Issue assets to these accounts
     const customAsset = new StellarSdk.Asset("Boya", accountOne.publicKey());
-    await issueAsset(
-      server,
-      networkPassPhrase,
-      accountOne,
-      accountTwo,
-      customAsset,
-    );
+    await issueAsset(accountOne, accountTwo, customAsset);
 
     // Create liquidity pool
     console.log("Creating liquidity pool...");
     const nativeAsset = StellarSdk.Asset.native();
-    await createLiquidityPool(
-      server,
-      accountOne,
-      nativeAsset,
-      customAsset,
-      networkPassPhrase,
-    );
+    await createLiquidityPool(accountTwo, nativeAsset, customAsset);
 
     // Deploy a contract
     console.log("Deploying contract...");
@@ -407,12 +365,10 @@ async function automateSetup() {
     const contractWasmFilePath =
       "./target/wasm32-unknown-unknown/release/hello_world.wasm"; // This is Wasmfile for an Hello World Contract.
     const salt =
-      "3157dca02e4105a749bd88d0ea429cde67b399aaa99dc646edccd74d5692a857"; // example salt
+      "2a875e49a81e4e17858abb2d3eb8a7722a657849e08a779eaf06ac85eade15a9"; // KodeSage,The First Principle Engineer was here Fam
 
     const ContractData = await deployAndInvokeContract(
-      server,
       accountTwo,
-      networkPassPhrase,
       contractWasmFilePath,
       salt,
     );
