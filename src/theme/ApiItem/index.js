@@ -5,6 +5,8 @@ import DocItem from '@theme-original/DocItem';
 export default function ApiItemWrapper(props) {
   if (
     props.location?.pathname?.includes('api-reference')
+    && !props.location?.pathname?.includes('rpc')
+    && !props.location?.pathname.includes('error-handling')
   ) {
     return (
       <>

@@ -6,23 +6,28 @@ import { combineAdjacentStrings, partition } from "@site/src/helpers";
 import styles from "./styles.module.scss";
 
 export const ListItem = (props) => {
-  const children = combineAdjacentStrings(
-    React.Children.toArray(props.children),
-  );
+  const children = props.children.props.children.filter((child) => child !== "\n");
 
   const [name, sublist] = children;
 
-  const [typeElement, descriptionElement] = React.Children.toArray(
-    sublist.props.children,
-  );
+  const [typeElement, descriptionElement] = sublist.props.children.filter((child) => child !== "\n");
 
   const type =
-    typeElement.props.children === "skip" ? null : typeElement.props.children;
+  typeElement.props.children === "skip" ? null : typeElement.props.children;
 
   const [description, collapsedChildren] = partition(
     React.Children.toArray(descriptionElement.props.children),
-    (child) => child?.props?.mdxType !== "ul",
+    (child) => child?.type?.name !== "MDXUl" && child?.type?.name !== "ul",
   );
+
+  const collapsedList = [];
+  collapsedChildren.length > 0 && collapsedChildren[0].props.children
+    .filter((child) => child !== "\n")
+    .map((child, index) => {
+      collapsedList.push(
+        <ListItem key={`collapsedItem-${index}`}>{child}</ListItem>,
+      );
+    });
 
   return (
     <li className={styles.ListItem}>
@@ -33,9 +38,9 @@ export const ListItem = (props) => {
 
       <p>{description}</p>
 
-      {collapsedChildren.length > 0 && (
+      {collapsedList.length > 0 && (
         <Details summary={<summary>Show child attributes</summary>}>
-          {collapsedChildren}
+          {collapsedList}
         </Details>
       )}
     </li>

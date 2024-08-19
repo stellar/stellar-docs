@@ -1,8 +1,8 @@
 import React from 'react';
 import clsx from 'clsx';
 import Heading from '@theme/Heading';
-import styles from './styles.module.css';
 import Link from '@docusaurus/Link';
+import styles from './styles.module.css';
 
 const WayfindingWays = [
   {
@@ -18,7 +18,7 @@ const WayfindingWays = [
         to="/docs/learn/fundamentals">
         Dive In
       </Link>
-    )
+    ),
   },
   {
     title: 'Write a Smart Contract',
@@ -31,10 +31,10 @@ const WayfindingWays = [
     // temporarily set this to /docs/soroban until "smart contracts" section is done
     link: (
       <Link
-        to="/docs/smart-contracts/getting-started/setup">
+        to="/docs/build/smart-contracts/getting-started/setup">
         Get Started
       </Link>
-    )
+    ),
   },
   {
     title: 'Issue an Asset',
@@ -46,10 +46,10 @@ const WayfindingWays = [
     ),
     link: (
       <Link
-        to="/docs/issuing-assets/how-to-issue-an-asset">
+        to="/docs/tokens/how-to-issue-an-asset">
         Issue Asset
       </Link>
-    )
+    ),
   },
   {
     title: 'Build an Application',
@@ -61,10 +61,10 @@ const WayfindingWays = [
     ),
     link: (
       <Link
-        to="/docs/category/build-applications">
+        to="/docs/build/apps">
         Get Building
       </Link>
-    )
+    ),
   },
   {
     title: 'Developer Tools',
@@ -79,7 +79,7 @@ const WayfindingWays = [
         to="/docs/tools/developer-tools">
         See Tools
       </Link>
-    )
+    ),
   },
   {
     title: 'Access Data',
@@ -94,7 +94,7 @@ const WayfindingWays = [
         to="/docs/data">
         Get the Goods
       </Link>
-    )
+    ),
   },
 ];
 
