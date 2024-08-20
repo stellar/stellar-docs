@@ -271,8 +271,8 @@ const config: Config = {
               href: "https://stellar.expert",
             },
             {
-              label: "Laboratory",
-              href: "https://laboratory.stellar.org",
+              label: "Lab",
+              href: "https://lab.stellar.org",
             },
             {
               label: "Status",
