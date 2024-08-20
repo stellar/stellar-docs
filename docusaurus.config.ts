@@ -1,11 +1,12 @@
-import type { Config } from '@docusaurus/types';
-import type * as Preset from '@docusaurus/preset-classic';
-import type * as Plugin from '@docusaurus/types/src/plugin';
-import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
-
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
+
+import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
+import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
+
+import type { Config } from '@docusaurus/types';
+import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: "Stellar Docs",
@@ -47,56 +48,8 @@ const config: Config = {
         },
       },
     ],
-    [
-      "docusaurus-plugin-openapi-docs",
-      {
-        id: "platformapis",
-        docsPluginId: "platforms",
-        config: {
-          ap_platform: {
-            specPath: "openapi/anchor-platform/bundled-platform.yaml",
-            outputDir: "platforms/anchor-platform/api-reference/platform/transactions",
-            hideSendButton: true,
-            template: "src/template.mustache",
-          } satisfies OpenApiPlugin.Options,
-          ap_callbacks: {
-            specPath: "openapi/anchor-platform/bundled-callbacks.yaml",
-            outputDir: "platforms/anchor-platform/api-reference/callbacks",
-            hideSendButton: true,
-            template: "src/template.mustache",
-          } satisfies OpenApiPlugin.Options,
-          ap_custody: {
-            specPath: "openapi/anchor-platform/bundled-custody.yaml",
-            outputDir: "platforms/anchor-platform/api-reference/custody",
-            hideSendButton: true,
-            template: "src/template.mustache",
-          } satisfies OpenApiPlugin.Options,
-          stellar_disbursement_platform: {
-            specPath: "openapi/stellar-disbursement-platform/bundled.yaml",
-            outputDir: "platforms/stellar-disbursement-platform/api-reference",
-            sidebarOptions: {
-              groupPathsBy: "tag",
-              categoryLinkSource: 'tag',
-            },
-            template: "src/template.mustache",
-          } satisfies OpenApiPlugin.Options,
-        } satisfies Plugin.PluginOptions,
-      },
-    ],
-    [
-      "@docusaurus/plugin-content-docs",
-      {
-        id: "platforms",
-        path: "platforms",
-        routeBasePath: "/platforms",
-        docItemComponent: "@theme/ApiItem",
-        sidebarPath: require.resolve("./sidebarsPlatforms.js"),
-        editUrl: "https://github.com/stellar/stellar-docs/tree/main",
-        exclude: ['**/component/**', '**/README.md'],
-        showLastUpdateTime: true,
-        showLastUpdateAuthor: true,
-      },
-    ],
+    ...anchorPlatformPluginInstances,
+    ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
   ],
@@ -130,7 +83,7 @@ const config: Config = {
             require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
           ]],
           rehypePlugins: [rehypeKatex],
-          sidebarPath: require.resolve("./sidebars.js"),
+          sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
           exclude: ['**/component/**', '**/README.md'],
@@ -256,6 +209,12 @@ const config: Config = {
           sidebarId: 'validators',
           label: 'Validators',
           position: 'left',
+        },
+        {
+          type: 'docsVersionDropdown',
+          docsPluginId: 'ap',
+          dropdownActiveClassDisabled: true,
+          position: 'right',
         },
         {
           to: '/meetings',
