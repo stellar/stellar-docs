@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from 'path';
 
 const headers = { "user-agent": "https://github.com/stellar/stellar-docs" };
 let result = await fetch("https://crates.io/api/v1/crates/stellar-cli", {
@@ -43,7 +44,8 @@ async function fetchAndSaveFile(filename) {
 }
 
 async function getFileList() {
-  const response = await fetch(`https://api.github.com/repos/stellar/stellar-cli/git/trees/main?recursive=1`, { headers });
+  const url = "https://api.github.com/repos/stellar/stellar-cli/git/trees/main?recursive=1";
+  const response = await fetch(url, { headers });
   const data = await response.json();
 
   if (!data.tree) {
