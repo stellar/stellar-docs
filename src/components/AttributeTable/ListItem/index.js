@@ -4,6 +4,7 @@ import Details from "@theme/Details";
 import { combineAdjacentStrings, partition } from "@site/src/helpers";
 
 import styles from "./styles.module.scss";
+import Translate from "@docusaurus/Translate";
 
 export const ListItem = (props) => {
   const children = props.children.props.children.filter((child) => child !== "\n");
@@ -39,7 +40,15 @@ export const ListItem = (props) => {
       <p>{description}</p>
 
       {collapsedList.length > 0 && (
-        <Details summary={<summary>Show child attributes</summary>}>
+        <Details summary={
+          <summary>
+            <Translate
+              id="components.AttributeTable.ListItem.ShowChildAttributes"
+              description="For hand-written API schema pages, a message to tell readers they can expand a section to see more sub-items">
+              Show child attributes
+            </Translate>
+          </summary>
+        }>
           {collapsedList}
         </Details>
       )}

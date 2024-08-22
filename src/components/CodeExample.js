@@ -3,6 +3,7 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeBlock from '@theme/CodeBlock';
 import { CODE_LANGS } from "../constants";
+import Translate from '@docusaurus/Translate';
 
 export const CodeExample = ({ children }) => (
   <Tabs groupId="programming-language">
@@ -16,7 +17,13 @@ export const CodeExample = ({ children }) => (
         <TabItem
           key={language || index}
           value={language || index}
-          label={CODE_LANGS[language] || 'Example'}
+          label={CODE_LANGS[language] ||
+            <Translate
+              id='components.CodeExample.NoLanguageTabTitle'
+              description='The tab title for a code example where no programming language was specified'>
+              Example
+            </Translate>
+          }
         >
           <CodeBlock language={language} showLineNumbers>
             {codeProps.children}
