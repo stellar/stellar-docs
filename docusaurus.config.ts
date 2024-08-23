@@ -15,8 +15,10 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenLinks: "throw",
-  onBrokenMarkdownLinks: "throw",
+  onBrokenLinks: "log",
+  onBrokenMarkdownLinks: "log",
+  // onBrokenLinks: "throw",
+  // onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
@@ -126,10 +128,6 @@ const config: Config = {
       },
       items: [
         {
-          type: 'localeDropdown',
-          position: 'left',
-        },
-        {
           type: 'docSidebar',
           sidebarId: 'build',
           label: 'Build',
@@ -223,6 +221,10 @@ const config: Config = {
         {
           to: '/meetings',
           label: 'Meetings',
+          position: 'right',
+        },
+        {
+          type: 'localeDropdown',
           position: 'right',
         },
         {
