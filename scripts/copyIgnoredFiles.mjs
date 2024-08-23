@@ -7,8 +7,8 @@ import yaml from 'js-yaml';
 const languages = ['es'];
 
 /**
- * Reads and parses the crowdin.yml file.
- * @param {string} filePath - The path to the crowdin.yml file.
+ * Reads and parses the crowdin.yaml file.
+ * @param {string} filePath - The path to the crowdin.yaml file.
  * @returns {Object} - The parsed configuration object.
  */
 function readCrowdinConfig(filePath) {
@@ -91,7 +91,10 @@ function copyIgnoredFilesForLanguages(config) {
 
     config.files.forEach(({ source, translation, ignore = [] }) => {
         ignore.forEach(ignorePattern => {
-            const srcPattern = ignorePattern.replace(/^\//, ''); // Strip the leading slash for the source path
+            let srcPattern = source
+                .replace(/^\//, '') // Strip the leading slash for the source path
+                .replace(/\*\*\/\*$/, ''); // strips the glob patter from the end
+            srcPattern += ignorePattern
 
             glob(srcPattern, (err, files) => {
                 if (err) {
@@ -114,7 +117,7 @@ function copyIgnoredFilesForLanguages(config) {
  * Main function to execute the workflow.
  */
 function main() {
-    const config = readCrowdinConfig('crowdin.yml');
+    const config = readCrowdinConfig('crowdin.yaml');
     copyIgnoredFilesForLanguages(config);
     logMessage('Ignored files copied for all specified languages.');
 }
