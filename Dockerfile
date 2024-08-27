@@ -24,6 +24,8 @@ RUN yarn stellar-cli:build
 # See: https://docusaurus.io/docs/3.4.0/i18n/crowdin#automate-with-ci
 RUN yarn crowdin download
 RUN yarn crowdin:fix
+# TODO: It's actually this part that is more time-consuming. The best way to
+# speed this up is to generate the preview for only `--locale en`
 RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build
 
 FROM nginx:1.17
