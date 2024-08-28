@@ -9,7 +9,7 @@ TAG ?= stellar/stellar-docs:$(LABEL)
 BUILD_DATE := $(shell date -u +%FT%TZ)
 
 docker-build:
-	$(SUDO) docker build --no-cache --pull --label org.opencontainers.image.created="$(BUILD_DATE)" -t $(TAG) . --build-arg CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN}
+	$(SUDO) docker build --secret id=CROWDIN_PERSONAL_TOKEN --no-cache --pull --label org.opencontainers.image.created="$(BUILD_DATE)" -t $(TAG) .
 
 docker-push:
 	$(SUDO) docker push $(TAG)
