@@ -1,5 +1,7 @@
 import type { PluginConfig } from '@docusaurus/types';
 import versions from '../ap_versions.json'
+import { makeEditUrl } from './constants';
+
 import type * as Plugin from '@docusaurus/types/src/plugin';
 import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 import type { APIVersionOptions } from 'docusaurus-plugin-openapi-docs/src/types';
@@ -54,7 +56,7 @@ export const anchorPlatformPluginInstances: PluginConfig[] = [
             routeBasePath: "/platforms/anchor-platform",
             docItemComponent: "@theme/ApiItem",
             sidebarPath: "config/anchorPlatform.sidebar.ts",
-            editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+            editUrl: makeEditUrl,
             exclude: ['**/component/**', '**/README.md'],
             showLastUpdateTime: true,
             showLastUpdateAuthor: true,

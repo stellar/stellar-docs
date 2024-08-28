@@ -2,6 +2,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
+import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
 import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
 import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
 
@@ -23,7 +24,7 @@ const config: Config = {
   organizationName: "stellar",
   projectName: "stellar-docs",
   i18n: {
-    defaultLocale: "en",
+    defaultLocale: DEFAULT_LOCALE,
     locales: ["en", "es"],
   },
   plugins: [
@@ -87,7 +88,7 @@ const config: Config = {
           rehypePlugins: [rehypeKatex],
           sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
-          editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+          editUrl: makeEditUrl,
           exclude: ['**/component/**', '**/README.md'],
         },
         theme: {
