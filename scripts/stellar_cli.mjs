@@ -7,14 +7,15 @@ const localRepoPath = './stellar-cli-repo';
 const sourcePath = 'cookbook';
 const targetDir = 'docs/build/guides/cli/';
 
-// Clone or update the repository
-if (!fs.existsSync(localRepoPath)) {
-  console.log('Cloning repository...');
-  execSync(`git clone ${repoUrl} ${localRepoPath}`);
-} else {
-  console.log('Updating repository...');
-  execSync('git pull', { cwd: localRepoPath });
+// Remove the existing repo if it exists
+if (fs.existsSync(localRepoPath)) {
+  console.log('Removing existing repository...');
+  fs.removeSync(localRepoPath);
 }
+
+// Perform a shallow clone of the repository
+console.log('Cloning repository...');
+execSync(`git clone --depth 1 ${repoUrl} ${localRepoPath}`);
 
 // Ensure the target directory exists
 fs.ensureDirSync(targetDir);
