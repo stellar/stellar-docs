@@ -26,7 +26,7 @@ ${text}
 fs.writeFileSync("docs/tools/developer-tools/cli/stellar-cli.mdx", text);
 
 // copy mdx files from the CLI to the guides section
-const sourcePath = 'docs';
+const sourcePath = 'cookbook';
 const targetDir = 'docs/build/guides/cli/';
 
 // Ensure the target directory exists
