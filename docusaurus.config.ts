@@ -1,11 +1,12 @@
-import type { Config } from '@docusaurus/types';
-import type * as Preset from '@docusaurus/preset-classic';
-import type * as Plugin from '@docusaurus/types/src/plugin';
-import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
-
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
+
+import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
+import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
+
+import type { Config } from '@docusaurus/types';
+import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: "Stellar Docs",
@@ -38,8 +39,8 @@ const config: Config = {
         docsPluginId: "classic",
         config: {
           horizon: {
-            specPath: "openapi/horizon/bundled.yml", // Path to designated spec file
-            outputDir: "docs/data/horizon/api-reference", // Output directory for generated .mdx docs
+            specPath: "openapi/horizon/bundled.yml",
+            outputDir: "docs/data/horizon/api-reference",
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
@@ -47,62 +48,8 @@ const config: Config = {
         },
       },
     ],
-    [
-      "docusaurus-plugin-openapi-docs",
-      {
-        id: "platformapis",
-        docsPluginId: "platforms",
-        config: {
-          anchor_platform_api: {
-            specPath: "openapi/anchor-platform/bundled.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/api-reference/resources", // Output directory for generated .mdx docs
-            sidebarOptions: {
-              groupPathsBy: "tag",
-            },
-            template: "src/template.mustache", // Customize API MDX with mustache template
-          } satisfies OpenApiPlugin.Options,
-          anchor_platform_callbacks: {
-            specPath: "openapi/anchor-platform/bundled_callback.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/api-reference/callbacks", // Output directory for generated .mdx docs
-            sidebarOptions: {
-              groupPathsBy: "tag",
-            },
-            template: "src/template.mustache", // Customize API MDX with mustache template
-          } satisfies OpenApiPlugin.Options,
-          anchor_custody_api: {
-            specPath: "openapi/anchor-platform/bundled_custody.yml", // Path to designated spec file
-            outputDir: "platforms/anchor-platform/api-reference/custody-server", // Output directory for generated .mdx docs
-            sidebarOptions: {
-              groupPathsBy: "tag",
-            },
-            template: "src/template.mustache", // Customize API MDX with mustache template
-          } satisfies OpenApiPlugin.Options,
-          stellar_disbursement_platform: {
-            specPath: "openapi/stellar-disbursement-platform/bundled.yml", // Path to designated spec file
-            outputDir: "platforms/stellar-disbursement-platform/api-reference/resources", // Output directory for generated .mdx docs
-            sidebarOptions: {
-              groupPathsBy: "tag",
-            },
-            template: "src/template.mustache", // Customize API MDX with mustache template
-          } satisfies OpenApiPlugin.Options,
-        } satisfies Plugin.PluginOptions,
-      },
-    ],
-    [
-      "@docusaurus/plugin-content-docs",
-      {
-        id: "platforms",
-        path: "platforms",
-        routeBasePath: "/platforms",
-        docItemComponent: "@theme/ApiItem",
-        sidebarPath: require.resolve("./sidebarsPlatforms.js"),
-        sidebarItemsGenerator: require("./src/sidebar-platforms-generator"),
-        editUrl: "https://github.com/stellar/stellar-docs/tree/main",
-        exclude: ['**/component/**', '**/README.md'],
-        showLastUpdateTime: true,
-        showLastUpdateAuthor: true,
-      },
-    ],
+    ...anchorPlatformPluginInstances,
+    ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
   ],
@@ -136,7 +83,7 @@ const config: Config = {
             require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }
           ]],
           rehypePlugins: [rehypeKatex],
-          sidebarPath: require.resolve("./sidebars.js"),
+          sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: "https://github.com/stellar/stellar-docs/tree/main",
           exclude: ['**/component/**', '**/README.md'],
@@ -264,6 +211,12 @@ const config: Config = {
           position: 'left',
         },
         {
+          type: 'docsVersionDropdown',
+          docsPluginId: 'ap',
+          dropdownActiveClassDisabled: true,
+          position: 'right',
+        },
+        {
           to: '/meetings',
           label: 'Meetings',
           position: 'right',
@@ -318,8 +271,8 @@ const config: Config = {
               href: "https://stellar.expert",
             },
             {
-              label: "Laboratory",
-              href: "https://laboratory.stellar.org",
+              label: "Lab",
+              href: "https://lab.stellar.org",
             },
             {
               label: "Status",
@@ -394,6 +347,7 @@ const config: Config = {
         "log",
         "nginx",
         "powershell",
+        "php",
         "python",
         "rust",
         "scala",
