@@ -1,74 +1,60 @@
-import fs from "fs";
+import fs from "fs-extra";
 import path from 'path';
+import { execSync } from 'child_process';
 
-const headers = { "user-agent": "https://github.com/stellar/stellar-docs" };
-let result = await fetch("https://crates.io/api/v1/crates/stellar-cli", {
-  headers,
-});
-const json = await result.json();
-const version = json.crate.newest_version;
+const repoUrl = 'https://github.com/stellar/stellar-cli.git';
+const localRepoPath = './stellar-cli-repo';
+const sourcePath = 'cookbook';
+const targetDir = 'docs/build/guides/cli/';
 
-result = await fetch(
-  // `https://github.com/stellar/stellar-cli/raw/v${version}/FULL_HELP_DOCS.md`,
-  `https://github.com/stellar/stellar-cli/raw/main/FULL_HELP_DOCS.md`,
-  { headers },
-);
-let text = await result.text();
+// Clone or update the repository
+if (!fs.existsSync(localRepoPath)) {
+  console.log('Cloning repository...');
+  execSync(`git clone ${repoUrl} ${localRepoPath}`);
+} else {
+  console.log('Updating repository...');
+  execSync('git pull', { cwd: localRepoPath });
+}
 
-text = `---
+// Ensure the target directory exists
+fs.ensureDirSync(targetDir);
+
+// Copy FULL_HELP_DOCS.md
+const fullHelpDocsPath = path.join(localRepoPath, 'FULL_HELP_DOCS.md');
+const fullHelpDocsContent = fs.readFileSync(fullHelpDocsPath, 'utf8');
+
+const modifiedContent = `---
 sidebar_position: 30
 description: This document contains the help content for the stellar command-line program.
 ---
 
-${text}
+${fullHelpDocsContent}
 `;
 
-fs.writeFileSync("docs/tools/developer-tools/cli/stellar-cli.mdx", text);
+fs.writeFileSync("docs/tools/developer-tools/cli/stellar-cli.mdx", modifiedContent);
 
-// copy mdx files from the CLI to the guides section
-const sourcePath = 'cookbook';
-const targetDir = 'docs/build/guides/cli/';
+// Copy mdx files from the CLI to the guides section
+const sourceDir = path.join(localRepoPath, sourcePath);
 
-// Ensure the target directory exists
-if (!fs.existsSync(targetDir)) {
-  fs.mkdirSync(targetDir, { recursive: true });
-}
+function copyMdxFiles(dir) {
+  const files = fs.readdirSync(dir);
 
-async function fetchAndSaveFile(filename) {
-  const result = await fetch(`https://raw.githubusercontent.com/stellar/stellar-cli/main/${filename}`, { headers });
-  const text = await result.text();
+  for (const file of files) {
+    const sourcePath = path.join(dir, file);
+    const stat = fs.statSync(sourcePath);
 
-  const targetPath = path.join(targetDir, path.basename(filename));
-  fs.writeFileSync(targetPath, text);
-  console.log(`Saved ${filename}`);
-}
-
-async function getFileList() {
-  const url = "https://api.github.com/repos/stellar/stellar-cli/git/trees/main?recursive=1";
-  const response = await fetch(url, { headers });
-  const data = await response.json();
-
-  if (!data.tree) {
-    throw new Error('Unable to retrieve file list from GitHub API');
-  }
-
-  return data.tree
-    .filter(item => item.type === 'blob' && item.path.startsWith(sourcePath) && path.extname(item.path) === '.mdx')
-    .map(item => item.path);
-}
-
-async function processFiles() {
-  try {
-    const mdxFiles = await getFileList();
-
-    for (const file of mdxFiles) {
-      await fetchAndSaveFile(file);
+    if (stat.isDirectory()) {
+      copyMdxFiles(sourcePath);
+    } else if (path.extname(file) === '.mdx') {
+      const relativePath = path.relative(sourceDir, sourcePath);
+      const targetPath = path.join(targetDir, relativePath);
+      fs.ensureDirSync(path.dirname(targetPath));
+      fs.copyFileSync(sourcePath, targetPath);
+      console.log(`Copied ${relativePath}`);
     }
-
-    console.log('All files processed successfully.');
-  } catch (error) {
-    console.error('Error processing files:', error);
   }
 }
 
-processFiles();
+copyMdxFiles(sourceDir);
+
+console.log('All files processed successfully.');
