@@ -4,8 +4,6 @@ import { execSync } from 'child_process';
 
 const repoUrl = 'https://github.com/stellar/stellar-cli.git';
 const localRepoPath = './stellar-cli-repo';
-const sourcePath = 'cookbook';
-const targetDir = 'docs/build/guides/cli/';
 
 // Remove the existing repo if it exists
 if (fs.existsSync(localRepoPath)) {
@@ -16,9 +14,6 @@ if (fs.existsSync(localRepoPath)) {
 // Perform a shallow clone of the repository
 console.log('Cloning repository...');
 execSync(`git clone --depth 1 ${repoUrl} ${localRepoPath}`);
-
-// Ensure the target directory exists
-fs.ensureDirSync(targetDir);
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, 'FULL_HELP_DOCS.md');
@@ -34,28 +29,12 @@ ${fullHelpDocsContent}
 
 fs.writeFileSync("docs/tools/developer-tools/cli/stellar-cli.mdx", modifiedContent);
 
-// Copy mdx files from the CLI to the guides section
-const sourceDir = path.join(localRepoPath, sourcePath);
+fs.cpSync(
+  path.join(localRepoPath, 'cookbook'),
+  'docs/build/guides/cli/cookbook',
+  { recursive: true },
+);
 
-function copyMdxFiles(dir) {
-  const files = fs.readdirSync(dir);
-
-  for (const file of files) {
-    const sourcePath = path.join(dir, file);
-    const stat = fs.statSync(sourcePath);
-
-    if (stat.isDirectory()) {
-      copyMdxFiles(sourcePath);
-    } else if (path.extname(file) === '.mdx') {
-      const relativePath = path.relative(sourceDir, sourcePath);
-      const targetPath = path.join(targetDir, relativePath);
-      fs.ensureDirSync(path.dirname(targetPath));
-      fs.copyFileSync(sourcePath, targetPath);
-      console.log(`Copied ${relativePath}`);
-    }
-  }
-}
-
-copyMdxFiles(sourceDir);
+execSync('yarn format:mdx');
 
 console.log('All files processed successfully.');
