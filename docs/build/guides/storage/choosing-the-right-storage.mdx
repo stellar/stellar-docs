@@ -4,55 +4,41 @@ hide_table_of_contents: true
 description: This guide walks you through choosing the most suitable storage type for your use case and how to implement it
 ---
 
-State archival refers to how data on the network is stored. This data includes all information that comprises the network's current and historical state. Storage is managed by keeping the important data active and archiving the rest in order to help keep the network fast and cheap. Read more about state archival [here](../../../learn/encyclopedia/storage/state-archival.mdx).
-
-State archival is vital for several reasons including:
-
-- It ensures that data is preserved efficiently and can be accessed when needed or restored if it becomes archived;
-- It optimizes cost for users based on the data's importance and longevity;
-- It helps maintain optimal performance and throughput on the network.
-
 ## Storage types
 
-When a smart contract is deployed on the Stellar network, the uploaded Wasm bytecode is stored as a `CONTRACT_DATA` entry on the ledger. Each entry has a stipulated time it can be accessed on the ledger before it is either archived or permanently deleted from the network; this is known as the entry's time to live (TTL). The TTL is measured in ledgers. That is, if an entry's TTL is 50, the entry will be available for the next 50 ledgers. When the entry's TTL reaches zero, it is either deleted or archived based on the type of storage used.
+Smart contracts can persist data in the Stellar ledger using the storage interface (`env.storage()` in Soroban SDK). There are three types of storage available on the Stellar network:
 
-There are three types of storage available on the Stellar network:
+| Storage type | SDK API | Cost | Behavior when TTL expires | Number of keys |
+| --- | --- | --- | --- | --- |
+| Persistent | `env.storage().persistent()` | Most expensive | Data is archived | Unlimited |
+| Temporary | `env.storage().temporary()` | Less expensive | Data is removed forever | Unlimited |
+| Instance | `env.storage().instance()` | More expensive | Data is archived | Limited by entry size limit |
 
-- Temporary storage
-- Persistent storage
-- Instance storage
+Every storage type can be thought of as a map from arbitrary keys to arbitrary values. The data is physically stored in the Stellar ledger.
 
-### Temporary storage
+Every storage 'map' is completely independent from every other storage 'map'. It is possible to store different data for the same key in every storage. For example, in temporary storage, key `123_u32` may have a value of `100_u32`, while in persistent storage the same `123_u32` key may have a value of `abcd`.
 
-As the name implies, temporary storage stores data for a short period. It is suitable for contracts that only require their data for a short while and can afford for the data to be discarded afterward without any consequences. Here, once the TTL reaches zero, the data will be deleted from the ledger and cannot be restored. Temporary storage has unlimited storage space and the cheapest fees among all the storage types.
+All the storage types have almost exactly the same functionality, besides the differences highlighted in the table above, specifically cost, behavior when TTL expires, and limit for the number of keys stored per contract.
 
-Temporary storage is best suited for contracts with easily replaceable data and contracts that are only relevant within a certain period. For example, a contract that issues session tokens that provide temporary access to a service may use temporary storage to keep track of these access tokens since once the tokens expire, they are no longer needed. Let's look how temporary storage may be implemented in a time-bound auction contract where users can place bids, which only need to be kept for the duration of the auction.
+### A note on TTL
 
-```rust
-use soroban_sdk::{Env, Symbol};
+If you're wondering what 'TTL' means, here is a quick intro on TTLs and state archival in Stellar.
 
-// This function lets a user place a bid
-pub fn place_bid(env: Env, user: Symbol, bid_amount: i64) {
-    let bid_key = Symbol::short("bid").append_symbol(user);
-    env.storage().temporary().set(&bid_key, bid_amount);
-}
+State archival is a special mechanism defined by the Stellar protocol that ensures that the active ledger state size doesn't grow indefinitely. In simple terms, every stored contract data entry, as well as contract code (Wasm) entry, has a certain 'time-to-live' (TTL) assigned. TTL is just a number of ledgers for which the entry is considered to be 'active', and after that number of ledgers, the entry is considered to have TTL expired and thus no longer active. Different storage types handle TTL expiration differently: data will either be moved to the archive ('cold', off-chain storage), or automatically removed from the ledger (in case of temporary storage). The data stored in the archive can be restored on-chain later and thus become active again.
 
-// This function returns a user's bid or 0 if the auction is over
-pub fn get_bid(env: Env, user: Symbol) -> i64 {
-    let bid_key = Symbol::short("bid").append_symbol(user);
-    env.storage().temporary().get(&bid_key).unwrap_or(0)
-}
-```
+TTL also may be extended however many times is necessary, for a fee.
 
-### Persistent storage
+Read more about state archival [here](../../../learn/encyclopedia/storage/state-archival.mdx).
 
-This storage type is used for storing data on the network over a long period.
+## Persistent storage
 
-For persistent storage, when the TTL reaches zero, the entry is archived rather than deleted, and can be restored when needed using the `RestoreFootprintOp` operation. This allows for the long-term management and retrieval of historical contract states and user data.
+This storage type is used for storing data on the network over an indefinitely long time period.
 
-Like temporary storage, persistent storage also has an unlimited amount of storage space. However, it is expensive since the data is stored on the network for a longer time.
+For persistent storage, when the TTL reaches zero, the entry is moved to the archival storage. It can then be restored when needed using the `RestoreFootprintOp` operation.
 
-Examples of data that may be stored on persistent storage include user balances, token metadata, voting and governance decisions, and all data that need to remain accessible across multiple contract invocations and potentially long durations.
+Persistent storage is the default storage type use-case-wise. Instance and temporary storage are only useful for the specific use cases described in the respective sections. Stellar protocol also uses persistent storage to store the contracts and their Wasm executables, so that they always can be accessed or restored.
+
+Examples of data that may be stored on persistent storage include user balances, token metadata, voting and governance decisions, and all data that need to either remain accessible forever, or until explicitly deleted.
 
 Let's look at a contract for a loyalty points system where users can accumulate points and redeem them for rewards. Each user's point balance will be stored in persistent storage.
 
@@ -69,22 +55,9 @@ pub struct LoyaltyPointsContract;
 
 #[contractimpl]
 impl LoyaltyPointsContract {
-    // This function adds points to the user's balance
-    pub fn add_points(env: Env, user: Address, points: u64) {
-        let key = DataKey::Points(user.clone());
-        let current_points: u64 = env.storage().persistent().get(&key).unwrap_or(0);
-        let new_points = current_points + points;
-        env.storage().persistent().set(&key, &new_points);
-    }
-
-    // This function retrieves the user's points balance
-    pub fn get_points(env: Env, user: Address) -> u64 {
-        let key = DataKey::Points(user);
-        env.storage().persistent().get(&key).unwrap_or(0)
-    }
-
     // This function redeems points according to the user's balance
     pub fn redeem_points(env: Env, user: Address, points: u64) -> bool {
+        user.require_auth();
         let key = DataKey::Points(user.clone());
         let current_points: u64 = env.storage().persistent().get(&key).unwrap_or(0);
 
@@ -96,56 +69,152 @@ impl LoyaltyPointsContract {
             false
         }
     }
-}
 
+    // This function retrieves the user's points balance
+    pub fn get_points(env: Env, user: Address) -> u64 {
+        let key = DataKey::Points(user);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    // ...
+    // This example omits functions that add points to the users, see the next
+    // section for these.
+}
 ```
 
-### Instance storage
+## Instance storage
 
-Instance storage is a type of persistent storage that is used for storing data associated with the contract instance itself; data that only needs to be accessed while the contract is active.
+Instance storage is a small, limited-size map attached to the contract instance. It is physically stored in the same ledger entry as the contract itself and shares TTL with it.
 
-Here, the ledger entry shares the same TTL as the contract instance. Therefore once the contract instance is no longer active, the data is archived. However, it can also be restored using the `RestoreFootprintOp` operation.
+Like persistent storage, instance storage stores data permanently. However, it has a few pros and cons compared to it:
 
-Like persistent storage, instance storage stores data permanently and for the same fees as persistent storage. The key difference is that instance storage allocates a limited storage space.
+- Pro: Data TTL is tied to the contract instance, thus making state archival behavior much easier
+- Pro/Con: Data is loaded automatically together with the contract, thus reducing the transaction footprint size, but increasing the number of bytes read every time the contract is loaded (_usually_ this still will result in a lower fee)
+- Con: The total size of all the keys and values in the instance storage is limited by the ledger entry size limit. See the current value of the limit [here](../../../networks/resource-limits-fees.mdx). The total number of keys supported is on the order of tens to hundreds depending on the underlying data size and the current network limit. Keep in mind, that the network limit can never go down, so the instance can't ever become non-valid.
 
-Instance storage is best suited for data that only needs to be accessed during the lifespan of the contract instance. For example, contract admin settings that can be modified by authorized users.
+Instance storage is best suited for data that has a well-known size limit and is either very small, or is necessary for every contract invocation. For example, contract administrator entry (small and should be maintained together with the contract instance), or a token pair for a liquidity pool (necessary for almost every operation on a liquidity pool).
 
-Let's look at a voting system where each contract instance represents a unique vote with a specific set of candidates. Instance storage will be used for storing and retrieving votes for a set of candidates within a voting instance.
+Let's look at additional functions for the loyalty points contract from the previous section, specifically the functions that define the contract admin and add points to the users:
 
 ```rust
-use soroban_sdk::{contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contractimpl, Address,  Env};
 
 #[contracttype]
 pub enum DataKey {
-    Votes(Symbol),
+    Points(Address),
+    Admin
 }
 
-#[contract]
-pub struct VotingContract;
+#[contractimpl]
+impl LoyaltyPointsContract {
+    // Initialize a contract with the administrator address.
+    // Note, that since protocol 22 this should be `__constructor` instead.
+    pub fn init(env: Env, admin: Address) {
+        env.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    pub fn add_points(env: Env, user: Address, points: u64) {
+        // Load the admin from the instance storage and make sure it has
+        // authorized this invocation.
+        let admin: Address =
+             env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let new_points = current_points + points;
+        env.storage().persistent().set(&key, &new_points);
+    }
+}
+```
+
+## Temporary storage
+
+As the name implies, temporary storage stores data only for a certain time period, and then discards it automatically when TTL expires. **Temporary entries are gone forever when their TTL expires**.
+
+The benefit of temporary storage is the smaller cost and the ability to set a very low TTL, both of which result in lower rent fees compared to persistent storage. See the current information on the minimal lifetimes and rent fees [here](../../../networks/resource-limits-fees.mdx).
+
+Temporary storage is suitable for data that is only necessary for a relatively short and well-defined time period. 'Well-defined' here means that when creating an entry, the contract should be able to define its maximum necessary TTL.
+
+:::caution
+
+While TTL for the temporary data can be extended, it is unsafe to rely on the extensions to preserve data. There is always a risk of losing temporary data. Only the TTL extension made when the entry is created is guaranteed to happen.
+
+:::
+
+:::caution
+
+It is also unsafe to rely on an entry expiring as it can be extended by anyone. When a time bound has to be enforced, always include it in the data as well.
+
+**Temporary storage is a cost optimization, it's not a mechanism of enforcing any time-based invariants.**
+
+:::
+
+Temporary storage is best suited for easily replaceable data, or data that is only relevant within a certain time period. For example, oracle price feed data that is only relevant for a few minutes, or limited time authorizations such as token allowances, session tokens, auctions, timelocks, etc. Nonces for the Soroban signatures are also stored in the temporary storage, at least until the signature itself expires.
+
+Let's look at how temporary storage may be implemented in a contract that runs auctions periodically, and users can place bids that are only valid only until some user-defined time point:
+
+```rust
+use soroban_sdk::{contracttype, contractimpl, Env, Address};
+
+#[contracttype]
+pub enum DataKey {
+    Bid(Address),
+}
+
+#[contracttype]
+pub struct Bid {
+    value: i128,
+    // The bid is no longer valid after this ledger sequence number. It's
+    // important to store this value alongside the entry, as the entry may live
+    // longer than expected.
+    expiration_ledger_seq: u32,
+}
 
 #[contractimpl]
-impl VotingContract {
-    // This function initializes the voting contract with candidates
-    pub fn initialize(env: Env, candidates: Vec<Symbol>) {
-        for candidate in candidates {
-            let key = DataKey::Votes(candidate.clone());
-            env.storage().instance().set(&key, &0u64);
+impl AuctionContract {
+    // This function lets a user place a bid that lives only until the auction ends.
+    pub fn place_bid(env: Env, user: Address, bid: i128, bid_expiration_ledger_seq: u32) {
+        user.require_auth();
+        let bid_key = DataKey::Bid(user.clone());
+
+        // Store the bid in the temporary storage.
+        env.storage().temporary().set(&bid_key, &Bid {
+            value: bid,
+            expiration_ledger_seq: bid_expiration_ledger_seq,
+        });
+        // Compute the TTL that the bid requires.
+        let bid_ttl = bid_expiration_ledger_seq
+            .checked_sub(e.ledger().sequence())
+            .unwrap();
+        // Extend the TTL for the bid, such that it's guaranteed to live at
+        // least until the `bid_expiration_ledger_seq` that the user has
+        // requested. This operation is will fail in
+        // case if extension is longer than the protocol allows, so there is
+        // no need to further validate `bid_ttl`.
+        env.storage().temporary().extend_ttl(&bid_key, bid_ttl, bid_ttl);
+    }
+
+    // This function returns a user's bid (0 if it has expired).
+    pub fn get_bid(env: Env, user: Symbol) -> i64 {
+        let maybe_bid: Bid = env.storage().temporary().get(&DataKey::Bid(user));
+        if let Some(bid) = maybe_bid {
+            if bid.expiration_ledger_seq <= e.ledger().sequence() {
+                bid.value
+            } else {
+                // Even though the entry is still in the storage, it has
+                // logically expired. Somebody must have extended the entry in
+                // order to trick our contract, so return 0.
+                0
+            }
+
+        } else {
+            // There is no bid for the user - it either hasn't existed at all,
+            // or has been removed from the temporary storage. In either case,
+            // just return 0.
+            0
         }
     }
 
-    // This function casts a vote for a candidate
-    pub fn vote(env: Env, candidate: Symbol) {
-        let key = DataKey::Votes(candidate.clone());
-        let current_votes: u64 = env.storage().instance().get(&key).unwrap_or(0);
-        let new_votes = current_votes + 1;
-        env.storage().instance().set(&key, &new_votes);
-    }
-
-    // This function retrieves the vote count for a candidate
-    pub fn get_votes(env: Env, candidate: Symbol) -> u64 {
-        let key = DataKey::Votes(candidate);
-        env.storage().instance().get(&key).unwrap_or(0)
-    }
+    // ...
+    // The functions that initialize and run the auctions are omitted.
 }
-
 ```
