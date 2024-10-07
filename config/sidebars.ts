@@ -23,7 +23,7 @@ const sidebars: SidebarsConfig = {
     'data/README',
     'data/requirements',
     { type: 'html', value: '<small>Data Availability</small>', defaultStyle: true, className: 'networkMenuHtmlItem'},
-    { type: 'ref', id: 'data/rpc/README', label: 'Soroban RPC'},
+    { type: 'ref', id: 'data/rpc/README', label: 'Stellar RPC'},
     { type: 'ref', id: 'data/hubble/README', label: 'Hubble'},
     { type: 'ref', id: 'data/horizon/README', label: 'Horizon'},
   ],
