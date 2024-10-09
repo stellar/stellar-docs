@@ -1,4 +1,4 @@
-# Stellar Documentation and API Reference <!-- omit in toc -->
+# Stellar Documentation and API Reference 🌌 <!-- omit in toc -->
 
 Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
 

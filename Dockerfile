@@ -1,4 +1,4 @@
-FROM ubuntu:22.04 AS build
+FROM ubuntu:24.04 AS build
 
 LABEL maintainer="SDF Ops Team <ops@stellar.org>"
 
@@ -29,7 +29,7 @@ RUN yarn crowdin:fix
 # speed this up is to generate the preview for only `--locale en`
 RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build
 
-FROM nginx:1.17
+FROM nginx:1.27
 
 COPY --from=build /app/build/ /usr/share/nginx/html/
 COPY nginx /etc/nginx/
