@@ -18,6 +18,7 @@ const config: Config = {
   trailingSlash: false,
   onBrokenLinks: "log",
   onBrokenMarkdownLinks: "log",
+  onBrokenAnchors: "warn",
   // onBrokenLinks: "throw",
   // onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
