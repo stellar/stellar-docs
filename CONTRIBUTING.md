@@ -55,11 +55,17 @@ let example = true;
 <!-- end with seperation line -->
 ```
 
+### Multiple Cases
+
+If you're editing a detailed guide with different example segments, it is common to import packages only in the first initializatiopn of your example. After, packages, variables, and constants can be implied as the reader scrolls further into the page.
+
 # Developed Conventions
 
 ## Referencing Base Fees
 
-Options here are reccomindign `baseFee` or explicitly 100, which [has and more likely than not will](https://stellar.expert/explorer/public/protocol-history) change. Part of the thinking imo is the amount of code to change when decreasing.
+Options here are recominding `baseFee`[^abd] or explicitly 100, which [has (and more likely than not will)](https://stellar.expert/explorer/public/protocol-history) change. Part of the thinking imo is the amount of code to change when decreasing.
+
+[^abd]: Possibly as an abstraction, similar to not repeating package imports.
 
 ## Diction, Wording
 
