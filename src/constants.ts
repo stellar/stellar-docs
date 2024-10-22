@@ -17,6 +17,8 @@ export const CODE_LANGS = {
   python: 'Python',
   scss: 'SCSS',
   sql: 'SQL',
+  rust: 'Rust',
+  php: 'PHP',
   toml: 'TOML',
   ts: 'TypeScript',
   tsx: 'TSX',

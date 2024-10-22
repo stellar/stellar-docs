@@ -1,4 +1,4 @@
-# Stellar Documentation and API Reference <!-- omit in toc -->
+# Stellar Documentation and API Reference 🌌 <!-- omit in toc -->
 
 Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
 
@@ -20,11 +20,7 @@ If you're here for the Deep Dive Docs Bounty, please navigate to the bottom of t
   - [Submission process](#submission-process)
   - [What makes a good submission](#what-makes-a-good-submission)
 - [Helpful resources](#helpful-resources)
-- [Deep Dive Docs Bounty Eligibility Guidelines](#deep-dive-docs-bounty-eligibility-guidelines)
-  - [Submission Guidelines](#submission-guidelines)
-  - [Award Eligibility Guidelines](#award-eligibility-guidelines)
-  - [License to Submissions](#license-to-submissions)
-  - [Legal Terms and Acknowledgements](#legal-terms-and-acknowledgements)
+- [Deep Dive Docs Bounty (not currently running) Eligibility Guidelines](#deep-dive-docs-bounty-eligibility-guidelines)
 
 ## Contributing
 
@@ -242,84 +238,6 @@ const CODE_LANGS = {
   yaml: 'YAML',
 };
 ```
-## Welcome to the Deep Dive Docs Bounty 🐙!
-
-If you’re here to participate in the Deep Dive Docs Bounty (it’s rid-doc-ulous!), you’ve come to the right place!
-
-Between May 29th and August 7th, 2024, you can earn awards for contributing to and creating content for [Stellar Developer Documentation](https://developers.stellar.org/). The goal of this bounty is to encourage the community to contribute to Stellar projects and to help create a best-in-class developer experience by improving Stellar developer documentation.
-
-Each submission can earn awards between $100 and $1,000 worth of XLM, depending on the complexity of the individual issue and the quality of the submission. More on award allocation is below.
-
-### Submission process
-
-If you haven't already, check out the [Stellar docs](https://developers.stellar.org/) to get oriented! When you’re ready to get started, follow these instructions:
-
-- Navigate to the [Stellar Developer Docs issues](https://github.com/stellar/stellar-docs/issues) on GitHub
-- Look through the open issues marked with the `Docs Bounty` label and pick one you’d like to work on
-- Comment and tag `briwylde08` on the issue you'd like to work on and she will mark your chosen issue as “In Progress” in the Projects - Status section and assign you to the issue
-- When you’re ready, open a [pull request (PR)](https://github.com/stellar/stellar-docs/pulls) in the Stellar Developer Docs GitHub and link to the corresponding issue in the PR description
-- When you’ve completed your work on the PR, comment on the PR tagging `briwylde08` to let her know the PR is ready for review
-- Bri will respond to your PR within three days of it being submitted and will mark the corresponding issue as “In Review”
-
-We will review your submission within three weeks and reply on your submission thread to let you know if your submission qualifies to earn an award! If so, we will ask you to complete a form to collect the info necessary to validate and deliver an award.
-
-If your submission did not qualify, we may provide you with feedback on what's missing or on how you can improve your submission so it qualifies. Once you have made the requested revisions, we will re-review your submission and let you know if your updated submission qualifies for an award.
-
-### What makes a good submission
-
-The Stellar Development Foundation (“SDF”) will review submissions as they come in, and all Deep Dive Docs Bounty awards are contingent upon the review and approval of the submission by SDF at its sole discretion.
-
-Your submission should adequately solve its corresponding issue. Each issue will include the amount of XLM it’s worth based on its complexity and say, “Get up to $__ worth of XLM for this issue.” Exact awards are then based on the quality of the submission (is it well-written, well-crafted, and easy to follow?) and thoroughness (is it comprehensive and well-documented?).
-
-Here are some existing guides to help you get an idea of what we’re looking for:
-
-- [Build a Payment App with the JS SDK](https://developers.stellar.org/docs/building-apps/example-application-tutorial/payment): Payment Tutorial: something like this guide would get the full award allocation because it provides an introduction that defines how payments work, information about the user experience, and a detailed code walkthrough.
-- [Deploy a Contract from Installed Wasm Bytecode How-To Guide](https://developers.stellar.org/docs/build/guides/cli/deploy-contract): something like this would be eligible for a lower award amount because it only provides the code implementation without any explanatory material.
-
-**Note:** SDF is under no obligation to make any awards if there are no eligible submissions or Eligible Individuals (as defined below) or if Eligible Individuals do not successfully complete the compliance and tax obligations set forth below.
-
-## Helpful resources
-
-Here are some resources that may be helpful to get you started:
-
-- [Existing smart contract How-To Guides](https://developers.stellar.org/docs/build/guides): many open issues involve creating new How-To Guides, so check out our existing guides in the docs to get a feel for the format and the content.
-- [Stellar Developer Discord](https://discord.gg/stellardev): if you’re stuck on an issue, the Stellar Developer Discord is a great place to get guidance from the ecosystem.
-
-## Deep Dive Docs Bounty Eligibility Guidelines
-
-### Submission Guidelines
-- All submission materials should be in English or, if not in English, include an English translation.
-- Do not submit:
-  - Submissions that point to ongoing asset sales, ICOs, referral programs, or affiliate links.
-  - Speculative submissions, price or price prediction submissions, or “why X should buy Y” articles.
-  - Submissions attacking others. Please adhere to the SDF Code of Conduct.
-  - Other people’s work - no plagiarizing or infringing on a third party’s rights.
-- All submissions must be original works, and the author should own all rights, title, and interest in the submission. If third-party licensed content is included in a submission, all necessary rights must be fully sub-licensable to SDF. Submissions should not include any content that is unlawful, breaches any third-party rights, or is otherwise in violation of or contrary to applicable laws or regulations.
-
-### Award Eligibility Guidelines
-
-While anyone may make a submission, only Eligible Individuals will be considered for XLM awards. For purposes of Deep Dive Docs Bounty, an “Eligible Individual'' is a natural person who:
-
-1. Is 18 years of age or older;
-2. Is not an individual on the U.S. Department of Treasury’s Office of Foreign Assets Control (OFAC) Specially Designated Nationals and Blocked Persons List or otherwise under sanction by OFAC (or an immediate family member - spouses, parent, child, sibling, grandparent, and “step” child - of such individual) or be employed by or affiliated with an entity sanctioned by OFAC;
-3. Is not a resident of any country, state, province or territory subject to comprehensive OFAC sanctions, including Cuba, Iran, North Korea, Syria or any Russian-controlled region of Ukraine; and
-4. Does not reside in a jurisdiction where the transfer and holding of cryptocurrency is illegal or would require a special license or authorization that the such person does not possess.
-
-SDF reserves the right, in its absolute discretion, to disqualify any participant or submission, without warning, from Deep Dive Docs Bounty, and to ban them from future programs funded by the Soroban adoption fund if they act in a way that violates these guidelines, is inappropriate, or not in the best interests or spirit of the program.
-
-### License to Submissions
-
-By posting a submission, you will be granting to SDF and its assigns, licensees, and successors a royalty-free, irrevocable, non-exclusive and unlimited right and permission to use your submission, name, picture, statements, project name, likeness, and voice, and any material based thereon or derived therefrom (collectively, the “Content”), in any form, media, or technology now known or later developed, and to use, edit, modify, duplicate, distribute, publish, publicize and/or create derivative works from the Content (or any portion thereof), throughout the world, in perpetuity, without limitation and without payment of any royalties or compensation, consideration, notice or permission, except where prohibited by law, for the purpose of creating educational, informational, and promotional materials or creative assets (any such materials or assets that feature the Content are referred to herein as “Assets”), including, without limitation, on social media, or on any website owned or affiliated with SDF. You will have no right of approval, no claim to any compensation, and no claim arising out of the use, alteration, or distortion or use in any composite form of the Content.
-
-### Legal Terms and Acknowledgements
-
-Deep Dive Docs Bounty is governed by the [SDF Terms of Service](https://www.stellar.org/terms-of-service?locale=en) and the guidelines described herein (the “Deep Dive Docs Bounty Eligibility Guidelines”). SDF may collect personal information from you in connection with your submission, and such information is subject to the [SDF Privacy Policy](https://www.stellar.org/privacy-policy?locale=en).  SDF reserves the right, in its sole discretion, to cancel, suspend and/or modify all or any part of Deep Dive Docs Bounty at any time for any reason. The terms and conditions of Deep Dive Docs Bounty are subject to change at any time, including the rights or obligations of the Participants and SDF.
-
-XLM is a highly risky and volatile asset, and SDF does not provide any representations, warranties, or guarantees of its value. You will be required to provide certain information to facilitate receipt of any XLM award, including completing and submitting any tax or other forms necessary for compliance with applicable withholding and reporting requirements. You are responsible for reporting the receipt of any XLM award to relevant government departments or agencies, where applicable, and paying all applicable taxes in your jurisdiction of residence. SDF reserves the right to withhold a portion of any award amount to comply with the tax laws of the United States or other relevant jurisdictions. You should inform yourself as to any legal and tax requirements or consequences applicable to you in respect of the acquisition, holding, and disposition of XLM. You are also responsible for complying with any applicable foreign exchange and banking regulations relating to any XLM award received hereunder.
-
-To determine the number of XLM equal to the USD value of any Award, the USD valuation of XLM shall be calculated using the CF Stellar Lumens-Dollar Settlement Price as administered, maintained, and reported by the cryptocurrency index provider CF Benchmarks Ltd. (using the ticker “XLMUSD_RR”) (available at https://www.cfbenchmarks.com/indices/XLMUSD_RR), or, if such settlement price is unavailable or reasonably suspected by SDF to be unreliable, the settlement price as reported on a substantially similar and equally reputable cryptocurrency index provider as determined by the SDF in its discretion. The USD valuation of XLM for any particular Award shall be calculated using the CF Stellar Lumens-Dollar Settlement Price (or other agreed upon settlement price) reported on the day such Award is scheduled to be paid. The Participants acknowledge and understand that XLM is a highly risky and volatile asset, and that SDF does not provide any representations, warranties, or guarantees of its value.
-
-SDF’s failure to enforce any of these terms or guidelines shall not constitute a waiver of that provision. Should any provision of these Sorobanathon Eligibility Guidelines be or become illegal or unenforceable in any jurisdiction whose laws or regulations may apply to a participant or submission, such illegality or unenforceability shall leave the remainder of these Sorobanathon Eligibility Guidelines to the fullest extent permitted by law, unaffected and valid. The illegal or unenforceable provision shall be replaced by a valid and enforceable provision that comes closest and best reflects the SDF’s intention in a legal and enforceable manner with respect to the invalid or unenforceable provision.
 
 **Remember that this is a community; we build together! 💪 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
 

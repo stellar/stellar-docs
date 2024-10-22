@@ -1,25 +1,40 @@
-import fs from "fs";
+import fs from "fs-extra";
+import path from 'path';
+import { execSync } from 'child_process';
 
-const headers = { "user-agent": "https://github.com/stellar/stellar-docs" };
-let result = await fetch("https://crates.io/api/v1/crates/stellar-cli", {
-  headers,
-});
-const json = await result.json();
-const version = json.crate.newest_version;
+const repoUrl = 'https://github.com/stellar/stellar-cli.git';
+const localRepoPath = './stellar-cli-repo';
 
-result = await fetch(
-  // `https://github.com/stellar/stellar-cli/raw/v${version}/FULL_HELP_DOCS.md`,
-  `https://github.com/stellar/stellar-cli/raw/main/FULL_HELP_DOCS.md`,
-  { headers },
-);
-let text = await result.text();
+// Remove the existing repo if it exists
+if (fs.existsSync(localRepoPath)) {
+  console.log('Removing existing repository...');
+  fs.removeSync(localRepoPath);
+}
 
-text = `---
+// Perform a shallow clone of the repository
+console.log('Cloning repository...');
+execSync(`git clone --depth 1 ${repoUrl} ${localRepoPath}`);
+
+// Copy FULL_HELP_DOCS.md
+const fullHelpDocsPath = path.join(localRepoPath, 'FULL_HELP_DOCS.md');
+const fullHelpDocsContent = fs.readFileSync(fullHelpDocsPath, 'utf8');
+
+const modifiedContent = `---
 sidebar_position: 30
 description: This document contains the help content for the stellar command-line program.
 ---
 
-${text}
+${fullHelpDocsContent}
 `;
 
-fs.writeFileSync("docs/tools/stellar-cli.mdx", text);
+fs.writeFileSync("docs/tools/developer-tools/cli/stellar-cli.mdx", modifiedContent);
+
+fs.cpSync(
+  path.join(localRepoPath, 'cookbook'),
+  'docs/build/guides/cli',
+  { recursive: true },
+);
+
+execSync('yarn format:mdx');
+
+console.log('All files processed successfully.');
