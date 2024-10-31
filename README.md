@@ -238,9 +238,6 @@ const CODE_LANGS = {
   yaml: 'YAML',
 };
 ```
-## Welcome to the Deep Dive Docs Bounty 🐙! (**THE DOCS BOUNTY IS NOW COMPLETED**)
-
-The docs bounty ended on August 7th, 2024. All PRs submitted by end of day Eastern Time on August 7th will be accepted and reviewed. Any submissions made after August 7th are not eligible for the bounty. Thank you to all who participated!
 
 **Remember that this is a community; we build together! 💪 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
 
