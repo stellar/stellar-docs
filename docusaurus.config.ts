@@ -164,6 +164,11 @@ const config: Config = {
               docId: "data/horizon/README",
               label: "Horizon",
             },
+            {
+              type: 'doc',
+              docId: "data/galexie/README",
+              label: "Galexie",
+            },
 
           ]
         },
