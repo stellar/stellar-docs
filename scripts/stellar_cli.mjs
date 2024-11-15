@@ -39,7 +39,7 @@ ${fullHelpDocsContent}
 
 fs.writeFileSync(
   "src/helpers/stellarCli.ts",
-  `export const stellarCliVersion = "${latestVersion}";`,
+  `export const latestVersion = "${latestVersion}";`,
 );
 
 fs.writeFileSync(
