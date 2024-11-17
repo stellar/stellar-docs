@@ -1,110 +1,172 @@
 ---
-title: Extend a deployed contract’s TTL with code
-description: How to extend the TTL of a deployed contract's Wasm code using JavaScript SDK
+title: Extend a deployed contract's TTL with code
+description: How to extend the TTL of a deployed contract's Wasm code
 ---
 
-# Extending a deployed contract’s TTL using code
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+# Extending a deployed contract's TTL using code
 
 When a smart contract is deployed on the Stellar network, its WebAssembly (Wasm) code has a [Time To Live (TTL)](../../../learn/encyclopedia/storage/state-archival.mdx#ttl) that determines how long it remains accessible.
 
 The TTL is the number of ledgers between the current ledger and the final ledger for which the contract data can still be accessed. If the TTL expires, the contract's code becomes archived and inaccessible. To prevent this, you need to periodically extend the TTL of the contract's Wasm code.
 
-This guide will show you how to extend the TTL of a deployed contract's Wasm code using JavaScript.
+This guide will show you how to extend the TTL of a deployed contract's Wasm code using the Javascript and Rust SDKs.
+
+## Understanding TTL in Soroban
+
+Before we demonstrate the TTL extension methods, you should note that in Soroban:
+
+- Contract instances and code are stored in the instance storage
+- TTL exists to prevent the blockchain from being cluttered with inactive contracts
+- TTL extension can be done for both the contract instance and the contract code
 
 ## Prerequisites
 
-- Stellar SDK: `npm install @stellar/stellar-sdk`
-- A Stellar RPC endpoint (e.g., `https://soroban-testnet.stellar.org`)
-- Basic knowledge of Stellar SDK
+- Stellar SDK: `npm install @stellar/stellar-sdk` for Javascript
+- A Soroban RPC endpoint (e.g., `https://soroban-testnet.stellar.org`)
+- Basic knowledge of the SDK in use
 
-## Process overview
+## Methods for Extending TTL
 
-- Get the contract's footprint,
-- Set a reasonable resource fee (perhaps start at 10,000 stroops as this is a costly operation),
-- Set Soroban data as read-only,
-- Set the desired ledger TTL to expire the contract,
-- Create an operation `StellarSdk.Operation.extendFootprintTtl`,
-- Note that a resource fee and base fee are both charged in this operation.
+This guide will cover three ways to extend a contract's TTL:
 
-## JavaScript code
+- Self-Extension: Extending the TTL from within the contract itself, in Rust.
 
-The code below uses Nodejs environment but same concept can also be applied in the browser using Freighter wallet or using any other [Stellar SDK](../../../tools/sdks/library.mdx).
+  - Use case: When a contract needs to manage its own lifetime
+  - Process: Directly accessing the contract's instance storage to extend its TTL
 
-```javascript
-import * as StellarSdk from "@stellar/stellar-sdk";
+- External Extension: Extending the TTL from another contract (the deployer), in Rust.
 
-import { Server } from "@stellar/stellar-sdk/rpc";
+  - Use case: When managing multiple contract instances or implementing administrative control
+  - Process: Using the deployer's authority to extend TTL for any contract it has deployed
 
-async function extendContractWasmTTL(contractId, sourceKeypair) {
-  const server = new Server("https://soroban-testnet.stellar.org");
+- Client Extension: Extending the TTL from an external client using Javascript.
+  - Use Case: When you need to manage contract TTLs through an external application or automated system.
+  - Process: - Get the contract's footprint - Set a reasonable resource fee (perhaps start at 10,000 stroops as this is a costly operation) - Set Soroban data as read-only - Set the desired ledger TTL to expire the contract - Create an operation `StellarSdk.Operation.extendFootprintTtl` :::note A resource fee and base fee are both charged in this operation. :::
 
-  // Create a new transaction builder
-  const account = await server.getAccount(sourceKeypair.publicKey());
-  const fee = "200100"; // Base fee plus resource fee
+<Tabs groupId="language" defaultValue="rust">
+  <TabItem value="rust" label="Rust">
+    ```rust
+    #![no_std]
+    use soroban_sdk::{contract, contractimpl, Env, symbol_short};
 
-  // Get the contract instance
-  const contract = new StellarSdk.Contract(contractId);
-  const instance = contract.getFootprint();
+    #[contract]
+    pub struct ExtendTTLContract;
 
-  // Set the Soroban data and create an operation to extend the contract's TTL
-  const sorobanData = new StellarSdk.SorobanDataBuilder()
-    .setResourceFee(200_000)
-    .setReadOnly([instance])
-    .build();
-  const transaction = new StellarSdk.TransactionBuilder(account, {
-    fee,
-    networkPassphrase: StellarSdk.Networks.TESTNET, // Use appropriate network
-  })
-    .setSorobanData(sorobanData)
-    .addOperation(
-      StellarSdk.Operation.extendFootprintTtl({
-        extendTo: 500_000,
-      }),
-    )
-    .setTimeout(30)
-    .build();
+    #[contractimpl]
+    impl ExtendTTLContract {
+        // Self-extension
+        pub fn extend_contract_ttl(env: Env, threshold: u32, extend_to: u32) {
+            env.storage().instance().extend_ttl(threshold, extend_to);
+        }
 
-  // Sign and submit the transaction
-  transaction.sign(sourceKeypair);
-  const result = await server.sendTransaction(transaction);
+        // External extension
+        pub fn extend_other_contract_ttl(env: Env, contract_address: Address, threshold: u32, extend_to: u32) {
+            let deployer = env.deployer();
+            deployer.extend_ttl(
+                contract_address,
+                threshold,
+                extend_to
+            );
+        }
+    }
+    ```
+    where:
 
-  console.log(
-    "Transaction submitted. Result:",
-    JSON.stringify(result, null, 2),
-  );
-  return result;
-}
+    - `env.storage().instance().extend_ttl(...)` is called to extend the TTL of the current contract instance.
+    - `threshold` is a check that ensures that the current TTL of the contract instance is less than the set threshold value.
+    - `extend_to` is the number of ledgers to be added to the current TTL.
+    - `contract_address` is the address of the contract instance whose TTL we want to extend.
+    - `env.deployer()` accesses the deployer, which has methods for managing the contract's lifecycle.
+    - `deployer.extend_ttl(...)` extends the TTL of the specified contract instance.
 
-// Usage
-const contractId = "CC6MWZMG2JPQEENRL7XVICAY5RNMHJ2OORMUHXKRDID6MNGXSSOJZLLF";
-const sourceKeypair = StellarSdk.Keypair.fromSecret(
-  "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-);
+    </TabItem>
 
-extendContractWasmTTL(contractId, sourceKeypair)
-  .then(console.log)
-  .catch(console.error);
-```
+    <TabItem value="js" label="JS">
+    The code below uses Nodejs environment but same concept can also be applied in the browser using Freighter wallet or using any other [Stellar SDK](../../../tools/sdks/library.mdx).
 
-### Breaking Down the Code
+    ```javascript
+    import * as StellarSdk from "@stellar/stellar-sdk";
 
-Let's walk through the key parts of this function:
+    import { Server } from "@stellar/stellar-sdk/rpc";
 
-1. Setting up the Soroban data: The `SorobanDataBuilder()` is where we prep the Soroban-specific info for our transaction.
+    async function extendContractWasmTTL(contractId, sourceKeypair) {
+    const server = new Server("https://soroban-testnet.stellar.org");
 
-- We set a resource fee with `setResourceFee(200_000)`. This covers the extra costs for storage and execution.
-- We use `setReadOnly([instance])` to tell the network which contract stuff we need to access. We're using `setReadOnly()` instead of `setReadWrite()` because we're just extending the TTL, not changing any data.
+    // Create a new transaction builder
+    const account = await server.getAccount(sourceKeypair.publicKey());
+    const fee = "200100"; // Base fee plus resource fee
 
-Why `setReadOnly()`? A few reasons:
+    // Get the contract instance
+    const contract = new StellarSdk.Contract(contractId);
+    const instance = contract.getFootprint();
 
-- It's faster and uses fewer resources
-- It's safer - we can't accidentally change data we're not supposed to
-- The `ExtendFootprintTTLOp` operation needs it
+    // Set the Soroban data and create an operation to extend the contract's TTL
+    const sorobanData = new StellarSdk.SorobanDataBuilder()
+        .setResourceFee(200_000)
+        .setReadOnly([instance])
+        .build();
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee,
+        networkPassphrase: StellarSdk.Networks.TESTNET, // Use appropriate network
+    })
+        .setSorobanData(sorobanData)
+        .addOperation(
+        StellarSdk.Operation.extendFootprintTtl({
+            extendTo: 500_000,
+        }),
+        )
+        .setTimeout(30)
+        .build();
 
-2. Adding the operation: After setting up the Soroban data, we add the `extendFootprintTtl` operation to our transaction. We're telling it to extend the TTL to 500,000 ledgers with `extendTo: 500_000`.
+    // Sign and submit the transaction
+    transaction.sign(sourceKeypair);
+    const result = await server.sendTransaction(transaction);
 
-3. What's the point? This whole process is about keeping our contract's data alive in the ledger. It's like renewing a lease - we're telling the network "Hey, keep this stuff around longer, we're still using it!"
+    console.log(
+        "Transaction submitted. Result:",
+        JSON.stringify(result, null, 2),
+    );
+    return result;
+    }
 
-   This is super important for contracts that need to stick around for a while. Without extending the TTL, the contract's data could expire and disappear from the ledger.
+    // Usage
+    const contractId = "CC6MWZMG2JPQEENRL7XVICAY5RNMHJ2OORMUHXKRDID6MNGXSSOJZLLF";
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(
+    "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    );
+
+    extendContractWasmTTL(contractId, sourceKeypair)
+    .then(console.log)
+    .catch(console.error);
+    ```
+    ### Breaking Down the Code
+
+    Let's walk through the key parts of this function:
+
+    1. Setting up the Soroban data: The `SorobanDataBuilder()` is where we prep the Soroban-specific info for our transaction.
+
+    - We set a resource fee with `setResourceFee(200_000)`. This covers the extra costs for storage and execution.
+    - We use `setReadOnly([instance])` to tell the network which contract stuff we need to access. We're using `setReadOnly()` instead of `setReadWrite()` because we're just extending the TTL, not changing any data.
+
+    Why `setReadOnly()`? A few reasons:
+
+    - It's faster and uses fewer resources
+    - It's safer - we can't accidentally change data we're not supposed to
+    - The `ExtendFootprintTTLOp` operation needs it
+
+    2. Adding the operation: After setting up the Soroban data, we add the `extendFootprintTtl` operation to our transaction. We're telling it to extend the TTL to 500,000 ledgers with `extendTo: 500_000`.
+
+    3. What's the point? This whole process is about keeping our contract's data alive in the ledger. It's like renewing a lease - we're telling the network "Hey, keep this stuff around longer, we're still using it!"
+
+    This is super important for contracts that need to stick around for a while. Without extending the TTL, the contract's data could expire and disappear from the ledger.
+
+    </TabItem>
+
+</Tabs>
+
+Learn how to test the TTL extension in this [guide](../archival/test-ttl-extension.mdx).
 
 Want to dive deeper? Check out the docs on the [Extend Footprint TTL operation](../../../learn/encyclopedia/storage/state-archival.mdx#extendfootprintttlop).
