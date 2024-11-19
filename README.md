@@ -16,11 +16,6 @@ If you're here for the Deep Dive Docs Bounty, please navigate to the bottom of t
   - [Custom Markdown](#custom-markdown)
     - [Alert](#alert)
     - [Code Example](#code-example)
-- [Welcome to the Deep Dive Docs Bounty 🐙!](#welcome-to-the-deep-dive-docs-bounty-)
-  - [Submission process](#submission-process)
-  - [What makes a good submission](#what-makes-a-good-submission)
-- [Helpful resources](#helpful-resources)
-- [Deep Dive Docs Bounty (not currently running) Eligibility Guidelines](#deep-dive-docs-bounty-eligibility-guidelines)
 
 ## Contributing
 
