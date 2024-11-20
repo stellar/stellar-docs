@@ -115,6 +115,10 @@ const config: Config = {
     },
   ],
   themeConfig: {
+    announcementBar: {
+      id: 'announcementBar-translation',
+      content: '<strong>Disclaimer:</strong> This documentation has been automatically translated and may contain inaccuracies. For the most accurate information, please refer to the original English version. We are not responsible for translation errors.',
+    },
     docs: {
       sidebar: {
         autoCollapseCategories: false,
