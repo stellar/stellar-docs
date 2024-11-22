@@ -14,9 +14,16 @@ if (fs.existsSync(localRepoPath)) {
 // Perform a shallow clone of the repository
 console.log("Cloning repository...");
 execSync(`git clone ${repoUrl} ${localRepoPath}`);
-execSync(
-  `cd ${localRepoPath} && git checkout --quiet $(git tag | grep -v -E 'rc|preview' | tail -n1)`,
-);
+let latestVersion = execSync(
+  `cd ${localRepoPath} && git tag | grep -v -E 'rc|preview' | tail -n1`,
+)
+  .toString()
+  .substring(1)
+  .trim();
+
+console.log("the latest version is", latestVersion.toString());
+
+execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
@@ -29,6 +36,11 @@ description: This document contains the help content for the stellar command-lin
 
 ${fullHelpDocsContent}
 `;
+
+fs.writeFileSync(
+  "src/helpers/stellarCli.ts",
+  `export const latestVersion = "${latestVersion}";`,
+);
 
 fs.writeFileSync(
   "docs/tools/developer-tools/cli/stellar-cli.mdx",
