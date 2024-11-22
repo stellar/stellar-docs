@@ -194,12 +194,6 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
-          id: "api-reference/get-all-countries",
-          label: "Get All Countries",
-          className: "api-method get",
-        },
-        {
-          type: "doc",
           id: "api-reference/get-all-assets",
           label: "Get All Assets",
           className: "api-method get",
