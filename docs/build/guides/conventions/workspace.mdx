@@ -1,0 +1,203 @@
+---
+title: Organize contracts with workspace
+hide_table_of_contents: true
+description: Organize your contracts using Cargo workspaces
+---
+
+### Initializing workspace project
+
+Using Cargo's workspace [feature](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) makes it very convenient to organize your smart contracts in subdirectories of your project's root.
+
+It's very simple to get started using the cli:
+
+```bash
+mkdir soroban-project
+cd soroban-project
+PROJECT_ROOT=.
+stellar contract init . --name my-contract
+```
+
+Running this command will create a root project directory (`soroban-project`) and then initialize a project workspace with a single contract named `my-contract`.
+
+Adding one more contract template to the project can be done using the same command:
+
+```bash
+stellar contract init . --name second-contract
+```
+
+The project tree will look like this:
+
+```
+$ tree
+.
+├── Cargo.toml
+├── contracts
+│   ├── my-contract
+│   │   ├── Cargo.toml
+│   │   ├── Makefile
+│   │   └── src
+│   │       ├── lib.rs
+│   │       └── test.rs
+│   └── second-contract
+│       ├── Cargo.toml
+│       ├── Makefile
+│       └── src
+│           ├── lib.rs
+│           └── test.rs
+└── README.md
+```
+
+Running `contract init` command created a sample contracts subdirectories (located in `./contracts), each contains:
+
+1. Cargo.toml file with all (minimal) necessary dependencies
+2. `Makefile` to easily build contract using `make` command
+3. `src` directory with an example hello-world contract and a simple test.
+
+We can now build our project's contracts with
+
+```bash
+stellar contract build
+```
+
+command and check the build directory:
+
+```bash
+$ ls target/wasm32-unknown-unknown/release/ | grep wasm
+my_contract.wasm
+second_contract.wasm
+```
+
+### Cross-contract call between workspaces
+
+With the given project structure, cross-contract calls can be easily made. Starting with modifying the sample hello world contract into an add contract:
+
+```rust
+// contracts/my-contract/src/lib.rs
+#![no_std]
+use soroban_sdk::{contract, contractimpl};
+
+#[contract]
+pub struct ContractAdd;
+
+#[contractimpl]
+impl ContractAdd {
+    pub fn add(x: u32, y: u32) -> u32 {
+        x.checked_add(y).expect("no overflow")
+    }
+}
+```
+
+The `ContractAdd` can now be referenced and used from another contracts in the same workspace using [`contractimport`](https://docs.rs/soroban-sdk/latest/soroban_sdk/macro.contractimport.html) macros. Note that the `contractimport` requires relative path of the compiled wasm file, so first it's required to recompile the contract with:
+
+```bash
+stellar contract build
+```
+
+As seen previously, target wasm file is located in
+
+```
+$PROJECT_ROOT/target/wasm32-unknown-unknown/release/
+```
+
+In order to reference this wasm file from `contracts/second-contract/src/lib.rs`, we need to first construct the path to the project root: `../..` (relative to second contract's Cargo.toml file location) followed by path to the wasm file:
+
+```bash
+../../../target/wasm32-unknown-unknown/release/my_contract.wasm
+```
+
+It can now be used in the rust code:
+
+```rust
+// contracts/second-contract/src/lib.rs
+#![no_std]
+
+use soroban_sdk::{contract, contractimpl, Address, Env};
+
+mod contract_add {
+    soroban_sdk::contractimport!(
+        file = "../../../target/wasm32-unknown-unknown/release/my_contract.wasm"
+    );
+}
+
+#[contract]
+pub struct ContractMain;
+
+#[contractimpl]
+impl ContractMain {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        let client = contract_add::Client::new(&env, &contract);
+        client.add(&x, &y)
+    }
+}
+
+mod test;
+```
+
+Here, main contract will invoke `ContractAdd`'s `add` function to calculate the sum of 2 numbers. It's a good idea to update tests for our main contract as well:
+
+```rust
+// contracts/second-contract/src/test.rs
+#![cfg(test)]
+
+use crate::{contract_add, ContractMain, ContractMainClient};
+use soroban_sdk::Env;
+
+#[test]
+fn test_adding_cross_contract() {
+    let env = Env::default();
+
+    // Register add contract using the imported WASM.
+    let contract_add_id = env.register_contract_wasm(None, contract_add::WASM);
+
+    // Register main contract defined in this crate.
+    let contract_main_id = env.register_contract(None, ContractMain);
+
+    // Create a client for calling main contract.
+    let client = ContractMainClient::new(&env, &contract_main_id);
+
+    // Invoke main contract via its client. Main contract will invoke add contract.
+    let sum = client.add_with(&contract_add_id, &5, &7);
+    assert_eq!(sum, 12);
+}
+```
+
+Contracts can now be re-complied:
+
+```bash
+cd $PROJECT_ROOT
+stellar contract build
+```
+
+And check that the test is working correctly:
+
+```bash
+$ cd contracts/second-contract
+$ cargo test
+
+running 1 test
+test test::test_adding_cross_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+Finally, let's deploy this contracts and call our main contract using cli. If you haven't already, set up an account (alice) first
+
+```bash
+stellar keys generate alice --fund --network testnet
+STELLAR_SOURCE_ACCOUNT=alice
+```
+
+Second is to deploy the contracts:
+
+```bash
+ADD_CONTRACT=`stellar contract deploy --network testnet --wasm target/wasm32-unknown-unknown/release/my_contract.wasm`
+MAIN_CONTRACT=`stellar contract deploy --network testnet --wasm target/wasm32-unknown-unknown/release/second_contract.wasm`
+```
+
+And finally call the main contract:
+
+```bash
+$ stellar contract invoke --id $MAIN_CONTRACT --network testnet -- add_with --contract $ADD_CONTRACT --x 9 --y 10
+ℹ️ Send skipped because simulation identified as read-only. Send by rerunning with `--send=yes`.
+19
+```
