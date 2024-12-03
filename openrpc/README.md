@@ -1,4 +1,4 @@
-# Soroban RPC API Specification <!-- omit in toc -->
+# Stellar RPC API Specification <!-- omit in toc -->
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -157,7 +157,7 @@ object allows us to embed a literal example of what the schema can look like.
 
 This collection of JSON files define the [example pairing objects] that will go
 into the generated specification file. The example pairing objects make up a
-complete example request to the Soroban RPC service. This is where you can
+complete example request to the Stellar RPC service. This is where you can
 specify a set of `params` that were supplied in the request, as well as the
 value(s) returned in the `result` from the node. The following properties are
 required in the example pairing objects:
@@ -168,7 +168,7 @@ required in the example pairing objects:
 
 > _Note:_ The `result` property is not technically _required_ by the open-rpc
 > specification if the method is to be represented as a notification. However,
-> Soroban RPC doesn't make use of any methods as notifications, so we've listed
+> Stellar RPC doesn't make use of any methods as notifications, so we've listed
 > it as required here.
 
 [method objects]: https://spec.open-rpc.org/#method-object
