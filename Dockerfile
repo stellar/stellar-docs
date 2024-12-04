@@ -27,7 +27,7 @@ RUN CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn crowdin:sync
 RUN yarn crowdin:fix
 # TODO: It's actually this part that is more time-consuming. The best way to
 # speed this up is to generate the preview for only `--locale en`
-RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build
+RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build --locale es
 
 FROM nginx:1.27
 
