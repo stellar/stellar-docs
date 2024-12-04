@@ -5,6 +5,7 @@ import CodeBlock from '@theme/CodeBlock';
 import BrowserOnly from '@docusaurus/BrowserOnly';
 import {getCookie, walletDefaultLang} from "./LanguageSpecific";
 import {CODE_LANGS} from "../constants";
+import Translate from '@docusaurus/Translate';
 
 // TODO: when TS docs are ready set to false
 const ALLOW_EMPTY_DOCS = true;
@@ -38,7 +39,13 @@ const getTabs = (children: React.ReactElement, targetLanguage: String) => {
             <TabItem
                 key={language || index}
                 value={CODE_LANGS[language] || language || index}
-                label={CODE_LANGS[language] || 'Example'}
+                label={CODE_LANGS[language] ||
+                    <Translate
+                        id='components.CodeExample.NoLanguageTabTitle'
+                        description='The tab title for a code example where no programming language was specified'>
+                        Example
+                    </Translate>
+                }
                 default={defaultVal === CODE_LANGS[language]}
             >
                 <CodeBlock language={language} showLineNumbers>
@@ -60,7 +67,12 @@ const getTabs = (children: React.ReactElement, targetLanguage: String) => {
                     default={defaultVal === language}
                 >
                     <CodeBlock language={language} showLineNumbers>
-                        // There is no code example for {language} yet
+                        <Translate
+                            id="components.CodeExample.MissingCodeExample"
+                            description='In the Wallet-SDK code example component, this message will display when the selected programming language has no accompanying example'
+                            values={{language: language}}>
+                            {'// There is no code example for {language} yet'}
+                        </Translate>
                     </CodeBlock>
                 </TabItem>);
             } else {

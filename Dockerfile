@@ -15,11 +15,19 @@ RUN apt-get update && apt-get install --no-install-recommends -y gpg curl git ma
     apt-get update && apt-get install -y nodejs yarn && apt-get clean
 
 COPY . /app/
+ARG CROWDIN_PERSONAL_TOKEN
 
 RUN yarn install
 RUN yarn rpcspec:build
 RUN yarn stellar-cli:build
-RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build
+# TODO: This takes a bit of time, we should probably make sure it's only done
+# for production builds
+# See: https://docusaurus.io/docs/3.4.0/i18n/crowdin#automate-with-ci
+RUN CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn crowdin:sync
+RUN yarn crowdin:fix
+# TODO: It's actually this part that is more time-consuming. The best way to
+# speed this up is to generate the preview for only `--locale en`
+RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build --locale es
 
 FROM nginx:1.27
 
