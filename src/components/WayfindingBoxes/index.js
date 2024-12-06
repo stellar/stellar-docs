@@ -6,93 +6,93 @@ import styles from './styles.module.css';
 
 const WayfindingWays = [
   {
-    title: 'Stellar 101',
+    title: 'Asset Issuers',
     image: require('@site/static/icons/stellar-101.png').default,
     description: (
       <>
-        Learn about the core concepts of Stellar in this educational section.
+        Issue an asset on the Stellar network or create a custom smart contract token.
       </>
     ),
     link: (
       <Link
-        to="/docs/learn/fundamentals">
-        Dive In
+        to="#asset-issuers">
+        Issue an asset
       </Link>
     ),
   },
   {
-    title: 'Write a Smart Contract',
+    title: 'Smart Contract Developers',
     image: require('@site/static/icons/contract.png').default,
     description: (
       <>
-        Get set up and write your first smart contract on the Stellar network.
+        Write, test, deploy, and interact with smart contracts on the Stellar network.
       </>
     ),
     // temporarily set this to /docs/soroban until "smart contracts" section is done
     link: (
       <Link
-        to="/docs/build/smart-contracts/getting-started/setup">
-        Get Started
+        to="#smart-contract-developers">
+        Write a smart contract
       </Link>
     ),
   },
   {
-    title: 'Issue an Asset',
+    title: 'Ramps (anchors)',
     image: require('@site/static/icons/issue-assets.png').default,
     description: (
       <>
-        Issuing assets on Stellar is easy. Learn how in this tutorial.
+        Set up an on/off-ramp (also known as an anchor) using the SDF-maintained Anchor Platform tool.
       </>
     ),
     link: (
       <Link
-        to="/docs/tokens/how-to-issue-an-asset">
-        Issue Asset
+        to="#ramps-anchors">
+        Set up an anchor
       </Link>
     ),
   },
   {
-    title: 'Build an Application',
+    title: 'Applications',
     image: require('@site/static/icons/build-applications.png').default,
     description: (
       <>
-        Build an application on Stellar using the Wallet SDK or JS SDK.
+        For application builders or exchanges that want to list Stellar assets.
       </>
     ),
     link: (
       <Link
-        to="/docs/build/apps">
-        Get Building
+        to="#applications">
+        Build an app
       </Link>
     ),
   },
   {
-    title: 'Developer Tools',
+    title: 'Infrastructure Providers',
     image: require('@site/static/icons/dev-tools.png').default,
     description: (
       <>
-        Stellar has a myriad of community and SDF-maintained tools. Check them out!
+        Set up Stellar network infrastructure to use yourself or list as a third-party service for others.
       </>
     ),
     link: (
       <Link
-        to="/docs/tools/developer-tools">
-        See Tools
+        to="#infrastructure-providers">
+        Set up infrastructure
       </Link>
     ),
   },
   {
-    title: 'Access Data',
+    title: 'Analytics',
     image: require('@site/static/icons/access-data.png').default,
     description: (
       <>
-        The RPC, Hubble, and Horizon offer all the data capabilities you could possibly need.
+        Perform analysis on Stellar network data.
       </>
     ),
     link: (
       <Link
-        to="/docs/data">
-        Get the Goods
+        to="#analytics">
+        Access Stellar network data
       </Link>
     ),
   },
