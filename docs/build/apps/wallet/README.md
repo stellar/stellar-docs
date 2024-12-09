@@ -1,4 +1,4 @@
-## Contributing guide
+## Contributing guide {#contributing-guide}
 
 Thank you for contributing to the Stellar Wallet documentation! To get started,
 please first read [main README](../../../README.md) guide.
@@ -13,9 +13,9 @@ Generally, text should be applicable to all of supported programming languages,
 but for differences special `<LanguageSpecific/>` component can be used (read
 more below)
 
-### Wallet guide components
+### Wallet guide components {#wallet-guide-components}
 
-#### Header
+#### Header {#header}
 
 Header is a special .mdx file that should be included on all pages. It contains:
 
@@ -30,17 +30,17 @@ of languages that are work in progress:
 <Header WIPLangs={["ts", "dart"]}/>
 ```
 
-#### LanguageButtons
+#### LanguageButtons {#languagebuttons}
 
 This component is a part of the header. It allows to switch between programming
 languages. Current language is stored as a cookie.
 
-#### WalletGuideWarn
+#### WalletGuideWarn {#walletguidewarn}
 
 This component puts a warning if language is in progress for this section.
 Please use `WIPLangs` property to enable it for a language for the page.
 
-#### WalletCodeExample
+#### WalletCodeExample {#walletcodeexample}
 
 This is improved `CodeExample` component. It currently supports dynamic
 switching between TypeScript, Kotlin and Flutter code snippets (depending on the
@@ -67,7 +67,7 @@ missing. Here's an example on how to use it:
 For a regular code examples (non Wallet SDK) please use vanilla `CodeExample`
 component.
 
-#### LanguageSpecific
+#### LanguageSpecific {#languagespecific}
 
 This component allows to render parts of documentation based on selected code.
 To get started, crete 2 files in `component` directory:

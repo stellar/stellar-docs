@@ -11,7 +11,7 @@ We're super glad to have you here, and hopefully this document will help you
 understand how (and more importantly _where_) to make the needed changes to our
 documentation. Let's start off with a bit of Docusaurus vocabulary, shall we?
 
-## TL;DR
+## TL;DR {#tldr}
 
 - For _unreleased_ versions of Anchor Platform:
   - Add and edit docs in `/platforms/anchor-platform`
@@ -38,7 +38,7 @@ want to be judicious about which files you add to your commit.
 yarn ap:versions:regen
 ```
 
-## Table of Contents <!-- omit in toc -->
+## Table of Contents <!-- omit in toc --> {#table-of-contents----omit-in-toc---}
 
 - [TL;DR](#tldr)
 - [More About Docusaurus than You Ever Wanted to Know](#more-about-docusaurus-than-you-ever-wanted-to-know)
@@ -59,12 +59,12 @@ yarn ap:versions:regen
   - [Update Documentation Pages](#update-documentation-pages)
   - [Update API Specification](#update-api-specification)
 
-## More About Docusaurus than You Ever Wanted to Know
+## More About Docusaurus than You Ever Wanted to Know {#more-about-docusaurus-than-you-ever-wanted-to-know}
 
 I know it can feel a bit mysterious, but here's some knowledge and context to
 help your understanding of what's ahead.
 
-### Versions Nomenclature
+### Versions Nomenclature {#versions-nomenclature}
 
 This is how Docusaurus defines these terms, so that's what I'll use in this
 document, as well.
@@ -79,7 +79,7 @@ document, as well.
   available at the `/platforms/anchor-platform` URL. This is the "stable" set of
   docs.
 
-### Plugins
+### Plugins {#plugins}
 
 There are two Docusaurus plugins at play here:
 
@@ -95,7 +95,7 @@ Both of these plugin configurations have been broken out into a
 `/config/anchorPlatform.config.ts` file, to ease management of them and
 de-clutter somewhat the main `docusaurus.config.ts` file.
 
-### Instances
+### Instances {#instances}
 
 This is where it gets a bit more "in the weeds," but I promise this part is
 helpful to know. Both of the [plugins](#plugins) I mentioned above are really
@@ -104,7 +104,7 @@ elsewhere in our docs site for Horizon, SDP, and just "regular" docs. It's not
 _generally_ important to consider different plugin instances, but it _is_
 **quite relevant** when we discuss links. So...
 
-### Links
+### Links {#links}
 
 Most often, **especially in versioned docs**, it's important to
 [link to other docs by _relative_ file paths](https://docusaurus.io/docs/versioning#link-docs-by-file-paths).
@@ -120,7 +120,7 @@ So, in practical terms:
   convention, we use _absolute_ paths for this, too, to make it a little more
   obvious when this behavior is taking place.
 
-#### Examples
+#### Examples {#examples}
 
 This should help to make it a bit clearer.
 
@@ -167,12 +167,12 @@ This should help to make it a bit clearer.
 Read more about links [here](https://docusaurus.io/docs/markdown-features/links)
 (especially toward the bottom of the page).
 
-## Directories to Know
+## Directories to Know {#directories-to-know}
 
 There are a few directories that _all_ feed into the end product that is our
 versioned AP documentation.
 
-### Directories You Already Know About
+### Directories You Already Know About {#directories-you-already-know-about}
 
 - `/platforms/anchor-platform` This is where you are now, and traditionally has
   been the place to modify any of the markdown content that becomes our AP docs
@@ -219,7 +219,7 @@ versioned AP documentation.
   "old" versions will likely just need to be made in those versioned specfiles
   for now (more on that in the next section).
 
-### New Shiny Directories
+### New Shiny Directories {#new-shiny-directories}
 
 - `/ap_versioned_sidebars` We can pretty well breeze right past this one. When
   you make a new version of the docs, Docusaurus stores a copy of the sidebar at
@@ -235,13 +235,13 @@ versioned AP documentation.
   or update in a released version of the docs, you'll need to update accordingly
   here.
 
-## Making New Versions
+## Making New Versions {#making-new-versions}
 
 As noted in the [TL;DR](#tldr), this process is automated with the
 `VERSION=3.0.0 yarn ap:versions:new` script. However, here's what's happening
 under the hood of that script.
 
-### Use Docusaurus to "Tag" a New Release
+### Use Docusaurus to "Tag" a New Release {#use-docusaurus-to-tag-a-new-release}
 
 It's actually pretty simple! Use the Docusaurus CLI to make a new release:
 
@@ -255,13 +255,13 @@ well "work" to get the new version displayed on the site. Any future changes to
 the 3.0.0 version of the docs should be made within the `/ap_versioned_docs`
 directory.
 
-### Configure the OpenAPI plugin
+### Configure the OpenAPI plugin {#configure-the-openapi-plugin}
 
 We'll also want to be able to modify/update/re-generate the API documentation if
 the need arises. So, we'll need to configure that
 `docusaurus-plugin-openapi-docs` plugin instance accordingly.
 
-#### Copy the (bundled) OpenAPI Specfiles to the Versioned Directory
+#### Copy the (bundled) OpenAPI Specfiles to the Versioned Directory {#copy-the-bundled-openapi-specfiles-to-the-versioned-directory}
 
 At the moment, it's just as simple as copying the files:
 
@@ -274,7 +274,7 @@ cp openapi/anchor-platform/bundled-custody.yaml openapi/anchor-platform/versions
 > Notice how we're copying the _bundled_ file, not the _main_ file. This makes
 > sure the versioned file contains everything it needs.
 
-#### Add Configuration to the OpenAPI Plugin Instance
+#### Add Configuration to the OpenAPI Plugin Instance {#add-configuration-to-the-openapi-plugin-instance}
 
 > _Note_: These `versions` parts of the configuration are now generated
 > dynamically, using a `makeVersions()` function, so these manual config steps
@@ -308,9 +308,9 @@ ap_platform: {
 }
 ```
 
-## Updating Old Versions
+## Updating Old Versions {#updating-old-versions}
 
-### Update Documentation Pages
+### Update Documentation Pages {#update-documentation-pages}
 
 Let's say I find a misspelling in the `v2.8.4` Admin Guide documentation. Find
 the relevant file in the `/ap_versioned_docs/version-2.8.4` directory, fix it
@@ -321,7 +321,7 @@ and commit. Content updates are pretty easy here.
 > here:
 > `/ap_versioned_docs/version-2.8.4/api-reference/platform/rpc/anchor-platform.openrpc.json`
 
-### Update API Specification
+### Update API Specification {#update-api-specification}
 
 This is a little more involved, but not much. Find and change the relevant
 part(s) of the
