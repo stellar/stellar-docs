@@ -1,3 +1,5 @@
+import { makeEditUrl } from './constants';
+
 import type { PluginConfig } from '@docusaurus/types';
 import type * as Plugin from '@docusaurus/types/src/plugin';
 import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
@@ -29,7 +31,7 @@ export const disbursementPlatformPluginInstances: PluginConfig[] = [
             routeBasePath: "/platforms/stellar-disbursement-platform",
             docItemComponent: "@theme/ApiItem",
             sidebarPath: "config/disbursementPlatform.sidebar.ts",
-            editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+            editUrl: makeEditUrl,
             exclude: ['**/component/**', '**/README.md'],
             showLastUpdateTime: true,
             showLastUpdateAuthor: true,
