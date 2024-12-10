@@ -1,0 +1,381 @@
+---
+title: The Guestbook Contract
+sidebar_position: 20
+---
+
+The heart of this project starts with our smart contract. This smart contract will, in essence, act as a database for our guestbook messages. Users will be able to write messages, read them, and edit their own previously submitted message(s). Additionally, the contract will be upgradeable, and it will require initialization.
+
+## Required functionality
+
+All the following "business logic" will be handled by our smart contract:
+
+- **A means of writing messages.** Users can invoke this function to leave a message for the site maintainer. They will have to authenticate this function, and it must contain a `title` and `text` field (both strings). The function will return the ID number of the message, which increments sequentially.
+- **A means of reading messages.** This function will allow a user to "query" the contract for a guestbook message, by providing the message ID. Non-existing IDs will result in an error.
+- **A means of editing messages (with authentication).** If a user needs to modify their previously written message, they can use this function to do so. They must provide proper authorization to do so, and they must provide either a `title` or `text` field (both cannot be empty, but one of them could).
+- **A means of retrieving donations and transferring them to the "admin" address.** The hubris associated with requesting donations on a site like this speaks volumes of the maintainer's sense of self. However, providing this functionality is an excellent exercise in asset interactions within the smart contract.
+- We'll also need some utility functions that the contract will use internally, as well as a `__constructor` and an `upgrade` function, in case we need to upgrade our smart contract in the future.
+
+:::note
+
+We'll be diving into each of the main functions below, but if you want to see the whole smart contract uninterrupted, it can be found here: [https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/contracts/ye_olde_guestbook/src/lib.rs](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/contracts/ye_olde_guestbook/src/lib.rs)
+
+:::
+
+## How it works
+
+### Contract functions
+
+#### `__constructor`
+
+With the release and successful validator vote of Protocol 22, smart contracts are now capable of utilizing a `__constructor` function! Previously, any initialization of a smart contract had to be done in a subsequent invocation of the contract following the `deploy` action. Now, it's possible to perform that initialization at deploy-time. This prevents front-running, and keeps the contract you've deployed within your own control at all times.
+
+Constructor functions _look_ pretty much exactly the same as the previously used `init` functions. The only difference is _when_ the function is executed.
+
+```rust
+/// Initializes the guestbook with a warm welcome message for prospective
+/// signers to read.
+///
+/// # Arguments
+///
+/// * `admin` - The address which will be the owner and administrator of the
+///   guestbook.
+/// * `title` - The title or subject of the welcome message.
+/// * `text` - The body or contents of the welcome message.
+///
+/// # Panics
+///
+/// * If the `title` argument is empty or missing.
+/// * If the `text` argument is empty or missing.
+pub fn __constructor(
+    env: Env,
+    admin: Address,
+    title: String,
+    text: String,
+) -> Result<(), Error> {
+    check_string_not_empty(&env, &title);
+    check_string_not_empty(&env, &text);
+
+    admin.require_auth();
+    env.storage().instance().set(&DataKey::Admin, &admin);
+
+    let first_message = Message {
+        author: admin,
+        ledger: env.ledger().sequence(),
+        title,
+        text,
+    };
+
+    save_message(&env, first_message);
+    Ok(())
+}
+```
+
+#### `write_message`
+
+First things first, we need a function that will allow a message to be written in the guestbook. A simple struct is created, and it's stored in the contract's persistent storage. This is a fairly simple function that takes three pieces of data from the invocation (`author`, `title`, and `text`) and then creates a struct to store in the contract's persistent storage entries. Here are some things to note:
+
+- We're using a helper function called `check_string_not_empty` to ensure that a non-empty value has been passed for both the `title` and `text` arguments. More on this function later on.
+- We're requiring authentication from the author's address, to ensure they've authorized the message entry to be associated with them.
+- We're utilizing a `save_message` utility function to do the actual storage entry reading/writing. More on the specifics of this function later on, but for now just know it's storing the the `new_message` struct, and returning the ID of the stored message.
+
+```rust
+/// Write a message to the guestbook.
+///
+/// # Arguments
+///
+/// * `author` - The sender of the message.
+/// * `title` - The title or subject of the guestbook message.
+/// * `text` - The body or contents of the guestbook message.
+///
+/// # Panics
+///
+/// * If the `title` argument is empty or missing.
+/// * If the `text` argument is empty or missing.
+pub fn write_message(
+    env: Env,
+    author: Address,
+    title: String,
+    text: String,
+) -> Result<u32, Error> {
+    check_string_not_empty(&env, &title);
+    check_string_not_empty(&env, &text);
+    author.require_auth();
+
+    let new_message = Message {
+        author,
+        ledger: env.ledger().sequence(),
+        title,
+        text,
+    };
+
+    let message_id = save_message(&env, new_message);
+    return Ok(message_id);
+}
+```
+
+#### `edit_message`
+
+We'll also make it possible for a user to edit a message that's already been written. In the event that only the `text` or `title` need to be changed, we'll allow for passing of empty strings as the arguments here. We'll check to ensure _both_ aren't empty, however. We're using a `get_message` utility function here to read the data from the contract's storage entries. Retrieving a message is relatively common in this contract, so we've created a utility to minimize duplicate code.
+
+We modify the message by:
+
+- retrieving it from storage (into a mutable variable),
+- assigning the struct fields to the edited value (or the original if an argument is empty), and
+- updating the message's ledger number to the current ledger's value.
+
+It's important to note we're _not_ requiring authentication from a passed-in `Address` argument. Instead, we retrieve the message struct first, and require authentication from the stored author.
+
+The process of saving this edited message object is quite similar to the `write_message` function, except that we're not modifying the `MessageCount`, since we're only _modifying_ and not _adding_ a message.
+
+```rust
+/// Edit a specified message in the guestbook.
+///
+/// # Arguments
+///
+/// * `message_id` - The ID number of the message to edit.
+/// * `title` - The title or subject of the guestbook message.
+/// * `text` - The body or contents of the guestbook message.
+///
+/// # Panics
+///
+/// * If both the `title` AND `text` arguments are empty or missing.
+/// * If there is no authorization from the original message author.
+pub fn edit_message(
+    env: Env,
+    message_id: u32,
+    title: String,
+    text: String,
+) -> Result<(), Error> {
+    if title.is_empty() {
+        check_string_not_empty(&env, &text);
+    }
+
+    if text.is_empty() {
+        check_string_not_empty(&env, &title);
+    }
+
+    let mut message = get_message(&env, message_id);
+    message.author.require_auth();
+
+    let edited_title = if title.is_empty() {
+        message.title
+    } else {
+        title
+    };
+    let edited_text = if text.is_empty() { message.text } else { text };
+
+    message.title = edited_title;
+    message.text = edited_text;
+    message.ledger = env.ledger().sequence();
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Message(message_id), &message);
+    return Ok(());
+}
+```
+
+#### `read_message`
+
+Reading a desired message is as simple as querying the contract's persistent storage, and returning the `Message` struct from the contract. Again, we're using the `get_message` utility function, so we'll cover the specifics of that later on. Briefly for now, we're passing in the message ID, and returning the corresponding message, erroring along the way if the message ID doesn't exist in the contract's storage.
+
+```rust
+/// Read a specified message from the guestbook.
+///
+/// # Arguments
+///
+/// * `message_id` - The ID number of the message to retrieve.
+///
+/// # Panics
+///
+/// * If the message ID is not associated with a message.
+pub fn read_message(env: Env, message_id: u32) -> Result<Message, Error> {
+    let message = get_message(&env, message_id);
+    Ok(message)
+}
+```
+
+#### `read_latest`
+
+But, what if someone just wants to read the _latest_ message, and doesn't know what its ID number is? Well, we're providing a function for exactly that. No arguments to pass in. No authentication. Just pull the message from the contract's persistent storage, and return the struct (or panic, if the contract doesn't have any messages yet). Easy peasy.
+
+```rust
+/// Read the latest message to be sent to the guestbook.
+pub fn read_latest(env: Env) -> Result<Message, Error> {
+    let latest_id = env
+        .storage()
+        .instance()
+        .get(&DataKey::MessageCount)
+        .unwrap();
+    let latest_message = get_message(&env, latest_id);
+    Ok(latest_message)
+}
+```
+
+#### `claim_donations`
+
+:::info
+
+We'll set aside whether or not the maintainer of the guestbook _should_ be soliciting donations, and we'll just assume that they _want to_. It's a great way to think about asset interoperability in your smart contracts, so let's go for it!
+
+:::
+
+The `claim_donations` function will allow the invoker of the function to send a balance of any token to the admin of the guestbook contract. We'll direct your attention to two aspects of this function, in particular.
+
+First, we're requiring an `Address` for the token that should be claimed. It may be your first instinct to hard-code and default to native XLM for these donations. This can certainly be done, but the address for that contract will be different on Mainnet, Testnet, or Futurenet, and the contract would have to be modified and re-compiled for each network you want to deploy to. A more "universally" applicable approach is to take the token address as an argument to this function, and allow the donors and admin to use whichever token they deem suitable for the situation.
+
+Second, we're not requiring any authentication for this function. It's not really necessary to add that logic into the mix, because no real harm will come if a non-admin invokes the function:
+
+- There's no risk that funds will be sent to the wrong address. The admin address is being read from the contract's instance storage.
+- There's no risk of the admin receiving unwanted tokens. If the token would require a trustline, and one does not exist on the account (i.e. the admin has not opted-in to holding that asset), the invocation will simply fail. If it's a custom Soroban-only token, the storage entry of the new balance will be paid by the invoker of this function. The admin is not out any funds, and the balance won't have any meaningful impact on their account.
+- The best-case scenario would be an altruistic person _really_ wants the admin to have the tokens they've donated, so they'll fork over the gas money to trigger the tokens held by the contract to be sent to the admin.
+
+Besides those two things, everything else is pretty straightforward. We create a token client, check the contract's balance of that token, and if there's a positive balance, then we send the tokens to the admin address.
+
+```rust
+/// Claim any donations that have been made to the guestbook contract.
+///
+/// # Panics
+///
+/// * If the contract is not holding any donations balance.
+pub fn claim_donations(env: Env, token: Address) -> Result<i128, Error> {
+    let token_client = token::TokenClient::new(&env, &token);
+    let contract_balance = token_client.balance(&env.current_contract_address());
+
+    if contract_balance == 0 {
+        panic_with_error!(&env, Error::NoDonations);
+    }
+
+    let admin_address: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    token_client.transfer(
+        &env.current_contract_address(),
+        &admin_address,
+        &contract_balance,
+    );
+
+    Ok(contract_balance)
+}
+```
+
+### Utility functions
+
+We have some utility functions, too that aren't exposed to be invoked by the smart contract in a transaction. These functions exist so we don't have to code the same logic over and over (i.e. reading a message from the contract's storage). This is a fairly common approach to reduce contract size and make contract logic more consistent.
+
+#### `check_string_not_empty`
+
+Here, we're simply abstracting a check that is made multiple times throughout the contract. This way, we can be confident that _every_ time we want to check a string isn't empty, we're checking in the same exact way.
+
+```rust
+// Make sure the provided string is not empty.
+fn check_string_not_empty(env: &Env, sus_string: &String) {
+    if sus_string.is_empty() {
+        panic_with_error!(env, Error::InvalidMessage);
+    }
+}
+```
+
+#### `get_message`
+
+This function retrieves a message entry from the guestbook contract's storage entry. If the entry is found not to exist, we panic with an error message. If it is found, we return the whole message `struct`.
+
+```rust
+// Read a message from persistent storage.
+fn get_message(env: &Env, message_id: u32) -> Message {
+    if !env
+        .storage()
+        .persistent()
+        .has(&DataKey::Message(message_id))
+    {
+        panic_with_error!(env, Error::NoSuchMessage);
+    }
+
+    let message: Message = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Message(message_id))
+        .unwrap();
+    return message;
+}
+```
+
+#### `save_message`
+
+We're abstracting away the method we're using to write a message to the contract storage because it's used in two places: the `initialize` and `write_message` functions. We want both to store messages in the same manner, so we're enforcing that by using this utility function.
+
+We're storing a `MessageCount` in the contract's instance storage, to assist us in message saves, reads, edits, etc. This could certainly be done differently, but it will be convenient for us when it comes to saving new messages, reading messages from the contract, querying for contract state in the frontend, etc.
+
+```rust
+// Write a message to persistent storage.
+fn save_message(env: &Env, message: Message) -> u32 {
+    let mut num_messages = env
+        .storage()
+        .instance()
+        .get(&DataKey::MessageCount)
+        .unwrap_or(0 as u32);
+    num_messages += 1;
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Message(num_messages), &message);
+    env.storage()
+        .instance()
+        .set(&DataKey::MessageCount, &num_messages);
+
+    return num_messages;
+}
+```
+
+### Contract types
+
+In addition to the functions above, we have some custom types written for our smart contract. These can be seen in the [`types.rs file`](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/contracts/ye_olde_guestbook/src/types.rs) in the source code repository.
+
+#### `Message`
+
+The `Message` type is a `struct` data structure that will hold all the information about a message that's been written to the guestbook. We keep track of the message's title, text, author, and in which ledger number it was written. Some of this is not strictly necessary here, and could probably be handled outside of the smart contract (by using a data indexer, for example). For the purposes of this tutorial, however, we'll keep these messages in persistent entries in the contract storage.
+
+```rust
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Message {
+    pub author: Address,
+    pub ledger: u32,
+    pub title: String,
+    pub text: String,
+}
+```
+
+#### `DataKey`
+
+This is a struct that's used elsewhere in the contract to define the keys for the various storage entries the contract will hold. Nothing groundbreaking or remarkable here, to be honest, but it's still worth showing. The `Message(ID_NUMBER)` will be used as the key to store a `Message` struct on-chain as the corresponding value.
+
+```rust
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    Admin,
+    MessageCount,
+    Message(u32),
+}
+```
+
+#### `Error`
+
+We're holding to the typical [contract conventions](https://developers.stellar.org/docs/build/guides/conventions/error-enum), and creating an `enum` to keep track of our errors.
+
+```rust
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    InvalidMessage = 1,     // The provided message is malformed in some way.
+    NoSuchMessage = 2,      // The message requested does not exist.
+    UnauthorizedToEdit = 3, // Address is not allowed to edit this message.
+    NoDonations = 4,        // Contract has no donations to claim.
+}
+```
+
+#### Tests
+
+We've written some tests that work through many (foreseen) usage patterns for this smart contract. It's too lengthy to dive into here, but it's worth checking out the [source code](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/contracts/ye_olde_guestbook/src/test.rs) to understand the logic about how the various contract functions are meant to work together.
+
+Up next, we'll look at how we go from this deployed contract to an NPM package that can be imported and used in a frontend project easily, and with full type-safety.
