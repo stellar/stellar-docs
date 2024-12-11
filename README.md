@@ -2,8 +2,6 @@
 
 Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
 
-If you're here for the Deep Dive Docs Bounty, please navigate to the bottom of this page for all relevant information: [Deep Dive Docs Bounty](#welcome-to-the-deep-dive-docs-bounty-).
-
 ## Table of Contents <!-- omit in toc -->
 
 - [Contributing](#contributing)
@@ -16,11 +14,6 @@ If you're here for the Deep Dive Docs Bounty, please navigate to the bottom of t
   - [Custom Markdown](#custom-markdown)
     - [Alert](#alert)
     - [Code Example](#code-example)
-- [Welcome to the Deep Dive Docs Bounty 🐙!](#welcome-to-the-deep-dive-docs-bounty-)
-  - [Submission process](#submission-process)
-  - [What makes a good submission](#what-makes-a-good-submission)
-- [Helpful resources](#helpful-resources)
-- [Deep Dive Docs Bounty (not currently running) Eligibility Guidelines](#deep-dive-docs-bounty-eligibility-guidelines)
 
 ## Contributing
 
@@ -239,7 +232,7 @@ const CODE_LANGS = {
 };
 ```
 
-**Remember that this is a community; we build together! 💪 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
+**Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
 
 [docs]: https://developers.stellar.org/docs
 [api]: https://developers.stellar.org/api
