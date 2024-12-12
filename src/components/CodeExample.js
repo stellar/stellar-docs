@@ -9,9 +9,7 @@ export const CodeExample = ({ children }) => (
     {React.Children.map(children, (child, index) => {
       const codeProps = child.props.children.props;
       const { className = '' } = codeProps;
-
       const [, language] = className.split('-');
-
       return (
         <TabItem
           key={language || index}
