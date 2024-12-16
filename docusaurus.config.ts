@@ -169,7 +169,11 @@ const config: Config = {
               docId: "data/galexie/README",
               label: "Galexie",
             },
-
+            {
+              type: 'doc',
+              docId: "data/data-indexers/README",
+              label: "Data Indexers",
+            },
           ]
         },
         {
