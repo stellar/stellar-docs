@@ -258,6 +258,10 @@ const config: Config = {
               label: "Stellar Quest",
               href: "https://quest.stellar.org/",
             },
+            {
+              label: "Soroban Quest",
+              href: "https://fastcheapandoutofcontrol.com/tutorial",
+            },
           ],
         },
         {
