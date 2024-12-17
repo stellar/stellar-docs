@@ -3,11 +3,14 @@ import clsx from 'clsx';
 import Heading from '@theme/Heading';
 import Link from '@docusaurus/Link';
 import styles from './styles.module.css';
-import Translate from '@docusaurus/Translate';
+import Translate, {translate} from '@docusaurus/Translate';
 
 const WayfindingWays = [
   {
-    title: 'Stellar 101',
+    title: translate({
+      message: 'Stellar 101',
+      id: 'components.WayfindingBoxes.Stellar101.Title'
+    }),
     image: require('@site/static/icons/stellar-101.png').default,
     description: (
       <Translate
@@ -28,7 +31,10 @@ const WayfindingWays = [
     ),
   },
   {
-    title: 'Write a Smart Contract',
+    title: translate({
+      message: 'Write a Smart Contract',
+      id: 'components.WayfindingBoxes.WriteASmartContract.Title'
+    }),
     image: require('@site/static/icons/contract.png').default,
     description: (
       <Translate
@@ -37,7 +43,6 @@ const WayfindingWays = [
         Get set up and write your first smart contract on the Stellar network.
       </Translate>
     ),
-    // temporarily set this to /docs/soroban until "smart contracts" section is done
     link: (
       <Link
         to="/docs/build/smart-contracts/getting-started/setup">
@@ -50,7 +55,10 @@ const WayfindingWays = [
     ),
   },
   {
-    title: 'Issue an Asset',
+    title: translate({
+      message: 'Issue an Asset',
+      id: 'components.WayfindingBoxes.IssueAnAsset.Title'
+    }),
     image: require('@site/static/icons/issue-assets.png').default,
     description: (
       <Translate
@@ -71,7 +79,10 @@ const WayfindingWays = [
     ),
   },
   {
-    title: 'Build an Application',
+    title: translate({
+      message: 'Build an Application',
+      id: 'components.WayfindingBoxes.BuildAnApplication.Title'
+    }),
     image: require('@site/static/icons/build-applications.png').default,
     description: (
       <Translate
@@ -92,7 +103,10 @@ const WayfindingWays = [
     ),
   },
   {
-    title: 'Developer Tools',
+    title: translate({
+      message: 'Developer Tools',
+      id: 'components.WayfindingBoxes.DeveloperTools.Title'
+    }),
     image: require('@site/static/icons/dev-tools.png').default,
     description: (
       <Translate
@@ -113,7 +127,10 @@ const WayfindingWays = [
     ),
   },
   {
-    title: 'Access Data',
+    title: translate({
+      message: 'Access Data',
+      id: 'components.WayfindingBoxes.AccessData.Title'
+    }),
     image: require('@site/static/icons/access-data.png').default,
     description: (
       <Translate
