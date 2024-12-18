@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y gpg curl git ma
 
 COPY . /app/
 ARG CROWDIN_PERSONAL_TOKEN
-ARG BUILD_TRANSLATIONS="False"
+ARG BUILD_TRANSLATIONS="True"
 
 RUN yarn install
 RUN yarn rpcspec:build
