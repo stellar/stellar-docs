@@ -16,18 +16,19 @@ RUN apt-get update && apt-get install --no-install-recommends -y gpg curl git ma
 
 COPY . /app/
 ARG CROWDIN_PERSONAL_TOKEN
+ARG BUILD_TRANSLATIONS="False"
 
 RUN yarn install
 RUN yarn rpcspec:build
 RUN yarn stellar-cli:build
-# TODO: This takes a bit of time, we should probably make sure it's only done
-# for production builds
-# See: https://docusaurus.io/docs/3.4.0/i18n/crowdin#automate-with-ci
-RUN CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn crowdin:sync
-RUN yarn crowdin:fix
-# TODO: It's actually this part that is more time-consuming. The best way to
-# speed this up is to generate the preview for only `--locale en`
-RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build
+
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
+    CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn build:production; \
+  else \
+    # In the preview build, we only want to build for English. Much quicker
+    yarn build; \
+  fi
 
 FROM nginx:1.27
 
