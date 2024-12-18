@@ -2,6 +2,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
+import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
 import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
 import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
 
@@ -15,14 +16,15 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
+  onBrokenAnchors: "warn",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   i18n: {
-    defaultLocale: "en",
-    locales: ["en"],
+    defaultLocale: DEFAULT_LOCALE,
+    locales: ["en", "es"],
   },
   plugins: [
     "docusaurus-plugin-sass",
@@ -85,7 +87,7 @@ const config: Config = {
           rehypePlugins: [rehypeKatex],
           sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
-          editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+          editUrl: makeEditUrl,
           exclude: ['**/component/**', '**/README.md'],
         },
         theme: {
@@ -111,6 +113,10 @@ const config: Config = {
     },
   ],
   themeConfig: {
+    announcementBar: {
+      id: 'announcementBar-translation',
+      content: '<strong>Disclaimer:</strong> This documentation has been automatically translated and may contain inaccuracies. For the most accurate information, please refer to the original English version. We are not responsible for translation errors.',
+    },
     docs: {
       sidebar: {
         autoCollapseCategories: false,
@@ -228,6 +234,10 @@ const config: Config = {
         {
           to: '/meetings',
           label: 'Meetings',
+          position: 'right',
+        },
+        {
+          type: 'localeDropdown',
           position: 'right',
         },
         {
