@@ -3,96 +3,150 @@ import clsx from 'clsx';
 import Heading from '@theme/Heading';
 import Link from '@docusaurus/Link';
 import styles from './styles.module.css';
+import Translate, {translate} from '@docusaurus/Translate';
 
 const WayfindingWays = [
   {
-    title: 'Asset Issuers',
+    title: translate({
+      message: 'Asset Issuers',
+      id: 'components.WayfindingBoxes.AssetIssuers.Title',
+    }),
     image: require('@site/static/icons/stellar-101.png').default,
     description: (
-      <>
+      <Translate
+        id='components.WayfindingBoxes.AssetIssuers.Description'
+        description='Short, punchy description for this "wayfinding box" on the homepage.'>
         Issue an asset on the Stellar network or create a custom smart contract token.
-      </>
+      </Translate>
     ),
     link: (
       <Link
         to="#asset-issuers">
-        Issue an asset
+        <Translate
+          id='components.WayfindingBoxes.AssetIssuers.LinkText'
+          description='Button text for this "wayfinding box" on the homepage.'>
+          Issue an asset
+        </Translate>
       </Link>
     ),
   },
   {
-    title: 'Smart Contract Developers',
+    title: translate({
+      message: 'Smart Contract Developers',
+      id: 'components.WayfindingBoxes.SmartContractDevelopers.Title'
+    }),
     image: require('@site/static/icons/contract.png').default,
     description: (
-      <>
+      <Translate
+        id='components.WayfindingBoxes.SmartContractDevelopers.Description'
+        description='Short, punchy description for this "wayfinding box" on the homepage.'>
         Write, test, deploy, and interact with smart contracts on the Stellar network.
-      </>
+      </Translate>
     ),
-    // temporarily set this to /docs/soroban until "smart contracts" section is done
     link: (
       <Link
         to="#smart-contract-developers">
-        Write a smart contract
+        <Translate
+          id='components.WayfindingBoxes.SmartContractDevelopers.LinkText'
+          description='Button text for this "wayfinding box" on the homepage.'>
+          Write a smart contract
+        </Translate>
       </Link>
     ),
   },
   {
-    title: 'Ramps (anchors)',
+    title: translate({
+      message: 'Ramps (anchors)',
+      id: 'components.WayfindingBoxes.RampsAnchors.Title'
+    }),
     image: require('@site/static/icons/issue-assets.png').default,
     description: (
-      <>
+      <Translate
+        id='components.WayfindingBoxes.RampsAnchors.Description'
+        description='Short, punchy description for this "wayfinding box" on the homepage.'>
         Set up an on/off-ramp (also known as an anchor) using the SDF-maintained Anchor Platform tool.
-      </>
+      </Translate>
     ),
     link: (
       <Link
         to="#ramps-anchors">
-        Set up an anchor
+        <Translate
+          id='components.WayfindingBoxes.RampsAnchors.LinkText'
+          description='Button text for this "wayfinding box" on the homepage.'>
+          Set up an anchor
+        </Translate>
       </Link>
     ),
   },
   {
-    title: 'Applications',
+    title: translate({
+      message: 'Applications',
+      id: 'components.WayfindingBoxes.Applications.Title',
+    }),
     image: require('@site/static/icons/build-applications.png').default,
     description: (
-      <>
+      <Translate
+        id='components.WayfindingBoxes.Applications.Description'
+        description='Short, punchy description for this "wayfinding box" on the homepage.'>
         For application builders or exchanges that want to list Stellar assets.
-      </>
+      </Translate>
     ),
     link: (
       <Link
         to="#applications">
-        Build an app
+        <Translate
+          id='components.WayfindingBoxes.Applications.LinkText'
+          description='Button text for this "wayfinding box" on the homepage.'>
+          Build an app
+        </Translate>
       </Link>
     ),
   },
   {
-    title: 'Infrastructure Providers',
+    title: translate({
+      message: 'Infrastructure Providers',
+      id: 'components.WayfindingBoxes.InfrastructureProviders.Title',
+    }),
     image: require('@site/static/icons/dev-tools.png').default,
     description: (
-      <>
+      <Translate
+        id='components.WayfindingBoxes.InfrastructureProviders.Description'
+        description='Short, punchy description for this "wayfinding box" on the homepage.'>
         Set up Stellar network infrastructure to use yourself or list as a third-party service for others.
-      </>
+      </Translate>
     ),
     link: (
       <Link
         to="#infrastructure-providers">
-        Set up infrastructure
+        <Translate
+          id='components.WayfindingBoxes.InfrastructureProviders.LinkText'
+          description='Button text for this "wayfinding box" on the homepage.'>
+          Set up infrastructure
+        </Translate>
       </Link>
     ),
   },
   {
-    title: 'Analytics',
+    title: translate({
+      message: 'Analytics',
+      id: 'components.WayfindingBoxes.Analytics.Title'
+    }),
     image: require('@site/static/icons/access-data.png').default,
     description: (
-      <>
+      <Translate
+        id='components.WayfindingBoxes.Analytics.Description'
+        description='Short, punchy description for this "wayfinding box" on the homepage.'>
         Perform analysis on Stellar network data.
-      </>
+      </Translate>
     ),
     link: (
       <Link
         to="#analytics">
-        Access Stellar network data
+        <Translate
+          id='components.WayfindingBoxes.Analytics.LinkText'
+          description='Button text for this "wayfinding box" on the homepage.'>
+          Access Stellar network data
+        </Translate>
       </Link>
     ),
   },

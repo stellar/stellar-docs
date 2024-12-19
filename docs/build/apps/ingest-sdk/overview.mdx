@@ -3,14 +3,14 @@ title: Overview
 sidebar_position: 10
 ---
 
-This tutorial walks through how an application can leverage common streaming data patterns to ingest Stellar network transaction data using a few select packages from the Stellar Go Repo [github.com/stellar/go](https://github.com/stellar/go/blob/master/) collectively known as the 'Ingestion' SDK:
+This tutorial walks through how an application can leverage [CDP architecture](https://stellar.org/blog/developers/composable-data-platform) to create fast, lightweight Stellar Ledger Metada data pipelines using a few select packages from the Stellar Go Repo [github.com/stellar/go](https://github.com/stellar/go/blob/master/) collectively known as the 'Ingestion' SDK:
 
 ## The Ingestion SDK packages
 
 - `github.com/stellar/go/amount` utility package to convert prices from network transaction operations to string
 - `github.com/stellar/go/historyarchive` `github.com/stellar/go/support/datastore` `github.com/stellar/go/support/storage` utility package with convenient wrappers for accessing history archives, and avoid low-level http aspects
-- `github.com/stellar/go/ingest` provides parsing functionality over the network ledger data, converts to more developer-centric `LedgerTransaction` model
-- `github.com/stellar/go/ingest/ledgerbackend` provides the captive core backend implementation
+- `github.com/stellar/go/ingest` provides parsing functionality over the network ledger metadata, converts to more developer-centric `LedgerTransaction` model
+- `github.com/stellar/go/cdp` provides the CDP ledger metadata producer function for streaming pipeline integration.
 - `github.com/stellar/go/network` provides convenient pre-configured settings for Testnet and Mainnet networks
 - `github.com/stellar/go/xdr` a complete Golang binding to the Stellar network data model
 
@@ -18,14 +18,18 @@ This tutorial walks through how an application can leverage common streaming dat
 
 ### Project requirements
 
-To build an example streaming network ingestion pipeline from live Stellar network transaction data, you'll need:
+To use this example CDP pipeline for live Stellar network transaction data, you'll need:
 
 - A developer workstation with [Go](https://go.dev/learn/) programming language runtime installed
 - An IDE to edit Go code, [VSCode](https://code.visualstudio.com/download) is good if one is needed
 - A newly initialized, empty Go project folder. `mkdir pipeline; cd pipeline; go mod init example/pipeline`
-- `stellar-core` must be [installed](../../../validators/admin-guide/installation.mdx) on your workstation and available on your o/s PATH
+- Some familiarity to the [Stellar Ledger Metadata model](../../../learn/fundamentals/stellar-data-structures/README.mdx). It is defined in an IDL format expressed in [XDR encoding](https://github.com/stellar/stellar-xdr).
+- Docker
+- Google Cloud Platform account:
+  - a bucket created in Google Cloud Storage(GCS)
+  - GCP [credentials in workstation environment](https://github.com/stellar/go/blob/master/services/galexie/README.md#set-up-gcp-credentials)
 
-The [Stellar network data model](../../../learn/fundamentals/stellar-data-structures/README.mdx) is defined in an IDL format expressed in [XDR encoding](https://github.com/stellar/stellar-xdr). Our example application is only interested in a small subset of the overall transaction data model related to buying and selling of assets, i.e. a payment, and defines its own data model internally:
+Our example application is only interested in a small subset of the overall network data model related to asset transfers triggered by Payment operation and defines its own derived data model as the goal of exercise:
 
 <CodeExample>
 
@@ -41,22 +45,48 @@ The [Stellar network data model](../../../learn/fundamentals/stellar-data-struct
 
 </CodeExample>
 
-The example application will run a [network ingestion pipeline](https://github.com/stellar/go/blob/master/ingest/doc.go) to derive a smaller `ApplicationPayment` model from the [Stellar network transaction data model](../../../learn/fundamentals/stellar-data-structures/README.mdx) as 'source of origin' and thus enable the application to avoid large compute resources that would have been required for maintaining storage of the full Stellar network data model.
+The example application will perform both of CDP pipelines. A minimum of two pipelines are required for a complete end to end CDP architecture.
 
-The ingestion pipeline will perform three distinct stream processor roles:
+![](/assets/cdp_pipelines.png)
 
-### Inbound Adapter
+### Ledger Metadata Export Pipeline
 
-Acts as the 'source of origin' for the pipeline. Retrieves [LedgerCloseMeta](https://github.com/stellar/go/blob/f30d11432e81c7a7cbb739a694520f729bbb31dd/xdr/xdr_generated.go#L18358) generated from a Stellar network using captive core. `LedgerCloseMeta` is the top-level aggregate in the Stellar data model of which all [Stellar network transaction data](../../../learn/fundamentals/stellar-data-structures/README.mdx) is nested within. Publishes the `LedgerCloseMeta` onto the pipeline.
+This pipeline needs to be initiated first, it is responsible for exporting Stellar Ledger Metadata as files to a [CDP Datastore](https://github.com/stellar/go/blob/master/support/datastore/datastore.go#L17).
 
-### Transformer
+#### Determine the Datastore
 
-Subscribes to receive `LedgerCloseMeta` from the pipeline. Uses the Go SDK package [github.com/stellar/go/xdr](https://github.com/stellar/go/tree/master/xdr) to parse the nested network data model for payment operations and convert those into a new instance of application data model `ApplicationPayment` instances. Publishes `ApplicationPayment` to the pipeline.
+The Datastore in CDP is an interface, allowing for multiple implementations which represent different physical storage layers that can be 'plugged in' to export and consumer pipelines. Stellar provides the [GCS Datastore] as the first Datastore implementation, and this example chooses to use this existing implementation.
 
-### Outbound Adapter
+There will be open source contributions for implementations on other storage layers to choose from as CDP grows. If you can't find an implementation for a storage layer you would like to use, it is also possible to develop your own [ Datastore](https://github.com/stellar/go/blob/master/support/datastore/datastore.go#L17) implementation, which is beyond scope of this example, as it entails a separate learning exercise of its own, coming soon!
+
+#### Exporting network metadata to Datastore
+
+Use Galexie, a new CDP command line program for exporting network metadata to datastores.
+
+- Follow the Galexie setup steps in [Galexie User Guide](https://github.com/stellar/go/blob/master/services/galexie/README.md#setup), to configure specifics of GCS bucket and target network.
+
+- Follow the [Galexie docker runtime instructions](https://github.com/stellar/go/blob/master/services/galexie/README.md#running-galexie) to start the export.
+  - For one time export of historical bounded range of ledgers, use `append --start <from_ledger> --end <to_ledger>`
+  - For a continuous export of prior ledgers and all new ledgers generated on network, use `append --start <from_ledger>`.
+
+### Ledger Metadata Consumer Pipeline
+
+A consumer pipeline retrieves files from the GCS bucket and uses them as the origin of Ledger Metadata in a data processing pipeline. There can be many separate consumer pipelines all accessing the same Datastore at stame time. Each consumer pipeline will typically perform three distinct stream processor roles:
+
+#### Inbound Adapter
+
+The 'source of origin' for the ledger metadata in a pipeline. This processor retrieves [Ledger Metadata](https://github.com/stellar/go/blob/f30d11432e81c7a7cbb739a694520f729bbb31dd/xdr/xdr_generated.go#L18358) files from the GCS Datastore, extracts the `LedgerCloseMeta` for each Ledger and publishes it onto the messaging pipeline.
+
+The go sdk provides consumer helper function [ApplyLedgerMetadata](https://github.com/stellar/go/blob/master/ingest/cdp/producer.go#L89) for automated, performant, buffered retrieval of files from the remote datastore, application code can leverage this to acquire pure `LedgerCloseMeta` data from a callback function.
+
+#### Transformer
+
+Subscribes on the pipeline to receive `LedgerCloseMeta`. Uses the Go SDK package [github.com/stellar/go/xdr](https://github.com/stellar/go/tree/master/xdr) to parse the ledger meta data model for payment operations and convert those into a new instance of application data model `AppPayment` instances. Publishes `AppPayment` to the pipeline.
+
+#### Outbound Adapter
 
 Acts as the termination of the pipeline, it subscribes to receive `ApplicationPayment` and publishes the data off the pipeline and to an external data store, a ZeroMQ Publisher Socket, which is essentially a message broker.
 
 ### Summary
 
-Refer to [Ingestion Pipeline Sample Application](./ingestion-pipeline-code.mdx) for complete code demonstrating usage of the 'ingestion' SDK packages to create these adapters and transformers and run a live pipeline against the Stellar network.
+Refer to [Ingestion Pipeline Sample Application](./ingestion-pipeline-code.mdx) for complete consumer code example, demonstrating a live, streaming pipeline against the Stellar network, processing each new ledger's metadata as it is closed on the network.
