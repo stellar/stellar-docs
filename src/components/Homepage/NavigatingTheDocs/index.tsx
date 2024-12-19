@@ -16,7 +16,7 @@ export const learnMoreLink = (target: string) => (
     <Translate
       id='component.Homepage.LearnMoreButton.Text'
       description='The text that will be displayed on the "Learn more" buttons'>
-      Learn more
+      Explore
     </Translate>
   </Link>
 )
@@ -82,7 +82,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
       <Translate
         id='component.Homepage.NavigatingTheDocs.Data.Description'
         description='Long description of what kind of information this section of the docs.'>
-        Discover various data availability options: RPC, Hubble, and Horizon.
+        Discover various data availability options: RPC, Hubble, Horizon, Galexie, and data indexers.
       </Translate>
     ),
     link: learnMoreLink('/docs/data'),
@@ -96,7 +96,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
       <Translate
         id='component.Homepage.NavigatingTheDocs.Tools.Description'
         description='Long description of what kind of information this section of the docs.'>
-        Learn about all the available tools at your disposal for building on, interacting with, or just watching the Stellar network. Also, find information on how to use the Anchor Platform or Stellar Disbursement Platform.
+        Learn about all the available tools for building on, interacting with, or just watching the Stellar network. Also, find information on how to use the Anchor Platform or Stellar Disbursement Platform.
       </Translate>
     ),
     link: learnMoreLink('/docs/tools'),
@@ -110,7 +110,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
       <Translate
         id='component.Homepage.NavigatingTheDocs.Networks.Description'
         description='Long description of what kind of information this section of the docs.'>
-        Information about deployed networks (Mainnet, Testnet, and Futurenet), current software versions, and resource limitations and fees.
+        Information about deployed networks (Mainnet, Testnet, and Futurenet), current software versions, resource limitations, and fees.
       </Translate>
     ),
     link: learnMoreLink('/docs/networks'),

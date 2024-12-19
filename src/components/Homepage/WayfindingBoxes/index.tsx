@@ -23,7 +23,7 @@ const WayfindingWays: WayfindingItem[] = [
       <Translate
         id='components.WayfindingBoxes.AssetIssuers.Description'
         description='Short, punchy description for this "wayfinding box" on the homepage.'>
-        Issue an asset on the Stellar network or create a custom smart contract token.
+        Issue an asset or create a custom smart contract token.
       </Translate>
     ),
     link: (
@@ -32,7 +32,7 @@ const WayfindingWays: WayfindingItem[] = [
         <Translate
           id='components.WayfindingBoxes.AssetIssuers.LinkText'
           description='Button text for this "wayfinding box" on the homepage.'>
-          Issue an asset
+          Learn more
         </Translate>
       </Link>
     ),
@@ -47,7 +47,7 @@ const WayfindingWays: WayfindingItem[] = [
       <Translate
         id='components.WayfindingBoxes.SmartContractDevelopers.Description'
         description='Short, punchy description for this "wayfinding box" on the homepage.'>
-        Write, test, deploy, and interact with smart contracts on the Stellar network.
+        Write smart contracts on the Stellar network.
       </Translate>
     ),
     link: (
@@ -56,14 +56,14 @@ const WayfindingWays: WayfindingItem[] = [
         <Translate
           id='components.WayfindingBoxes.SmartContractDevelopers.LinkText'
           description='Button text for this "wayfinding box" on the homepage.'>
-          Write a smart contract
+          Learn more
         </Translate>
       </Link>
     ),
   },
   {
     title: translate({
-      message: 'Ramps (anchors)',
+      message: 'Ramps (Anchors)',
       id: 'components.WayfindingBoxes.RampsAnchors.Title'
     }),
     image: require('@site/static/icons/issue-assets.png').default,
@@ -71,7 +71,7 @@ const WayfindingWays: WayfindingItem[] = [
       <Translate
         id='components.WayfindingBoxes.RampsAnchors.Description'
         description='Short, punchy description for this "wayfinding box" on the homepage.'>
-        Set up an on/off-ramp (also known as an anchor) using the SDF-maintained Anchor Platform tool.
+        Learn about and set up an anchor.
       </Translate>
     ),
     link: (
@@ -80,7 +80,7 @@ const WayfindingWays: WayfindingItem[] = [
         <Translate
           id='components.WayfindingBoxes.RampsAnchors.LinkText'
           description='Button text for this "wayfinding box" on the homepage.'>
-          Set up an anchor
+          Learn more
         </Translate>
       </Link>
     ),
@@ -95,7 +95,7 @@ const WayfindingWays: WayfindingItem[] = [
       <Translate
         id='components.WayfindingBoxes.Applications.Description'
         description='Short, punchy description for this "wayfinding box" on the homepage.'>
-        For application builders or exchanges that want to list Stellar assets.
+        Build a traditional wallet, dapp, or list Stellar assets on an exchange. 
       </Translate>
     ),
     link: (
@@ -104,7 +104,7 @@ const WayfindingWays: WayfindingItem[] = [
         <Translate
           id='components.WayfindingBoxes.Applications.LinkText'
           description='Button text for this "wayfinding box" on the homepage.'>
-          Build an app
+          Learn more
         </Translate>
       </Link>
     ),
@@ -119,7 +119,7 @@ const WayfindingWays: WayfindingItem[] = [
       <Translate
         id='components.WayfindingBoxes.InfrastructureProviders.Description'
         description='Short, punchy description for this "wayfinding box" on the homepage.'>
-        Set up Stellar network infrastructure to use yourself or list as a third-party service for others.
+        Set up a Horizon or RPC service. 
       </Translate>
     ),
     link: (
@@ -128,7 +128,7 @@ const WayfindingWays: WayfindingItem[] = [
         <Translate
           id='components.WayfindingBoxes.InfrastructureProviders.LinkText'
           description='Button text for this "wayfinding box" on the homepage.'>
-          Set up infrastructure
+          Learn more
         </Translate>
       </Link>
     ),
@@ -143,7 +143,7 @@ const WayfindingWays: WayfindingItem[] = [
       <Translate
         id='components.WayfindingBoxes.Analytics.Description'
         description='Short, punchy description for this "wayfinding box" on the homepage.'>
-        Perform analysis on Stellar network data.
+        Use Hubble to perform analysis on Stellar network data.
       </Translate>
     ),
     link: (
@@ -152,7 +152,7 @@ const WayfindingWays: WayfindingItem[] = [
         <Translate
           id='components.WayfindingBoxes.Analytics.LinkText'
           description='Button text for this "wayfinding box" on the homepage.'>
-          Access Stellar network data
+          Learn more
         </Translate>
       </Link>
     ),
