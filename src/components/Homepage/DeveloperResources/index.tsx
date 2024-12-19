@@ -80,7 +80,12 @@ function DeveloperResourcesFeature({title, description, link}) {
 function DocsContribution() {
   return (
     <>
-      <Heading as="h3"><Translate>Contribute to the docs and leave feedback</Translate></Heading>
+      <Heading as="h3">
+        <Translate
+          id='component.Homepage.DocsContribution.Heading'>
+          Contribute to the docs and leave feedback
+        </Translate>
+      </Heading>
       <p>
         <Translate
           id='component.Homepage.DocsContribution.Paragraph1'
@@ -100,7 +105,7 @@ function DocsContribution() {
       </p>
       <p>
         <Translate
-          id='component.Homepage.DocsContribution.Paragraph1'
+          id='component.Homepage.DocsContribution.Paragraph2'
           values={{
             githubOrgLink: (
               <Link to="https://github.com/stellar">
