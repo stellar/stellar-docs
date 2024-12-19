@@ -159,12 +159,12 @@ const WayfindingWays: WayfindingItem[] = [
   },
 ];
 
-function Feature({image, title, description, link}) {
+function WayfindingFeature({image, title, description, link}) {
   return (
     <div className={clsx('col col--4')}>
       <div className="padding-horiz--md">
         <div>
-          <Link {...link.props} className={clsx(styles.boxIconLink, 'button', 'button--secondary')}><img src={image} className={styles.boxIcon} role="img" /></Link>
+          <Link {...link.props} className={styles.boxIconLink}><img src={image} className={styles.boxIcon} role="img" /></Link>
         </div>
         <Heading as="h3">{title}</Heading>
         <p>{description}</p>
@@ -180,7 +180,7 @@ export default function WayfindingBoxes() {
       <div className="container">
         <div className="row">
           {WayfindingWays.map((props, idx) => (
-            <Feature key={idx} {...props} />
+            <WayfindingFeature key={idx} {...props} />
           ))}
         </div>
       </div>
