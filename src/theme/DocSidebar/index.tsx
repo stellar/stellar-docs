@@ -9,7 +9,12 @@ export default function DocSidebarWrapper(props: Props): JSX.Element {
   let newProps;
 
   // For all `/platforms` and `/docs/data` sidebars, remove the parent category from the sidebar.
-  if (props.path.startsWith('/platforms') || props.path.startsWith('/docs/data')) {
+  if (
+    props.path.startsWith('/platforms') ||
+    props.path.startsWith('/docs/data') ||
+    props.path.startsWith('/es/platforms') ||
+    props.path.startsWith('/es/docs/data')
+  ) {
     newProps = {
       ...props,
     };

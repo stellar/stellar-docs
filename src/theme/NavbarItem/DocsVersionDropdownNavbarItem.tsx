@@ -21,7 +21,7 @@ export default function DocsVersionDropdownNavbarItemWrapper(props: Props): JSX.
    * version dropdown for each plugin in your navbarItems config property for
    * this to work well.
    */
-  if (!(pathname.startsWith('/platforms/anchor-platform') && docsPluginId === 'ap')) {
+  if (!(pathname.match(/^(\/es)?\/platforms\/anchor-platform/) && docsPluginId === 'ap')) {
     return null
   }
   return (
