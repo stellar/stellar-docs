@@ -1,11 +1,18 @@
-import React from 'react';
+import React, { type ReactNode } from 'react';
 import clsx from 'clsx';
 import Heading from '@theme/Heading';
 import Link from '@docusaurus/Link';
 import styles from './styles.module.css';
 import Translate, {translate} from '@docusaurus/Translate';
 
-const WayfindingWays = [
+type WayfindingItem = {
+  title: string;
+  description: ReactNode;
+  image: string;
+  link: ReactNode;
+}
+
+const WayfindingWays: WayfindingItem[] = [
   {
     title: translate({
       message: 'Asset Issuers',
@@ -155,13 +162,13 @@ const WayfindingWays = [
 function Feature({image, title, description, link}) {
   return (
     <div className={clsx('col col--4')}>
-      <div className="text--center">
-        <Link {...link.props} className={clsx(styles.boxIconLink, 'button', 'button--secondary')}><img src={image} className={styles.boxIcon} role="img" /></Link>
-      </div>
-      <div className="text--center padding-horiz--md">
+      <div className="padding-horiz--md">
+        <div>
+          <Link {...link.props} className={clsx(styles.boxIconLink, 'button', 'button--secondary')}><img src={image} className={styles.boxIcon} role="img" /></Link>
+        </div>
         <Heading as="h3">{title}</Heading>
         <p>{description}</p>
-        <p className="margin-bottom--lg"><Link className="button button--primary" {...link.props} /></p>
+        <p className="margin-bottom--lg"><Link className="button button--outline button--primary" {...link.props} /></p>
       </div>
     </div>
   );
