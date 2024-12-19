@@ -5,23 +5,23 @@ import Translate, { translate } from '@docusaurus/Translate';
 import clsx from 'clsx';
 import styles from './styles.module.css'
 
-type NavigatingDocsItem = {
+export type NavigatingDocsItem = {
   title: string;
   description: ReactNode;
   link: ReactNode;
 }
 
-const learnMoreLink = (target: string) => (
+export const learnMoreLink = (target: string) => (
   <Link to={target}>
     <Translate
-      id='component.NavigatingTheDocs.LearnMoreButton.Text'
+      id='component.Homepage.LearnMoreButton.Text'
       description='The text that will be displayed on the "Learn more" buttons'>
       Learn more
     </Translate>
   </Link>
 )
 
-const partitionBoxes = (boxesArray: NavigatingDocsItem[]): NavigatingDocsItem[][] => {
+export const partitionBoxes = (boxesArray: NavigatingDocsItem[]): NavigatingDocsItem[][] => {
   return boxesArray.reduce((acc, item, i, arr) => {
     if (i % 2 === 0) {
       acc.push(arr.slice(i, i + 2))
@@ -34,11 +34,11 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
   {
     title: translate({
       message: 'Build',
-      id: 'component.NavigatingTheDocs.Build.Title',
+      id: 'component.Homepage.NavigatingTheDocs.Build.Title',
     }),
     description: (
       <Translate
-        id='component.NavigatingTheDocs.Build.Description'
+        id='component.Homepage.NavigatingTheDocs.Build.Description'
         description='Long description of what kind of information this section of the docs.'>
         Contains tutorials and how-to guides for writing smart contracts, building applications, interacting with the network, and more.
       </Translate>
@@ -48,11 +48,11 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
   {
     title: translate({
       message: 'Learn',
-      id: 'component.NavigatingTheDocs.Learn.Title',
+      id: 'component.Homepage.NavigatingTheDocs.Learn.Title',
     }),
     description: (
       <Translate
-        id='component.NavigatingTheDocs.Learn.Description'
+        id='component.Homepage.NavigatingTheDocs.Learn.Description'
         description='Long description of what kind of information this section of the docs.'>
         Find all informational and conceptual content here. Learn about Stellar fundamentals like how accounts and transactions function, dive deeper into the functionality of each operation, discover how fees work, and more.
       </Translate>
@@ -62,11 +62,11 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
   {
     title: translate({
       message: 'Tokens',
-      id: 'component.NavigatingTheDocs.Tokens.Title',
+      id: 'component.Homepage.NavigatingTheDocs.Tokens.Title',
     }),
     description: (
       <Translate
-        id='component.NavigatingTheDocs.Tokens.Description'
+        id='component.Homepage.NavigatingTheDocs.Tokens.Description'
         description='Long description of what kind of information this section of the docs.'>
         Information on how to issue assets on the Stellar network and create custom smart contract tokens.
       </Translate>
@@ -76,11 +76,11 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
   {
     title: translate({
       message: 'Data',
-      id: 'component.NavigatingTheDocs.Data.Title',
+      id: 'component.Homepage.NavigatingTheDocs.Data.Title',
     }),
     description: (
       <Translate
-        id='component.NavigatingTheDocs.Data.Description'
+        id='component.Homepage.NavigatingTheDocs.Data.Description'
         description='Long description of what kind of information this section of the docs.'>
         Discover various data availability options: RPC, Hubble, and Horizon.
       </Translate>
@@ -90,11 +90,11 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
   {
     title: translate({
       message: 'Tools',
-      id: 'component.NavigatingTheDocs.Tools.Title',
+      id: 'component.Homepage.NavigatingTheDocs.Tools.Title',
     }),
     description: (
       <Translate
-        id='component.NavigatingTheDocs.Tools.Description'
+        id='component.Homepage.NavigatingTheDocs.Tools.Description'
         description='Long description of what kind of information this section of the docs.'>
         Learn about all the available tools at your disposal for building on, interacting with, or just watching the Stellar network. Also, find information on how to use the Anchor Platform or Stellar Disbursement Platform.
       </Translate>
@@ -104,11 +104,11 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
   {
     title: translate({
       message: 'Networks',
-      id: 'component.NavigatingTheDocs.Networks.Title',
+      id: 'component.Homepage.NavigatingTheDocs.Networks.Title',
     }),
     description: (
       <Translate
-        id='component.NavigatingTheDocs.Networks.Description'
+        id='component.Homepage.NavigatingTheDocs.Networks.Description'
         description='Long description of what kind of information this section of the docs.'>
         Information about deployed networks (Mainnet, Testnet, and Futurenet), current software versions, and resource limitations and fees.
       </Translate>
@@ -118,11 +118,11 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
   {
     title: translate({
       message: 'Validators',
-      id: 'component.NavigatingTheDocs.Validators.Title',
+      id: 'component.Homepage.NavigatingTheDocs.Validators.Title',
     }),
     description: (
       <Translate
-        id='component.NavigatingTheDocs.Validators.Description'
+        id='component.Homepage.NavigatingTheDocs.Validators.Description'
         description='Long description of what kind of information this section of the docs.'>
         Everything you'll need to know if you want to run, operate, and maintain a core validator node on the Stellar network.
       </Translate>
@@ -145,14 +145,15 @@ function NavigatingDocsFeature({title, description, link}) {
 
 export default function NavigatingTheDocs() {
   const partitionedBoxes = partitionBoxes(NavigatingDocsBoxes)
+
   return (
     <section className='margin-vert--lg'>
       <div className="container">
           {partitionedBoxes.map((twoBoxes) => (
             <div className='row'>
-            {twoBoxes.map((props, idx) => (
-              <NavigatingDocsFeature key={idx} {...props} />
-            ))}
+              {twoBoxes.map((props, idx) => (
+                <NavigatingDocsFeature key={idx} {...props} />
+              ))}
             </div>
           ))}
       </div>
