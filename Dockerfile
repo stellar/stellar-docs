@@ -15,11 +15,20 @@ RUN apt-get update && apt-get install --no-install-recommends -y gpg curl git ma
     apt-get update && apt-get install -y nodejs yarn && apt-get clean
 
 COPY . /app/
+ARG CROWDIN_PERSONAL_TOKEN
+ARG BUILD_TRANSLATIONS="False"
 
 RUN yarn install
 RUN yarn rpcspec:build
 RUN yarn stellar-cli:build
-RUN NODE_OPTIONS="--max-old-space-size=4096" yarn build
+
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
+    CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn build:production; \
+  else \
+    # In the preview build, we only want to build for English. Much quicker
+    yarn build; \
+  fi
 
 FROM nginx:1.27
 
