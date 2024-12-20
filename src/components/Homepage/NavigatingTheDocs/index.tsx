@@ -135,7 +135,7 @@ function NavigatingDocsFeature({title, description, link}) {
   return (
     <div className='col col--6 padding--md'>
       <div className={clsx(styles.NavigatingDocsFeature, 'padding--lg')}>
-        <Heading as="h3">{title}</Heading>
+        <Heading as="h3" className='text--semibold'>{title}</Heading>
         <p>{description}</p>
         <Link className='button button--outline button--primary' {...link.props} />
       </div>
@@ -148,15 +148,13 @@ export default function NavigatingTheDocs() {
 
   return (
     <section className='margin-vert--lg'>
-      <div className="container">
-          {partitionedBoxes.map((twoBoxes) => (
-            <div className='row'>
-              {twoBoxes.map((props, idx) => (
-                <NavigatingDocsFeature key={idx} {...props} />
-              ))}
-            </div>
+      {partitionedBoxes.map((twoBoxes) => (
+        <div className='row'>
+          {twoBoxes.map((props, idx) => (
+            <NavigatingDocsFeature key={idx} {...props} />
           ))}
-      </div>
+        </div>
+      ))}
     </section>
   )
 }
