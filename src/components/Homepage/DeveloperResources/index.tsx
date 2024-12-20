@@ -69,7 +69,7 @@ function DeveloperResourcesFeature({title, description, link}) {
   return (
     <div className='col col--6 padding--md'>
       <div className={clsx(styles.DeveloperResourcesFeature, 'padding--lg')}>
-        <Heading as="h3">{title}</Heading>
+        <Heading as="h3" className='text--semibold'>{title}</Heading>
         <p>{description}</p>
         <Link className='button button--outline button--primary' {...link.props} />
       </div>
@@ -80,7 +80,7 @@ function DeveloperResourcesFeature({title, description, link}) {
 function DocsContribution() {
   return (
     <>
-      <Heading as="h3">
+      <Heading as="h3" className='text--semibold'>
         <Translate
           id='component.Homepage.DocsContribution.Heading'>
           Contribute to the docs and leave feedback
@@ -129,21 +129,19 @@ export default function DeveloperResources() {
 
   return (
     <section className='margin-vert--lg'>
-      <div className="container">
-          {partitionedBoxes.map((twoBoxes) => (
-            <div className='row'>
-              {twoBoxes.map((props, idx) => (
-                <DeveloperResourcesFeature key={idx} {...props} />
-              ))}
-            </div>
+      {partitionedBoxes.map((twoBoxes) => (
+        <div className='row'>
+          {twoBoxes.map((props, idx) => (
+            <DeveloperResourcesFeature key={idx} {...props} />
           ))}
-          <div className='row'>
-            <div className='col padding--md'>
-              <div className={clsx(styles.DeveloperResourcesFeature, 'padding--lg')}>
-                <DocsContribution />
-              </div>
-            </div>
+        </div>
+      ))}
+      <div className='row'>
+        <div className='col padding--md'>
+          <div className={clsx(styles.DeveloperResourcesFeature, 'padding--lg')}>
+            <DocsContribution />
           </div>
+        </div>
       </div>
     </section>
   )
