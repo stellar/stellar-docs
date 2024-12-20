@@ -12,6 +12,16 @@ type WayfindingItem = {
   link: ReactNode;
 }
 
+export const learnMoreLink = (target: string) => (
+  <Link to={target}>
+    <Translate
+      id='component.Homepage.LearnMoreButton.Text'
+      description='The text that will be displayed on the "Learn More" buttons'>
+      LearnMore
+    </Translate>
+  </Link>
+)
+
 const WayfindingWays: WayfindingItem[] = [
   {
     title: translate({
@@ -26,16 +36,7 @@ const WayfindingWays: WayfindingItem[] = [
         Issue an asset or create a custom smart contract token.
       </Translate>
     ),
-    link: (
-      <Link
-        to="#asset-issuers">
-        <Translate
-          id='components.WayfindingBoxes.AssetIssuers.LinkText'
-          description='Button text for this "wayfinding box" on the homepage.'>
-          Learn more
-        </Translate>
-      </Link>
-    ),
+    link: learnMoreLink("#asset-issuers"),
   },
   {
     title: translate({
@@ -50,16 +51,7 @@ const WayfindingWays: WayfindingItem[] = [
         Write smart contracts on the Stellar network.
       </Translate>
     ),
-    link: (
-      <Link
-        to="#smart-contract-developers">
-        <Translate
-          id='components.WayfindingBoxes.SmartContractDevelopers.LinkText'
-          description='Button text for this "wayfinding box" on the homepage.'>
-          Learn more
-        </Translate>
-      </Link>
-    ),
+    link: learnMoreLink("#smart-contract-developers"),
   },
   {
     title: translate({
@@ -74,16 +66,7 @@ const WayfindingWays: WayfindingItem[] = [
         Learn about and set up an anchor.
       </Translate>
     ),
-    link: (
-      <Link
-        to="#ramps-anchors">
-        <Translate
-          id='components.WayfindingBoxes.RampsAnchors.LinkText'
-          description='Button text for this "wayfinding box" on the homepage.'>
-          Learn more
-        </Translate>
-      </Link>
-    ),
+    link: learnMoreLink("#ramps-anchors"),
   },
   {
     title: translate({
@@ -95,19 +78,10 @@ const WayfindingWays: WayfindingItem[] = [
       <Translate
         id='components.WayfindingBoxes.Applications.Description'
         description='Short, punchy description for this "wayfinding box" on the homepage.'>
-        Build a traditional wallet, dapp, or list Stellar assets on an exchange. 
+        Build a traditional wallet, dapp, or list Stellar assets on an exchange.
       </Translate>
     ),
-    link: (
-      <Link
-        to="#applications">
-        <Translate
-          id='components.WayfindingBoxes.Applications.LinkText'
-          description='Button text for this "wayfinding box" on the homepage.'>
-          Learn more
-        </Translate>
-      </Link>
-    ),
+    link: learnMoreLink("#applications"),
   },
   {
     title: translate({
@@ -119,19 +93,10 @@ const WayfindingWays: WayfindingItem[] = [
       <Translate
         id='components.WayfindingBoxes.InfrastructureProviders.Description'
         description='Short, punchy description for this "wayfinding box" on the homepage.'>
-        Set up a Horizon or RPC service. 
+        Set up a Horizon or RPC service.
       </Translate>
     ),
-    link: (
-      <Link
-        to="#infrastructure-providers">
-        <Translate
-          id='components.WayfindingBoxes.InfrastructureProviders.LinkText'
-          description='Button text for this "wayfinding box" on the homepage.'>
-          Learn more
-        </Translate>
-      </Link>
-    ),
+    link: learnMoreLink("#infrastructure-providers"),
   },
   {
     title: translate({
@@ -146,16 +111,7 @@ const WayfindingWays: WayfindingItem[] = [
         Use Hubble to perform analysis on Stellar network data.
       </Translate>
     ),
-    link: (
-      <Link
-        to="#analytics">
-        <Translate
-          id='components.WayfindingBoxes.Analytics.LinkText'
-          description='Button text for this "wayfinding box" on the homepage.'>
-          Learn more
-        </Translate>
-      </Link>
-    ),
+    link: learnMoreLink("#analytics"),
   },
 ];
 

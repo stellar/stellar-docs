@@ -2,7 +2,7 @@ import React, { type ReactNode } from 'react'
 import Heading from '@theme/Heading';
 import Link from '@docusaurus/Link';
 import clsx from 'clsx';
-import { learnMoreLink, partitionBoxes, type NavigatingDocsItem as DeveloperResourcesItem } from '@site/src/components/Homepage/NavigatingTheDocs'
+import { exploreLink, partitionBoxes, type NavigatingDocsItem as DeveloperResourcesItem } from '@site/src/components/Homepage/NavigatingTheDocs'
 import Translate, { translate } from '@docusaurus/Translate'
 import styles from './styles.module.css'
 
@@ -19,7 +19,7 @@ const DeveloperResourcesBoxes: DeveloperResourcesItem[] = [
         Ask questions and engage with other Stellar devs.
       </Translate>
     ),
-    link: learnMoreLink('https://discord.gg/st7Mxd58BV'),
+    link: exploreLink('https://discord.gg/st7Mxd58BV'),
   },
   {
     title: translate({
@@ -33,7 +33,7 @@ const DeveloperResourcesBoxes: DeveloperResourcesItem[] = [
         Get the latest news and insights about building on Stellar.
       </Translate>
     ),
-    link: learnMoreLink('https://stellar.org/developers'),
+    link: exploreLink('https://stellar.org/developers'),
   },
   {
     title: translate({
@@ -47,7 +47,7 @@ const DeveloperResourcesBoxes: DeveloperResourcesItem[] = [
         A question and answer site for Stellar developers; if you can’t find what you’re looking for in the docs, try searching the Stack Exchange to see if your question has been addressed. If it hasn't, feel free to ask!
       </Translate>
     ),
-    link: learnMoreLink('https://stellar.stackexchange.com/'),
+    link: exploreLink('https://stellar.stackexchange.com/'),
   },
   {
     title: translate({
@@ -61,7 +61,7 @@ const DeveloperResourcesBoxes: DeveloperResourcesItem[] = [
         Discuss Core Advancement Proposals (CAPs) and Stellar Ecosystem Proposals (SEPs), talk about the development of Stellar Core and Horizon, and stay informed about important network upgrades.
       </Translate>
     ),
-    link: learnMoreLink('https://groups.google.com/g/stellar-dev'),
+    link: exploreLink('https://groups.google.com/g/stellar-dev'),
   },
 ]
 

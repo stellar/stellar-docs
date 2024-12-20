@@ -11,11 +11,11 @@ export type NavigatingDocsItem = {
   link: ReactNode;
 }
 
-export const learnMoreLink = (target: string) => (
+export const exploreLink = (target: string) => (
   <Link to={target}>
     <Translate
-      id='component.Homepage.LearnMoreButton.Text'
-      description='The text that will be displayed on the "Learn more" buttons'>
+      id='component.Homepage.ExploreButton.Text'
+      description='The text that will be displayed on the "Explore" buttons'>
       Explore
     </Translate>
   </Link>
@@ -43,7 +43,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
         Contains tutorials and how-to guides for writing smart contracts, building applications, interacting with the network, and more.
       </Translate>
     ),
-    link: learnMoreLink('/docs/build'),
+    link: exploreLink('/docs/build'),
   },
   {
     title: translate({
@@ -57,7 +57,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
         Find all informational and conceptual content here. Learn about Stellar fundamentals like how accounts and transactions function, dive deeper into the functionality of each operation, discover how fees work, and more.
       </Translate>
     ),
-    link: learnMoreLink('/docs/learn/fundamentals'),
+    link: exploreLink('/docs/learn/fundamentals'),
   },
   {
     title: translate({
@@ -71,7 +71,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
         Information on how to issue assets on the Stellar network and create custom smart contract tokens.
       </Translate>
     ),
-    link: learnMoreLink('/docs/tokens'),
+    link: exploreLink('/docs/tokens'),
   },
   {
     title: translate({
@@ -85,7 +85,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
         Discover various data availability options: RPC, Hubble, Horizon, Galexie, and data indexers.
       </Translate>
     ),
-    link: learnMoreLink('/docs/data'),
+    link: exploreLink('/docs/data'),
   },
   {
     title: translate({
@@ -99,7 +99,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
         Learn about all the available tools for building on, interacting with, or just watching the Stellar network. Also, find information on how to use the Anchor Platform or Stellar Disbursement Platform.
       </Translate>
     ),
-    link: learnMoreLink('/docs/tools'),
+    link: exploreLink('/docs/tools'),
   },
   {
     title: translate({
@@ -113,7 +113,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
         Information about deployed networks (Mainnet, Testnet, and Futurenet), current software versions, resource limitations, and fees.
       </Translate>
     ),
-    link: learnMoreLink('/docs/networks'),
+    link: exploreLink('/docs/networks'),
   },
   {
     title: translate({
@@ -127,7 +127,7 @@ const NavigatingDocsBoxes: NavigatingDocsItem[] = [
         Everything you'll need to know if you want to run, operate, and maintain a core validator node on the Stellar network.
       </Translate>
     ),
-    link: learnMoreLink('/docs/validators'),
+    link: exploreLink('/docs/validators'),
   },
 ]
 
