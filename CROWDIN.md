@@ -56,7 +56,7 @@ As documents are translated, they will be assigned a translation percentage high
 
 To manage files that have been checked or proofread, it is recommended to mark them as approved. Approved files will display an approved percentage highlighted in green. 
 
-**Note:** All translations are synced with the Stellar Docusaurus Documentation regardless of whether they have been marked as approved. Approval is purely for managing translation files that have been checked. 
+**Note:** All translations are synced with the Stellar Docusaurus Documentation after they are reviewed and approved. Approval is a check for managing translation files that have been edited. 
 
 For more information on approving translations, see the following documentation: 
 [Proofreading](https://support.crowdin.com/online-editor/#proofreading)
