@@ -70,40 +70,40 @@ test test::test ... ok
 #[contract]
 pub struct Deployer;
 
+const ADMIN: Symbol = symbol_short!("admin");
+
 #[contractimpl]
 impl Deployer {
-    /// Deploy the contract Wasm and after deployment invoke the init function
-    /// of the contract with the given arguments.
+    /// Construct the deployer with a provided administrator.
+    pub fn __constructor(env: Env, admin: Address) {
+        env.storage().instance().set(&ADMIN, &admin);
+    }
+
+    /// Deploys the contract on behalf of the `Deployer` contract.
     ///
-    /// This has to be authorized by `deployer` (unless the `Deployer` instance
-    /// itself is used as deployer). This way the whole operation is atomic
-    /// and it's not possible to frontrun the contract initialization.
-    ///
-    /// Returns the contract address and result of the init function.
+    /// This has to be authorized by the `Deployer`s administrator.
     pub fn deploy(
         env: Env,
-        deployer: Address,
         wasm_hash: BytesN<32>,
         salt: BytesN<32>,
-        init_fn: Symbol,
-        init_args: Vec<Val>,
-    ) -> (Address, Val) {
-        // Skip authorization if deployer is the current contract.
-        if deployer != env.current_contract_address() {
-            deployer.require_auth();
-        }
+        constructor_args: Vec<Val>,
+    ) -> Address {
+        let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        admin.require_auth();
 
-        // Deploy the contract using the uploaded Wasm with given hash.
+        // Deploy the contract using the uploaded Wasm with given hash on behalf
+        // of the current contract.
+        // Note, that not deploying on behalf of the admin provides more
+        // consistent address space for the deployer contracts - the admin could
+        // change or it could be a completely separate contract with complex
+        // authorization rules, but all the contracts will still be deployed
+        // by the same `Deployer` contract address.
         let deployed_address = env
             .deployer()
-            .with_address(deployer, salt)
-            .deploy(wasm_hash);
+            .with_address(env.current_contract_address(), salt)
+            .deploy_v2(wasm_hash, constructor_args);
 
-        // Invoke the init function with the given arguments.
-        let res: Val = env.invoke_contract(&deployed_address, &init_fn, init_args);
-        // Return the contract ID of the deployed contract and the result of
-        // invoking the init result.
-        (deployed_address, res)
+        deployed_address
     }
 }
 ```
@@ -128,42 +128,41 @@ See the [tests](#tests) for an example of uploading the contract code programmat
 
 :::info
 
-This section can be skipped for factory contracts that deploy another contract from their own address (`deployer == env.current_contract_address()``).
-
-:::
-
-:::info
-
 For introduction to Soroban authorization see the [auth tutorial](./auth.mdx).
 
 :::
 
-We start with verifying authorization of the `deployer`, unless its the current contract (at which point the authorization is implied).
+We start with verifying authorization of the deployer contract's admin. Without that anyone would be able to call the `deploy` function with any arguments, which may not always be desirable (however, there are contracts where it's perfectly fine to have permissionless deployments).
 
 ```rust
-if deployer != env.current_contract_address() {
-    deployer.require_auth();
-}
+let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+admin.require_auth();
 ```
 
-While `deployer().with_address()` performs authorization as well, we want to make sure that `deployer` has also authorized the whole operation, as besides deployment it also performs atomic contract initialization. If we didn't require deployer authorization here, then it would be possible to frontrun the deployment operation performed by `deployer` and initialize it differently, thus breaking the promise of atomic initialization.
+`deployer().with_address()` performs authorization as well. However, as we deploy on behalf of the current contract, the call is considered to have been implicitly authorized.
 
 See more details on the actual authorization payloads in [tests](#tests).
 
 ### `deployer()`
 
-The `deployer()` SDK function comes with a few deployment-related utilities. Here we use the most generic deployer kind, `with_address(deployer_address, salt)`.
+The `deployer()` SDK function comes with a few deployment-related utilities. Here we use the most generic deployer kind, `with_address(env.current_contract_address(), salt)`.
 
 ```rust
 let deployed_address = env
     .deployer()
-    .with_address(deployer, salt)
-    .deploy(wasm_hash);
+    .with_address(env.current_contract_address(), salt)
+    .deploy_v2(wasm_hash, constructor_args);
 ```
 
 `with_address()` accepts the `deployer` address and salt. Both are used to derive the address of the deployed contract deterministically. It is not possible to re-deploy an already existing contract.
 
-`deploy()` function performs the actual deployment using the provided `wasm_hash`. The implementation of the new contract is defined by the Wasm file uploaded under `wasm_hash`.
+:::tip
+
+`deployer().with_address(env.current_contract_address(), salt)` call may be replaced with `deployer().with_current_contract(salt)` function for brevity.
+
+:::
+
+`deploy_v2()` function performs the actual deployment using the provided `wasm_hash`. The implementation of the new contract is defined by the Wasm file uploaded under `wasm_hash`. `constructor_args` are the arguments that will be passed to the constructor of the contract that is being deployed. If the deployed contract has no constructor, empty argument vector should be passed.
 
 :::tip
 
@@ -171,29 +170,11 @@ Only the `wasm_hash` itself is stored per contract ID thus saving the ledger spa
 
 :::
 
-When only deploying the contract on behalf of the current contract, i.e. when `deployer` address is always `env.current_contract_address()` it is possible to use `deployer().with_current_contract(salt)` function for brevity.
-
-### Initialization
-
-The contract can be called immediately after deployment, which is useful for initialization.
-
-```rust
-let res: Val = env.invoke_contract(&deployed_address, &init_fn, init_args);
-```
-
-`invoke_contract` can call any defined contract function with any arguments. We pass the actual function to call and the arguments from `deploy` inputs. The result can be any value, depending on the `init_fn`'s return value.
-
-If the initialization fails, then the whole `deploy` call falls and thus the contract won't be deployed. This behavior is required for the atomic initialization guarantee as well.
-
-The contract returns the deployed contract's address and the result of executing the initialization function.
-
-```rust
- (deployed_address, res)
-```
-
 ### Tests
 
 Open the `deployer/deployer/src/test.rs` file to follow along.
+
+#### Contract to deploy
 
 Import the test contract Wasm to be deployed.
 
@@ -207,7 +188,7 @@ mod contract {
 }
 ```
 
-That contract contains the following code that exports two functions: initialization function that takes a value and a getter function for the stored initialized value.
+That contract contains the following code that exports two functions: constructor function that takes a value and a getter function for the stored value.
 
 ```rust title="deployer/contract/src/lib.rs"
 #[contract]
@@ -217,28 +198,26 @@ const KEY: Symbol = symbol_short!("value");
 
 #[contractimpl]
 impl Contract {
-    pub fn init(env: Env, value: u32) {
+    pub fn __constructor(env: Env, value: u32) {
         env.storage().instance().set(&KEY, &value);
     }
+
     pub fn value(env: Env) -> u32 {
         env.storage().instance().get(&KEY).unwrap()
     }
 }
 ```
 
-This test contract will be used when testing the deployer. The deployer contract will deploys the test contract and invoke its `init` function.
+This test contract will be used when testing the deployer. The deployer contract will deploy the test contract and invoke its constructor.
 
-There are two tests: deployment from the current contract without authorization and deployment from an arbitrary address with authorization. Besides authorization, these tests are very similar.
-
-#### Curent contract deployer
-
-In the first test we deploy contract from the `Deployer` contract instance itself.
+#### Test code
 
 ```rust
 #[test]
-fn test_deploy_from_contract() {
+fn test() {
     let env = Env::default();
-    let deployer_client = DeployerClient::new(&env, &env.register_contract(None, Deployer));
+    let admin = Address::generate(&env);
+    let deployer_client = DeployerClient::new(&env, &env.register(Deployer, (&admin,)));
 
     // Upload the Wasm to be deployed from the deployer contract.
     // This can also be called from within a contract if needed.
@@ -246,19 +225,21 @@ fn test_deploy_from_contract() {
 
     // Deploy contract using deployer, and include an init function to call.
     let salt = BytesN::from_array(&env, &[0; 32]);
-    let init_fn = symbol_short!("init");
-    let init_fn_args: Vec<Val> = (5u32,).into_val(&env);
-    let (contract_id, init_result) = deployer_client.deploy(
-        &deployer_client.address,
-        &wasm_hash,
-        &salt,
-        &init_fn,
-        &init_fn_args,
-    );
+    let constructor_args: Vec<Val> = (5u32,).into_val(&env);
+    env.mock_all_auths();
+    let contract_id = deployer_client.deploy(&wasm_hash, &salt, &constructor_args);
 
-    assert!(init_result.is_void());
-    // No authorizations needed - the contract acts as a factory.
-    assert_eq!(env.auths(), vec![]);
+    // An authorization from the admin is required.
+    let expected_auth = AuthorizedInvocation {
+        // Top-level authorized function is `deploy` with all the arguments.
+        function: AuthorizedFunction::Contract((
+            deployer_client.address,
+            symbol_short!("deploy"),
+            (wasm_hash.clone(), salt, constructor_args).into_val(&env),
+        )),
+        sub_invocations: vec![],
+    };
+    assert_eq!(env.auths(), vec![(admin, expected_auth)]);
 
     // Invoke contract to check that it is initialized.
     let client = contract::Client::new(&env, &contract_id);
@@ -273,10 +254,11 @@ In any test the first thing that is always required is an `Env`, which is the So
 let env = Env::default();
 ```
 
-Register the deployer contract with the environment and create a client to for it.
+Register the deployer contract with the environment and create a client to for it. The contract is initialized with the admin address during the registration.
 
 ```rust
-let deployer_client = DeployerClient::new(&env, &env.register_contract(None, Deployer));
+let admin = Address::generate(&env);
+let deployer_client = DeployerClient::new(&env, &env.register(Deployer, (&admin,)));
 ```
 
 Upload the code of the test contract that we have imported above via `contractimport!` and get the hash of the uploaded Wasm code.
@@ -285,148 +267,44 @@ Upload the code of the test contract that we have imported above via `contractim
 let wasm_hash = env.deployer().upload_contract_wasm(contract::WASM);
 ```
 
-The client is used to invoke the `deploy` function. The contract will deploy the test contract using the hash of its Wasm code, call the `init` function, and pass in a single `5u32` argument. The expected return value of `init` function is just `void` (i.e. no value).
+The client is used to invoke the `deploy` function. The contract will deploy the test contract using the hash of its Wasm code and pass a single `5u32` argument to its constructor. We also need the `salt` to pass into the call in order to generate a unique identifier of the output contract.
 
 ```rust
 let salt = BytesN::from_array(&env, &[0; 32]);
-let init_fn = symbol_short!("init");
-let init_fn_args: Vec<Val> = (5u32,).into_val(&env);
-let (contract_id, init_result) = deployer_client.deploy(
-    &deployer_client.address,
-    &wasm_hash,
-    &salt,
-    &init_fn,
-    &init_fn_args,
-);
-```
-
-The test checks that the test contract was deployed by using its client to invoke it and get back the value set during initialization.
-
-```rust
-let client = contract::Client::new(&env, &contract_id);
-let sum = client.value();
-assert_eq!(sum, 5);
-```
-
-#### External deployer
-
-The second test is very similar to the first one.
-
-```rust
-#[test]
-fn test_deploy_from_address() {
-    let env = Env::default();
-    let deployer_client = DeployerClient::new(&env, &env.register_contract(None, Deployer));
-
-    // Upload the Wasm to be deployed from the deployer contract.
-    // This can also be called from within a contract if needed.
-    let wasm_hash = env.deployer().upload_contract_wasm(contract::WASM);
-
-    // Define a deployer address that needs to authorize the deployment.
-    let deployer = Address::random(&env);
-
-    // Deploy contract using deployer, and include an init function to call.
-    let salt = BytesN::from_array(&env, &[0; 32]);
-    let init_fn = symbol_short!("init");
-    let init_fn_args: Vec<Val> = (5u32,).into_val(&env);
-    env.mock_all_auths();
-    let (contract_id, init_result) =
-        deployer_client.deploy(&deployer, &wasm_hash, &salt, &init_fn, &init_fn_args);
-
-    assert!(init_result.is_void());
-
-    let expected_auth = AuthorizedInvocation {
-        // Top-level authorized function is `deploy` with all the arguments.
-        function: AuthorizedFunction::Contract((
-            deployer_client.address,
-            symbol_short!("deploy"),
-            (
-                deployer.clone(),
-                wasm_hash.clone(),
-                salt,
-                init_fn,
-                init_fn_args,
-            )
-                .into_val(&env),
-        )),
-        // From `deploy` function the 'create contract' host function has to be
-        // authorized.
-        sub_invocations: vec![AuthorizedInvocation {
-            function: AuthorizedFunction::CreateContractHostFn(CreateContractArgs {
-                contract_id_preimage: ContractIdPreimage::Address(ContractIdPreimageFromAddress {
-                    address: deployer.clone().try_into().unwrap(),
-                    salt: Uint256([0; 32]),
-                }),
-                executable: xdr::ContractExecutable::Wasm(xdr::Hash(wasm_hash.into_val(&env))),
-            }),
-            sub_invocations: vec![],
-        }],
-    };
-    assert_eq!(env.auths(), vec![(deployer, expected_auth)]);
-
-    // Invoke contract to check that it is initialized.
-    let client = contract::Client::new(&env, &contract_id);
-    let sum = client.value();
-    assert_eq!(sum, 5);
-}
-```
-
-The main difference is that the contract is deployed on behalf of the arbitrary address.
-
-```rust
-// Define a deployer address that needs to authorize the deployment.
-let deployer = Address::random(&env);
+let constructor_args: Vec<Val> = (5u32,).into_val(&env);
 ```
 
 Before invoking the contract we need to enable mock authorization in order to get the recorded authorization payload that we can verify.
 
 ```rust
 env.mock_all_auths();
-let (contract_id, init_result) =
-        deployer_client.deploy(&deployer, &wasm_hash, &salt, &init_fn, &init_fn_args);
 ```
 
-The expected authorization tree for the `deployer` looks as follows.
+After the preparations above we can actually call the `deploy` function.
 
 ```rust
+let contract_id = deployer_client.deploy(&wasm_hash, &salt, &constructor_args);
+```
+
+The deployment requires authorization from the admin. As mentioned above, the authorization necessary for `deploy_v2` function is performed on behalf of the deployer contract and is implicit. This can be verified in the test by examining `env.auths()`.
+
+```rust
+// An authorization from the admin is required.
 let expected_auth = AuthorizedInvocation {
     // Top-level authorized function is `deploy` with all the arguments.
     function: AuthorizedFunction::Contract((
         deployer_client.address,
         symbol_short!("deploy"),
-        (
-            deployer.clone(),
-            wasm_hash.clone(),
-            salt,
-            init_fn,
-            init_fn_args,
-        )
-            .into_val(&env),
+        (wasm_hash.clone(), salt, constructor_args).into_val(&env),
     )),
-    // From `deploy` function the 'create contract' host function has to be
-    // authorized.
-    sub_invocations: vec![AuthorizedInvocation {
-        function: AuthorizedFunction::CreateContractHostFn(CreateContractArgs {
-            contract_id_preimage: ContractIdPreimage::Address(ContractIdPreimageFromAddress {
-                address: deployer.clone().try_into().unwrap(),
-                salt: Uint256([0; 32]),
-            }),
-            executable: xdr::ContractExecutable::Wasm(xdr::Hash(wasm_hash.into_val(&env))),
-        }),
-        sub_invocations: vec![],
-    }],
+    sub_invocations: vec![],
 };
+assert_eq!(env.auths(), vec![(admin, expected_auth)]);
 ```
 
-At the top level we have the `deploy` function itself with all the arguments that we've passed to it. From the `deploy` function the `CreateContractHostFn` has to be authorized. This is the authorization payload that has to be authorized by any deployer in any context. It contains the deployer address, salt and executable.
-
-This authorization tree proves that the deployment and initialization are authorized atomically: actual deployment happens within the context of `deploy` and all of salt, executable, and initialization arguments are authorized together (i.e. there is one signature to authorizes this exact combination).
-
-Then we make sure that deployer has authorized the expected tree and that expected value has been stored.
+The test checks that the test contract was deployed by using its client to invoke it and get back the value set during initialization.
 
 ```rust
-assert_eq!(env.auths(), vec![(deployer, expected_auth)]);
-
 let client = contract::Client::new(&env, &contract_id);
 let sum = client.value();
 assert_eq!(sum, 5);
@@ -481,8 +359,7 @@ stellar contract invoke --id 1 -- deploy \
     --deployer CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
     --salt 123 \
     --wasm_hash 7792a624b562b3d9414792f5fb5d72f53b9838fef2ed9a901471253970bc3b15 \
-    --init_fn init \
-    --init_args '[{"u32":5}]'
+    --constructor_args '[{"u32":5}]'
 ```
 
 </TabItem>
@@ -494,8 +371,7 @@ stellar contract invoke --id 1 -- deploy `
     --deployer CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
     --salt 123 `
     --wasm_hash 7792a624b562b3d9414792f5fb5d72f53b9838fef2ed9a901471253970bc3b15 `
-    --init_fn init `
-    --init_args '[{"u32":5}]'
+    --constructor_args '[{"u32":5}]'
 ```
 
 </TabItem>

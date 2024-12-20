@@ -88,7 +88,7 @@ enum DataKey {
 }
 ...
 // Initialize the contract with a list of ed25519 public key ('signers').
-pub fn init(env: Env, signers: Vec<BytesN<32>>) {
+pub fn __constructor(env: Env, signers: Vec<BytesN<32>>) {
     // In reality this would need some additional validation on signers
     // (deduplication etc.).
     for signer in signers.iter() {
@@ -101,6 +101,8 @@ pub fn init(env: Env, signers: Vec<BytesN<32>>) {
 ```
 
 This account contract needs to work with the public keys explicitly. Here we initialize the contract with ed25519 keys.
+
+We use constructor in order to ensure that the contract instance is created and initialized atomically (without constructor there is a risk that someone frontruns the initialization of the contract and sets their own public keys).
 
 ### Policy modification
 
@@ -173,7 +175,7 @@ Here it is implemented in two steps. First, authentication is performed using th
 ```rust
 fn authenticate(
     env: &Env,
-    signature_payload: &BytesN<32>,
+    signature_payload: &Hash<32>,
     signatures: &Vec<AccSignature>,
 ) -> Result<(), AccError> {
     for i in 0..signatures.len() {
@@ -213,63 +215,69 @@ fn verify_authorization_policy(
     all_signed: bool,
     spend_left_per_token: &mut Map<Address, i128>,
 ) -> Result<(), AccError> {
-    // For the account control every signer must sign the invocation.
+    // There are no limitations when every signers signs the transaction.
+    if all_signed {
+        return Ok(());
+    }
     let contract_context = match context {
         Context::Contract(c) => {
+            // Allow modifying this contract only if every signer has signed for it.
             if &c.contract == curr_contract {
-                if !all_signed {
-                    return Err(AccError::NotEnoughSigners);
-                }
+                return Err(AccError::NotEnoughSigners);
             }
             c
         }
-        Context::CreateContractHostFn(_) => return Err(AccError::InvalidContext),
+        // Allow creating new contracts only if every signer has signed for it.
+        Context::CreateContractHostFn(_) | Context::CreateContractWithCtorHostFn(_) => {
+            return Err(AccError::NotEnoughSigners);
+        }
     };
 ```
 
-We verify the policy per `Context`. i.e. Per one `require_auth` call. The policy for the account contract itself enforces every signer to have signed the method call.
+We verify the policy per `Context`. i.e. per one `require_auth` call for the address of this account. The policy for the account contract itself enforces every signer to have signed the method call.
 
 ```rust
-// Otherwise, we're only interested in functions that spend tokens.
-if contract_context.fn_name != TRANSFER_FN
-    && contract_context.fn_name != Symbol::new(env, "approve")
-{
-    return Ok(());
-}
-
-let spend_left: Option<i128> =
-    if let Some(spend_left) = spend_left_per_token.get(contract_context.contract.clone()) {
-        Some(spend_left)
-    } else if let Some(limit_left) = env
-        .storage()
-        .instance()
-        .get::<_, i128>(&DataKey::SpendLimit(contract_context.contract.clone()))
+    // Besides the checks above we're only interested in functions that spend tokens.
+    if contract_context.fn_name != TRANSFER_FN
+        && contract_context.fn_name != APPROVE_FN
+        && contract_context.fn_name != BURN_FN
     {
-        Some(limit_left)
-    } else {
-        None
-    };
+        return Ok(());
+    }
 
-// 'None' means that the contract is outside of the policy.
-if let Some(spend_left) = spend_left {
-    // 'amount' is the third argument in both `approve` and `transfer`.
-    // If the contract has a different signature, it's safer to panic
-    // here, as it's expected to have the standard interface.
-    let spent: i128 = contract_context
-        .args
-        .get(2)
-        .unwrap()
-        .try_into_val(env)
-        .unwrap();
-    if spent < 0 {
-        return Err(AccError::NegativeAmount);
+    let spend_left: Option<i128> =
+        if let Some(spend_left) = spend_left_per_token.get(contract_context.contract.clone()) {
+            Some(spend_left)
+        } else if let Some(limit_left) = env
+            .storage()
+            .instance()
+            .get::<_, i128>(&DataKey::SpendLimit(contract_context.contract.clone()))
+        {
+            Some(limit_left)
+        } else {
+            None
+        };
+
+    // 'None' means that the contract is outside of the policy.
+    if let Some(spend_left) = spend_left {
+        // 'amount' is the third argument in both `approve` and `transfer`.
+        // If the contract has a different signature, it's safer to panic
+        // here, as it's expected to have the standard interface.
+        let spent: i128 = contract_context
+            .args
+            .get(2)
+            .unwrap()
+            .try_into_val(env)
+            .unwrap();
+        if spent < 0 {
+            return Err(AccError::NegativeAmount);
+        }
+        if !all_signed && spent > spend_left {
+            return Err(AccError::NotEnoughSigners);
+        }
+        spend_left_per_token.set(contract_context.contract.clone(), spend_left - spent);
     }
-    if !all_signed && spent > spend_left {
-        return Err(AccError::NotEnoughSigners);
-    }
-    spend_left_per_token.set(contract_context.contract.clone(), spend_left - spent);
-}
-Ok(())
+    Ok(())
 ```
 
 Then we check for the standard token function names and verify that for these function we don't exceed the spending limits.
