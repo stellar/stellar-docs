@@ -17,7 +17,7 @@ export const learnMoreLink = (target: string) => (
     <Translate
       id='component.Homepage.LearnMoreButton.Text'
       description='The text that will be displayed on the "Learn More" buttons'>
-      LearnMore
+      Learn More
     </Translate>
   </Link>
 )
