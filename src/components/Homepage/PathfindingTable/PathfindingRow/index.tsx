@@ -16,12 +16,12 @@ export default function PathfindingRow({ row }) {
 
   const description = descTd.props.children
   const badgeCategory = badgeTd.props.children
-  console.log('badgeCategory', badgeCategory)
+
   return (
     <tr>
       <td className={styles.LinkColumn} {...linkTd.props}></td>
       <td className={styles.DescColumn}>
-        <div className={styles.DescColumnInner}>
+        <div className={clsx(styles.DescColumnInner)}>
           <span>{description}</span>
           <span className={clsx('badge', `badge--${BADGE_CATEGORIES[badgeCategory]}`)}>{badgeCategory}</span>
         </div>
