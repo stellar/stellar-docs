@@ -1,0 +1,531 @@
+---
+title: BLS Signature
+description: A custom account contract with BLS signature verification.
+sidebar_position: 50
+---
+
+<head>
+  <title>BLS Signature</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="A custom account contract with BLS signature verification."
+  />
+  <meta
+    property="og:description"
+    content="A basic custom account contract implementing the `FastAggregateVerify` function in [BLS Signatures](https://www.ietf.org/archive/id/draft-irtf-cfrg-bls-signature-05.html#name-fastaggregateverify) draft."
+  />
+</head>
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import { getPlatform } from "@site/src/helpers/getPlatform";
+
+The [BLS signature example] illustrates how to implement BLS signature verification inside a custom account contract.
+
+This example is an based off of the [account example]. Although the main goal is to illustrate the practical use of the BLS12-381 functionalities in a relevant setting.
+
+It is good to have a understanding of how a custom account contract works, but it is not required.
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
+
+[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v22.0.1
+[BLS signature example]: https://github.com/stellar/soroban-examples/tree/v22.0.1/bls_signature
+[account example]: https://github.com/stellar/soroban-examples/tree/v22.0.1/account
+
+## Background on BLS Signature
+
+There are plenty of good resources on BLS signature, for example the "BLS12-381 For The Rest Of Us" has a section on [BLS digital signature](https://hackmd.io/@benjaminion/bls12-381#BLS-digital-signatures). [BLS Signature for Busy People](https://gist.github.com/paulmillr/18b802ad219b1aee34d773d08ec26ca2) is a also a good resource for a quick overview. For full reference check out the [IETF draft](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bls-signature/).
+
+In short, we are verifying the following relation:
+
+$$
+e(pk, H(m)) = e(g1, \sigma)
+$$
+
+Where $pk$ is the public key, $H(m)$ is hash of the message onto the `G2` group, $g1$ is the generator point in the `G1` group and $sigma$ is the signature. $e(,)$ denotes the bilinear pairing between a point in `G1` and a point in `G2`.
+
+The nice thing about pairing based signature is it enables signature aggregation. I.e. if you have multiple signers `pk0 .. pk0` on the a single message, you can compute the aggregate public key $pk_{agg}$ by adding up all the public keys (recall each public key is just a point on the G1 group), the aggregate signature $\sigma_{agg}$ by adding up individual signatures (which is just a point on the G2 group).
+
+Then the aggregate signature verification is just
+
+$$
+e(pk_{agg}, H(m)) = e(g1, \sigma_{agg})
+$$
+
+with a single pairing on chain, you can verify N signatures on the same message in constant time. In general, `n` unique messages takes `n + 1` pairing operations to verify all signatures.
+
+### Hash of message `H(m)`
+
+The message will need to be hashed on the curve `H(m)` for pairing operation to be applied. We follow the approach outlined in [RFC 9380 - Hashing to Elliptic Curves](https://datatracker.ietf.org/doc/rfc9380/).
+
+The hashing method requires a unique domain separation tag (DST), it is highly advisable that your application choose a unique DST. For the requirements of DST, refer to section 3.1 of the RFC,
+
+:::tip
+
+For digital signatures, the G1 and G2 groups can be used interchangeably. Public keys can be chosen as elements of G1 with signatures in G2, or the other way around. The choice involves trade-offs between execution speed and storage size. G1 offers smaller points and faster operations, whereas G2 has larger points and slower performance.
+
+:::
+
+:::caution
+
+The example presented below is intended for demonstration purpose only
+
+- It has **not** undergone security auditing.
+- It is **not** safe for use in production environments.
+
+Implementing a production-safe signature scheme requires deep understanding of the underlying cryptography and security considerations. **Use this at your own risk**.
+
+:::
+
+## Run the Example
+
+First go through the [Setup] process to get your development environment configured, then clone the `v22.0.1` tag of `soroban-examples` repository:
+
+[setup]: ../getting-started/setup.mdx
+
+```
+git clone -b v22.0.1 https://github.com/stellar/soroban-examples
+```
+
+Or, skip the development environment setup and open this example in [Gitpod][oigp].
+
+To run the tests for the example, navigate to the `bls_signature` directory, and use `cargo test`.
+
+```
+cd bls_signature
+cargo test
+```
+
+You should see the output:
+
+```
+running 1 test
+test test::test ... ok
+```
+
+## Code
+
+```rust title="bls_signature/src/lib.rs"
+#[contract]
+pub struct IncrementContract;
+
+// `DST `is the domain separation tag, intended to keep hashing inputs of your
+// contract separate. Refer to section 3.1 in the [Hashing to Elliptic
+// Curves](https://datatracker.ietf.org/doc/html/rfc9380) on requirements of
+// DST.
+const DST: &str = "BLSSIG-V01-CS01-with-BLS12381G2_XMD:SHA-256_SSWU_RO_";
+
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Owners,
+    Counter,
+    Dst,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum AccError {
+    InvalidSignature = 1,
+}
+
+#[contractimpl]
+impl IncrementContract {
+    pub fn init(env: Env, agg_pk: BytesN<96>) {
+        // Initialize the account contract essentials: the aggregated pubkey and
+        // the DST. Because the message to be signed (which is
+        // the hash of some call stack) is the same for all signers, we can
+        // simply aggregate all signers (adding up the G1 pubkeys) and store it.
+        env.storage().persistent().set(&DataKey::Owners, &agg_pk);
+        env.storage()
+            .instance()
+            .set(&DataKey::Dst, &Bytes::from_slice(&env, DST.as_bytes()));
+        // initialize the counter, i.e. the business logic this signer contract
+        // guards
+        env.storage().instance().set(&DataKey::Counter, &0_u32);
+    }
+
+    pub fn increment(env: Env) -> u32 {
+        env.current_contract_address().require_auth();
+        let mut count: u32 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
+        count += 1;
+        env.storage().instance().set(&DataKey::Counter, &count);
+        count
+    }
+}
+
+#[contractimpl]
+impl CustomAccountInterface for IncrementContract {
+    type Signature = BytesN<192>;
+
+    type Error = AccError;
+
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,
+        signature_payload: Hash<32>,
+        agg_sig: Self::Signature,
+        _auth_contexts: Vec<Context>,
+    ) -> Result<(), AccError> {
+        // The sdk module containing access to the bls12_381 functions
+        let bls = env.crypto().bls12_381();
+
+        // Retrieve the aggregated pubkey and the DST from storage
+        let agg_pk: BytesN<96> = env.storage().persistent().get(&DataKey::Owners).unwrap();
+        let dst: Bytes = env.storage().instance().get(&DataKey::Dst).unwrap();
+
+        // This is the negative of g1 (generator point of the G1 group)
+        let neg_g1 = G1Affine::from_bytes(bytesn!(&env, 0x17f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb114d1d6855d545a8aa7d76c8cf2e21f267816aef1db507c96655b9d5caac42364e6f38ba0ecb751bad54dcd6b939c2ca));
+        // Hash the signature_payload i.e. the msg being signed and to be
+        // verified into a point in G2
+        let msg_g2 = bls.hash_to_g2(&signature_payload.into(), &dst);
+
+        // Prepare inputs to the pairing function
+        let vp1 = vec![&env, G1Affine::from_bytes(agg_pk), neg_g1];
+        let vp2 = vec![&env, msg_g2, G2Affine::from_bytes(agg_sig)];
+
+        // Perform the pairing check, i.e. e(pk, msg)*e(-g1, sig) == 1, which is
+        // equivalent to checking `e(pk, msg) == e(g1, sig)`.
+        // The LHS = e(sk * g1, msg) = sk * e(g1, msg) = e(g1, sk * msg) = e(g1, sig),
+        // thus it must equal to the RHS if the signature matches.
+        if !bls.pairing_check(vp1, vp2) {
+            return Err(AccError::InvalidSignature);
+        }
+        Ok(())
+    }
+}
+```
+
+Ref: https://github.com/stellar/soroban-examples/tree/v22.0.1/bls_signature
+
+## How it Works
+
+The example contract stores a counter that can only be incremented if a set of owners have approved it.
+
+Open the `bls_signature/src/lib.rs` file or see the code above to follow along.
+
+### The Contract
+
+```rust
+#[contract]
+pub struct IncrementContract;
+
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Owners,
+    Counter,
+    Dst,
+}
+
+#[contractimpl]
+impl IncrementContract {
+    pub fn init(env: Env, agg_pk: BytesN<96>) {
+        // Initialize the account contract essentials: the aggregated pubkey and
+        // the DST. Because the message to be signed (which is
+        // the hash of some call stack) is the same for all signers, we can
+        // simply aggregate all signers (adding up the G1 pubkeys) and store it.
+        env.storage().persistent().set(&DataKey::Owners, &agg_pk);
+        env.storage()
+            .instance()
+            .set(&DataKey::Dst, &Bytes::from_slice(&env, DST.as_bytes()));
+        // initialize the counter, i.e. the business logic this signer contract
+        // guards
+        env.storage().instance().set(&DataKey::Counter, &0_u32);
+    }
+
+    pub fn increment(env: Env) -> u32 {
+        env.current_contract_address().require_auth();
+        let mut count: u32 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
+        count += 1;
+        env.storage().instance().set(&DataKey::Counter, &count);
+        count
+    }
+}
+```
+
+This contract is fairly simple and standard. On `init()`, it initializes the aggregate public key of all the owners, the domain separation tag `DST`, and initializes the counter to 0.
+
+It contains a single function `increment` which calls `require_auth` that will check the authorization condition defined later, and if success, increment and return the counter.
+
+### BLS Signature verification
+
+```
+#[contractimpl]
+impl CustomAccountInterface for IncrementContract {
+    type Signature = BytesN<192>;
+
+    type Error = AccError;
+
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,
+        signature_payload: Hash<32>,
+        agg_sig: Self::Signature,
+        _auth_contexts: Vec<Context>,
+    ) -> Result<(), AccError> {
+        // The sdk module containing access to the bls12_381 functions
+        let bls = env.crypto().bls12_381();
+
+        // Retrieve the aggregated pubkey and the DST from storage
+        let agg_pk: BytesN<96> = env.storage().persistent().get(&DataKey::Owners).unwrap();
+        let dst: Bytes = env.storage().instance().get(&DataKey::Dst).unwrap();
+
+        // This is the negative of g1 (generator point of the G1 group)
+        let neg_g1 = G1Affine::from_bytes(bytesn!(&env, 0x17f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb114d1d6855d545a8aa7d76c8cf2e21f267816aef1db507c96655b9d5caac42364e6f38ba0ecb751bad54dcd6b939c2ca));
+        // Hash the signature_payload i.e. the msg being signed and to be
+        // verified into a point in G2
+        let msg_g2 = bls.hash_to_g2(&signature_payload.into(), &dst);
+
+        // Prepare inputs to the pairing function
+        let vp1 = vec![&env, G1Affine::from_bytes(agg_pk), neg_g1];
+        let vp2 = vec![&env, msg_g2, G2Affine::from_bytes(agg_sig)];
+
+        // Perform the pairing check, i.e. e(pk, msg)*e(-g1, sig) == 1, which is
+        // equivalent to checking `e(pk, msg) == e(g1, sig)`.
+        // The LHS = e(sk * g1, msg) = sk * e(g1, msg) = e(g1, sk * msg) = e(g1, sig),
+        // thus it must equal to the RHS if the signature matches.
+        if !bls.pairing_check(vp1, vp2) {
+            return Err(AccError::InvalidSignature);
+        }
+        Ok(())
+    }
+}
+```
+
+The `CustomAccountInterface::__check_auth` function implements the custom signature verification logic for this account.
+
+`env.crypto().bls12_381()` initializes the bls12_381 module from which the BLS12-381 functions are available. The `signature_payload` contains the payload that was signed.
+
+`bls.hash_to_g2(&signature_payload.into(), &dst)` hashes the message into the G2 group. `agg_sig` contains the aggregate signature which is another point in G2.
+
+To perform the signature verification, we construct two vectors `Vec<G1Affine>` and `Vec<G2Affine>`, and call `bls.pairing_check` on them. The pairing check function performs `e(pk, msg)*e(-g1, sig) == 1` which is equivalent to checking `e(pk, msg) == e(g1, sig)`.
+
+### Tests
+
+Open the [`bls_signature/src/test.rs`] file to follow along.
+
+[`auth/src/test.rs`]: https://github.com/stellar/soroban-examples/tree/v22.0.1/bls_signature/src/test.rs
+
+```rust title="auth/src/test.rs"
+#[test]
+fn test() {
+    let env = Env::default();
+    env.budget().reset_unlimited();
+    let pk = aggregate_pk_bytes(&env);
+    env.mock_all_auths();
+
+    let client = create_client(&env);
+    client.init(&pk);
+    let payload = BytesN::random(&env);
+    let sig_val = sign_and_aggregate(&env, &payload.clone().into()).to_val();
+
+    env.budget().reset_default();
+    env.try_invoke_contract_check_auth::<AccError>(&client.address, &payload, sig_val, &vec![&env])
+        .unwrap();
+    env.budget().print();
+}
+```
+
+Most of what's here is needed in order to create the contract client and ensure the invocation of its custom account interface for signature authorization. After the setup, calling `env.try_invoke_contract_check_auth` on the client will invoke the `__check_auth` logic we've defined in our contract.
+
+The invocation will return nothing on success, and will panic on failure. The other thing we are interested here is budget consumption for this call. At the beginning setting `env.budget().reset_unlimited()` ensure all the prep work (which emulates the off-chain work needed to be performed by e.g. a smart wallet) will not run out of budget. This isn't strictly necessary since the default budget should be large enough. `env.budget().reset_default()` right before the invocation makes sure the budget is reset to default state (also resetting metering counters) so that we can get an accurate capture of the budget for the invocation alone. `env.budget().print()` at the end prints out the budget.
+
+#### Signature aggregation
+
+We first declare 10 random key pairs. These will be used as the signers of this test contract.
+
+```rust
+#[derive(Debug)]
+pub struct KeyPair {
+    pub sk: [u8; 32],
+    pub pk: [u8; 96],
+}
+
+static KEY_PAIRS: &[KeyPair] = &[
+    KeyPair {
+        sk: hex!("18a5ac3cfa6d0b10437a92c96f553311fc0e25500d691ae4b26581e6f925ec83"),
+        pk: hex!("0914e32703bad05ccf4180e240e44e867b26580f36e09331997b2e9effe1f509b1a804fc7ba1f1334c8d41f060dd72550901c5549caef45212a236e288a785d762a087092c769bfa79611b96d73521ddd086b7e05b5c7e4210f50c2ee832e183"),
+    },
+    KeyPair {
+        sk: hex!("738dbecafa122ee3c953f07e78461a4281cadec00c869098bac48c8c57b63374"),
+        pk: hex!("05f4708a013699229f67d0e16f7c2af8a6557d6d11b737286cfb9429e092c31c412f623d61c7de259c33701aa5387b5004e2c03e8b7ea2740b10a5b4fd050eecca45ccf5588d024cbb7adc963006c29d45a38cb7a06ce2ac45fce52fc0d36572"),
+    },
+    KeyPair {
+        sk: hex!("4bff25b53f29c8af15cf9b8e69988c3ff79c80811d5027c80920f92fad8d137d"),
+        pk: hex!("18d0fef68a72e0746f8481fa72b78f945bf75c3a1e036fbbde62a421d8f9568a2ded235a27ad3eb0dc234b298b54dd540f61577bc4c6e8842f8aa953af57a6783924c479e78b0d4959038d3d108b3f6dc6a1b02ec605cb6d789af16cfe67f689"),
+    },
+    KeyPair {
+        sk: hex!("2110f7dae25c4300e1a9681bad6311a547269dba69e94efd342cc208ff50813b"),
+        pk: hex!("1643b04cc21f8af9492509c51a6e20e67fa7923f4fbd52f6fcf73c6a4013f864e3e29eb03f54d234582250ebb5df21140381d0c735e868adfe62f85cf8e85d279864333dbe70656a5f35ebc52c5b497f1c65c7a0144bb0c9a1d843f1a8fb9979"),
+    },
+    KeyPair {
+        sk: hex!("1e4b6d54ac58d317cbe6fb0472c3cbf2e60ea157edea21354cbc198770f81448"),
+        pk: hex!("02286d1a83a93f35c3461dd71d0840e83e1cd3275ee1af1bfd90ec2366485e9f7f18730f5b686f4810480f1ce5c63dca13a2fac1774aa4e22c29abb9280796d72a2bd0ef963dc76fd45090012bae4a727a6dce49550d9bc9776705f825e24731"),
+    },
+    KeyPair {
+        sk: hex!("471145761f5cd9d0a9a511f1a80657edfcddc43424e4a5582040ea75c4649909"),
+        pk: hex!("0b7920a3f2a50cfd6dc132a46b7163d3f7d6b1d03d9fcf450eb05dfa89991a269e707e3412270dc422b664d7adda782c11c973232e975ef0d4b4fb5626b563df542fd1862f80bce17cd09bcbce8884bdda4ac9286bf94854dd29cd511a9103a7"),
+    },
+    KeyPair {
+        sk: hex!("1914beab355b0a86a7bcd37f2e036a9c2c6bff7f16d8bf3e23e42b7131b44701"),
+        pk: hex!("1872237fb7ceccc1a6e85f83988c226cc47db75496e41cf20e8a4b93e8fd5e91d0cdcc3b2946a352223ec2b7817a2aae0dc4e6bb7b97c855828670362fcbd0ad6453f28e4fa4b7a075ac8bb1d69a4a1bb8c6723900fead307239f04a9bcec0ad"),
+    },
+    KeyPair {
+        sk: hex!("46b19b928638068780ba82e76dfeaeaf5c37790cdf37f580e206dc6599c72dc7"),
+        pk: hex!("0fd1a6b1e46b83a197bbf1dc2a854d024caa5ead5a54893c9767392c837d7c070e86a9206ddba1801332f9d74e0f78e9175419ccc40a966bf4c12a7f8500519e2b83cebd61e32121379911925bf7ae6d2c0d8ec4dcc411d4bbcd14763c1a9d31"),
+    },
+    KeyPair {
+        sk: hex!("0ce3cd1dcaecf002715228aeb0645c6a7fd9990ace3d79515c547dac120bb9f7"),
+        pk: hex!("19f7e9dcd4ce2bef92180b60d0c7c7b48b1924a36f9fbb93e9ecb8acb3219e26033b83facd4dc6d2e3f9fa0fffafeca8168bd4824e31dc9dfd977fbf037210508bc807c1a6d20f98a044911f6b689328f3f25dd35a6c05e8c6ac3ac6ef0def91"),
+    },
+    KeyPair {
+        sk: hex!("6b4b27ba3ffc953eff3b974142cdac75f98c8c4ab26f93d5adfd49da5d462c3f"),
+        pk: hex!("15f55ec5572026d6c3c7c62b3ce3c5d7539045e9f492f2b1b0860c0af5f5f6b34531dfe4626a92d5c23ac6ad44330cf40e63a8a7234edbb41539c5484eff2cd23b2f0d502a7fd74501b1a05ffee29b24e79cb1ee9fb9b804d84f486283101ee0"),
+    },
+];
+```
+
+We aggregate the signer public keys, by first converting the bytes into `G1Affine`, then add them all up.
+
+```rust
+fn aggregate_pk_bytes(env: &Env) -> BytesN<96> {
+    let bls = env.crypto().bls12_381();
+    let mut agg_pk = G1Affine::from_bytes(BytesN::from_array(env, &KEY_PAIRS[0].pk));
+    for i in 1..KEY_PAIRS.len() {
+        let pk = G1Affine::from_bytes(BytesN::from_array(env, &KEY_PAIRS[i].pk));
+        agg_pk = bls.g1_add(&agg_pk, &pk);
+    }
+    agg_pk.to_bytes()
+}
+```
+
+To produce the signature, the message will first be hashed into G2 via `bls.hash_to_g2`. Here we use our own defined DST.
+
+To aggregate the signatures, we first produce individual signatures by having each signer sign the message. This means multiplying the secret key by the message's G2 point. Then we add them all up. Here we use `g2_msm`, by an array of message (`Vec<G2Affine>`) points and an the array of secret keys (`Vec<Fr>`) and it computes their inner-product which is the aggregate signature we want.
+
+```rust
+const DST: &str = "BLSSIG-V01-CS01-with-BLS12381G2_XMD:SHA-256_SSWU_RO_";
+
+fn sign_and_aggregate(env: &Env, msg: &Bytes) -> BytesN<192> {
+    let bls = env.crypto().bls12_381();
+    let mut vec_sk: Vec<Fr> = vec![env];
+    for kp in KEY_PAIRS {
+        vec_sk.push_back(Fr::from_bytes(BytesN::from_array(env, &kp.sk)));
+    }
+    let dst = Bytes::from_slice(env, DST.as_bytes());
+    let msg_g2 = bls.hash_to_g2(&msg, &dst);
+    let vec_msg: Vec<G2Affine> = vec![
+        env,
+        msg_g2.clone(),
+        msg_g2.clone(),
+        msg_g2.clone(),
+        msg_g2.clone(),
+        msg_g2.clone(),
+        msg_g2.clone(),
+        msg_g2.clone(),
+        msg_g2.clone(),
+        msg_g2.clone(),
+        msg_g2.clone(),
+    ];
+    bls.g2_msm(vec_msg, vec_sk).to_bytes()
+}
+```
+
+Running this test will produce the following budget output, the total cpu consumption for signature verification is around 31M. And you can add as many additional public keys as you like. In general `pairing_check` is a function with linear cost, so the more unique messages that needs to be signed, the higher cost. Here because all signers sign the same content (hash of the call stack of this contract), we can do this in constant time.
+
+```
+---- test::test stdout ----
+=================================================================
+Cpu limit: 100000000; used: 31143651
+Mem limit: 41943040; used: 159964
+=================================================================
+CostType                           cpu_insns      mem_bytes
+WasmInsnExec                       0              0
+MemAlloc                           23516          5000
+MemCpy                             4541           0
+MemCmp                             1817           0
+DispatchHostFunction               0              0
+VisitObject                        3538           0
+ValSer                             0              0
+ValDeser                           0              0
+ComputeSha256Hash                  3738           0
+ComputeEd25519PubKey               0              0
+VerifyEd25519Sig                   0              0
+VmInstantiation                    0              0
+VmCachedInstantiation              0              0
+InvokeVmFunction                   0              0
+ComputeKeccak256Hash               0              0
+DecodeEcdsaCurve256Sig             0              0
+RecoverEcdsaSecp256k1Key           0              0
+Int256AddSub                       0              0
+Int256Mul                          0              0
+Int256Div                          0              0
+Int256Pow                          0              0
+Int256Shift                        0              0
+ChaCha20DrawBytes                  0              0
+ParseWasmInstructions              0              0
+ParseWasmFunctions                 0              0
+ParseWasmGlobals                   0              0
+ParseWasmTableEntries              0              0
+ParseWasmTypes                     0              0
+ParseWasmDataSegments              0              0
+ParseWasmElemSegments              0              0
+ParseWasmImports                   0              0
+ParseWasmExports                   0              0
+ParseWasmDataSegmentBytes          0              0
+InstantiateWasmInstructions        0              0
+InstantiateWasmFunctions           0              0
+InstantiateWasmGlobals             0              0
+InstantiateWasmTableEntries        0              0
+InstantiateWasmTypes               0              0
+InstantiateWasmDataSegments        0              0
+InstantiateWasmElemSegments        0              0
+InstantiateWasmImports             0              0
+InstantiateWasmExports             0              0
+InstantiateWasmDataSegmentBytes    0              0
+Sec1DecodePointUncompressed        0              0
+VerifyEcdsaSecp256r1Sig            0              0
+Bls12381EncodeFp                   2644           0
+Bls12381DecodeFp                   11820          0
+Bls12381G1CheckPointOnCurve        3868           0
+Bls12381G1CheckPointInSubgroup     1461020        0
+Bls12381G2CheckPointOnCurve        11842          0
+Bls12381G2CheckPointInSubgroup     2115644        0
+Bls12381G1ProjectiveToAffine       0              0
+Bls12381G2ProjectiveToAffine       0              0
+Bls12381G1Add                      0              0
+Bls12381G1Mul                      0              0
+Bls12381G1Msm                      0              0
+Bls12381MapFpToG1                  0              0
+Bls12381HashToG1                   0              0
+Bls12381G2Add                      0              0
+Bls12381G2Mul                      0              0
+Bls12381G2Msm                      0              0
+Bls12381MapFp2ToG2                 0              0
+Bls12381HashToG2                   7052263        6816
+Bls12381Pairing                    20447400       148148
+Bls12381FrFromU256                 0              0
+Bls12381FrToU256                   0              0
+Bls12381FrAddSub                   0              0
+Bls12381FrMul                      0              0
+Bls12381FrPow                      0              0
+Bls12381FrInv                      0              0
+=================================================================
+```
+
+## Build the Contract
+
+To build the contract into a `.wasm` file, use the `stellar contract build` command.
+
+```sh
+stellar contract build
+```
+
+The `.wasm` file should be found in the `target` directory after building:
+
+```
+target/wasm32-unknown-unknown/release/soroban_bls_signature_contract.wasm
+```
