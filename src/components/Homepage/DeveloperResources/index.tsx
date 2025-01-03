@@ -19,7 +19,7 @@ const DeveloperResourcesBoxes: DeveloperResourcesItem[] = [
         Ask questions and engage with other Stellar devs.
       </Translate>
     ),
-    link: exploreLink('https://discord.gg/st7Mxd58BV'),
+    link: exploreLink('https://discord.gg/stellardev'),
   },
   {
     title: translate({
