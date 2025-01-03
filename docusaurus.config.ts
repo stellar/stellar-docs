@@ -308,7 +308,7 @@ const config: Config = {
           items: [
             {
               label: "Developer Discord",
-              href: "https://discord.gg/st7Mxd58BV",
+              href: "https://discord.gg/fHWKDWQX5u",
             },
             {
               label: "Developer Google Group",
