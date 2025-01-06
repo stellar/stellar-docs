@@ -180,6 +180,11 @@ const config: Config = {
               docId: "data/data-indexers/README",
               label: "Data Indexers",
             },
+            {
+              type: 'doc',
+              docId: "data/oracles/README",
+              label: "Oracles",
+            }
           ]
         },
         {
