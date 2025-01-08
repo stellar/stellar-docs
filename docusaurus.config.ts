@@ -281,6 +281,14 @@ const config: Config = {
               label: "Soroban Quest",
               href: "https://fastcheapandoutofcontrol.com/tutorial",
             },
+            {
+              label: "YouTube",
+              href: "https://www.youtube.com/@StellarDevelopmentFoundation",
+            },
+            {
+              label: "Twitch",
+              href: "https://m.twitch.tv/stellarorg/home",
+            },
           ],
         },
         {
