@@ -1,4 +1,4 @@
-import Method from "@ahalabs/open-rpc-docs-react";
+import Method from "@stellar/open-rpc-docs-react";
 import React from "react";
 import type { MethodObject } from "@open-rpc/meta-schema";
 
