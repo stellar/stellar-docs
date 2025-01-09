@@ -18,117 +18,111 @@ Please go to [the project homepage](https://github.com/stellar/js-stellar-sdk) o
 
 :::
 
-```javascript
+First, upload the bytes of [the example contract](https://developers.stellar.org/docs/build/smart-contracts/example-contracts/auth) onto the blockchain using [Stellar CLI](../../../tools/developer-tools/cli/stellar-cli). This is called "install" because, from the perspective of the blockchain itself, this contract has been installed.
+
+```bash
+stellar contract build
+stellar contract install --wasm target/wasm32-unknown-unknown/release/test_auth_contract.wasm --network testnet
+```
+
+This will return a hash; save that, you'll use it soon. For this example, we will use `bc7d436bab44815c03956b344dc814fac3ef60e9aca34c3a0dfe358fcef7527f`.
+
+No contract has yet been deployed with this hash. In Soroban, you can have many Smart Contracts which all reference the same Wasm hash, defining their behavior. We'll do that from the following JavaScript code itself.
+
+```ts
+import { Keypair } from "@stellar/stellar-sdk"
+import { Client, basicNodeSigner } from "@stellar/stellar-sdk/contract"
+import { Server } from "@stellar/stellar-sdk/rpc"
+
+// As mentioned, we are using Testnet for this example
+const rpcUrl = "https://soroban-testnet.stellar.org"
+const networkPassphrase = "Test SDF Network ; September 2015"
+const wasmHash = "bc7d436bab44815c03956b344dc814fac3ef60e9aca34c3a0dfe358fcef7527f"
+
+/**
+ * Generate a random keypair and fund it
+ */
+async function generateFundedKeypair() {
+  const keypair = Keypair.random();
+  const server = new Server(rpcUrl);
+  await server.requestAirdrop(keypair.publicKey());
+  return keypair
+}
+
 (async () => {
-  const {
-    Keypair,
-    Contract,
-    SorobanRpc,
-    TransactionBuilder,
-    Networks,
-    BASE_FEE,
-    nativeToScVal,
-    Address,
-  } = require("@stellar/stellar-sdk");
-
   // The source account will be used to sign and send the transaction.
-  // GCWY3M4VRW4NXJRI7IVAU3CC7XOPN6PRBG6I5M7TAOQNKZXLT3KAH362
-  const sourceKeypair = Keypair.fromSecret(
-    "SCQN3XGRO65BHNSWLSHYIR4B65AHLDUQ7YLHGIWQ4677AZFRS77TCZRB",
-  );
+  const sourceKeypair = await generateFundedKeypair()
 
-  // Configure SorobanClient to use the `soroban-rpc` instance of your
-  // choosing.
-  const server = new SorobanRpc.Server(
-    "https://soroban-testnet.stellar.org:443",
-  );
+  // If you are using a browser, you can pass in `signTransaction` from your
+  // Wallet extension such as Freighter. If you're using Node, you can use
+  // `signTransaction` from `basicNodeSigner`.
+  const { signTransaction } = basicNodeSigner(sourceKeypair, networkPassphrase)
 
-  // Here we will use a deployed instance of the `increment` example contract.
-  const contractAddress =
-    "CCTAMZGXBVCQJJCX64EVYTM6BKW5BXDI5PRCXTAYT6DVEDXKGS347HWU";
-  const contract = new Contract(contractAddress);
-
-  // Transactions require a valid sequence number (which varies from one
-  // account to another). We fetch this sequence number from the RPC server.
-  const sourceAccount = await server.getAccount(sourceKeypair.publicKey());
-
-  // The transaction begins as pretty standard. The source account, minimum
-  // fee, and network passphrase are provided.
-  let builtTransaction = new TransactionBuilder(sourceAccount, {
-    fee: BASE_FEE,
-    networkPassphrase: Networks.TESTNET,
-  })
-    // The invocation of the `increment` function of our contract is added
-    // to the transaction.
-    .addOperation(
-      contract.call(
-        "increment",
-        nativeToScVal(Address.fromString(sourceKeypair.publicKey())),
-        nativeToScVal(5, { type: "u32" }),
-      ),
-    )
-    // This transaction will be valid for the next 30 seconds
-    .setTimeout(30)
-    .build();
-
-  console.log(`builtTransaction=${builtTransaction.toXDR()}`);
-
-  // We use the RPC server to "prepare" the transaction. This simulating the
-  // transaction, discovering the storage footprint, and updating the
-  // transaction to include that footprint. If you know the footprint ahead of
-  // time, you could manually use `addFootprint` and skip this step.
-  let preparedTransaction = await server.prepareTransaction(builtTransaction);
-
-  // Sign the transaction with the source account's keypair.
-  preparedTransaction.sign(sourceKeypair);
-
-  // Let's see the base64-encoded XDR of the transaction we just built.
-  console.log(
-    `Signed prepared transaction XDR: ${preparedTransaction
-      .toEnvelope()
-      .toXDR("base64")}`,
-  );
-
-  // Submit the transaction to the Soroban-RPC server. The RPC server will
-  // then submit the transaction into the network for us. Then we will have to
-  // wait, polling `getTransaction` until the transaction completes.
-  try {
-    let sendResponse = await server.sendTransaction(preparedTransaction);
-    console.log(`Sent transaction: ${JSON.stringify(sendResponse)}`);
-
-    if (sendResponse.status === "PENDING") {
-      let getResponse = await server.getTransaction(sendResponse.hash);
-      // Poll `getTransaction` until the status is not "NOT_FOUND"
-      while (getResponse.status === "NOT_FOUND") {
-        console.log("Waiting for transaction confirmation...");
-        // See if the transaction is complete
-        getResponse = await server.getTransaction(sendResponse.hash);
-        // Wait one second
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-
-      console.log(`getTransaction response: ${JSON.stringify(getResponse)}`);
-
-      if (getResponse.status === "SUCCESS") {
-        // Make sure the transaction's resultMetaXDR is not empty
-        if (!getResponse.resultMetaXdr) {
-          throw "Empty resultMetaXDR in getTransaction response";
-        }
-        // Find the return value from the contract and return it
-        let transactionMeta = getResponse.resultMetaXdr;
-        let returnValue = transactionMeta.v3().sorobanMeta().returnValue();
-        console.log(`Transaction result: ${returnValue.value()}`);
-      } else {
-        throw `Transaction failed: ${getResponse.resultXdr}`;
-      }
-    } else {
-      throw sendResponse.errorResultXdr;
+  // This constructs and simulates a deploy transaction. Once we sign and send
+  // this below, it will create a brand new smart contract instance that
+  // references the wasm we uploaded with the CLI.
+  const deployTx = await Client.deploy(
+    null, // if the contract has a `__constructor` function, its arguments go here
+    {
+      networkPassphrase,
+      rpcUrl,
+      wasmHash,
+      publicKey: sourceKeypair.publicKey(),
+      signTransaction,
     }
-  } catch (err) {
-    // Catch and report any errors we've thrown
-    console.log("Sending transaction failed");
-    console.log(JSON.stringify(err));
-  }
+  )
+  // Like other `Client` methods, `deploy` returns an `AssembledTransaction`,
+  // which wraps logic for signing, sending, and awaiting completion of the
+  // transaction. Once that all completes, the `result` of this transaction
+  // will contain the final `Client` instance, which we can use to invoke
+  // methods on the new contract. Here we are using JS destructuring to get the
+  // `result` key from the object returned by `signAndSend`, and put it in a
+  // local variable called `client`.
+  const { result: client } = await deployTx.signAndSend()
+
+  ...
+```
+
+:::tip Client from existing Contract
+
+If you don't need to deploy a contract, and instead already know a deployed contract's ID, you can instantiate a Client for it directly. This uses similar arguments to the ones to `Client.deploy` above, with the addition of `contractId`:
+
+```diff
+-const deployTx = await Client.deploy(
+-  null,
+-  {
++const client = await Client.from({
++  contractId: "C123abc…",
+   networkPassphrase,
+   rpcUrl,
+   wasmHash,
+   publicKey: sourceKeypair.publicKey(),
+   signTransaction,
+ })
+```
+
+:::
+
+Now that we instantiated a `client`, we can use it to call methods on the contract. Picking up where we left off:
+
+```ts
+  ...
+
+  // This will construct and simulate an `increment` transaction. Since the
+  // `auth` contract requires that this transaction be signed, we will need to
+  // call `signAndSend` on it, like we did with `deployTx` above.
+  const incrementTx = await client.increment({
+    user: sourceKeypair.publicKey(), // who needs to sign
+    value: 1, // how much to increment by
+  })
+
+  // For calls that don't need to be signed, you can get the `result` of their
+  // simulation right away, on a call like `client.increment()` above.
+  const { result } = await incrementTx.signAndSend()
+
+  // Now you can do whatever you need to with the `result`, which in this case
+  // contains the new value of the incrementor/counter.
+  console.log("New incremented value:", result)
 })();
 ```
 
@@ -160,7 +154,7 @@ network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
 contract_id = "CDOGJBJMRVVXW5K3UJ5BGVJ5RSQXQB4UFVQYVFOIARC2UYXSEPF4YAVR"
 # The source account will be used to sign and send the transaction.
 source_keypair = Keypair.from_secret(secret)
-# Configure SorobanClient to use the `soroban-rpc` instance of your choosing.
+# Configure SorobanClient to use the `stellar-rpc` instance of your choosing.
 soroban_server = SorobanServer(rpc_server_url)
 # Transactions require a valid sequence number (which varies from one account to another).
 # We fetch this sequence number from the RPC server.
@@ -198,7 +192,7 @@ tx.sign(source_keypair)
 # Let's see the base64-encoded XDR of the transaction we just built.
 print(f"Signed prepared transaction XDR: {tx.to_xdr()}")
 
-# Submit the transaction to the Soroban-RPC server. The RPC server will
+# Submit the transaction to the Stellar-RPC server. The RPC server will
 # then submit the transaction into the network for us. Then we will have to
 # wait, polling `get_transaction` until the transaction completes.
 send_transaction_data = soroban_server.send_transaction(tx)
@@ -266,7 +260,7 @@ public class Example {
         // The source account will be used to sign and send the transaction.
         KeyPair sourceKeypair = KeyPair.fromSecretSeed("SAAPYAPTTRZMCUZFPG3G66V4ZMHTK4TWA6NS7U4F7Z3IMUD52EK4DDEV");
 
-        // Configure SorobanClient to use the `soroban-rpc` instance of your choosing.
+        // Configure SorobanClient to use the `stellar-rpc` instance of your choosing.
         SorobanServer sorobanServer = new SorobanServer("https://soroban-testnet.stellar.org");
 
         // Here we will use a deployed instance of the `increment` example contract.
@@ -314,7 +308,7 @@ public class Example {
         // Let's see the base64-encoded XDR of the transaction we just built.
         System.out.println("Signed prepared transaction XDR: " + transaction.toEnvelopeXdrBase64());
 
-        // Submit the transaction to the Soroban-RPC server. The RPC server will then
+        // Submit the transaction to the Stellar-RPC server. The RPC server will then
         // submit the transaction into the network for us. Then we will have to wait,
         // polling `getTransaction` until the transaction completes.
         SendTransactionResponse response = sorobanServer.sendTransaction(transaction);

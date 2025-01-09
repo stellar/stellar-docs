@@ -2,6 +2,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
+import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
 import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
 import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
 
@@ -15,14 +16,15 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
+  onBrokenAnchors: "warn",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   i18n: {
-    defaultLocale: "en",
-    locales: ["en"],
+    defaultLocale: DEFAULT_LOCALE,
+    locales: ["en", "es"],
   },
   plugins: [
     "docusaurus-plugin-sass",
@@ -85,7 +87,7 @@ const config: Config = {
           rehypePlugins: [rehypeKatex],
           sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
-          editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+          editUrl: makeEditUrl,
           exclude: ['**/component/**', '**/README.md'],
         },
         theme: {
@@ -111,6 +113,10 @@ const config: Config = {
     },
   ],
   themeConfig: {
+    announcementBar: {
+      id: 'announcementBar-translation',
+      content: '<strong>Disclaimer:</strong> This documentation has been automatically translated and may contain inaccuracies. For the most accurate information, please refer to the original English version. We are not responsible for translation errors.',
+    },
     docs: {
       sidebar: {
         autoCollapseCategories: false,
@@ -164,7 +170,21 @@ const config: Config = {
               docId: "data/horizon/README",
               label: "Horizon",
             },
-
+            {
+              type: 'doc',
+              docId: "data/galexie/README",
+              label: "Galexie",
+            },
+            {
+              type: 'doc',
+              docId: "data/data-indexers/README",
+              label: "Data Indexers",
+            },
+            {
+              type: 'doc',
+              docId: "data/oracles/README",
+              label: "Oracles",
+            }
           ]
         },
         {
@@ -222,6 +242,10 @@ const config: Config = {
           position: 'right',
         },
         {
+          type: 'localeDropdown',
+          position: 'right',
+        },
+        {
           href: "https://github.com/stellar/stellar-docs",
           position: "right",
           className: "header-github-link",
@@ -258,9 +282,13 @@ const config: Config = {
               href: "https://fastcheapandoutofcontrol.com/tutorial",
             },
             {
-              label: "Dapps Challenge",
-              href: "/docs/learn/interactive/dapps/introduction"
-            }
+              label: "YouTube",
+              href: "https://www.youtube.com/@StellarDevelopmentFoundation",
+            },
+            {
+              label: "Twitch",
+              href: "https://m.twitch.tv/stellarorg/home",
+            },
           ],
         },
         {
@@ -293,7 +321,7 @@ const config: Config = {
           items: [
             {
               label: "Developer Discord",
-              href: "https://discord.gg/st7Mxd58BV",
+              href: "https://discord.gg/stellardev",
             },
             {
               label: "Developer Google Group",
