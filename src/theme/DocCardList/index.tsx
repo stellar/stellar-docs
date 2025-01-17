@@ -10,9 +10,9 @@ type Props = WrapperProps<typeof DocCardListType>;
 
 function DocCardListForCurrentSidebarCategory(props: Props): JSX.Element {
   const category = useCurrentSidebarCategory();
-  return category.label === 'Example Contracts'
+  return (category.label === 'Example Contracts' || category.label === 'Ejemplos de contratos')
     ? <ExampleContractsDocCardList items={category.items} className={props.className} />
-    : category.label === 'How-To Guides'
+    : (category.label === 'How-To Guides' || category.label === 'Guías de Cómo-Hacer')
     ? <GuidesDocCardList items={category.items} className={props.className} />
     : <DocCardList items={category.items} className={props.className} />;
 }
