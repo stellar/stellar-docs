@@ -281,6 +281,14 @@ const config: Config = {
               label: "Soroban Quest",
               href: "https://fastcheapandoutofcontrol.com/tutorial",
             },
+            {
+              label: "YouTube",
+              href: "https://www.youtube.com/@StellarDevelopmentFoundation",
+            },
+            {
+              label: "Twitch",
+              href: "https://m.twitch.tv/stellarorg/home",
+            },
           ],
         },
         {
@@ -312,6 +320,10 @@ const config: Config = {
           title: "Community",
           items: [
             {
+              label: "Contribute to Docs",
+              href: "https://github.com/stellar/stellar-docs?tab=readme-ov-file#contributing",
+            },
+            {
               label: "Developer Discord",
               href: "https://discord.gg/stellardev",
             },
@@ -327,7 +339,7 @@ const config: Config = {
               label: "Stellar Community Fund",
               href: "https://communityfund.stellar.org/",
             },
-          ],
+         ],
         },
         {
           title: "About",
