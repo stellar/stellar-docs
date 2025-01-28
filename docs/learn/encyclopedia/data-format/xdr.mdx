@@ -2,6 +2,8 @@
 title: XDR
 ---
 
+import { CodeExample } from "@site/src/components/CodeExample";
+
 Stellar stores and communicates ledger data, transactions, results, history, and messages in a binary format called External Data Representation (XDR). XDR is optimized for network performance but not human readable. Horizon and the Stellar SDKs convert XDRs into friendlier formats.
 
 ## .X files
@@ -43,3 +45,193 @@ XDR is specified in [RFC 4506](http://tools.ietf.org/html/rfc4506.html) and is s
 Since XDR is a binary format and not as widely known as simpler formats like JSON, the Stellar SDKs all include tools for parsing XDR and will do so automatically when retrieving data.
 
 In addition, the Horizon API server generally exposes the most important parts of the XDR data in JSON, so they are easier to parse if you are not using an SDK. The XDR data is still included (encoded as a base64 string) inside the JSON in case you need direct access to it.
+
+## Digging into XDR structures
+
+Since the XDR format is a fundamental underpinning of the Stellar Network, we often find it necessary to dig into these raw binary data structures for clients to interact with things like transactions and authorization entries. It can be hard to understand because of its structure, but this section will aim to enlighten you on the ways to interact with it in a handful of popular languages. The Protocol's schema is defined in the [`stellar/stellar-xdr`](https://github.com/stellar/stellar-xdr/) repository, though that contains far more than what we'll need for our purposes.
+
+### XDR's Common Forms
+
+In the Stellar Protocol, XDR takes a handful of different forms that are important to understand and distinguish:
+
+#### Basic Primitives
+
+These are the easiest to understand for anyone familiar with a programming language and includes things like integers, strings, and arrays of bytes. These are fairly straightforward to interact with, though things can get more complicated when you have aliases.
+
+For example, you have the `Uint64` alias in the Stellar Protocol (defined [Stellar-types.x](https://github.com/stellar/stellar-xdr/blob/70180d5e8d9caee9e8645ed8a38c36a8cf403cd9/Stellar-types.x#L14)), defined for readability instead of XDR's native "unsigned hyper" value. You can treat it exactly as you'd expect:
+
+```typescript
+import { xdr } from "@stellar/stellar-sdk";
+
+const u64 = new xdr.Uint64(12345678);
+```
+
+Some language variations will let you instantiate it in a number of ways. For example, since 64-bit integers are a little... [wonky](https://stackoverflow.com/a/9643650) in JavaScript, you can also initialize it with a [`BigInt`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt) or even a string type:
+
+```typescript
+import { xdr } from "@stellar/stellar-sdk";
+
+let u64 = new xdr.Uint64("1_000_000_000_000_000");
+u64 = new xdr.Uint64(1_000_000_000_000_000n);
+```
+
+You can see the full set of options to construct a `Uint64` in the definition for `UnsignedHyper` in the TypeScript definition here: [curr.d.ts](https://github.com/stellar/js-stellar-base/blob/master/types/curr.d.ts#L127-L136). In fact, this file should be your primary guide to navigating the XDR if you're using JavaScript.
+
+Other languages, such as Python (see `stellar-sdk`'s [uint64.html](https://stellar-sdk.readthedocs.io/en/stable/_modules/stellar_sdk/xdr/uint64.html) documentation), support arbitrarily-sized integers by default, so there are no such variations:
+
+```python
+import xdr from stellar_sdk;
+
+u64 = xdr.Uint64(1_000_000_000_000_000)
+```
+
+As a result, many of the basic primitives can be initialized in the "intuitive" way for your respective language.
+
+#### Unions
+
+This is where things get a little more complicated. A _union type_ is a generic type that switches between different "arms", each of which is a different internal type. When parsing an XDR union type, it's important to determine which arm is being used before you try parsing what's inside.
+
+Let's take an [`SCAddress`](https://github.com/stellar/stellar-xdr/blob/70180d5e8d9caee9e8645ed8a38c36a8cf403cd9/Stellar-contract.x#L185-L191), for example. From the type definition, we can see that it's either an account (i.e. `SC_ADDRESS_TYPE_ACCOUNT`) or the hash of a contract (`SC_ADDRESS_TYPE_CONTRACT`). Right above that definition, you can see that these are constants of the `SCAddressType` enum defined as 0 or 1, respectively.
+
+In general, unions follow a particular pattern: switch on the type and match the appropriate enum value. So when you have one of these unions, you need to figure out which one it is:
+
+<CodeExample>
+
+```typescript
+import { xdr } from "@stellar/stellar-sdk";
+import Buffer from "buffer";
+
+// suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
+switch (scAddr.switch()) {
+  case xdr.ScAddressType.scAddressTypeAccount().value:
+    console.log("The account is:", scAddr.accountId());
+    break;
+
+  case xdr.ScAddressType.scAddressTypeContract().value:
+    console.log("The contract is:", scAddr.contractId());
+    break;
+
+  default:
+    throw new Error(`Unexpected address type: ${scAddr.switch()}`);
+}
+```
+
+```python
+import SCAddressType, SCAddress from stellar_sdk.xdr.sc_address_type
+
+if scAddr.type == SCAddressType.SC_ADDRESS_TYPE_ACCOUNT:
+    print("The account is:", scAddr.account_id);
+    break
+
+elif scAddr.type == SCAddressType.SC_ADDRESS_TYPE_CONTRACT:
+    print("The contract is:", scAddr.contract_id);
+    break
+
+else:
+    raise Exception(f"Unexpected address type: {scAddr.type}")
+```
+
+</CodeExample>
+
+You can see the references for these in the documentation ([Python](https://stellar-sdk.readthedocs.io/en/stable/api.html#scaddress) and [JavaScript](https://github.com/stellar/js-stellar-base/blob/master/types/curr.d.ts#L13881-L13886), respectively).
+
+It's worth noting that you _could_ just use the defined enum constants directly, e.g.
+
+```typescript
+import { xdr } from "@stellar/stellar-sdk";
+import Buffer from "buffer";
+
+// suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
+switch (scAddr.switch().value) {
+  case 0:
+    console.log("The account is:", scAddr.accountId());
+    break;
+
+  case 1:
+    console.log("The contract is:", scAddr.contractId());
+    break;
+
+  default:
+    throw new Error(`Unexpected address type: ${scAddr.switch()}`);
+}
+```
+
+However, this is generally more error-prone and harder to read. You can also refer to them by their _name_ (`.name` in JS and `str(...)` in Python): this is marginally better for readability but worse for performance since you're doing string comparisons. It's very useful for logs, user-facing rendering, or other debugging, though.
+
+Unions appear in _many_ places throughout the XDR and they can be just one arm or a whole _bunch_ of arms. For example, the **s**mart **c**ontract **val**ue `ScVal` has 22 possible values since it's the universal representation for a value inside of a smart contract. You can see all of them being inspected in the JavaScript utility [`scValToNative`](https://stellar.github.io/js-stellar-sdk/js-stellar-base_src_scval.js.html#line279).
+
+Remember, XDR is the lowest level of communication on the Stellar Network. Generally speaking, there are high-level abstractions that should help with these structures. For example, the above parsing routine is exactly the purpose of the [`Address.fromScAddress`](https://stellar.github.io/js-stellar-sdk/Address.html#.fromScAddress) and [`Address.from_xdr_sc_address`](https://stellar-sdk.readthedocs.io/en/stable/api.html#stellar_sdk.address.Address) abstractions in the JavaScript and Python SDKs, respectively. This greatly simplifies your code:
+
+<CodeExample>
+
+```typescript
+import { Address } from "@stellar/stellar-sdk";
+
+// suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
+const address = Address.fromScAddress(scAddr);
+```
+
+```python
+import Address from stellar_sdk;
+
+# suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
+addr = Address.from_xdr_sc_address(scAddr)
+```
+
+</CodeExample>
+
+Always try to find a higher-level abstraction before digging into the raw structure.
+
+#### Structures
+
+Like in any C-like language, a structure is a packed object containing a bunch of fields of arbitrary types. Structures can themselves contain structures, so be sure you traverse the entire tree of fields when you're constructing one.
+
+Let's take, for example, the [`ContractEvent`](https://github.com/stellar/stellar-xdr/blob/c1a58e2f81a4d1b02adc6db9914e6f51960e1ce3/Stellar-ledger.x#L339-L358) structure. Its definition is a little complicated, so let's break it down:
+
+- An `ExtensionPoint` is a way for the protocol to be extended while maintaining backwards binary compatibility.
+
+It's basically an empty slot into which you can add variations in the future. The [`SorobanTransactionMeta` structure](https://github.com/stellar/stellar-xdr/blob/c1a58e2f81a4d1b02adc6db9914e6f51960e1ce3/Stellar-ledger.x#L410) is a great example of this in action: When the structure was initially added to the protocol, it just contained the details of an invocation (events and a return value). Later, we needed more details about the invocation in the resulting metadata, so `SorobanTransactionMetaExt` was injected into the `ExtensionPoint` with a [`V1` variant](https://github.com/stellar/stellar-xdr/blob/c1a58e2f81a4d1b02adc6db9914e6f51960e1ce3/Stellar-ledger.x#L368C8-L368C35) containing metadata about fees charged as a result of the invocation.
+
+- The `contractID` should be self-explanatory: it's the hash of the contract ID that caused this event. It's a pointer, though, because not all events are related to a specific contract. Some may come from the system, diagnostics, etc.
+
+It should not be surprising that the field is stored as a `Hash`: even though at the ecosystem layer we refer to contracts by their "strkey" or string representation (in the form `C...`), these are actually "friendlier" representations of a raw SHA-256 hash. This is common at the protocol layer: the simplest, most compact representation will always be used. There are generally SDK tools to make translating these into more user-friendly types (as demonstrated in the example below).
+
+- The `ContractType` is essentially a way to differentiate which of the fields in the structure you should expect to be present and isn't worth elaborating on.
+
+- Finally, we have the curious `v` union field.
+
+You will often see unions in structures and vice-versa. If you have a handle on how each of these is traversed individually, you can handle them interleaved amongst each other. As a demonstration of how this is done with an SDK, even catered specifically to this structure, we can take a look at the source of the [`humanizeEvents` helper method](https://stellar.github.io/js-stellar-sdk/global.html#humanizeEvents) in the JavaScript SDK. Specifically, we'll look at the details of the [`extractEvent` subroutine](https://stellar.github.io/js-stellar-sdk/js-stellar-base_src_events.js.html), replicated here for convenience:
+
+```js
+function extractEvent(event) {
+  return {
+    ...(typeof event.contractId === "function" &&
+      event.contractId() != null && {
+        contractId: StrKey.encodeContract(event.contractId()),
+      }),
+    type: event.type().name,
+    topics: event
+      .body()
+      .value()
+      .topics()
+      .map((t) => scValToNative(t)),
+    data: scValToNative(event.body().value().data()),
+  };
+}
+```
+
+In this short and sweet example we can see tons of the nuances we've discussed in this guide at work:
+
+- By differentiating on whether or not the `contractId` returns a value or not (it's a pointer, remember?), we decide whether or not we want to turn the raw hash into an ecosystem-compatible contract ID.
+- We access the `.name` field of the event type, which turns it into a human-readable string rather than an opaque structure, just like we discussed in [Unions](#unions), earlier.
+- We inspect _deeply_ into the `body` member to extract the `topics` and `data` fields separately, converting each of those opaque `ScVal`ues into JavaScript-friendly equivalents.
+
+In the last part, we "abuse" the fact that there is only one variation of the `body` union we discussed: there is only the initial version (an arm with `v == 0`), so we can use the `.value()` accessor to give us the underlying value directly rather than going through the rigamarole of differentiating the different cases. Calling `.v0()` would have been equivalent, but the benefit here is that if a `v == 1` variation is introduced that _also_ has a `topics` array and a `data` field (i.e. it adds additional fields rather than changing the v0 structure), this code will continue to work!
+
+There are many cases in which the different union arms share structure, and `.value()` lets you take advantage of that.
+
+---
+
+This overview should give you a strong baseline on understanding how to inspect XDR in your respective SDK to dig into the fields that you're interested in. Specifics will, of course, be language dependent, but if you start at the foundation--that being the raw [.x files](#.x-files) themselves--you will get an understanding of the structure itself and should be able to access that same structure directly in your language of choice, as we've outlined here.
+
+{/* TODO: Room to expand much more: Tools -> CLI Visualization, JSON Visualization, Stellar Lab */}
