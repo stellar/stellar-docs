@@ -184,6 +184,16 @@ const config: Config = {
               type: 'doc',
               docId: "data/oracles/README",
               label: "Oracles",
+            },
+            {
+              type: 'html',
+              value: '<hr><small>Migration Guides</small>',
+              className: 'subtitle',
+            },
+            {
+              type: 'doc',
+              docId: 'data/migrate-from-horizon-to-rpc',
+              label: 'Horizon to RPC'
             }
           ]
         },
