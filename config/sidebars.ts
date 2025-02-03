@@ -31,8 +31,8 @@ const sidebars: SidebarsConfig = {
     { type: 'ref', id: 'data/oracles/README', label: 'Oracles'},
     { type: 'html', value: '<small>Migration Guides</small>', defaultStyle: true, className: 'networkMenuHtmlItem'},
     {
-      type: "ref",
-      id: "data/migrate-from-horizon-to-rpc",
+      type: "doc",
+      id: "data/migrate-from-horizon-to-rpc/README",
       label: "Horizon to RPC"
     },
   ],

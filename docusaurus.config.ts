@@ -192,7 +192,7 @@ const config: Config = {
             },
             {
               type: 'doc',
-              docId: 'data/migrate-from-horizon-to-rpc',
+              docId: 'data/migrate-from-horizon-to-rpc/README',
               label: 'Horizon to RPC'
             }
           ]
