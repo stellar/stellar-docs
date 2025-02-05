@@ -22,6 +22,16 @@ const config: Config = {
   favicon: "img/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
+  scripts: [
+    {
+      src: "https://dashboard.letmeexplain.ai/embed/lme_chatbot_widget.js", // LetMeExplain embed script
+      async: false,
+    },
+    {
+      src: "/js/enable_lme_chatbot.js", // Custom initialization script
+      defer: true,
+    },
+  ],
   i18n: {
     defaultLocale: DEFAULT_LOCALE,
     locales: ["en", "es"],
