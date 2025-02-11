@@ -16,7 +16,7 @@ const config: Config = {
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenAnchors: "warn",
+  onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
   favicon: "img/favicon-96x96.png",
@@ -74,6 +74,7 @@ const config: Config = {
           blogSidebarCount: 'ALL',
           postsPerPage: 'ALL',
           routeBasePath: 'meetings',
+          onUntruncatedBlogPosts: 'ignore',
         },
         docs: {
           showLastUpdateTime: true,
