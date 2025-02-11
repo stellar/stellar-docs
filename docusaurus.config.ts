@@ -10,6 +10,9 @@ import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
+  future: {
+    experimental_faster: true,
+  },
   title: "Stellar Docs",
   tagline:
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
