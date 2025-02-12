@@ -205,7 +205,7 @@ const config: Config = {
           activeBaseRegex: `(docs/tools|platforms)`,
           items: [
             {
-              to: '/docs/tools/sdks/library',
+              to: '/docs/tools/sdks',
               label: 'SDKs',
               activeBasePath: 'docs/tools/sdks'
             },
