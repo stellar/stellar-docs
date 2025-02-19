@@ -22,13 +22,13 @@ RUN yarn install
 RUN yarn rpcspec:build
 RUN yarn stellar-cli:build
 
-ENV NODE_OPTIONS="--max-old-space-size=4096"
+ENV NODE_OPTIONS="--max-old-space-size=8192"
 RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
     CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn build:production; \
   else \
     # In the preview build, we only want to build for English. Much quicker
     # yarn build; \
-    yarn docusaurus write-translations && yarn crowdin download --no-progress && yarn crowdin:fix && yarn docusaurus build; \
+    yarn docusaurus write-translations && CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn crowdin download --no-progress && yarn crowdin:fix && yarn docusaurus build; \
   fi
 
 FROM nginx:1.27
