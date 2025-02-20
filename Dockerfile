@@ -22,7 +22,7 @@ RUN yarn install
 RUN yarn rpcspec:build
 RUN yarn stellar-cli:build
 
-ENV NODE_OPTIONS="--max-old-space-size=8192"
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
     CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn build:production; \
   else \
