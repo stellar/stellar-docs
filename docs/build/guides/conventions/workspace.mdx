@@ -4,14 +4,14 @@ hide_table_of_contents: true
 description: Organize contracts using Cargo workspaces
 ---
 
-### Initializing workspace project
+# Workspace
 
 Using Cargo's workspace [feature](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) makes it very convenient to organize your smart contracts in subdirectories of your project's root.
 
 It's very simple to get started using the cli:
 
 ```
-stellar contract init . --name add_contract
+stellar contract init soroban-project --name add_contract
 ```
 
 Running this command will create a root project directory (`soroban-project`) and then initialize a project workspace with a single contract named `add_contract`.
@@ -19,13 +19,12 @@ Running this command will create a root project directory (`soroban-project`) an
 Adding one more contract template to the project can be done using the same command:
 
 ```
-stellar contract init . --name main_contract
+stellar contract init soroban-project --name main_contract
 ```
 
-The project tree will look like this:
+The project tree in the `soroban-project` directory will look like this:
 
 ```
-$ tree
 .
 ├── Cargo.toml
 ├── contracts
@@ -44,21 +43,18 @@ $ tree
 └── README.md
 ```
 
-Running `stellar contract init` command created a sample contracts subdirectories (located in `./contracts), each contains:
+Running `stellar contract init` command created a new contract, located in `./contracts`, each containing:
 
-1. Cargo.toml file with all (minimal) necessary dependencies
-2. `Makefile` to easily build contract using `make` command
-3. `src` directory with an example hello-world contract and a simple test.
+- Cargo.toml file with the `soroban-sdk` dependency
+- `src` directory with an example hello-world contract and a test.
 
-We can now build our workspace's contracts with
+Build the contracts with the following command (don't forget to change working directory to `soroban-project` first before running it), and check the build directory `target/wasm32-unknown-unknown/release/` for the compiled `.wasm` files.
 
 ```
 stellar contract build
 ```
 
-command and check the build directory `target/wasm32-unknown-unknown/release/`
-
-### Cross-contract call between workspaces
+### Integrating Contracts in the Same Workspace
 
 With the given project structure, cross-contract calls can be easily made. Starting with modifying the sample hello world contract into an add contract:
 
@@ -77,36 +73,28 @@ impl ContractAdd {
 }
 ```
 
-The `ContractAdd` can now be referenced and used from another contracts in the same workspace using [`contractimport`](https://docs.rs/soroban-sdk/latest/soroban_sdk/macro.contractimport.html) macros. Note that the `contractimport` requires relative path of the compiled wasm file, so first it's required to recompile the contract with:
+:::tip
 
-```
-stellar contract build
-```
+In this tutorial we use workspaces to import contract client. However, it's also possible to use contract's compiled code instead (for example, if you don't have a source code for it). See [making cross-contract calls](/docs/build/guides/conventions/cross-contract.mdx) guide for more info
 
-As seen previously, target wasm file is located in
+:::
 
-```
-$PROJECT_ROOT/target/wasm32-unknown-unknown/release/
-```
+Next, in order to call `ContractAdd` from another contract, it's necessary to add a workspace dependency:
 
-In order to reference this wasm file from `contracts/main_contract/src/lib.rs`, we need to first construct the path to the project root: `../..` (relative to second contract's Cargo.toml file location) followed by path to the wasm file:
-
-```
-../../../target/wasm32-unknown-unknown/release/add_contract.wasm
+```toml title="./contracts/main_contract/Cargo.toml"
+# <...>
+[dependencies]
+soroban-sdk = { workspace = true }
+add_contract = { path = "../add_contract" }
+# <...>
 ```
 
-It can now be used in the rust code:
+The `ContractAdd` can now be referenced and used from another contracts using `ContractAddClient`:
 
 ```rust title="contracts/main_contract/src/lib.rs"
 #![no_std]
-
+use add_contract::ContractAddClient;
 use soroban_sdk::{contract, contractimpl, Address, Env};
-
-mod contract_add {
-    soroban_sdk::contractimport!(
-        file = "../../../target/wasm32-unknown-unknown/release/add_contract.wasm"
-    );
-}
 
 #[contract]
 pub struct ContractMain;
@@ -114,7 +102,7 @@ pub struct ContractMain;
 #[contractimpl]
 impl ContractMain {
     pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
-        let client = contract_add::Client::new(&env, &contract);
+        let client = ContractAddClient::new(&env, &contract);
         client.add(&x, &y)
     }
 }
@@ -127,18 +115,19 @@ Here, main contract will invoke `ContractAdd`'s `add` function to calculate the 
 ```rust title="contracts/main_contract/src/test.rs"
 #![cfg(test)]
 
-use crate::{contract_add, ContractMain, ContractMainClient};
+use crate::{ContractMain, ContractMainClient};
 use soroban_sdk::Env;
+use add_contract::ContractAdd;
 
 #[test]
 fn test_adding_cross_contract() {
     let env = Env::default();
 
-    // Register add contract using the imported WASM.
-    let contract_add_id = env.register_contract_wasm(None, contract_add::WASM);
+    // Register add contract using the imported contract.
+    let contract_add_id = env.register(ContractAdd, ());
 
     // Register main contract defined in this crate.
-    let contract_main_id = env.register_contract(None, ContractMain);
+    let contract_main_id = env.register(ContractMain, ());
 
     // Create a client for calling main contract.
     let client = ContractMainClient::new(&env, &contract_main_id);
@@ -170,7 +159,7 @@ Finally, let's deploy this contracts and call our main contract using cli. If yo
 
 ```bash
 stellar keys generate alice --fund --network testnet
-STELLAR_SOURCE_ACCOUNT=alice
+stellar keys use alice
 ```
 
 Second is to deploy the contracts:
@@ -233,6 +222,7 @@ adder-interface = {workspace = true}
 [dependencies]
 soroban-sdk = { workspace = true }
 adder-interface = {workspace = true}
+add_contract = { path = "../add_contract" }
 # <...>
 ```
 
@@ -300,22 +290,6 @@ impl ContractMain {
 }
 
 mod test;
-```
-
-And update test imports:
-
-```rust title="contracts/main_contract/src/test.rs"
-#![cfg(test)]
-
-use crate::{ContractMain, ContractMainClient};
-use soroban_sdk::Env;
-
-mod contract_add {
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/my_contract.wasm"
-    );
-}
-// <...>
 ```
 
 As the final step we can create an alternative `Adder` implementation that adds an extra 1:
