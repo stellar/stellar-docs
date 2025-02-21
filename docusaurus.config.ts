@@ -184,6 +184,16 @@ const config: Config = {
               type: 'doc',
               docId: "data/oracles/README",
               label: "Oracles",
+            },
+            {
+              type: 'html',
+              value: '<hr><small>Migration Guides</small>',
+              className: 'subtitle',
+            },
+            {
+              type: 'doc',
+              docId: 'data/migrate-from-horizon-to-rpc/README',
+              label: 'Horizon to RPC'
             }
           ]
         },
@@ -195,7 +205,7 @@ const config: Config = {
           activeBaseRegex: `(docs/tools|platforms)`,
           items: [
             {
-              to: '/docs/tools/sdks/library',
+              to: '/docs/tools/sdks',
               label: 'SDKs',
               activeBasePath: 'docs/tools/sdks'
             },

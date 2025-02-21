@@ -29,6 +29,12 @@ const sidebars: SidebarsConfig = {
     { type: 'ref', id: 'data/galexie/README', label: 'Galexie'},
     { type: 'ref', id: 'data/data-indexers/README', label: 'Data Indexers'},
     { type: 'ref', id: 'data/oracles/README', label: 'Oracles'},
+    { type: 'html', value: '<small>Migration Guides</small>', defaultStyle: true, className: 'networkMenuHtmlItem'},
+    {
+      type: "doc",
+      id: "data/migrate-from-horizon-to-rpc/README",
+      label: "Horizon to RPC"
+    },
   ],
   tools: [
     {
