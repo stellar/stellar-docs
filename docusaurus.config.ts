@@ -180,6 +180,21 @@ const config: Config = {
               docId: "data/data-indexers/README",
               label: "Data Indexers",
             },
+            {
+              type: 'doc',
+              docId: "data/oracles/README",
+              label: "Oracles",
+            },
+            {
+              type: 'html',
+              value: '<hr><small>Migration Guides</small>',
+              className: 'subtitle',
+            },
+            {
+              type: 'doc',
+              docId: 'data/migrate-from-horizon-to-rpc/README',
+              label: 'Horizon to RPC'
+            }
           ]
         },
         {
@@ -190,7 +205,7 @@ const config: Config = {
           activeBaseRegex: `(docs/tools|platforms)`,
           items: [
             {
-              to: '/docs/tools/sdks/library',
+              to: '/docs/tools/sdks',
               label: 'SDKs',
               activeBasePath: 'docs/tools/sdks'
             },
@@ -276,6 +291,14 @@ const config: Config = {
               label: "Soroban Quest",
               href: "https://fastcheapandoutofcontrol.com/tutorial",
             },
+            {
+              label: "YouTube",
+              href: "https://www.youtube.com/@StellarDevelopmentFoundation",
+            },
+            {
+              label: "Twitch",
+              href: "https://m.twitch.tv/stellarorg/home",
+            },
           ],
         },
         {
@@ -307,6 +330,10 @@ const config: Config = {
           title: "Community",
           items: [
             {
+              label: "Contribute to Docs",
+              href: "https://github.com/stellar/stellar-docs?tab=readme-ov-file#contributing",
+            },
+            {
               label: "Developer Discord",
               href: "https://discord.gg/stellardev",
             },
@@ -322,7 +349,7 @@ const config: Config = {
               label: "Stellar Community Fund",
               href: "https://communityfund.stellar.org/",
             },
-          ],
+         ],
         },
         {
           title: "About",

@@ -136,6 +136,12 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
+          id: "api-reference/delete-a-disbursement",
+          label: "Deletes a Draft Disbursement",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
           id: "api-reference/list-all-disbursement-receivers",
           label: "List All Disbursement Receivers",
           className: "api-method get",
@@ -407,6 +413,30 @@ const sidebar: SidebarsConfig = {
           id: "api-reference/update-user-role",
           label: "Update User Role",
           className: "api-method patch",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "Exports",
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/export-disbursements",
+          label: "Export Disbursements",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/export-payments-csv",
+          label: "Export Payments",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/export-receivers-csv",
+          label: "Export Receivers",
+          className: "api-method get",
         },
       ],
     },
