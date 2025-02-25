@@ -27,8 +27,7 @@ RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
     CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn build:production; \
   else \
     # In the preview build, we only want to build for English. Much quicker
-    # yarn build; \
-    yarn docusaurus write-translations && CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn crowdin download --no-progress && yarn crowdin:fix && yarn docusaurus build; \
+    yarn build; \
   fi
 
 FROM nginx:1.27
