@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { type ReactNode } from 'react';
 import ApiExplorer from '@theme-original/ApiExplorer';
 import Admonition from "@theme/Admonition";
 import Link from "@docusaurus/Link";
@@ -8,7 +8,7 @@ import type {WrapperProps} from '@docusaurus/types';
 
 type Props = WrapperProps<typeof ApiExplorerType>;
 
-export default function ApiExplorerWrapper(props: Props): JSX.Element {
+export default function ApiExplorerWrapper(props: Props): ReactNode {
   return (
     <>
       <ApiExplorer {...props} />
