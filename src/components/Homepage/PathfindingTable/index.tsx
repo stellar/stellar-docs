@@ -12,7 +12,9 @@ export default function PathfindingTable({ children }) {
         return (
           <table className={styles.PathfindingTable}>
             <thead>
-              <th colSpan={3} {...thead.props.children.props.children[0].props}></th>
+              <tr>
+                <th colSpan={3} {...thead.props.children.props.children[0].props}></th>
+              </tr>
             </thead>
             <tbody>
               {React.Children.map(rows, row => <PathfindingRow row={row} />)}
