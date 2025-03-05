@@ -181,7 +181,7 @@ const config: Config = {
             },
             {
               type: 'doc',
-              docId: "data/ingest/README",
+              docId: "data/ingest-library/README",
               label: "Ingest Library",
             },
             {
