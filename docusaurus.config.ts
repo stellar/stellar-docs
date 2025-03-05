@@ -161,6 +161,16 @@ const config: Config = {
           items: [
             {
               type: 'doc',
+              docId: "data/README",
+              label: "Overview",
+            },
+            {
+              type: 'html',
+              value: '<hr><small>Data Availability</small>',
+              className: 'subtitle',
+            },
+            {
+              type: 'doc',
               docId: "data/rpc/README",
               label: "RPC",
             },
