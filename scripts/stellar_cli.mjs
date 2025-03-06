@@ -21,7 +21,7 @@ execSync(`git clone ${repoUrl} ${localRepoPath}`);
 //   .substring(1)
 //   .trim();t
 // TODO: remove this and uncomment above once
-let latestVersion = "195eb791d8a82f666aebc4c8d3be584c4fcab2a2"
+let latestVersion = "e4680d35b11f217ddd5403dc417a883bffbc387f"
 
 console.log("the latest version is", latestVersion.toString());
 
