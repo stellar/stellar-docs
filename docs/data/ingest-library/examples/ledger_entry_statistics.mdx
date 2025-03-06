@@ -1,0 +1,156 @@
+---
+title: Get ledger entries from History Archive
+sidebar_position: 10
+---
+
+This example connects to the Stellar History Archive using `historyarchive.Connect` and initializes a checkpoint reader with `ingest.NewCheckpointChangeReader` to read ledger entry changes at a given checkpoint. It iterates over the ledger changes, processing different entry types such as `Account`, `ClaimableBalance`, `Trustline`, and `Offer`, using the `ingest.Change` structure. The code tracks statistics in an `entriesInfo` struct, counting the total entries and specific types.
+
+<CodeExample>
+
+    ```go
+    package main
+
+    import (
+        "context"
+        "encoding/json"
+        "fmt"
+        "github.com/stellar/go/ingest/ledgerbackend"
+        "github.com/stellar/go/network"
+        "io"
+        "time"
+
+        "github.com/stellar/go/historyarchive"
+        "github.com/stellar/go/ingest"
+        "github.com/stellar/go/support/storage"
+        "github.com/stellar/go/xdr"
+    )
+
+    var (
+        config = captiveCoreConfig()
+    )
+
+    func captiveCoreConfig() ledgerbackend.CaptiveCoreConfig {
+        archiveURLs := network.TestNetworkhistoryArchiveURLs
+        networkPassphrase := network.TestNetworkPassphrase
+        captiveCoreToml, err := ledgerbackend.NewCaptiveCoreToml(ledgerbackend.CaptiveCoreTomlParams{
+            NetworkPassphrase:  networkPassphrase,
+            HistoryArchiveURLs: archiveURLs,
+        })
+        panicIf(err)
+
+        return ledgerbackend.CaptiveCoreConfig{
+            // Change these based on your environment:
+            BinaryPath:         "/usr/local/bin/stellar-core", // Location of stellar-core binary compiled for your platform
+            NetworkPassphrase:  networkPassphrase,
+            HistoryArchiveURLs: archiveURLs,
+            Toml:               captiveCoreToml,
+        }
+    }
+
+    func panicIf(err error) {
+        if err != nil {
+            panic(fmt.Errorf("An error occurred, panicking: %s\n", err))
+        }
+    }
+
+    type entriesInfo struct {
+        TotalEntries              int32
+        NumAccounts               int32
+        NumAccountsWithTrustlines int32
+
+        NumClaimableBalances int32
+        NumOffers            int32
+    }
+
+    func ledgerEntryStats() {
+        var err error
+
+        // Open a history archive using our existing configuration details.
+        historyArchive, err := historyarchive.Connect(
+            config.HistoryArchiveURLs[0],
+            historyarchive.ArchiveOptions{
+                NetworkPassphrase: config.NetworkPassphrase,
+                ConnectOptions: storage.ConnectOptions{
+                    S3Region:         "us-west-1",
+                    UnsignedRequests: false,
+                },
+            },
+        )
+        panicIf(err)
+
+        // First, we need to establish a safe fallback in case of any problems
+        // during the history archive download+processing, so we'll set a 30-second
+        // timeout.
+        //
+        // NOTE: We're using the testnet here, whose archives are much smaller. For
+        //       the pubnet, a 30 *minute* timeout may be more appropriate.
+        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        defer cancel()
+
+        // We pass 123455 because given a checkpoint frequency of 64 ledgers (the
+        // default in `ConnectOptions`, above), 123455+1 mod 64 == 0. Incompatible
+        // sequence numbers will likely result in 404 errors.
+        var reader *ingest.CheckpointChangeReader
+        reader, err = ingest.NewCheckpointChangeReader(ctx, historyArchive, 123455)
+        panicIf(err)
+
+        accountsToTrustlineCountMap := make(map[xdr.AccountId]int32)
+
+        info := entriesInfo{}
+        for {
+            var entry ingest.Change
+            entry, err = reader.Read()
+            if err == io.EOF {
+                break
+            }
+            panicIf(err)
+
+            info.TotalEntries++
+
+            switch entry.Type {
+            case xdr.LedgerEntryTypeClaimableBalance:
+                info.NumClaimableBalances++
+            case xdr.LedgerEntryTypeAccount:
+                info.NumAccounts++
+            case xdr.LedgerEntryTypeTrustline:
+                // The NewCheckpointChangeReader.read() function converts each ledgerEntry into a Change struct where Post is non empty
+                accountId := entry.Post.Data.MustTrustLine().AccountId
+                accountsToTrustlineCountMap[accountId]++
+            case xdr.LedgerEntryTypeOffer:
+                info.NumOffers++
+            default:
+                // there are other types as well, but we are not including them in this example
+            }
+
+            fmt.Printf("Processed %d ledger entry changes...\r", info.TotalEntries)
+        }
+
+        fmt.Println()
+        // Marshal the struct into JSON with indentation
+        jsonData, err := json.MarshalIndent(&info, "", "    ")
+        panicIf(err)
+        // Print the indented JSON
+        fmt.Println(string(jsonData))
+    }
+
+    func main() {
+        ledgerEntryStats()
+    }
+
+    ```
+
+</CodeExample>
+
+**Sample Response:**
+
+```bash
+>> go run  ./example_ledger_entries.go
+Processed 142357 ledger entry changes...
+{
+    "TotalEntries": 142357,
+    "NumAccounts": 79962,
+    "NumAccountsWithTrustlines": 0,
+    "NumClaimableBalances": 399,
+    "NumOffers": 575
+}
+```
