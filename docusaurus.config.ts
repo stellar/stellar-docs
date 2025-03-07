@@ -161,6 +161,11 @@ const config: Config = {
           items: [
             {
               type: 'doc',
+              docId: "data/README",
+              label: "Overview",
+            },
+            {
+              type: 'doc',
               docId: "data/rpc/README",
               label: "RPC",
             },
@@ -189,16 +194,6 @@ const config: Config = {
               docId: "data/oracles/README",
               label: "Oracles",
             },
-            {
-              type: 'html',
-              value: '<hr><small>Migration Guides</small>',
-              className: 'subtitle',
-            },
-            {
-              type: 'doc',
-              docId: 'data/migrate-from-horizon-to-rpc/README',
-              label: 'Horizon to RPC'
-            }
           ]
         },
         {

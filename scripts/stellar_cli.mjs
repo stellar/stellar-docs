@@ -14,16 +14,20 @@ if (fs.existsSync(localRepoPath)) {
 // Perform a shallow clone of the repository
 console.log("Cloning repository...");
 execSync(`git clone ${repoUrl} ${localRepoPath}`);
-let latestVersion = execSync(
-  `cd ${localRepoPath} && git tag | grep -v -E 'rc|preview' | tail -n1`,
-)
-  .toString()
-  .substring(1)
-  .trim();
+// let latestVersion = execSync(
+//   `cd ${localRepoPath} && git tag | grep -v -E 'rc|preview' | tail -n1`,
+// )
+//   .toString()
+//   .substring(1)
+//   .trim();t
+// TODO: remove this and uncomment above once
+let latestVersion = "e4680d35b11f217ddd5403dc417a883bffbc387f"
 
 console.log("the latest version is", latestVersion.toString());
 
-execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
+// TODO: uncomment
+// execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
+execSync(`cd ${localRepoPath} && git checkout --quiet ${latestVersion}`);
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
