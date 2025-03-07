@@ -12,7 +12,7 @@ A footprint is a set of ledger keys, each marked as either read-only or read-wri
 
 Any Soroban transaction submitted by a user has to be accompanied by this footprint. A single footprint encompasses _all_ the data read and written by _all_ contracts transitively invoked by the transaction: not just the initial contract that the transaction calls, but also all contracts it calls, and so on.
 
-Since it can be difficult for a user to know which ledger entries a given contract call will attempt to read or write (especially entries that are caused by other contracts deep within a transaction), the host provides an auxiliary `simulateTransaction` mechanism that executes a transaction against a temporary, possibly out-of-date _snapshot_ of the ledger. The `simulateTransaction` mechanism is _not_ constrained to only read or write the contents of a footprint; rather it _records_ a footprint describing the transaction's execution, discards the execution's effects, and then returns the recorded footprint to its caller.
+Since it can be difficult for a user to know which ledger entries a given contract call will attempt to read or write (especially entries that are caused by other contracts deep within a transaction), RPC servers provide an auxiliary [`simulateTransaction` mechanism](../../../../data/rpc/api-reference/methods/simulateTransaction.mdx) that executes a transaction against a temporary, possibly out-of-date _snapshot_ of the ledger. Simulation is _not_ constrained to only read or write the contents of a footprint; rather it _records_ a footprint describing the transaction's execution, discards the execution's effects, and then returns the recorded footprint to its caller.
 
 This simulation-provided footprint can then be used to accompany a "real" submission of the same transaction to the network for real execution. If the state of the ledger has changed too much between the time of the simulated and the real submission, the footprint may be too stale and no longer accurately identify the _keys_ the transaction needs to read and/or write, at which point the simulation must be retried to refresh the footprint.
 
@@ -26,10 +26,69 @@ See the [authorization overview](../../security/authorization.mdx) docs and auth
 
 Soroban's `simulateTransaction` mechanism can also be used to compute the `SorobanAuthorizedInvocation` trees that must be authorized by the `Address`es for all the `require_auth` checks to pass.
 
-Soroban host provides a special 'recording' mode for auth. Whenever `require_auth` is called, the host records its context (address, contract id, function, arguments), attributes it to a `SorobanAuthorizedInvocation` tree, and marks it as successful. Then, after the invocation has finished, `simulateTransaction` can return all the recorded trees, as well as the generated random nonce values.
+Soroban host provides a special 'recording' mode for auth. Whenever `require_auth` is called, the host records its context (address, contract id, function, arguments), attributes it to a `SorobanAuthorizedInvocation` tree, and marks it as successful. Then, after the invocation has finished, simulation returns all of the recorded trees, as well as the generated random nonce values.
 
 Given this information from the simulation, the client only needs to provide these trees and nonces to the respective `Address`es for signing and then build the final transaction using the simulation output and the corresponding signatures.
 
 The recording auth mode is optional for `simulateTransaction`. For example, when dealing with the custom account contracts, it may be necessary to simulate the custom account's `__check_auth` code (that is simply omitted in the recording auth mode), for example, to get its ledger footprint. The non-recording mode is referred to as 'enforcing'. Enforcing mode is basically equivalent to running the transaction on-chain (with possibly a slightly stale ledger state); hence, it requires all the signatures to be valid.
 
 Note that the recording auth mode never emulates authorization failures. The reason for that is that failing authorization is always an exceptional situation (i.e., the `Address`es for which you don't anticipate successful authorization shouldn't be used in the first place). It is similar to how, for example, the `simulateTransaction` mechanism doesn't emulate failures caused by the incorrect footprint. `simulateTransaction` with enforcing auth mode may still be used to verify the signatures before executing the transaction on-chain.
+
+## Example
+
+To demonstrate these principles in action, we'll work through an example using the [TypeScript SDK](../../../../tools/sdks/client-sdks.mdx).
+
+We'll keep this example fairly simple: funding two accounts on testnet via [Friendbot](https://developers.stellar.org/docs/learn/fundamentals/networks#friendbot) and sending XLM between them using contract invocations. Along the way, we'll highlight how simulation works, how authorization occurs, and the different helper mechanisms available for trickier authorization scenarios.
+
+```typescript
+import { Keypair } from "@stellar/stellar-sdk";
+import { Server } from "@stellar/stellar-sdk/rpc";
+
+const s = new Server("https://soroban-testnet.stellar.org");
+const xlm = Asset.native().contractId(Networks.TESTNET);
+
+async function prepare(count: number): Promise<Keypair[]> {
+  // Create & fund accounts.
+  const users = Array(count)
+    .fill(0)
+    .map((_) => Keypair.random());
+  await Promise.all(users.map((kp) => s.requestAirdrop(kp.publicKey())));
+  return users;
+}
+
+async function simpleTransfer(aliceKp, bobKp) {
+  const tx = new TransactionBuilder(await s.getAccount(aliceKp.publicKey()), {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.invokeContractFunction({
+        contract: xlm,
+        function: "transfer",
+        args: [
+          [aliceKp.publicKey(), "address"], // from
+          [bobKp.publicKey(), "address"], // to
+          [1000, "i128"], // amount
+        ].map((pair) => nativeToScVal(pair[0], { type: pair[1] })),
+      }),
+    )
+    .build();
+
+  const prepTx = await s.prepareTransaction(tx);
+  prepTx.sign(aliceKp);
+
+  const r = await s.sendTransaction(prepTx);
+  return await s.pollTransaction(r.hash);
+}
+
+async function thirdPartyTransfer(alice, bob, carol) {
+  // TODO: Alice transfers money from Carol to Bob.
+  // Carol needs to sign the auth entry.
+}
+
+async function main() {
+  const [alice, bob, carol] = await prepare(3);
+  simpleTransfer(alice, bob);
+  thirdPartyTransfer(alice, alice, carol);
+}
+```
