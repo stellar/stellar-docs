@@ -161,6 +161,11 @@ const config: Config = {
           items: [
             {
               type: 'doc',
+              docId: "data/README",
+              label: "Overview",
+            },
+            {
+              type: 'doc',
               docId: "data/rpc/README",
               label: "RPC",
             },
