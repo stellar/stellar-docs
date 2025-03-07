@@ -3,7 +3,7 @@ title: Get changes from a ledger range
 sidebar_position: 30
 ---
 
-This code connects to a Stellar history archive using a `ledgerbackend.CaptiveCoreConfig` and retrieves ledger data between a specified range of ledger sequences. It uses the `ingest.LedgerChangeReader` to read changes from each ledger (`xdr.LedgerCloseMeta`) and categorizes the changes based on whether they represent created, updated, or deleted ledger entries. The `ingest.Change` structure is used to capture individual changes, and the code tracks various types of changes such as those related to fees, transactions, or operations.
+This code invokes the `stellar-core` binary (as configured in `ledgerbackend.CaptiveCoreConfig`) to replay ledgers from a given ledger range. It uses the `ingest.LedgerChangeReader` to read changes from each ledger (`xdr.LedgerCloseMeta`) and categorizes the changes based on whether they represent created, updated, or deleted ledger entries. The `ingest.Change` structure is used to capture individual changes, and the code tracks various types of changes such as those related to fees, transactions, or operations.
 
 <CodeExample>
 
@@ -23,28 +23,6 @@ import (
 	"io"
 )
 
-var (
-	config = captiveCoreConfig()
-)
-
-func captiveCoreConfig() ledgerbackend.CaptiveCoreConfig {
-	archiveURLs := network.TestNetworkhistoryArchiveURLs
-	networkPassphrase := network.TestNetworkPassphrase
-	captiveCoreToml, err := ledgerbackend.NewCaptiveCoreToml(ledgerbackend.CaptiveCoreTomlParams{
-		NetworkPassphrase:  networkPassphrase,
-		HistoryArchiveURLs: archiveURLs,
-	})
-	panicIf(err)
-
-	return ledgerbackend.CaptiveCoreConfig{
-		// Change these based on your environment:
-		BinaryPath:         "/usr/local/bin/stellar-core",
-		NetworkPassphrase:  networkPassphrase,
-		HistoryArchiveURLs: archiveURLs,
-		Toml:               captiveCoreToml,
-	}
-}
-
 func panicIf(err error) {
 	if err != nil {
 		panic(fmt.Errorf("An error occurred, panicking: %s\n", err))
@@ -53,9 +31,10 @@ func panicIf(err error) {
 
 func getChangesFromLedger(passphrase string, ledger xdr.LedgerCloseMeta) []ingest.Change {
 	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(passphrase, ledger)
-	changes := make([]ingest.Change, 0)
-	defer changeReader.Close()
 	panicIf(err)
+	defer changeReader.Close()
+
+	changes := make([]ingest.Change, 0)
 	for {
 		change, err := changeReader.Read()
 		if err == io.EOF {
@@ -67,24 +46,22 @@ func getChangesFromLedger(passphrase string, ledger xdr.LedgerCloseMeta) []inges
 	return changes
 }
 
-func getLedgers(startingLedger uint32, endLedger uint32) map[uint32]xdr.LedgerCloseMeta {
+func getLedgers(config ledgerbackend.CaptiveCoreConfig, startingLedger uint32, endLedger uint32) []xdr.LedgerCloseMeta {
 	captiveCore, err := ledgerbackend.NewCaptive(config)
 	panicIf(err)
 
 	ctx := context.Background()
 	err = captiveCore.PrepareRange(ctx, ledgerbackend.BoundedRange(startingLedger, endLedger))
 	panicIf(err)
+	defer captiveCore.Close()
 
-	var seqToLedgersMap = make(map[uint32]xdr.LedgerCloseMeta)
+	var ledgers []xdr.LedgerCloseMeta
 	for ledgerSeq := startingLedger; ledgerSeq <= endLedger; ledgerSeq++ {
 		ledger, err := captiveCore.GetLedger(ctx, ledgerSeq)
 		panicIf(err)
-		seqToLedgersMap[ledgerSeq] = ledger
+		ledgers = append(ledgers, ledger)
 	}
-
-	err = captiveCore.Close()
-	panicIf(err)
-	return seqToLedgersMap
+	return ledgers
 }
 
 type ChangesInfo struct {
@@ -105,19 +82,34 @@ func changeCausedBy(change ingest.Change) xdr.LedgerEntryChangeType {
 		return xdr.LedgerEntryChangeTypeLedgerEntryUpdated
 	}
 	// this should not happen
-	return xdr.LedgerEntryChangeType(-1)
-
+	panic(fmt.Errorf("unable to dertermine LedgerEntryChangeType from change"))
 }
 
 func main() {
-	startingLedger := uint32(123622) // Replace with your desired ledger number
+	archiveURLs := network.PublicNetworkhistoryArchiveURLs
+	networkPassphrase := network.PublicNetworkPassphrase
+	captiveCoreToml, err := ledgerbackend.NewCaptiveCoreToml(ledgerbackend.CaptiveCoreTomlParams{
+		NetworkPassphrase:  networkPassphrase,
+		HistoryArchiveURLs: archiveURLs,
+	})
+	panicIf(err)
+
+	config := ledgerbackend.CaptiveCoreConfig{
+		// Change these based on your environment:
+		BinaryPath:         "/usr/local/bin/stellar-core",
+		NetworkPassphrase:  networkPassphrase,
+		HistoryArchiveURLs: archiveURLs,
+		Toml:               captiveCoreToml,
+	}
+
+	startingLedger := uint32(28921599) // Replace with your desired ledger number
 	endLedger := startingLedger + 5
 
-	// Get the ledger metadata
-	ledgers := getLedgers(startingLedger, endLedger)
+	// NOTE: connecting to pubnet and getting ledgers might take a while.
+	ledgers := getLedgers(config, startingLedger, endLedger)
 
 	for seq, ledgerMeta := range ledgers {
-		fmt.Printf("Processing ledger: %d\n", seq)
+		fmt.Printf("Processing ledger: %d\n", startingLedger+uint32(seq))
 		changes := getChangesFromLedger(config.NetworkPassphrase, ledgerMeta)
 		info := ChangesInfo{}
 		for _, change := range changes {
@@ -148,8 +140,6 @@ func main() {
 			}
 
 		}
-
-		fmt.Printf("Finished parsing changes from ledger: %d\n", seq)
 		jsonData, err := json.MarshalIndent(info, "", "  ")
 		panicIf(err)
 		fmt.Println(string(jsonData))
@@ -166,64 +156,58 @@ func main() {
 
 // Log lines truncated for clarity
 
-Processing ledger: 123622
-Finished parsing changes from ledger: 123622
+Processing ledger: 28921599
 {
-  "LedgerEntriesCreated": 1,
-  "LedgerEntriesUpdated": 13,
-  "LedgerEntriesDeleted": 0,
-  "FeeRelatedChanges": 5,
-  "TxRelatedChanges": 5,
-  "OperationRelatedChanges": 4
+  "LedgerEntriesCreated": 59,
+  "LedgerEntriesUpdated": 907,
+  "LedgerEntriesDeleted": 62,
+  "FeeRelatedChanges": 227,
+  "TxRelatedChanges": 227,
+  "OperationRelatedChanges": 574
 }
-Processing ledger: 123623
-Finished parsing changes from ledger: 123623
+Processing ledger: 28921600
 {
-  "LedgerEntriesCreated": 1,
-  "LedgerEntriesUpdated": 10,
-  "LedgerEntriesDeleted": 1,
-  "FeeRelatedChanges": 4,
-  "TxRelatedChanges": 4,
-  "OperationRelatedChanges": 4
+  "LedgerEntriesCreated": 58,
+  "LedgerEntriesUpdated": 679,
+  "LedgerEntriesDeleted": 58,
+  "FeeRelatedChanges": 120,
+  "TxRelatedChanges": 120,
+  "OperationRelatedChanges": 555
 }
-Processing ledger: 123624
-Finished parsing changes from ledger: 123624
+Processing ledger: 28921601
 {
-  "LedgerEntriesCreated": 1,
-  "LedgerEntriesUpdated": 12,
-  "LedgerEntriesDeleted": 0,
-  "FeeRelatedChanges": 5,
-  "TxRelatedChanges": 5,
-  "OperationRelatedChanges": 3
+  "LedgerEntriesCreated": 61,
+  "LedgerEntriesUpdated": 885,
+  "LedgerEntriesDeleted": 63,
+  "FeeRelatedChanges": 224,
+  "TxRelatedChanges": 224,
+  "OperationRelatedChanges": 561
 }
-Processing ledger: 123625
-Finished parsing changes from ledger: 123625
+Processing ledger: 28921602
 {
-  "LedgerEntriesCreated": 3,
-  "LedgerEntriesUpdated": 12,
-  "LedgerEntriesDeleted": 0,
-  "FeeRelatedChanges": 4,
-  "TxRelatedChanges": 4,
-  "OperationRelatedChanges": 7
+  "LedgerEntriesCreated": 57,
+  "LedgerEntriesUpdated": 609,
+  "LedgerEntriesDeleted": 56,
+  "FeeRelatedChanges": 106,
+  "TxRelatedChanges": 106,
+  "OperationRelatedChanges": 510
 }
-Processing ledger: 123626
-Finished parsing changes from ledger: 123626
+Processing ledger: 28921603
 {
-  "LedgerEntriesCreated": 4,
-  "LedgerEntriesUpdated": 15,
-  "LedgerEntriesDeleted": 0,
-  "FeeRelatedChanges": 5,
-  "TxRelatedChanges": 5,
-  "OperationRelatedChanges": 9
+  "LedgerEntriesCreated": 62,
+  "LedgerEntriesUpdated": 922,
+  "LedgerEntriesDeleted": 59,
+  "FeeRelatedChanges": 230,
+  "TxRelatedChanges": 230,
+  "OperationRelatedChanges": 583
 }
-Processing ledger: 123627
-Finished parsing changes from ledger: 123627
+Processing ledger: 28921604
 {
-  "LedgerEntriesCreated": 1,
-  "LedgerEntriesUpdated": 5,
-  "LedgerEntriesDeleted": 0,
-  "FeeRelatedChanges": 2,
-  "TxRelatedChanges": 2,
-  "OperationRelatedChanges": 2
+  "LedgerEntriesCreated": 61,
+  "LedgerEntriesUpdated": 670,
+  "LedgerEntriesDeleted": 58,
+  "FeeRelatedChanges": 119,
+  "TxRelatedChanges": 119,
+  "OperationRelatedChanges": 551
 }
 ```
