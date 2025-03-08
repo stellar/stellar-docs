@@ -45,7 +45,7 @@ const config: Config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml",
-            outputDir: "docs/data/horizon/api-reference",
+            outputDir: "docs/data/apis/horizon/api-reference",
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
@@ -166,28 +166,18 @@ const config: Config = {
             },
             {
               type: 'doc',
-              docId: "data/rpc/README",
-              label: "RPC",
+              docId: "data/analytics/README",
+              label: "Analytics",
             },
             {
               type: 'doc',
-              docId: "data/hubble/README",
-              label: "Hubble",
+              docId: "data/apis/README",
+              label: "APIs",
             },
             {
               type: 'doc',
-              docId: "data/horizon/README",
-              label: "Horizon",
-            },
-            {
-              type: 'doc',
-              docId: "data/galexie/README",
-              label: "Galexie",
-            },
-            {
-              type: 'doc',
-              docId: "data/data-indexers/README",
-              label: "Data Indexers",
+              docId: "data/indexing/README",
+              label: "Indexing",
             },
             {
               type: 'doc',

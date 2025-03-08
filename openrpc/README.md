@@ -48,7 +48,7 @@ If you're here to add a new method to one of the specfiles, you'll want to:
 
    These files should be placed in:
 
-     - For stellar-rpc: `/docs/data/rpc/api-reference/methods`
+     - For stellar-rpc: `/docs/data/apis/rpc/api-reference/methods`
      - For anchor-platform:
        `/platforms/anchor-platform/api-reference/rpc/methods`
 
