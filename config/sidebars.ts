@@ -22,7 +22,7 @@ const sidebars: SidebarsConfig = {
   data_overview: [
     'data/README',
     { type: 'ref', id: 'data/analytics/README', label: 'Analytics'},
-    { type: 'ref', id: 'data/apis/README', label: 'API'},
+    { type: 'ref', id: 'data/apis/README', label: 'APIs'},
     { type: 'ref', id: 'data/indexing/README', label: 'Indexing'},
     { type: 'ref', id: 'data/oracles/README', label: 'Oracles'},
   ],
