@@ -149,75 +149,95 @@ import {
   humanizeEvents,
   nativeToScVal,
   scValToNative,
+  Address,
   Networks,
   Asset,
-  xdr
+  xdr,
 } from "@stellar/stellar-sdk";
 import { Server } from "@stellar/stellar-sdk/rpc";
 
 const s = new Server("https://soroban-testnet.stellar.org");
 
-function main() {
+async function main() {
   const response = await s.getLatestLedger();
   const xlmFilter = {
     type: "contract",
     contractIds: [Asset.native().contractId(Networks.TESTNET)],
-    topics: [[
-      nativeToScVal("transfer", { type: "symbol" }),
-      "*", // to anyone
-      "*", // from anyone
-    ]],
+    topics: [
+      [
+        nativeToScVal("transfer", { type: "symbol" }).toXDR("base64"),
+        "*", // from anyone
+        "*", // to anyone
+        "*", // any asset (it'll be XLM anyway)
+      ],
+    ],
   };
   let page = await s.getEvents({
-    startLedger: response.sequence - 1,
+    startLedger: response.sequence - 120, // start ~10m in the past
     filters: [xlmFilter],
+    limit: 10,
   });
 
-  while (true) { // run forever until Ctrl+C by user
-    //
-    // Two ways to output a human-friendly version:
-    //  1. the RPC response itself for human-readable text
-    //  2. a helper for the XDR structured-equivalent for human-readable JSON
-    //
-    console.log(JSON.stringify(simpleEventLog(events), null, 2));
-    console.log(JSON.stringify(fullEventLog(events), null, 2));
+  while (true) {
+    // run forever until Ctrl+C by user
+    if (!page.events.length) {
+      await new Promise((r) => setTimeout(r, 2000));
+    } else {
+      //
+      // Two ways to output a human-friendly version:
+      //  1. the RPC response itself for human-readable text
+      //  2. a helper for the XDR structured-equivalent for human-readable JSON
+      //
+      console.log(cereal(simpleEventLog(page.events)));
+      console.log(cereal(fullEventLog(page.events)));
+    }
 
     // Fetch the next page until events are exhausted, then wait.
     page = await s.getEvents({
-      pagination: { cursor: page.cursor, limit: 200 },
       filters: [xlmFilter],
+      cursor: page.cursor,
+      limit: 10,
     });
-
-    if (!page.events.length) {
-      await new Promise(r => setTimeout(r, 2000));
-    }
   }
 }
 
 function simpleEventLog(events) {
-  return page.events.map(event => {
+  return events.map((event) => {
     return {
-      topics: event.topics.map(t => scValToNative(t)),
+      topics: event.topic.map((t) => scValToNative(t)),
       value: scValToNative(event.value),
     };
-  );
+  });
 }
 
 function fullEventLog(events) {
   return humanizeEvents(
-    page.events.map(event => {
+    events.map((event) => {
       // rebuild the decomposed response into its original XDR structure
       return new xdr.ContractEvent({
-        contractId: new Address(event.contractId).toBuffer(),
+        contractId: event.contractId.address().toBuffer(),
         type: xdr.ContractEventType.contract(), // since we filtered on 'contract'
-        body: new xdr.ContractEventBody(0, new xdr.ContractEventV0({
-          topics: event.topic.map(t => xdr.ScVal.fromXDR(t, "base64")),
-          value: xdr.ScVal.fromXDR(event.value, "base64"),
-        }))
+        body: new xdr.ContractEventBody(
+          0,
+          new xdr.ContractEventV0({
+            topics: event.topic,
+            data: event.value,
+          }),
+        ),
       });
-    })
+    }),
   );
 }
+
+function cereal(data) {
+  return JSON.stringify(
+    data,
+    (k, v) => (typeof v === "bigint" ? v.toString() : v),
+    2,
+  );
+}
+
+main().catch((e) => console.error(e));
 ```
 
 </CodeExample>
