@@ -42,7 +42,6 @@ const sidebars: SidebarsConfig = {
         { type: 'ref', id: 'data/apis/horizon/horizon-providers', label: 'Horizon Providers' },
       ]
     },
-    { type: 'ref', id: 'data/indexers/README', label: 'Indexers'},
     {
       type: 'category',
       label: 'Indexers',
