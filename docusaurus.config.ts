@@ -166,7 +166,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small></a>',
+              value: '<hr><a href="/docs/data/analytics" class="subtitleDataDropdown"><small>Analytics</small></a>',
             },
             {
               type: 'doc',
@@ -180,7 +180,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/data/apis" class="subtitle"><small>APIs</small></a>',
+              value: '<hr><a href="/docs/data/apis" class="subtitleDataDropdown"><small>APIs</small></a>',
             },
             {
               type: 'doc',
@@ -209,7 +209,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small></a>',
+              value: '<hr><a href="/docs/data/indexers" class="subtitleDataDropdown"><small>Indexers</small></a>',
             },
             {
               type: 'doc',
@@ -223,7 +223,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small></a>',
+              value: '<hr><a href="/docs/data/oracles" class="subtitleDataDropdown"><small>Oracles</small></a>',
             },
             {
               type: 'doc',
