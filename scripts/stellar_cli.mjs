@@ -20,10 +20,15 @@ let latestVersion = execSync(
   .toString()
   .substring(1)
   .trim();
+// TODO: https://github.com/stellar/stellar-cli/issues/1908
+let clidDocsHash = "e4680d35b11f217ddd5403dc417a883bffbc387f"
 
 console.log("the latest version is", latestVersion.toString());
+console.log("using commit hash to fetch cli docs: ", clidDocsHash.toString());
 
-execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
+// TODO: https://github.com/stellar/stellar-cli/issues/1908
+// execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
+execSync(`cd ${localRepoPath} && git checkout --quiet ${clidDocsHash}`);
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
