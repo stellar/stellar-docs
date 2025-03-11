@@ -21,10 +21,45 @@ const sidebars: SidebarsConfig = {
   ],
   data_overview: [
     'data/README',
-    { type: 'ref', id: 'data/analytics/README', label: 'Analytics'},
-    { type: 'ref', id: 'data/apis/README', label: 'APIs'},
+    {
+      type: 'category',
+      label: 'Analytics',
+      link: { type: 'doc', id: 'data/analytics/README' },
+      items: [
+        { type: 'ref', id: 'data/analytics/hubble/README', label: 'Hubble' },
+        { type: 'ref', id: 'data/analytics/analytics-providers/analytics-providers', label: 'Data Analytics Providers' },
+      ]
+    },
+    {
+      type: 'category',
+      label: 'APIs',
+      link: { type: 'doc', id: 'data/apis/README' },
+      items: [
+        { type: 'ref', id: 'data/apis/rpc/README', label: 'RPC' },
+        { type: 'ref', id: 'data/apis/horizon/README', label: 'Horizon' },
+        { type: 'ref', id: 'data/apis/migrate-from-horizon-to-rpc/migrate-from-horizon-to-rpc', label: 'Migrate Horizon to RPC' },
+        { type: 'ref', id: 'data/apis/rpc/rpc-providers', label: 'RPC Providers' },
+        { type: 'ref', id: 'data/apis/horizon/horizon-providers', label: 'Horizon Providers' },
+      ]
+    },
     { type: 'ref', id: 'data/indexers/README', label: 'Indexers'},
-    { type: 'ref', id: 'data/oracles/README', label: 'Oracles'},
+    {
+      type: 'category',
+      label: 'Indexers',
+      link: { type: 'doc', id: 'data/indexers/README' },
+      items: [
+        { type: 'ref', id: 'data/indexers/build-your-own/README', label: 'Build Your Own Indexer' },
+        { type: 'ref', id: 'data/indexers/indexer-providers/indexer-providers', label: 'Indexer Providers' },
+      ]
+    },
+    {
+      type: 'category',
+      label: 'Oracles',
+      link: { type: 'doc', id: 'data/oracles/README' },
+      items: [
+        { type: 'ref', id: 'data/oracles/oracle-providers', label: 'Oracle Providers' },
+      ]
+    },
   ],
   tools: [
     {
