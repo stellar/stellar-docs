@@ -165,24 +165,70 @@ const config: Config = {
               label: "Overview",
             },
             {
-              type: 'doc',
-              docId: "data/analytics/README",
-              label: "Analytics",
+              type: 'html',
+              value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small></a>',
             },
             {
               type: 'doc',
-              docId: "data/apis/README",
-              label: "APIs",
+              docId: "data/analytics/hubble/README",
+              label: "Hubble",
             },
             {
               type: 'doc',
-              docId: "data/indexing/README",
-              label: "Indexing",
+              docId: "data/analytics/analytics-providers/analytics-providers",
+              label: "Providers",
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/apis" class="subtitle"><small>APIs</small></a>',
             },
             {
               type: 'doc',
-              docId: "data/oracles/README",
-              label: "Oracles",
+              docId: "data/apis/rpc/README",
+              label: "RPC",
+            },
+            {
+              type: 'doc',
+              docId: "data/apis/horizon/README",
+              label: "Horizon",
+            },
+            {
+              type: 'doc',
+              docId: "data/apis/migrate-from-horizon-to-rpc/migrate-from-horizon-to-rpc",
+              label: "Migrate Horizon to RPC",
+            },
+            {
+              type: 'doc',
+              docId: "data/apis/rpc/rpc-providers",
+              label: "RPC Providers",
+            },
+            {
+              type: 'doc',
+              docId: "data/apis/horizon/horizon-providers",
+              label: "Horizon Providers",
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small></a>',
+            },
+            {
+              type: 'doc',
+              docId: "data/indexers/build-your-own/README",
+              label: "Build Your Own",
+            },
+            {
+              type: 'doc',
+              docId: "data/indexers/indexer-providers/indexer-providers",
+              label: "Providers",
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small></a>',
+            },
+            {
+              type: 'doc',
+              docId: "data/oracles/oracle-providers",
+              label: "Providers",
             },
           ]
         },
