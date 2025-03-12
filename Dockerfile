@@ -18,7 +18,7 @@ COPY . /app/
 ARG CROWDIN_PERSONAL_TOKEN
 ARG BUILD_TRANSLATIONS="False"
 
-RUN yarn clear
+RUN yarn cache clean --all
 RUN yarn install
 RUN yarn rpcspec:build --no-minify
 RUN yarn stellar-cli:build --no-minify
