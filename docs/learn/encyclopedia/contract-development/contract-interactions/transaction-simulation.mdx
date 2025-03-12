@@ -49,22 +49,19 @@ From a developer's perspective, the difference between these is whether or not a
 Below, we'll demonstrate the various ways in which you can invoke transaction simulation as well as highlight some utilities available in the [TypeScript SDK](https://stellar.github.io/js-stellar-sdk/) for authorization.
 
 We'll cover three types of invocations:
-* A simple invocation in which the source account of the transaction is the only signer for the invocation tree.
-* An invocation in which two accounts need to sign the invocation tree.
-* An invocation run in enforcement mode to confirm that signatures are correct.
+
+- A simple invocation in which the source account of the transaction is the only signer for the invocation tree.
+- An invocation in which two accounts need to sign the invocation tree.
+- An invocation run in enforcement mode to confirm that signatures are correct.
 
 #### Example 1: source account authorization.
 
-In this variant, we will leverage the "source account"
+In this variant, we will leverage the "source account authorization" variant: this is when the source account on the transaction is the only one that needs to sign for the invocation (see the "source account" variant of [`SorobanCredentials`](https://github.com/stellar/stellar-xdr/blob/fa0338f4a25a95320d2143c8f08d200f0a360a4b/Stellar-transaction.x#L586-L595)). In this scenario, the signature on the transaction itself directly implies signing the invocation.
 
 <CodeExample>
 
 ```javascript
-import {
-  Operation,
-  authorizeEntry,
-  signAuthEntry,
-} from "@stellar/stellar-sdk";
+import { Operation, authorizeEntry, signAuthEntry } from "@stellar/stellar-sdk";
 import { Server } from "@stellar/stellar-sdk/rpc";
 
 async function main() {}
@@ -85,8 +82,98 @@ main().catch((e) => console.error(e));
 
 #### Example 2: multi-party authentication.
 
+In this variant, we'll extend the required signatures to more than one party, so the source account is no longer enough. We'll leverage the [`authorizeEntry` helper](https://stellar.github.io/js-stellar-sdk/global.html#authorizeEntry), which is designed specifically for making it easy to sign the entries returned by transaction simulation.
+
+<CodeExample>
+
+```typescript
+import {
+  Asset,
+  Keypair,
+  Networks,
+  Operation,
+  authorizeEntry,
+  TransactionBuilder,
+  xdr,
+} from "@stellar/stellar-sdk";
+import { Server, assembleTransaction } from "@stellar/stellar-sdk/rpc";
+
+const s = Server("https://soroban-testnet.stellar.org");
+
+// Pretend these are real, funded accounts.
+const signers = [Keypair.random(), Keypair.random()];
+const xlmContract = Asset.native().contractId(Networks.TESTNET);
+
+async function main() {
+  // Notice that the source account is the first keypair, but the transfer
+  // occurs *from* the second keypair, which means the second keypair will
+  // need to sign for an authorization entry to approve the transfer.
+  const tx = new TransactionBuilder(
+    await s.loadAccount(signers[0].publicKey()),
+    {
+      networkPassphrase: Networks.TESTNET,
+      fee: BASE_FEE,
+    },
+  )
+    .addOperation(
+      Operation.invokeContractFunction(
+        xlmContract,
+        [
+          ["transfer", "symbol"],
+          [signers[1].publicKey(), "address"], // from
+          [signers[0].publicKey(), "address"], // to
+          [1000, "i128"], // amount
+        ].map((val, type) => nativeToScVal(val, { type })),
+      ),
+    )
+    .build();
+
+  const simResult = s.simulateTransaction(tx);
+
+  // For every auth entry that needs signing, sign it with the correct keypair.
+  //
+  // Inject the auths back into the simulation result so they
+  // get assembled into our transaction.
+  simResult.result.auth = simResult.result.auth.map((entry) =>
+    authorizeEntry(
+      entry,
+      // Ignore source account entries, which is handled as a no-op.
+      entry.credentials().switch() !==
+        xdr.SorobanCredentialsType.sorobanCredentialsSourceAccount()
+        ? signers.find(
+            // Find the keypair that matches the entry's address.
+            (signer) =>
+              Address.fromScAddress(
+                entry.credentials().address().address(),
+              ).toString() === signer.publicKey(),
+          )
+        : null,
+      response.latestLedger + 12, // signature is valid for ~1m
+      Networks.TESTNET,
+    ),
+  );
+
+  const preppedTx = assembleTransaction(tx, simResult);
+  preppedTx.sign(signers[0]);
+
+  const sendTx = await s.sendTransaction(preppedTx);
+  return s.pollTransaction(sendTx.hash);
+}
+
+main().catch((e) => console.error(e));
+```
+
+</CodeExample>
+
 #### Example 3: enforcement mode.
 
+<CodeExample>
+
+```typescript
+
+```
+
+</CodeExample>
 
 [auth-data]: stellar-transaction.mdx#authorization-data
 [auth-invoke]: https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-transaction.x#L558
