@@ -11,7 +11,7 @@ BUILD_DATE := $(shell date -u +%FT%TZ)
 BUILD_TRANSLATIONS ?= "False"
 
 docker-build:
-	$(SUDO) docker build --no-cache --pull --label org.opencontainers.image.created="$(BUILD_DATE)" -t $(TAG) . --build-arg CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} --build-arg BUILD_TRANSLATIONS=${BUILD_TRANSLATIONS}
+	$(SUDO) docker build --no-cache --pull --label app="stellar-docs" --label org.opencontainers.image.created="$(BUILD_DATE)" -t $(TAG) . --build-arg CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} --build-arg BUILD_TRANSLATIONS=${BUILD_TRANSLATIONS}
 
 docker-push:
 	$(SUDO) docker push $(TAG)
