@@ -2,7 +2,6 @@ FROM ubuntu:24.04 AS build
 
 LABEL maintainer="SDF Ops Team <ops@stellar.org>"
 
-RUN mkdir -p /app
 WORKDIR /app
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,6 +19,7 @@ ARG BUILD_TRANSLATIONS="False"
 
 RUN yarn cache clean --all
 RUN yarn install
+RUN du -sh /app/*
 RUN yarn rpcspec:build --no-minify
 RUN yarn stellar-cli:build --no-minify
 
