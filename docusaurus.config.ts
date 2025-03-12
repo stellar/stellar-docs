@@ -166,8 +166,8 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/data/analytics" class="subtitleDataDropdown"><small>Analytics</small>',
-              className:'subtitleDataDropdown'
+              value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small>',
+              className:'subtitle'
             },
             {
               type: 'doc',
@@ -181,8 +181,8 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/data/apis" class="subtitleDataDropdown"><small>APIs</small>',
-              className:'subtitleDataDropdown'
+              value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small>',
+              className:'subtitle'
             },
             {
               type: 'doc',
@@ -211,8 +211,8 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/data/indexers" class="subtitleDataDropdown"><small>Indexers</small>',
-              className:'subtitleDataDropdown'
+              value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
+              className:'subtitle'
             },
             {
               type: 'doc',
@@ -226,8 +226,8 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/data/oracles" class="subtitleDataDropdown"><small>Oracles</small>',
-              className:'subtitleDataDropdown'
+              value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
+              className:'subtitle'
             },
             {
               type: 'doc',
