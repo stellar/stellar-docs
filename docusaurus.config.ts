@@ -201,13 +201,8 @@ const config: Config = {
             },
             {
               type: 'doc',
-              docId: "data/apis/rpc/rpc-providers",
-              label: "RPC Providers",
-            },
-            {
-              type: 'doc',
-              docId: "data/apis/horizon/horizon-providers",
-              label: "Horizon Providers",
+              docId: "data/apis/api-providers",
+              label: "Providers",
             },
             {
               type: 'html',
