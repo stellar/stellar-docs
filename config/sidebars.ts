@@ -44,6 +44,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Ingest Library',
+      link: { type: 'doc', id: 'data/ingest-library/README' },
+      items: [
+         { type: 'ref', id: 'data/ingest-library/examples/README', label: 'Examples' },
+      ],
+    },
+    {
+      type: 'category',
       label: 'Indexers',
       link: { type: 'doc', id: 'data/indexers/README' },
       items: [
