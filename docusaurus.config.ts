@@ -22,7 +22,7 @@ const config: Config = {
   onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
-  favicon: "img/favicon-96x96.png",
+  favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   i18n: {
@@ -126,12 +126,12 @@ const config: Config = {
         autoCollapseCategories: false,
       },
     },
-    image: 'img/dev-docs-preview.png',
+    image: 'img/docusaurus/dev-docs-preview.png',
     navbar: {
       logo: {
         width: 100,
-        src: "img/stellar-logo.svg",
-        srcDark: "img/stellar-logo-dark.svg",
+        src: "img/docusaurus/stellar-logo.svg",
+        srcDark: "img/docusaurus/stellar-logo-dark.svg",
         href: "/",
       },
       items: [
@@ -206,13 +206,8 @@ const config: Config = {
             },
             {
               type: 'doc',
-              docId: "data/apis/rpc/rpc-providers",
-              label: "RPC Providers",
-            },
-            {
-              type: 'doc',
-              docId: "data/apis/horizon/horizon-providers",
-              label: "Horizon Providers",
+              docId: "data/apis/api-providers",
+              label: "Providers",
             },
             {
               type: 'html',
