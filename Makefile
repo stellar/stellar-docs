@@ -16,3 +16,5 @@ docker-build:
 
 docker-push:
 	$(SUDO) docker push $(TAG)
+# memory usage notes
+#
