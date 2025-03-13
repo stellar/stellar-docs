@@ -201,11 +201,6 @@ const config: Config = {
             },
             {
               type: 'doc',
-              docId: "data/ingest-library/README",
-              label: "Ingest Library",
-            },
-            {
-              type: 'doc',
               docId: "data/apis/api-providers",
               label: "Providers",
             },
