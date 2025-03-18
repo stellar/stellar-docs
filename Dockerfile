@@ -2,7 +2,6 @@ FROM ubuntu:24.04 AS build
 
 LABEL maintainer="SDF Ops Team <ops@stellar.org>"
 
-RUN mkdir -p /app
 WORKDIR /app
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -18,16 +17,18 @@ COPY . /app/
 ARG CROWDIN_PERSONAL_TOKEN
 ARG BUILD_TRANSLATIONS="False"
 
+RUN yarn cache clean --all
 RUN yarn install
-RUN yarn rpcspec:build
-RUN yarn stellar-cli:build
+RUN du -sh /app/*
+RUN yarn rpcspec:build --no-minify
+RUN yarn stellar-cli:build --no-minify
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
-    CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn build:production; \
+    CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn build:production --no-minify; \
   else \
     # In the preview build, we only want to build for English. Much quicker
-    yarn build; \
+    yarn build --no-minify; \
   fi
 
 FROM nginx:1.27
