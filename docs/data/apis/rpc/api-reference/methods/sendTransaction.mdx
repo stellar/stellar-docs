@@ -18,7 +18,7 @@ The example above is sending a transaction using RPC methods directly. If you ar
 
 ```python
 # pip install --upgrade stellar-sdk
-from stellar_sdk import SorobanServer, soroban_rpc, Account, Asset, Keypair, Network, TransactionBuilder
+from stellar_sdk import SorobanServer, soroban_rpc, Keypair, Network, TransactionBuilder, scval
 
 def send_transaction() -> soroban_rpc.SendTransactionResponse:
     server = SorobanServer(server_url='https://soroban-testnet.stellar.org', client=None)
@@ -26,29 +26,37 @@ def send_transaction() -> soroban_rpc.SendTransactionResponse:
     root_keypair = Keypair.from_secret(
         "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
     )
-    root_account = server.load_account("GBSBL6FBPX5UHKL4AZCPUU6PXKUBYMKRUN3L4YQ4V2CCWSE7YMN2HYPB")
-    contract_id = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE"
+    root_account = server.load_account(root_keypair.public_key)
+    # native token contract (XLM)
+    contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
     transaction = (
         TransactionBuilder(
             source_account=root_account,
             network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
             base_fee=100,
         )
-        .append_invoke_contract_function_op(contract_id,"increment")
-         # mark this transaction as valid only for the next 30 seconds
+        # Transfer 1 native token to GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H
+        # https://developers.stellar.org/docs/tokens/token-interface
+        .append_invoke_contract_function_op(contract_id, "transfer", [
+            scval.to_address(root_keypair.public_key),  # from
+            scval.to_address("GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"),  # to
+            scval.to_int128(1 * 10 ** 7)  # amount, 1 XLM, decimal places are 7
+        ])
         .set_timeout(30)
         .build()
     )
+
+    transaction = server.prepare_transaction(transaction)
     transaction.sign(root_keypair)
-    response = server.send_transaction(transaction)
-    return response
+    return server.send_transaction(transaction)
+
 
 response = send_transaction()
 
 print("status", response.status)
-print("hash:", response.hash);
-print("status:", response.status);
-print("errorResultXdr:", response.error_result_xdr);
+print("hash:", response.hash)
+print("status:", response.status)
+print("errorResultXdr:", response.error_result_xdr)
 ```
 
 ```js
@@ -60,27 +68,40 @@ const server = new Server("https://soroban-testnet.stellar.org");
 
 async function sendTransaction() {
   try {
+    // native token contract (XLM)
     const contractId =
-      "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE";
+      "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
     const sourceSecretKey =
       "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
     const contract = new StellarSdk.Contract(contractId);
-    const accountId =
-      "GBSBL6FBPX5UHKL4AZCPUU6PXKUBYMKRUN3L4YQ4V2CCWSE7YMN2HYPB";
+    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecretKey);
+    const accountId = sourceKeypair.publicKey();
+
     const account = await server.getAccount(accountId);
     const fee = StellarSdk.BASE_FEE;
+    // Transfer 1 native token to GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H
+    // https://developers.stellar.org/docs/tokens/token-interface
     const transaction = new StellarSdk.TransactionBuilder(account, { fee })
       .setNetworkPassphrase(StellarSdk.Networks.TESTNET)
       .setTimeout(30)
-      .addOperation(contract.call("increment"))
+      .addOperation(
+        contract.call(
+          "transfer",
+          StellarSdk.nativeToScVal(accountId, { type: "address" }), // from
+          StellarSdk.nativeToScVal(
+            "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+            { type: "address" },
+          ), // to
+          StellarSdk.nativeToScVal("10000000", { type: "i128" }), // amount, 1 XLM, decimal places are 7
+        ),
+      )
       .build();
 
-    const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecretKey);
     server
-      .prepareTransaction(tx)
+      .prepareTransaction(transaction)
       .then((result) => {
         result.sign(sourceKeypair);
-        return sendTransaction(result);
+        return server.sendTransaction(result);
       })
       .then((result) => {
         console.log("hash:", result.hash);
@@ -96,47 +117,69 @@ sendTransaction();
 ```
 
 ```java
-// implementation 'network.lightsail:stellar-sdk:0.44.0'
-import org.stellar.sdk.AccountConverter;
-import org.stellar.sdk.InvokeHostFunctionOperation;
+// https://github.com/lightsail-network/java-stellar-sdk?tab=readme-ov-file#installation
 import org.stellar.sdk.KeyPair;
 import org.stellar.sdk.Network;
 import org.stellar.sdk.SorobanServer;
 import org.stellar.sdk.Transaction;
 import org.stellar.sdk.TransactionBuilder;
 import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
 import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+
+import java.math.BigInteger;
+import java.util.Arrays;
 
 public class SendTransactionExample {
 
-    public static void main(String[] args) {
-        SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
-        try {
-            TransactionBuilderAccount account = server.getAccount("GBSBL6FBPX5UHKL4AZCPUU6PXKUBYMKRUN3L4YQ4V2CCWSE7YMN2HYPB");
-            KeyPair sourceKeyPair = KeyPair.fromSecretSeed("SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
-            String contractId = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE";
-            InvokeHostFunctionOperation operation =  InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(contractId, "increment", null).build();
-            // Build the transaction
-            Transaction transaction = new TransactionBuilder(AccountConverter.enableMuxed(), account, Network.TESTNET)
-                    .addOperation(operation)
-                    .build();
+  public static void main(String[] args) {
+    SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
+    try {
+      KeyPair sourceKeyPair =
+          KeyPair.fromSecretSeed("SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+      TransactionBuilderAccount sourceAccount = server.getAccount(sourceKeyPair.getAccountId());
+      // native token contract (XLM)
+      String contractId = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 
-            // Sign the transaction
-            transaction.sign(sourceKeyPair);
+      // Transfer 1 native token to GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H
+      // https://developers.stellar.org/docs/tokens/token-interface
+      org.stellar.sdk.operations.InvokeHostFunctionOperation operation =
+          InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+                  contractId,
+                  "transfer",
+                  Arrays.asList(
+                      Scv.toAddress(sourceKeyPair.getAccountId()), // from
+                      Scv.toAddress(
+                          "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"), // to
+                      Scv.toInt128(
+                          BigInteger.valueOf(10000000)) // amount, 1 XLM, decimal places are 7
+                      ))
+              .build();
+      Transaction transaction =
+          new TransactionBuilder(sourceAccount, Network.TESTNET)
+              .setBaseFee(100)
+              .addOperation(operation)
+              .setTimeout(30)
+              .build();
 
-            // Send the transaction using the SorobanServer
-            SendTransactionResponse response = server.sendTransaction(transaction);
-            System.out.println(response.getStatus());
-            System.out.println(response.getHash());
-            System.out.println(response.getLatestLedger());
-            System.out.println(response.getLatestLedgerCloseTime());
-        } catch (Exception e) {
-            System.err.println("An error has occurred:");
-            e.printStackTrace();
-        }
+      transaction = server.prepareTransaction(transaction);
+
+      // Sign the transaction
+      transaction.sign(sourceKeyPair);
+
+      // Send the transaction using the SorobanServer
+      SendTransactionResponse response = server.sendTransaction(transaction);
+      System.out.println(response.getStatus());
+      System.out.println(response.getHash());
+      System.out.println(response.getLatestLedger());
+      System.out.println(response.getLatestLedgerCloseTime());
+    } catch (Exception e) {
+      System.err.println("An error has occurred:");
+      e.printStackTrace();
     }
+  }
 }
-
 ```
 
 </CodeExample>
