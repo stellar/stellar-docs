@@ -4,12 +4,18 @@ import { execSync } from "child_process";
 
 const repoUrl = "https://github.com/stellar/stellar-cli.git";
 const localRepoPath = "./stellar-cli-repo";
+const localArtifactPath = "./stellar-cli-artifacts"
 
 // Remove the existing repo if it exists
 if (fs.existsSync(localRepoPath)) {
   console.log("Removing existing repository...");
   fs.removeSync(localRepoPath);
 }
+if (fs.existsSync(localArtifactPath)) {
+  console.log("Removing existing artifacts...");
+  fs.removeSync(localArtifactPath);
+}
+
 
 // Perform a shallow clone of the repository
 console.log("Cloning repository...");
@@ -20,18 +26,14 @@ let latestVersion = execSync(
   .toString()
   .substring(1)
   .trim();
-// TODO: https://github.com/stellar/stellar-cli/issues/1908
-let clidDocsHash = "e4680d35b11f217ddd5403dc417a883bffbc387f"
 
 console.log("the latest version is", latestVersion.toString());
-console.log("using commit hash to fetch cli docs: ", clidDocsHash.toString());
 
-// TODO: https://github.com/stellar/stellar-cli/issues/1908
-// execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
-execSync(`cd ${localRepoPath} && git checkout --quiet ${clidDocsHash}`);
+execSync(`wget https://github.com/stellar/stellar-cli/releases/download/v${latestVersion}/stellar-cli-${latestVersion}-docs-cookbook.tar.gz -P ${localArtifactPath}`);
+execSync(`tar xzvf ${localArtifactPath}/stellar-cli-${latestVersion}-docs-cookbook.tar.gz -C ${localArtifactPath}`);
 
 // Copy FULL_HELP_DOCS.md
-const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
+const fullHelpDocsPath = path.join(localArtifactPath, "FULL_HELP_DOCS.md");
 const fullHelpDocsContent = fs.readFileSync(fullHelpDocsPath, "utf8");
 
 const modifiedContent = `---
@@ -52,7 +54,7 @@ fs.writeFileSync(
   modifiedContent,
 );
 
-fs.cpSync(path.join(localRepoPath, "cookbook"), "docs/build/guides/cli", {
+fs.cpSync(path.join(localArtifactPath, "cookbook"), "docs/build/guides/cli", {
   recursive: true,
 });
 
