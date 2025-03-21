@@ -1,37 +1,36 @@
 import fs from "fs-extra";
 import path from "path";
-import { execSync } from "child_process";
+import {execSync} from "child_process";
+import * as tar from 'tar'
+import {finished} from "stream/promises";
+import {Readable} from "stream"
 
-const repoUrl = "https://github.com/stellar/stellar-cli.git";
-const localRepoPath = "./stellar-cli-repo";
+const localArtifactPath = "./stellar-cli-artifacts"
 
-// Remove the existing repo if it exists
-if (fs.existsSync(localRepoPath)) {
-  console.log("Removing existing repository...");
-  fs.removeSync(localRepoPath);
+// Remove the existing artifact if it exists
+if (fs.existsSync(localArtifactPath)) {
+    console.log("Removing existing artifacts...");
+    fs.removeSync(localArtifactPath);
 }
+fs.mkdirSync(localArtifactPath)
 
-// Perform a shallow clone of the repository
-console.log("Cloning repository...");
-execSync(`git clone ${repoUrl} ${localRepoPath}`);
-let latestVersion = execSync(
-  `cd ${localRepoPath} && git tag | grep -v -E 'rc|preview' | tail -n1`,
-)
-  .toString()
-  .substring(1)
-  .trim();
-// TODO: https://github.com/stellar/stellar-cli/issues/1908
-let clidDocsHash = "e4680d35b11f217ddd5403dc417a883bffbc387f"
+const resp = await fetch("https://api.github.com/repos/stellar/stellar-cli/tags")
+const json = await resp.json()
+const latestVersion = json[0].name.replace("v", "")
+
+const url = `https://github.com/stellar/stellar-cli/releases/download/v${latestVersion}/stellar-cli-${latestVersion}-docs-cookbook.tar.gz`
+const blob = await fetch(url);
+await finished(Readable.fromWeb(blob.body).pipe(
+    tar.x({
+        C: `${localArtifactPath}`,
+        z: true
+    }),
+));
 
 console.log("the latest version is", latestVersion.toString());
-console.log("using commit hash to fetch cli docs: ", clidDocsHash.toString());
-
-// TODO: https://github.com/stellar/stellar-cli/issues/1908
-// execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
-execSync(`cd ${localRepoPath} && git checkout --quiet ${clidDocsHash}`);
 
 // Copy FULL_HELP_DOCS.md
-const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
+const fullHelpDocsPath = path.join(localArtifactPath, "FULL_HELP_DOCS.md");
 const fullHelpDocsContent = fs.readFileSync(fullHelpDocsPath, "utf8");
 
 const modifiedContent = `---
@@ -43,17 +42,17 @@ ${fullHelpDocsContent}
 `;
 
 fs.writeFileSync(
-  "src/helpers/stellarCli.ts",
-  `export const latestVersion = "${latestVersion}";`,
+    "src/helpers/stellarCli.ts",
+    `export const latestVersion = "${latestVersion}";`,
 );
 
 fs.writeFileSync(
-  "docs/tools/developer-tools/cli/stellar-cli.mdx",
-  modifiedContent,
+    "docs/tools/developer-tools/cli/stellar-cli.mdx",
+    modifiedContent,
 );
 
-fs.cpSync(path.join(localRepoPath, "cookbook"), "docs/build/guides/cli", {
-  recursive: true,
+fs.cpSync(path.join(localArtifactPath, "cookbook"), "docs/build/guides/cli", {
+    recursive: true,
 });
 
 execSync("yarn format:mdx");
