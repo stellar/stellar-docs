@@ -239,13 +239,33 @@ const config: Config = {
           activeBaseRegex: `(docs/tools|platforms)`,
           items: [
             {
+              type: 'html',
+              value: '<hr><small>Developer Tools</small>',
+              className: 'subtitle',
+            },
+            {
               to: '/docs/tools/sdks',
               label: 'SDKs',
               activeBasePath: 'docs/tools/sdks'
             },
             {
+              to: '/docs/tools/cli',
+              label: 'Stellar CLI',
+              activeBasePath: 'docs/tools/cli'
+            },
+            {
+              to: '/docs/tools/lab',
+              label: 'Lab',
+              activeBasePath: 'docs/tools/lab'
+            },
+            {
+              to: '/docs/tools/quickstart',
+              label: 'Quickstart',
+              activeBasePath: 'docs/tools/quickstart'
+            },
+            {
               to: '/docs/tools/developer-tools',
-              label: 'Developer Tools'
+              label: 'More Developer Tools'
             },
             {
               type: 'html',
