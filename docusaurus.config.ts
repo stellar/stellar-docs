@@ -10,16 +10,19 @@ import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
+  // future: {
+  //   experimental_faster: true,
+  // },
   title: "Stellar Docs",
   tagline:
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenAnchors: "warn",
+  onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
-  favicon: "img/favicon-96x96.png",
+  favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   i18n: {
@@ -42,7 +45,7 @@ const config: Config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml",
-            outputDir: "docs/data/horizon/api-reference",
+            outputDir: "docs/data/apis/horizon/api-reference",
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
@@ -74,6 +77,7 @@ const config: Config = {
           blogSidebarCount: 'ALL',
           postsPerPage: 'ALL',
           routeBasePath: 'meetings',
+          onUntruncatedBlogPosts: 'ignore',
         },
         docs: {
           showLastUpdateTime: true,
@@ -122,12 +126,12 @@ const config: Config = {
         autoCollapseCategories: false,
       },
     },
-    image: 'img/dev-docs-preview.png',
+    image: 'img/docusaurus/dev-docs-preview.png',
     navbar: {
       logo: {
         width: 100,
-        src: "img/stellar-logo.svg",
-        srcDark: "img/stellar-logo-dark.svg",
+        src: "img/docusaurus/stellar-logo.svg",
+        srcDark: "img/docusaurus/stellar-logo-dark.svg",
         href: "/",
       },
       items: [
@@ -157,44 +161,74 @@ const config: Config = {
           items: [
             {
               type: 'doc',
-              docId: "data/rpc/README",
-              label: "RPC",
+              docId: "data/README",
+              label: "Overview",
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small>',
+              className:'subtitle'
             },
             {
               type: 'doc',
-              docId: "data/hubble/README",
+              docId: "data/analytics/hubble/README",
               label: "Hubble",
             },
             {
               type: 'doc',
-              docId: "data/horizon/README",
+              docId: "data/analytics/analytics-providers/analytics-providers",
+              label: "Providers",
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small>',
+              className:'subtitle'
+            },
+            {
+              type: 'doc',
+              docId: "data/apis/rpc/README",
+              label: "RPC",
+            },
+            {
+              type: 'doc',
+              docId: "data/apis/horizon/README",
               label: "Horizon",
             },
             {
               type: 'doc',
-              docId: "data/galexie/README",
-              label: "Galexie",
+              docId: "data/apis/migrate-from-horizon-to-rpc/migrate-from-horizon-to-rpc",
+              label: "Migrate Horizon to RPC",
             },
             {
               type: 'doc',
-              docId: "data/data-indexers/README",
-              label: "Data Indexers",
-            },
-            {
-              type: 'doc',
-              docId: "data/oracles/README",
-              label: "Oracles",
+              docId: "data/apis/api-providers",
+              label: "Providers",
             },
             {
               type: 'html',
-              value: '<hr><small>Migration Guides</small>',
-              className: 'subtitle',
+              value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
+              className:'subtitle'
             },
             {
               type: 'doc',
-              docId: 'data/migrate-from-horizon-to-rpc/README',
-              label: 'Horizon to RPC'
-            }
+              docId: "data/indexers/build-your-own/README",
+              label: "Build Your Own",
+            },
+            {
+              type: 'doc',
+              docId: "data/indexers/indexer-providers/indexer-providers",
+              label: "Providers",
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
+              className:'subtitle'
+            },
+            {
+              type: 'doc',
+              docId: "data/oracles/oracle-providers",
+              label: "Providers",
+            },
           ]
         },
         {
@@ -205,13 +239,33 @@ const config: Config = {
           activeBaseRegex: `(docs/tools|platforms)`,
           items: [
             {
+              type: 'html',
+              value: '<hr><small>Developer Tools</small>',
+              className: 'subtitle',
+            },
+            {
               to: '/docs/tools/sdks',
               label: 'SDKs',
               activeBasePath: 'docs/tools/sdks'
             },
             {
+              to: '/docs/tools/cli',
+              label: 'Stellar CLI',
+              activeBasePath: 'docs/tools/cli'
+            },
+            {
+              to: '/docs/tools/lab',
+              label: 'Lab',
+              activeBasePath: 'docs/tools/lab'
+            },
+            {
+              to: '/docs/tools/quickstart',
+              label: 'Quickstart',
+              activeBasePath: 'docs/tools/quickstart'
+            },
+            {
               to: '/docs/tools/developer-tools',
-              label: 'Developer Tools'
+              label: 'More Developer Tools'
             },
             {
               type: 'html',
