@@ -57,6 +57,7 @@ const config: Config = {
     ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
+    require("./src/route-export-plugin"),
   ],
   markdown: {
     mermaid: true,
