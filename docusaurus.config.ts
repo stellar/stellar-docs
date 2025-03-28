@@ -170,14 +170,14 @@ const config: Config = {
               className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/analytics/hubble/README",
-              label: "Hubble",
+              to: '/docs/data/analytics/hubble',
+              label: 'Hubble',
+              activeBasePath: 'docs/data/analytics/hubble'
             },
             {
-              type: 'doc',
-              docId: "data/analytics/analytics-providers/analytics-providers",
-              label: "Providers",
+              to: '/docs/data/analytics/analytics-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/analytics/analytics-providers'
             },
             {
               type: 'html',
@@ -185,24 +185,24 @@ const config: Config = {
               className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/apis/rpc/README",
-              label: "RPC",
+              to: '/docs/data/apis/rpc',
+              label: 'RPC',
+              activeBasePath: 'docs/data/apis/rpc'
             },
             {
-              type: 'doc',
-              docId: "data/apis/horizon/README",
-              label: "Horizon",
+              to: '/docs/data/apis/horizon',
+              label: 'Horizon',
+              activeBasePath: 'docs/data/apis/horizon'
             },
             {
-              type: 'doc',
-              docId: "data/apis/migrate-from-horizon-to-rpc/migrate-from-horizon-to-rpc",
-              label: "Migrate Horizon to RPC",
+              to: '/docs/data/apis/migrate-from-horizon-to-rpc',
+              label: 'Migrate Horizon to RPC',
+              activeBasePath: 'docs/data/apis/migrate-from-horizon-to-rpc'
             },
             {
-              type: 'doc',
-              docId: "data/apis/api-providers",
-              label: "Providers",
+              to: '/docs/data/apis/api-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/apis/api-providers'
             },
             {
               type: 'html',
@@ -210,14 +210,14 @@ const config: Config = {
               className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/indexers/build-your-own/README",
-              label: "Build Your Own",
+              to: '/docs/data/indexers/build-your-own',
+              label: 'Build Your Own',
+              activeBasePath: 'docs/data/indexers/build-your-own'
             },
             {
-              type: 'doc',
-              docId: "data/indexers/indexer-providers/indexer-providers",
-              label: "Providers",
+              to: '/docs/data/indexers/indexer-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/indexers/indexer-providers'
             },
             {
               type: 'html',
@@ -225,9 +225,9 @@ const config: Config = {
               className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/oracles/oracle-providers",
-              label: "Providers",
+              to: '/docs/data/oracles',
+              label: 'Providers',
+              activeBasePath: 'docs/data/oracles'
             },
           ]
         },
