@@ -2,6 +2,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
+import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
 import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
 import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
 
@@ -9,20 +10,24 @@ import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
+  // future: {
+  //   experimental_faster: true,
+  // },
   title: "Stellar Docs",
   tagline:
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
+  onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
-  favicon: "img/favicon-96x96.png",
+  favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   i18n: {
-    defaultLocale: "en",
-    locales: ["en"],
+    defaultLocale: DEFAULT_LOCALE,
+    locales: ["en", "es"],
   },
   plugins: [
     "docusaurus-plugin-sass",
@@ -40,7 +45,7 @@ const config: Config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml",
-            outputDir: "docs/data/horizon/api-reference",
+            outputDir: "docs/data/apis/horizon/api-reference",
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
@@ -52,6 +57,7 @@ const config: Config = {
     ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
+    require("./src/route-export-plugin"),
   ],
   markdown: {
     mermaid: true,
@@ -72,6 +78,7 @@ const config: Config = {
           blogSidebarCount: 'ALL',
           postsPerPage: 'ALL',
           routeBasePath: 'meetings',
+          onUntruncatedBlogPosts: 'ignore',
         },
         docs: {
           showLastUpdateTime: true,
@@ -85,7 +92,7 @@ const config: Config = {
           rehypePlugins: [rehypeKatex],
           sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
-          editUrl: "https://github.com/stellar/stellar-docs/tree/main",
+          editUrl: makeEditUrl,
           exclude: ['**/component/**', '**/README.md'],
         },
         theme: {
@@ -111,17 +118,21 @@ const config: Config = {
     },
   ],
   themeConfig: {
+    announcementBar: {
+      id: 'announcementBar-translation',
+      content: '<strong>Disclaimer:</strong> This documentation has been automatically translated and may contain inaccuracies. For the most accurate information, please refer to the original English version. We are not responsible for translation errors.',
+    },
     docs: {
       sidebar: {
         autoCollapseCategories: false,
       },
     },
-    image: 'img/dev-docs-preview.png',
+    image: 'img/docusaurus/dev-docs-preview.png',
     navbar: {
       logo: {
         width: 100,
-        src: "img/stellar-logo.svg",
-        srcDark: "img/stellar-logo-dark.svg",
+        src: "img/docusaurus/stellar-logo.svg",
+        srcDark: "img/docusaurus/stellar-logo-dark.svg",
         href: "/",
       },
       items: [
@@ -151,20 +162,74 @@ const config: Config = {
           items: [
             {
               type: 'doc',
-              docId: "data/rpc/README",
-              label: "RPC",
+              docId: "data/README",
+              label: "Overview",
             },
             {
-              type: 'doc',
-              docId: "data/hubble/README",
-              label: "Hubble",
+              type: 'html',
+              value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small>',
+              className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/horizon/README",
-              label: "Horizon",
+              to: '/docs/data/analytics/hubble',
+              label: 'Hubble',
+              activeBasePath: 'docs/data/analytics/hubble'
             },
-
+            {
+              to: '/docs/data/analytics/analytics-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/analytics/analytics-providers'
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small>',
+              className:'subtitle'
+            },
+            {
+              to: '/docs/data/apis/rpc',
+              label: 'RPC',
+              activeBasePath: 'docs/data/apis/rpc'
+            },
+            {
+              to: '/docs/data/apis/horizon',
+              label: 'Horizon',
+              activeBasePath: 'docs/data/apis/horizon'
+            },
+            {
+              to: '/docs/data/apis/migrate-from-horizon-to-rpc',
+              label: 'Migrate Horizon to RPC',
+              activeBasePath: 'docs/data/apis/migrate-from-horizon-to-rpc'
+            },
+            {
+              to: '/docs/data/apis/api-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/apis/api-providers'
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
+              className:'subtitle'
+            },
+            {
+              to: '/docs/data/indexers/build-your-own',
+              label: 'Build Your Own',
+              activeBasePath: 'docs/data/indexers/build-your-own'
+            },
+            {
+              to: '/docs/data/indexers/indexer-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/indexers/indexer-providers'
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
+              className:'subtitle'
+            },
+            {
+              to: '/docs/data/oracles',
+              label: 'Providers',
+              activeBasePath: 'docs/data/oracles'
+            },
           ]
         },
         {
@@ -175,13 +240,33 @@ const config: Config = {
           activeBaseRegex: `(docs/tools|platforms)`,
           items: [
             {
-              to: '/docs/tools/sdks/library',
+              type: 'html',
+              value: '<hr><small>Developer Tools</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/tools/sdks',
               label: 'SDKs',
               activeBasePath: 'docs/tools/sdks'
             },
             {
+              to: '/docs/tools/cli',
+              label: 'Stellar CLI',
+              activeBasePath: 'docs/tools/cli'
+            },
+            {
+              to: '/docs/tools/lab',
+              label: 'Lab',
+              activeBasePath: 'docs/tools/lab'
+            },
+            {
+              to: '/docs/tools/quickstart',
+              label: 'Quickstart',
+              activeBasePath: 'docs/tools/quickstart'
+            },
+            {
               to: '/docs/tools/developer-tools',
-              label: 'Developer Tools'
+              label: 'More Developer Tools'
             },
             {
               type: 'html',
@@ -222,6 +307,10 @@ const config: Config = {
           position: 'right',
         },
         {
+          type: 'localeDropdown',
+          position: 'right',
+        },
+        {
           href: "https://github.com/stellar/stellar-docs",
           position: "right",
           className: "header-github-link",
@@ -258,9 +347,13 @@ const config: Config = {
               href: "https://fastcheapandoutofcontrol.com/tutorial",
             },
             {
-              label: "Dapps Challenge",
-              href: "/docs/learn/interactive/dapps/introduction"
-            }
+              label: "YouTube",
+              href: "https://www.youtube.com/@StellarDevelopmentFoundation",
+            },
+            {
+              label: "Twitch",
+              href: "https://m.twitch.tv/stellarorg/home",
+            },
           ],
         },
         {
@@ -292,8 +385,12 @@ const config: Config = {
           title: "Community",
           items: [
             {
+              label: "Contribute to Docs",
+              href: "https://github.com/stellar/stellar-docs?tab=readme-ov-file#contributing",
+            },
+            {
               label: "Developer Discord",
-              href: "https://discord.gg/st7Mxd58BV",
+              href: "https://discord.gg/stellardev",
             },
             {
               label: "Developer Google Group",
@@ -307,7 +404,7 @@ const config: Config = {
               label: "Stellar Community Fund",
               href: "https://communityfund.stellar.org/",
             },
-          ],
+         ],
         },
         {
           title: "About",

@@ -122,8 +122,8 @@ const services = {
     starterFile: {
       openrpc: "1.2.6",
       info: {
-        title: "Soroban RPC",
-        description: "Soroban-RPC allows you to communicate directly with Soroban via a JSON RPC interface.",
+        title: "Stellar RPC",
+        description: "Stellar-RPC allows you to communicate directly with Soroban via a JSON RPC interface.",
         termsOfService: "https://stellar.org/terms-of-service",
         contact: {
           name: "Stellar Development Foundation",

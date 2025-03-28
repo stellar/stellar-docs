@@ -1,23 +1,32 @@
-import React from 'react';
+import React, {type ReactNode} from 'react';
 import Footer from '@theme-original/DocItem/Footer';
-import { useDoc } from "@docusaurus/theme-common/internal";
-import ReaderFeedback from '@site/src/components/ReaderFeedback';
-import DocCardList from '@theme/DocCardList';
 import type FooterType from '@theme/DocItem/Footer';
-import type { WrapperProps } from '@docusaurus/types';
+import type {WrapperProps} from '@docusaurus/types';
+
+import Translate from '@docusaurus/Translate';
+import DocCardList from '@theme/DocCardList';
+import { useDoc } from '@docusaurus/plugin-content-docs/client'
+import ReaderFeedback from '@site/src/components/ReaderFeedback';
 import clsx from 'clsx';
 
 type Props = WrapperProps<typeof FooterType>;
 
-export default function FooterWrapper(props: Props): JSX.Element {
+export default function FooterWrapper(props: Props): ReactNode {
   const { metadata } = useDoc();
 
-  const canDisplayDocCardsOnGuide = metadata.permalink?.startsWith('/docs/build/guides');
+  const canDisplayDocCardsOnGuide = metadata.permalink?.includes('/docs/build/guides');
+  const isMainGuidesPage = metadata.id === 'build/guides/README'
+
   return (
     <>
       {canDisplayDocCardsOnGuide &&
-        <div className={clsx(metadata.permalink === '/docs/build/guides/' ? 'margin-top--lg' : 'margin-top--xl')}>
-          {metadata.permalink !== '/docs/build/guides/' && <h3>Guides in this category:</h3>}
+        <div className={clsx(isMainGuidesPage ? 'margin-top--lg' : 'margin-top--xl')}>
+          {!isMainGuidesPage && <h3>
+            <Translate
+              id='components.HowToGuides.GuidesInCategory'
+              description='The h3 title do display the other related how-to guides'
+            >Guides in this category:</Translate>
+          </h3>}
           <DocCardList />
         </div>
       }

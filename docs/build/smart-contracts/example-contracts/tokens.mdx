@@ -25,16 +25,16 @@ The [token example] demonstrates how to write a token contract that implements t
 
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][oigp]
 
-[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v21.6.0
-[token example]: https://github.com/stellar/soroban-examples/tree/v21.6.0/token
+[oigp]: https://gitpod.io/#https://github.com/stellar/soroban-examples/tree/v22.0.1
+[token example]: https://github.com/stellar/soroban-examples/tree/v22.0.1/token
 [token interface]: ../../../tokens/token-interface.mdx
 
 ## Run the Example
 
-First go through the [Setup] process to get your development environment configured, then clone the `v21.6.0` tag of `soroban-examples` repository:
+First go through the [Setup] process to get your development environment configured, then clone the `v22.0.1` tag of `soroban-examples` repository:
 
 ```sh
-git clone -b v21.6.0 https://github.com/stellar/soroban-examples
+git clone -b v22.0.1 https://github.com/stellar/soroban-examples
 ```
 
 Or, skip the development environment setup and open this example in [Gitpod][oigp].
@@ -49,14 +49,12 @@ cargo test
 You should see the output:
 
 ```sh
-running 8 tests
-test test::initialize_already_initialized - should panic ... ok
-test test::transfer_spend_deauthorized - should panic ... ok
+running 6 tests
 test test::decimal_is_over_eighteen - should panic ... ok
-test test::test_burn ... ok
-test test::transfer_receive_deauthorized - should panic ... ok
-test test::transfer_from_insufficient_allowance - should panic ... ok
 test test::transfer_insufficient_balance - should panic ... ok
+test test::test_zero_allowance ... ok
+test test::transfer_from_insufficient_allowance - should panic ... ok
+test test::test_burn ... ok
 test test::test ... ok
 ```
 
@@ -80,7 +78,6 @@ mod admin;
 mod allowance;
 mod balance;
 mod contract;
-mod event;
 mod metadata;
 mod storage_types;
 mod test;
@@ -92,13 +89,9 @@ pub use crate::contract::TokenClient;
 <TabItem value="admin">
 
 ```rust title="token/src/admin.rs"
-use crate::storage_types::DataKey;
-use soroban_sdk::{Address, Env, symbol_short};
+use soroban_sdk::{Address, Env};
 
-pub fn has_administrator(e: &Env) -> bool {
-    let key = DataKey::Admin;
-    e.storage().instance().has(&key)
-}
+use crate::storage_types::DataKey;
 
 pub fn read_administrator(e: &Env) -> Address {
     let key = DataKey::Admin;
@@ -185,12 +178,15 @@ pub fn spend_allowance(e: &Env, from: Address, spender: Address, amount: i128) {
 <TabItem value="balance">
 
 ```rust title="token/src/balance.rs"
-use crate::storage_types::DataKey;
+use crate::storage_types::{DataKey, BALANCE_BUMP_AMOUNT, BALANCE_LIFETIME_THRESHOLD};
 use soroban_sdk::{Address, Env};
 
 pub fn read_balance(e: &Env, addr: Address) -> i128 {
     let key = DataKey::Balance(addr);
     if let Some(balance) = e.storage().persistent().get::<DataKey, i128>(&key) {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, BALANCE_LIFETIME_THRESHOLD, BALANCE_BUMP_AMOUNT);
         balance
     } else {
         0
@@ -200,39 +196,22 @@ pub fn read_balance(e: &Env, addr: Address) -> i128 {
 fn write_balance(e: &Env, addr: Address, amount: i128) {
     let key = DataKey::Balance(addr);
     e.storage().persistent().set(&key, &amount);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, BALANCE_LIFETIME_THRESHOLD, BALANCE_BUMP_AMOUNT);
 }
 
 pub fn receive_balance(e: &Env, addr: Address, amount: i128) {
     let balance = read_balance(e, addr.clone());
-    if !is_authorized(e, addr.clone()) {
-        panic!("can't receive when deauthorized");
-    }
     write_balance(e, addr, balance + amount);
 }
 
 pub fn spend_balance(e: &Env, addr: Address, amount: i128) {
     let balance = read_balance(e, addr.clone());
-    if !is_authorized(e, addr.clone()) {
-        panic!("can't spend when deauthorized");
-    }
     if balance < amount {
         panic!("insufficient balance");
     }
     write_balance(e, addr, balance - amount);
-}
-
-pub fn is_authorized(e: &Env, addr: Address) -> bool {
-    let key = DataKey::State(addr);
-    if let Some(state) = e.storage().persistent().get::<DataKey, bool>(&key) {
-        state
-    } else {
-        true
-    }
-}
-
-pub fn write_authorization(e: &Env, addr: Address, is_authorized: bool) {
-    let key = DataKey::State(addr);
-    e.storage().persistent().set(&key, &is_authorized);
 }
 ```
 
@@ -242,50 +221,17 @@ pub fn write_authorization(e: &Env, addr: Address, is_authorized: bool) {
 ```rust title="token/src/contract.rs"
 //! This contract demonstrates a sample implementation of the Soroban token
 //! interface.
-use crate::admin::{has_administrator, read_administrator, write_administrator};
+use crate::admin::{read_administrator, write_administrator};
 use crate::allowance::{read_allowance, spend_allowance, write_allowance};
-use crate::balance::{is_authorized, write_authorization};
 use crate::balance::{read_balance, receive_balance, spend_balance};
-use crate::event;
 use crate::metadata::{read_decimal, read_name, read_symbol, write_metadata};
-use soroban_sdk::{contractimpl, Address, String, Env};
-use soroban_token_sdk::TokenMetadata;
-
-pub trait TokenTrait {
-    fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String);
-
-    fn allowance(e: Env, from: Address, spender: Address) -> i128;
-
-    fn approve(e: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32);
-
-    fn balance(e: Env, id: Address) -> i128;
-
-    fn spendable_balance(e: Env, id: Address) -> i128;
-
-    fn authorized(e: Env, id: Address) -> bool;
-
-    fn transfer(e: Env, from: Address, to: Address, amount: i128);
-
-    fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128);
-
-    fn burn(e: Env, from: Address, amount: i128);
-
-    fn burn_from(e: Env, spender: Address, from: Address, amount: i128);
-
-    fn clawback(e: Env, from: Address, amount: i128);
-
-    fn set_authorized(e: Env, id: Address, authorize: bool);
-
-    fn mint(e: Env, to: Address, amount: i128);
-
-    fn set_admin(e: Env, new_admin: Address);
-
-    fn decimals(e: Env) -> u32;
-
-    fn name(e: Env) -> String;
-
-    fn symbol(e: Env) -> String;
-}
+#[cfg(test)]
+use crate::storage_types::{AllowanceDataKey, AllowanceValue, DataKey};
+use crate::storage_types::{INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD};
+use soroban_sdk::token::{self, Interface as _};
+use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use soroban_token_sdk::metadata::TokenMetadata;
+use soroban_token_sdk::TokenUtils;
 
 fn check_nonnegative_amount(amount: i128) {
     if amount < 0 {
@@ -297,16 +243,12 @@ fn check_nonnegative_amount(amount: i128) {
 pub struct Token;
 
 #[contractimpl]
-impl TokenTrait for Token {
-    fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
-        if has_administrator(&e) {
-            panic!("already initialized")
-        }
-        write_administrator(&e, &admin);
+impl Token {
+    pub fn __constructor(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
         if decimal > 18 {
             panic!("Decimal must not be greater than 18");
         }
-
+        write_administrator(&e, &admin);
         write_metadata(
             &e,
             TokenMetadata {
@@ -317,8 +259,46 @@ impl TokenTrait for Token {
         )
     }
 
+    pub fn mint(e: Env, to: Address, amount: i128) {
+        check_nonnegative_amount(amount);
+        let admin = read_administrator(&e);
+        admin.require_auth();
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        receive_balance(&e, to.clone(), amount);
+        TokenUtils::new(&e).events().mint(admin, to, amount);
+    }
+
+    pub fn set_admin(e: Env, new_admin: Address) {
+        let admin = read_administrator(&e);
+        admin.require_auth();
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        write_administrator(&e, &new_admin);
+        TokenUtils::new(&e).events().set_admin(admin, new_admin);
+    }
+
+    #[cfg(test)]
+    pub fn get_allowance(e: Env, from: Address, spender: Address) -> Option<AllowanceValue> {
+        let key = DataKey::Allowance(AllowanceDataKey { from, spender });
+        let allowance = e.storage().temporary().get::<_, AllowanceValue>(&key);
+        allowance
+    }
+}
+
+#[contractimpl]
+impl token::Interface for Token {
     fn allowance(e: Env, from: Address, spender: Address) -> i128 {
-        read_allowance(&e, from, spender)
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        read_allowance(&e, from, spender).amount
     }
 
     fn approve(e: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32) {
@@ -326,141 +306,90 @@ impl TokenTrait for Token {
 
         check_nonnegative_amount(amount);
 
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
         write_allowance(&e, from.clone(), spender.clone(), amount, expiration_ledger);
-        event::approve(&e, from, spender, amount, expiration_ledger);
+        TokenUtils::new(&e)
+            .events()
+            .approve(from, spender, amount, expiration_ledger);
     }
 
     fn balance(e: Env, id: Address) -> i128 {
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         read_balance(&e, id)
-    }
-
-    fn spendable_balance(e: Env, id: Address) -> i128 {
-        read_balance(&e, id)
-    }
-
-    fn authorized(e: Env, id: Address) -> bool {
-        is_authorized(&e, id)
     }
 
     fn transfer(e: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
 
         check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
         spend_balance(&e, from.clone(), amount);
         receive_balance(&e, to.clone(), amount);
-        event::transfer(&e, from, to, amount);
+        TokenUtils::new(&e).events().transfer(from, to, amount);
     }
 
     fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128) {
         spender.require_auth();
 
         check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
         spend_allowance(&e, from.clone(), spender, amount);
         spend_balance(&e, from.clone(), amount);
         receive_balance(&e, to.clone(), amount);
-        event::transfer(&e, from, to, amount)
+        TokenUtils::new(&e).events().transfer(from, to, amount)
     }
 
     fn burn(e: Env, from: Address, amount: i128) {
         from.require_auth();
 
         check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
         spend_balance(&e, from.clone(), amount);
-        event::burn(&e, from, amount);
+        TokenUtils::new(&e).events().burn(from, amount);
     }
 
     fn burn_from(e: Env, spender: Address, from: Address, amount: i128) {
         spender.require_auth();
 
         check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
         spend_allowance(&e, from.clone(), spender, amount);
         spend_balance(&e, from.clone(), amount);
-        event::burn(&e, from, amount)
-    }
-
-    fn clawback(e: Env, from: Address, amount: i128) {
-        check_nonnegative_amount(amount);
-        let admin = read_administrator(&e);
-        admin.require_auth();
-        spend_balance(&e, from.clone(), amount);
-        event::clawback(&e, admin, from, amount);
-    }
-
-    fn set_authorized(e: Env, id: Address, authorize: bool) {
-        let admin = read_administrator(&e);
-        admin.require_auth();
-        write_authorization(&e, id.clone(), authorize);
-        event::set_authorized(&e, admin, id, authorize);
-    }
-
-    fn mint(e: Env, to: Address, amount: i128) {
-        check_nonnegative_amount(amount);
-        let admin = read_administrator(&e);
-        admin.require_auth();
-        receive_balance(&e, to.clone(), amount);
-        event::mint(&e, admin, to, amount);
-    }
-
-    fn set_admin(e: Env, new_admin: Address) {
-        let admin = read_administrator(&e);
-        admin.require_auth();
-        write_administrator(&e, &new_admin);
-        event::set_admin(&e, admin, new_admin);
+        TokenUtils::new(&e).events().burn(from, amount)
     }
 
     fn decimals(e: Env) -> u32 {
         read_decimal(&e)
     }
 
-    fn name(e: Env) -> Bytes {
+    fn name(e: Env) -> String {
         read_name(&e)
     }
 
-    fn symbol(e: Env) -> Bytes {
+    fn symbol(e: Env) -> String {
         read_symbol(&e)
     }
-}
-```
-
-</TabItem>
-<TabItem value="event">
-
-```rust title="token/src/event.rs"
-use soroban_sdk::{Address, Env, Symbol, symbol_short};
-
-pub(crate) fn approve(e: &Env, from: Address, to: Address, amount: i128, expiration_ledger: u32) {
-    let topics = (Symbol::new(e, "approve"), from, to);
-    e.events().publish(topics, (amount, expiration_ledger));
-}
-
-pub(crate) fn transfer(e: &Env, from: Address, to: Address, amount: i128) {
-    let topics = (symbol_short!("transfer"), from, to);
-    e.events().publish(topics, amount);
-}
-
-pub(crate) fn mint(e: &Env, admin: Address, to: Address, amount: i128) {
-    let topics = (symbol_short!("mint"), admin, to);
-    e.events().publish(topics, amount);
-}
-
-pub(crate) fn clawback(e: &Env, admin: Address, from: Address, amount: i128) {
-    let topics = (symbol_short!("clawback"), admin, from);
-    e.events().publish(topics, amount);
-}
-
-pub(crate) fn set_authorized(e: &Env, admin: Address, id: Address, authorize: bool) {
-    let topics = (Symbol::new(e, "set_authorized"), admin, id);
-    e.events().publish(topics, authorize);
-}
-
-pub(crate) fn set_admin(e: &Env, admin: Address, new_admin: Address) {
-    let topics = (symbol_short!("set_admin"), admin);
-    e.events().publish(topics, new_admin);
-}
-
-pub(crate) fn burn(e: &Env, from: Address, amount: i128) {
-    let topics = (symbol_short!("burn"), from);
-    e.events().publish(topics, amount);
 }
 ```
 
@@ -525,7 +454,7 @@ pub enum DataKey {
 </TabItem>
 </Tabs>
 
-Ref: https://github.com/stellar/soroban-examples/tree/v21.6.0/token
+Ref: https://github.com/stellar/soroban-examples/tree/v22.0.1/token
 
 ## How it Works
 
@@ -543,13 +472,10 @@ You have likely noticed that this example contract is broken into discrete modul
 
 For example, most of the token logic exists in the `contract.rs` module. Functions like `mint`, `burn`, `transfer`, etc. are written and programmed in that file. The Token Interface describes how some of these functions should emit events when they occur. However, keeping all that event-emitting logic bundled in with the rest of the contract code could make it harder to track what is happening in the code, and that confusion could ultimately lead to errors.
 
-Instead, we have a separate `events.rs` module that takes away all the headache of emitting events when other functions run. Here is the function to emit an event whenever the token is minted:
+Instead, we have a separate `soroban_token_sdk::TokenUtils` module that takes away all the headache of emitting events when other functions run. Here is the event emitted when a token is minted:
 
 ```rust
-pub(crate) fn mint(e: &Env, admin: Address, to: Address, amount: i128) {
-    let topics = (symbol_short!("mint"), admin, to);
-    e.events().publish(topics, amount);
-}
+TokenUtils::new(&e).events().mint(admin, to, amount);
 ```
 
 Admittedly, this is a simple example, but constructing the contract this way makes it very clear to the developer what is happening and where. This function is then used by the `contract.rs` module whenever the `mint` function is invoked:
@@ -564,7 +490,7 @@ fn mint(e: Env, to: Address, amount: i128) {
     admin.require_auth();
     receive_balance(&e, to.clone(), amount);
     // highlight-next-line
-    event::mint(&e, admin, to, amount);
+    TokenUtils::new(&e).events().mint(admin, to, amount);
 }
 ```
 
@@ -611,12 +537,23 @@ Open the `token/src/test.rs` file to follow along.
 extern crate std;
 
 use crate::{contract::Token, TokenClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
+    Address, Env, FromVal, IntoVal, String, Symbol,
+};
 
 fn create_token<'a>(e: &Env, admin: &Address) -> TokenClient<'a> {
-    let token = TokenClient::new(e, &e.register_contract(None, Token {}));
-    token.initialize(admin, &7, &"name".into_val(e), &"symbol".into_val(e));
-    token
+    let token_contract = e.register(
+        Token,
+        (
+            admin,
+            7_u32,
+            String::from_val(e, &"name"),
+            String::from_val(e, &"symbol"),
+        ),
+    );
+    TokenClient::new(e, &token_contract)
 }
 
 #[test]
@@ -624,11 +561,11 @@ fn test() {
     let e = Env::default();
     e.mock_all_auths();
 
-    let admin1 = Address::random(&e);
-    let admin2 = Address::random(&e);
-    let user1 = Address::random(&e);
-    let user2 = Address::random(&e);
-    let user3 = Address::random(&e);
+    let admin1 = Address::generate(&e);
+    let admin2 = Address::generate(&e);
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let user3 = Address::generate(&e);
     let token = create_token(&e, &admin1);
 
     token.mint(&user1, &1000);
@@ -721,44 +658,7 @@ fn test() {
         )]
     );
 
-    token.set_authorized(&user2, &false);
-    assert_eq!(
-        e.auths(),
-        std::vec![(
-            admin2.clone(),
-            AuthorizedInvocation {
-                function: AuthorizedFunction::Contract((
-                    token.address.clone(),
-                    Symbol::new(&e, "set_authorized"),
-                    (&user2, false).into_val(&e),
-                )),
-                sub_invocations: std::vec![]
-            }
-        )]
-    );
-    assert_eq!(token.authorized(&user2), false);
-
-    token.set_authorized(&user3, &true);
-    assert_eq!(token.authorized(&user3), true);
-
-    token.clawback(&user3, &100);
-    assert_eq!(
-        e.auths(),
-        std::vec![(
-            admin2.clone(),
-            AuthorizedInvocation {
-                function: AuthorizedFunction::Contract((
-                    token.address.clone(),
-                    symbol_short!("clawback"),
-                    (&user3, 100_i128).into_val(&e),
-                )),
-                sub_invocations: std::vec![]
-            }
-        )]
-    );
-    assert_eq!(token.balance(&user3), 200);
-
-    // Set allowance to 500
+    // Increase to 500
     token.approve(&user2, &user3, &500, &200);
     assert_eq!(token.allowance(&user2, &user3), 500);
     token.approve(&user2, &user3, &0, &200);
@@ -784,9 +684,9 @@ fn test_burn() {
     let e = Env::default();
     e.mock_all_auths();
 
-    let admin = Address::random(&e);
-    let user1 = Address::random(&e);
-    let user2 = Address::random(&e);
+    let admin = Address::generate(&e);
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
     let token = create_token(&e, &admin);
 
     token.mint(&user1, &1000);
@@ -841,9 +741,9 @@ fn transfer_insufficient_balance() {
     let e = Env::default();
     e.mock_all_auths();
 
-    let admin = Address::random(&e);
-    let user1 = Address::random(&e);
-    let user2 = Address::random(&e);
+    let admin = Address::generate(&e);
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
     let token = create_token(&e, &admin);
 
     token.mint(&user1, &1000);
@@ -853,51 +753,15 @@ fn transfer_insufficient_balance() {
 }
 
 #[test]
-#[should_panic(expected = "can't receive when deauthorized")]
-fn transfer_receive_deauthorized() {
-    let e = Env::default();
-    e.mock_all_auths();
-
-    let admin = Address::random(&e);
-    let user1 = Address::random(&e);
-    let user2 = Address::random(&e);
-    let token = create_token(&e, &admin);
-
-    token.mint(&user1, &1000);
-    assert_eq!(token.balance(&user1), 1000);
-
-    token.set_authorized(&user2, &false);
-    token.transfer(&user1, &user2, &1);
-}
-
-#[test]
-#[should_panic(expected = "can't spend when deauthorized")]
-fn transfer_spend_deauthorized() {
-    let e = Env::default();
-    e.mock_all_auths();
-
-    let admin = Address::random(&e);
-    let user1 = Address::random(&e);
-    let user2 = Address::random(&e);
-    let token = create_token(&e, &admin);
-
-    token.mint(&user1, &1000);
-    assert_eq!(token.balance(&user1), 1000);
-
-    token.set_authorized(&user1, &false);
-    token.transfer(&user1, &user2, &1);
-}
-
-#[test]
 #[should_panic(expected = "insufficient allowance")]
 fn transfer_from_insufficient_allowance() {
     let e = Env::default();
     e.mock_all_auths();
 
-    let admin = Address::random(&e);
-    let user1 = Address::random(&e);
-    let user2 = Address::random(&e);
-    let user3 = Address::random(&e);
+    let admin = Address::generate(&e);
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let user3 = Address::generate(&e);
     let token = create_token(&e, &admin);
 
     token.mint(&user1, &1000);
@@ -910,22 +774,37 @@ fn transfer_from_insufficient_allowance() {
 }
 
 #[test]
-#[should_panic(expected = "already initialized")]
-fn initialize_already_initialized() {
-    let e = Env::default();
-    let admin = Address::random(&e);
-    let token = create_token(&e, &admin);
-
-    token.initialize(&admin, &10, &"name".into_val(&e), &"symbol".into_val(&e));
-}
-
-#[test]
 #[should_panic(expected = "Decimal must not be greater than 18")]
 fn decimal_is_over_eighteen() {
     let e = Env::default();
     let admin = Address::generate(&e);
-    let token = TokenClient::new(&e, &e.register_contract(None, Token {}));
-    token.initialize(&admin, &19, &"name".into_val(&e), &"symbol".into_val(&e));
+    let _ = TokenClient::new(
+        &e,
+        &e.register(
+            Token,
+            (
+                admin,
+                19_u32,
+                String::from_val(&e, &"name"),
+                String::from_val(&e, &"symbol"),
+            ),
+        ),
+    );
+}
+
+#[test]
+fn test_zero_allowance() {
+    // Here we test that transfer_from with a 0 amount does not create an empty allowance
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::generate(&e);
+    let spender = Address::generate(&e);
+    let from = Address::generate(&e);
+    let token = create_token(&e, &admin);
+
+    token.transfer_from(&spender, &from, &spender, &0);
+    assert!(token.get_allowance(&from, &spender).is_none());
 }
 ```
 
@@ -941,14 +820,21 @@ We mock authentication checks in the tests, which allows the tests to proceed as
 e.mock_all_auths();
 ```
 
-We're also using a `create_token` function to ease the repetition of having to register and initialize our token contract. The resulting `token` client is then used to invoke the contract during each test.
+We're also using a `create_token` function to ease the repetition of having to register our token contract. The resulting `token` client is then used to invoke the contract during each test.
 
 ```rust
 // It is defined at the top of the file...
 fn create_token<'a>(e: &Env, admin: &Address) -> TokenClient<'a> {
-    let token = TokenClient::new(e, &e.register_contract(None, Token {}));
-    token.initialize(admin, &7, &"name".into_val(e), &"symbol".into_val(e));
-    token
+    let token_contract = e.register(
+        Token,
+        (
+            admin,
+            7_u32,
+            String::from_val(e, &"name"),
+            String::from_val(e, &"symbol"),
+        ),
+    );
+    TokenClient::new(e, &token_contract)
 }
 
 // ... and it is used inside each test
@@ -957,16 +843,14 @@ let token = create_token(&e, &admin);
 
 All public functions within an `impl` block that has been annotated with the `#[contractimpl]` attribute will have a corresponding function in the test's generated client type. The client type will be named the same as the contract type with `Client` appended. For example, in our contract, the contract type is named `Token`, and the client type is named `TokenClient`.
 
-The eight tests created for this example contract test a range of possible conditions and ensure the contract responds appropriately to each one:
+The six tests created for this example contract test a range of possible conditions and ensure the contract responds appropriately to each one:
 
 - **`test()`** - This function makes use of a variety of the built-in token functions to test the "predictable" way an asset might be interacted with by a user, as well as an administrator.
 - **`test_burn()`** - This function ensures a `burn()` invocation decreases a user's balance, and that a `burn_from()` invocation decreases a user's balance as well as consuming another user's allowance of that balance.
+- **`test_zero_allowance()`** - This function makes sure that a `transfer_from()` with an zero balance doesn't create an empty allowance.
 - **`transfer_insufficient_balance()`** - This function ensures a `transfer()` invocation panics when the `from` user doesn't have the balance to cover it.
-- **`transfer_receive_deauthorized()`** - This function ensures a user who is specifically de-authorized to hold the token cannot be the beneficiary of a `transfer()` invocation.
-- **`transfer_spend_deauthorized()`** - This function ensures a user with a token balance, who is subsequently de-authorized cannot be the source of a `transfer()` invocation.
 - **`transfer_from_insufficient_allowance()`** - This function ensures a user with an existing allowance for someone else's balance cannot make a `transfer()` greater than that allowance.
-- **`initialize_already_initialized()`** - This function checks that the contract cannot have it's `initialize()` function invoked a second time.
-- **`decimal_is_over_eighteen()`** - This function tests that invoking `initialize()` with too high of a decimal precision will not succeed.
+- **`decimal_is_over_eighteen()`** - This function tests that constructing a token with too high of a decimal precision will not succeed.
 
 ## Build the Contract
 
@@ -1016,4 +900,4 @@ stellar contract invoke `
 
 </Tabs>
 
-[`stellar-cli`]: ../../../tools/developer-tools/cli/stellar-cli.mdx
+[`stellar-cli`]: ../../../tools/cli/stellar-cli.mdx
