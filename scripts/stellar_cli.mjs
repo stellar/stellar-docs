@@ -1,9 +1,21 @@
 import fs from "fs-extra";
 import path from "path";
 import { execSync } from "child_process";
+import yargs from "yargs";
+import {hideBin} from "yargs/helpers";
 
 const repoUrl = "https://github.com/stellar/stellar-cli.git";
 const localRepoPath = "./stellar-cli-repo";
+
+const argv = yargs(hideBin(process.argv))
+    .parserConfiguration({
+        'strip-dashed': true
+    })
+    .option('cli-ref', {
+        type: 'string',
+        description: 'Cli reference'
+    })
+    .parse()
 
 // Remove the existing repo if it exists
 if (fs.existsSync(localRepoPath)) {
@@ -20,15 +32,13 @@ let latestVersion = execSync(
   .toString()
   .substring(1)
   .trim();
-// TODO: https://github.com/stellar/stellar-cli/issues/1908
-let clidDocsHash = "e4680d35b11f217ddd5403dc417a883bffbc387f"
+
+let cliRef = argv.cliRef || `v${latestVersion}`
 
 console.log("the latest version is", latestVersion.toString());
-console.log("using commit hash to fetch cli docs: ", clidDocsHash.toString());
+console.log("using cli ref to fetch cli docs: ", cliRef.toString());
 
-// TODO: https://github.com/stellar/stellar-cli/issues/1908
-// execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
-execSync(`cd ${localRepoPath} && git checkout --quiet ${clidDocsHash}`);
+execSync(`cd ${localRepoPath} && git checkout --quiet ${cliRef}`);
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
