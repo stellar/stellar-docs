@@ -58,7 +58,7 @@ fs.writeFileSync(
 );
 
 fs.writeFileSync(
-  "docs/tools/developer-tools/cli/stellar-cli.mdx",
+  "docs/tools/cli/stellar-cli.mdx",
   modifiedContent,
 );
 

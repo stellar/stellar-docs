@@ -57,6 +57,7 @@ const config: Config = {
     ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
+    require("./src/route-export-plugin"),
   ],
   markdown: {
     mermaid: true,
@@ -170,14 +171,14 @@ const config: Config = {
               className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/analytics/hubble/README",
-              label: "Hubble",
+              to: '/docs/data/analytics/hubble',
+              label: 'Hubble',
+              activeBasePath: 'docs/data/analytics/hubble'
             },
             {
-              type: 'doc',
-              docId: "data/analytics/analytics-providers/analytics-providers",
-              label: "Providers",
+              to: '/docs/data/analytics/analytics-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/analytics/analytics-providers'
             },
             {
               type: 'html',
@@ -185,24 +186,24 @@ const config: Config = {
               className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/apis/rpc/README",
-              label: "RPC",
+              to: '/docs/data/apis/rpc',
+              label: 'RPC',
+              activeBasePath: 'docs/data/apis/rpc'
             },
             {
-              type: 'doc',
-              docId: "data/apis/horizon/README",
-              label: "Horizon",
+              to: '/docs/data/apis/horizon',
+              label: 'Horizon',
+              activeBasePath: 'docs/data/apis/horizon'
             },
             {
-              type: 'doc',
-              docId: "data/apis/migrate-from-horizon-to-rpc/migrate-from-horizon-to-rpc",
-              label: "Migrate Horizon to RPC",
+              to: '/docs/data/apis/migrate-from-horizon-to-rpc',
+              label: 'Migrate Horizon to RPC',
+              activeBasePath: 'docs/data/apis/migrate-from-horizon-to-rpc'
             },
             {
-              type: 'doc',
-              docId: "data/apis/api-providers",
-              label: "Providers",
+              to: '/docs/data/apis/api-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/apis/api-providers'
             },
             {
               type: 'html',
@@ -210,14 +211,14 @@ const config: Config = {
               className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/indexers/build-your-own/README",
-              label: "Build Your Own",
+              to: '/docs/data/indexers/build-your-own',
+              label: 'Build Your Own',
+              activeBasePath: 'docs/data/indexers/build-your-own'
             },
             {
-              type: 'doc',
-              docId: "data/indexers/indexer-providers/indexer-providers",
-              label: "Providers",
+              to: '/docs/data/indexers/indexer-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/indexers/indexer-providers'
             },
             {
               type: 'html',
@@ -225,9 +226,9 @@ const config: Config = {
               className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: "data/oracles/oracle-providers",
-              label: "Providers",
+              to: '/docs/data/oracles',
+              label: 'Providers',
+              activeBasePath: 'docs/data/oracles'
             },
           ]
         },
@@ -239,13 +240,33 @@ const config: Config = {
           activeBaseRegex: `(docs/tools|platforms)`,
           items: [
             {
+              type: 'html',
+              value: '<hr><small>Developer Tools</small>',
+              className: 'subtitle',
+            },
+            {
               to: '/docs/tools/sdks',
               label: 'SDKs',
               activeBasePath: 'docs/tools/sdks'
             },
             {
+              to: '/docs/tools/cli',
+              label: 'Stellar CLI',
+              activeBasePath: 'docs/tools/cli'
+            },
+            {
+              to: '/docs/tools/lab',
+              label: 'Lab',
+              activeBasePath: 'docs/tools/lab'
+            },
+            {
+              to: '/docs/tools/quickstart',
+              label: 'Quickstart',
+              activeBasePath: 'docs/tools/quickstart'
+            },
+            {
               to: '/docs/tools/developer-tools',
-              label: 'Developer Tools'
+              label: 'More Developer Tools'
             },
             {
               type: 'html',
