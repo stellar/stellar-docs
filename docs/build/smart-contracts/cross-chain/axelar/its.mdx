@@ -1,0 +1,599 @@
+---
+title: "Send token cross-chain with Axelar Interchain Token Service (ITS)"
+sidebar_label: "Token Transfer Example"
+sidebar_position: 3
+description: "Learn how to send tokens cross-chain using Axelar Interchain Token Service (ITS) on Stellar."
+---
+
+# Deploy and Transfer Tokens from Stellar to EVM
+
+This guide demonstrates, step by step, how to use Axelar's Interchain Token Service (ITS) to create and transfer tokens between Stellar and other blockchains.
+
+We'll build a simple cross-chain token application that:
+
+1. Deploy a new token on Stellar.
+2. Deploy that token to another blockchain (Avalanche Fuji testnet).
+3. Transfers tokens between chains.
+
+## Prerequisites
+
+- [Rust](https://www.rust-lang.org/tools/install) with wasm32 target.
+- [Stellar CLI](https://github.com/stellar/stellar-cli).
+- A Stellar testnet account with funds.
+- [Metamask](https://metamask.io/) configured for Avalanche Fuji testnet or [Rabby](https://rabby.io/) wallet.
+- Some Avalanche Fuji testnet AVAX (from the [Avalanche faucet](https://faucet.avax.network/)).
+
+## Part 1: Interchain Token Service
+
+The [Interchain Token Service (ITS)](https://github.com/axelarnetwork/axelar-amplifier-stellar/tree/main/contracts/stellar-interchain-token-service) is a protocol that allows tokens to move freely between different blockchains. It provides functionality to:
+
+1. Create tokens that exist on multiple blockchains simultaneously.
+2. Connect existing tokens on one blockchain to other blockchains.
+3. Transfer tokens securely between blockchains.
+
+Unlike the single message-passing pattern of GMP, the ITS involves several components:
+
+- [**Interchain Token Service**](https://github.com/axelarnetwork/axelar-amplifier-stellar/tree/main/contracts/stellar-interchain-token-service): The main contract that coordinates token operations.
+- [**Token Manager**](https://github.com/axelarnetwork/axelar-amplifier-stellar/tree/main/contracts/stellar-token-manager): Handles token operations (minting, burning, locking) on a specific chain.
+- [**Interchain Token**](https://github.com/axelarnetwork/axelar-amplifier-stellar/tree/main/contracts/stellar-interchain-token): The actual token contract that implements the Stellar token interface.
+- [**Gateway**](https://github.com/axelarnetwork/axelar-amplifier-stellar/tree/main/contracts/stellar-axelar-gateway): Routes messages between blockchains.
+- [**Gas Service**](https://github.com/axelarnetwork/axelar-amplifier-stellar/tree/main/contracts/stellar-axelar-gas-service): Handles payments for cross-chain execution.
+
+## Part 2: Create a New Stellar ITS Project
+
+Let's create a basic Stellar project structure for our ITS integration.
+
+### 1. Initialize a new project:
+
+```bash
+stellar contract init axelar-its-app
+cd axelar-its-app
+```
+
+To simplify things, delete the `contracts/hello-world` folder. If you want to keep any other files in the `contracts` directory, move them to the `src/` folder.
+
+Make the `src/` folder your main working directory by moving any necessary files from subdirectories into it. Ensure you have only one `cargo.toml` file at the project root.
+
+```bash
+axelar-its-app
+├── src
+│   ├── abi.rs
+│   ├── test.rs
+├── .gitignore
+├── Cargo.lock
+├── Cargo.toml
+├── README.md
+```
+
+### 2. Configure your `Cargo.toml` to include the necessary dependencies:
+
+```toml
+[package]
+name = "axelar-its-app"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = "22.0.0"
+soroban-token-sdk = "22.0.0"
+stellar-axelar-gateway = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", branch = "main", features = ["library"] }
+stellar-axelar-gas-service = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", branch = "main", features = ["library"] }
+stellar-interchain-token-service = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", branch = "main", features = ["library"] }
+stellar-interchain-token = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", branch = "main", features = ["library"] }
+stellar-token-manager = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", branch = "main", features = ["library"] }
+stellar-axelar-std = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", branch = "main" }
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true
+```
+
+## Part 3: Implementing the Interchain Token Service (ITS)
+
+Now, let's create each file for our application and update the existing file.
+
+### 1. Update lib.rs
+
+This is the entry point to our project:
+
+```rust
+#![no_std]
+
+pub mod contract;
+pub mod error;
+mod storage_types;
+```
+
+### 2. Create error.rs
+
+This file will define all possible error conditions:
+
+```rust
+use stellar_axelar_std::{contracterror, soroban_sdk};
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ContractError {
+    TrustedChainAlreadySet = 1,
+    TrustedChainNotSet = 2,
+    InvalidMessageType = 3,
+    UntrustedChain = 4,
+    InvalidAmount = 5,
+    InvalidDestinationAddress = 6,
+    NotHubChain = 7,
+    NotHubAddress = 8,
+    InvalidTokenId = 9,
+    TokenAlreadyRegistered = 10,
+    FlowLimitExceeded = 11,
+    InvalidDestinationChain = 12,
+    InvalidData = 13,
+    InvalidTokenName = 14,
+    InvalidTokenSymbol = 15,
+    InvalidTokenDecimals = 16,
+    InvalidInitialSupply = 17,
+    InvalidTokenConfig = 18,
+}
+```
+
+### 3. Create storage_types.rs
+
+This `storage_types.rs` file defines the storage structure for our contract:
+
+```rust
+use soroban_sdk::{contracttype, String};
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum DataKey {
+    InterchainTokenService,
+    TokenId,
+    Salt,
+    TrustedChain(String),
+}
+```
+
+This storage structure includes:
+
+- `InterchainTokenService`: Stores the address of the deployed ITS contract.
+- `TokenId`: Stores the ID of the token we deploy.
+- `Salt`: Stores the salt used for token deployment (needed for remote deployment).
+- `TrustedChain`: Tracks which chains we've marked as trusted.
+
+### 4. Create contract.rs
+
+This is the main file that will interact with the ITS contracts:
+
+```rust
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String};
+use soroban_token_sdk::metadata::TokenMetadata;
+use stellar_axelar_std::types::Token;
+use stellar_interchain_token_service::InterchainTokenServiceClient;
+
+use crate::storage_types::DataKey;
+
+#[contract]
+pub struct ItsApp;
+
+#[contractimpl]
+impl ItsApp {
+    /// Initialize the contract with the ITS service address
+    pub fn initialize(env: &Env, its_address: Address) {
+        env.storage().instance().set(&DataKey::InterchainTokenService, &its_address);
+    }
+
+    /// Get the ITS client
+    fn its_client(env: &Env) -> InterchainTokenServiceClient {
+        let its_address = env.storage().instance().get(&DataKey::InterchainTokenService).unwrap();
+        InterchainTokenServiceClient::new(env, &its_address)
+    }
+
+    /// Check if a chain is trusted
+    pub fn is_trusted_chain(env: &Env, chain: String) -> bool {
+        let its = Self::its_client(env);
+        its.is_trusted_chain(&chain)
+    }
+
+    /// Deploy a new interchain token on Stellar
+    pub fn deploy_token(
+        env: &Env,
+        caller: Address,
+        salt: BytesN<32>,
+        name: String,
+        symbol: String,
+        decimals: u32,
+        initial_supply: i128,
+    ) -> BytesN<32> {
+        caller.require_auth();
+
+        let its = Self::its_client(env);
+
+        // Create token metadata
+        let token_metadata = TokenMetadata {
+            name,
+            symbol,
+            decimal: decimals,
+        };
+
+        // Deploy the token - direct call
+        let token_id = its.deploy_interchain_token(
+            &caller,
+            &salt,
+            &token_metadata,
+            &initial_supply,
+            &None, // No additional minter
+        );
+
+        // Store the token ID and salt for reference
+        env.storage().instance().set(&DataKey::TokenId, &token_id);
+        env.storage().instance().set(&DataKey::Salt, &salt);
+
+        token_id
+    }
+
+    /// Deploy the token to another blockchain
+    pub fn deploy_remote_token(
+        env: &Env,
+        caller: Address,
+        destination_chain: String,
+        gas_token_address: Address,
+        gas_amount: i128,
+    ) -> BytesN<32> {
+        caller.require_auth();
+
+        let its = Self::its_client(env);
+
+        // Get stored salt
+        let salt = env.storage().instance().get(&DataKey::Salt).unwrap_or_else(|| {
+            BytesN::from_array(env, &[0; 32])
+        });
+
+        // Prepare gas token
+        let gas_token = Some(Token {
+            address: gas_token_address,
+            amount: gas_amount,
+        });
+
+        // Deploy to remote chain - direct call
+        let token_id = its.deploy_remote_interchain_token(
+            &caller,
+            &salt,
+            &destination_chain,
+            &gas_token,
+        );
+
+        token_id
+    }
+
+    /// Transfer tokens to another blockchain
+    pub fn transfer_tokens(
+        env: &Env,
+        caller: Address,
+        token_id: BytesN<32>,
+        destination_chain: String,
+        destination_address: String,
+        amount: i128,
+        gas_token_address: Address,
+        gas_amount: i128,
+    ) {
+        caller.require_auth();
+
+        let its = Self::its_client(env);
+
+        // Basic validation
+        if amount <= 0 {
+            panic!("Invalid amount");
+        }
+
+        if destination_address.len() == 0 {
+            panic!("Invalid destination address");
+        }
+
+        // Convert string address to bytes
+        let dest_addr_bytes = Bytes::from_slice(env, destination_address.as_bytes());
+
+        // Prepare gas token
+        let gas_token = Some(Token {
+            address: gas_token_address,
+            amount: gas_amount,
+        });
+
+        // Send the tokens cross-chain - direct call
+        its.interchain_transfer(
+            &caller,
+            &token_id,
+            &destination_chain,
+            &dest_addr_bytes,
+            &amount,
+            &None, // No additional data
+            &gas_token,
+        );
+    }
+
+    /// Register an existing Stellar token for cross-chain use
+    pub fn register_existing_token(
+        env: &Env,
+        caller: Address,
+        token_address: Address,
+    ) -> BytesN<32> {
+        caller.require_auth();
+
+        let its = Self::its_client(env);
+
+        // Register the token - direct call
+        let token_id = its.register_canonical_token(&token_address);
+
+        // Store the token ID for reference
+        env.storage().instance().set(&DataKey::TokenId, &token_id);
+
+        token_id
+    }
+
+    /// Get the currently stored token ID
+    pub fn get_token_id(env: &Env) -> BytesN<32> {
+        env.storage().instance().get(&DataKey::TokenId).unwrap()
+    }
+}
+```
+
+In the code above:
+
+-The contract's methods, such as `deploy_token()` and `deploy_remote_token(),` provide an interface for Axelar's Interchain Token Service, enabling token creation and deployment remotely.
+
+- Methods such as `transfer_tokens()` and `is_trusted_chain()` extend token availability to other blockchains and manage cross-chain token transfers.
+- The implementation of `initialize()` and `its_client()` handles token metadata, authorization, and cross-chain communication through the Interchain Token Service.
+
+## Part 4: Build and Deploy the Contract
+
+Now, let's build and deploy our contract to the Stellar testnet.
+
+### 1. Build the contract:
+
+```bash
+stellar contract build
+```
+
+This will compile your contract and produce a WebAssembly (WASM) file. You should see output similar to this:
+
+```
+ℹ️  CARGO_BUILD_RUSTFLAGS=--remap-path-prefix=/path/to/registry/src= cargo rustc --manifest-path=Cargo.toml --crate-type=cdylib --target=wasm32-unknown-unknown --release
+   Compiling axelar-its-app v0.0.0 (/path/to/axelar-its-example)
+    Finished `release` profile [optimized] target(s) in 1.04s
+ℹ️  Build Summary:
+   Wasm File: target/wasm32-unknown-unknown/release/axelar_its_app.wasm
+   Wasm Hash: 6ec10215f2b47323e143289842bdf274b00929b5632f60e56ef39fd2caa066eb
+   Exported Functions: 8 found
+     • _
+     • deploy_remote_token
+     • deploy_token
+     • get_token_id
+     • initialize
+     • is_trusted_chain
+     • register_existing_token
+     • transfer_tokens
+✅ Build Complete
+```
+
+### 2. Optimize the WASM file:
+
+```bash
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/axelar_its_app.wasm
+```
+
+### 3. Deploy the contract to Stellar testnet:
+
+```bash
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/axelar_its_app.optimized.wasm \
+  --source YOUR_ACCOUNT_NAME \
+  --network testnet
+```
+
+When the deployment succeeds, you'll receive the address of your new contract. Save this address for future interactions.
+
+You should see something similar to what is shown below on your terminal.
+
+```
+ℹ️  Simulating install transaction…
+ℹ️  Signing transaction: ee3941979c516e4953b65d14704d1c9b9ec0c1646be5295f877f0ea6ae042504
+🌎 Submitting install transaction…
+ℹ️  Using wasm hash 8a09dd41239d938d23546dfd56e935d3e19f0784bd96757990858a78453e913e
+ℹ️  Simulating deploy transaction…
+ℹ️  Transaction hash is c98523481cfecfdb96ae19d19cdb766b18394b711b614ef79a2e924cc15a8461
+🔗 https://stellar.expert/explorer/testnet/tx/c98523481cfecfdb96ae19d19cdb766b18394b711b614ef79a2e924cc15a8461
+ℹ️  Signing transaction: c98523481cfecfdb96ae19d19cdb766b18394b711b614ef79a2e924cc15a8461
+🌎 Submitting deploy transaction…
+🔗 https://stellar.expert/explorer/testnet/contract/CCQBX3AFKB2A43RA6GVY53MFBGK3KSXROUAXZSRV3CG63FXFG7QXNKLT
+✅ Deployed!
+CCQBX3AFKB2A43RA6GVY53MFBGK3KSXROUAXZSRV3CG63FXFG7QXNKLT
+```
+
+## Part 5: Interacting with the Contract
+
+Now that our contract is deployed let's interact with it to create and transfer tokens across the cross-chain.
+
+### 1. Initialize the Contract
+
+First, initialize your contract with the address of the Interchain Token Service:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id YOUR_CONTRACT_ADDRESS \
+  --source-account YOUR_ACCOUNT_NAME \
+  -- \
+  initialize \
+  --its_address CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK
+```
+
+> Note: `CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK` is the address of the Axelar Interchain Token Service contract on Stellar testnet. You should confirm this address from the official Axelar documentation for testnet [here](https://github.com/axelarnetwork/axelar-contract-deployments/blob/main/axelar-chains-config/info/testnet.json).
+
+You should see something like:
+
+```
+ℹ️  Signing transaction: f90f7d67180f00e77b0de0b96b6cc801a68093c41ed6544cc82d327b2c1c4837
+```
+
+### 2. Check if Avalanche is a Trusted Chain
+
+Before we can send tokens to Avalanche, let's check if the ITS already trusts it:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id YOUR_CONTRACT_ADDRESS \
+  --source-account YOUR_ACCOUNT_NAME \
+  -- \
+  is_trusted_chain \
+  --chain '"Avalanche"'
+```
+
+> Note: The quotes around the chain name are required due to how the Stellar CLI handles string parameters.
+
+You will get this:
+
+```
+ℹ️  Simulation identified as read-only. Send by rerunning with `--send=yes`.
+true
+```
+
+This confirms that Avalanche is already trusted so that we can deploy tokens there.
+
+### 3. Deploy a New Interchain Token
+
+Create your own token that can exist across multiple blockchains:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id YOUR_CONTRACT_ADDRESS \
+  --source-account YOUR_ACCOUNT_NAME \
+  -- \
+  deploy_token \
+  --caller YOUR_ACCOUNT_NAME \
+  --salt 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --name '"Axelar Test Token"' \
+  --symbol '"ATT"' \
+  --decimals 7 \
+  --initial_supply 1000000000
+```
+
+> Make sure to replace the salt with a proper 32-byte hexadecimal string. For convenience, you can use the example value shown above.
+
+After executing this command, you should receive a token ID. The contract will also internally store both the token ID and the salt for future operations.
+
+You will see something like this:
+
+```
+ℹ️  Signing transaction: d6a4cb711a78b681324b9ef8d0ad57ab99bb465261d294daee7f5fbbae242a47
+📅 CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK - Event: [{"symbol":"interchain_token_deployed"},{"bytes":"76e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b"},{"address":"CCNZ2XJUC3IHIJIB77NOWKHEHQHNYCNQHMZLNLQSAH5YQS7VWVBYBCKX"},{"string":"Axelar Test Token"},{"string":"ATT"},{"u32":7},"void"] = {"vec":[]}
+📅 CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK - Event: [{"symbol":"token_manager_deployed"},{"bytes":"76e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b"},{"address":"CCNZ2XJUC3IHIJIB77NOWKHEHQHNYCNQHMZLNLQSAH5YQS7VWVBYBCKX"},{"address":"CAFKSZAAUJ6KVPC43ZOKXSYSEE6FMTLIPWUUZDHBYFZPVRR6THVOBDBG"},{"u32":0}] = {"vec":[]}
+📅 CCNZ2XJUC3IHIJIB77NOWKHEHQHNYCNQHMZLNLQSAH5YQS7VWVBYBCKX - Event: [{"symbol":"minter_added"},{"address":"CAFKSZAAUJ6KVPC43ZOKXSYSEE6FMTLIPWUUZDHBYFZPVRR6THVOBDBG"}] = {"vec":[]}
+📅 CCNZ2XJUC3IHIJIB77NOWKHEHQHNYCNQHMZLNLQSAH5YQS7VWVBYBCKX - Event: [{"symbol":"mint"},{"address":"CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"}] = {"i128":{"hi":0,"lo":1000000000}}
+"76e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b"
+```
+
+This deployment returns your token ID, which is `76e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b` in this example. Save it somewhere, as you will need it to do interchain token transfers.
+
+### 4. Deploy Your Token to Avalanche
+
+Now, let's make your token available on Avalanche. The contract will use the stored salt from the token deployment:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id YOUR_CONTRACT_ADDRESS \
+  --source-account YOUR_ACCOUNT_NAME \
+  -- \
+  deploy_remote_token \
+  --caller YOUR_ACCOUNT_NAME \
+  --destination_chain '"Avalanche"' \
+  --gas_token_address CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --gas_amount 100000000
+```
+
+> Notes:
+>
+> - `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` is the address of the native XLM token on Stellar testnet.
+> - The gas amount is 10 XLM (10,000,000,000 stroops).
+> - We don't need to specify the token_id as our contract stores this from the token deployment.
+
+You should see:
+
+```
+ℹ️  Signing transaction: 41a6d7c068fb82c777008f8da95c1d285d3b99ca07594b7e2c71eb4ed569018f
+📅 CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK - Event: [{"symbol":"token_deployment_started"},{"bytes":"76e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b"},{"address":"CCNZ2XJUC3IHIJIB77NOWKHEHQHNYCNQHMZLNLQSAH5YQS7VWVBYBCKX"},{"string":"Avalanche"},{"string":"Axelar Test Token"},{"string":"ATT"},{"u32":7},"void"] = {"vec":[]}
+📅 CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC - Event: [{"symbol":"transfer"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"},{"address":"CAZUKAFB5XHZKFZR7B5HIKB6BBMYSZIV3V2VWFTQWKYEMONWK2ZLTZCT"},{"string":"native"}] = {"i128":{"hi":0,"lo":10000000000}}
+📅 CAZUKAFB5XHZKFZR7B5HIKB6BBMYSZIV3V2VWFTQWKYEMONWK2ZLTZCT - Event: [{"symbol":"gas_paid"},{"address":"CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK"},{"string":"axelar"},{"string":"axelar1aqcj54lzz0rk22gvqgcn8fr5tx4rzwdv5wv5j9dmnacgefvd7wzsy2j2mr"},{"bytes":"acd9ec020c801c7d6e5e9c15a5fa5b7e7944a0d5cdb027e2bdf4e70892d7ab54"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"},{"map":[{"key":{"symbol":"address"},"val":{"address":"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"}},{"key":{"symbol":"amount"},"val":{"i128":{"hi":0,"lo":10000000000}}}]}] = {"vec":[{"bytes":""}]}
+📅 CCSNWHMQSPTW4PS7L32OIMH7Z6NFNCKYZKNFSWRSYX7MK64KHBDZDT5I - Event: [{"symbol":"contract_called"},{"address":"CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK"},{"string":"axelar"},{"string":"axelar1aqcj54lzz0rk22gvqgcn8fr5tx4rzwdv5wv5j9dmnacgefvd7wzsy2j2mr"},{"bytes":"acd9ec020c801c7d6e5e9c15a5fa5b7e7944a0d5cdb027e2bdf4e70892d7ab54"}] = {"vec":[{"bytes":"0000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000094176616c616e63686500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000160000000000000000000000000000000000000000000000000000000000000000176e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b00000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000007000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000000114178656c6172205465737420546f6b656e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000341545400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}]}
+"76e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b"
+```
+
+This was a cross-chain transaction. You can check its status on Axelarscan testnet explorer by pasting this transaction hash: `41a6d7c068fb82c777008f8da95c1d285d3b99ca07594b7e2c71eb4ed569018f`. You can check [here](https://testnet.axelarscan.io/gmp/41a6d7c068fb82c777008f8da95c1d285d3b99ca07594b7e2c71eb4ed569018f).
+
+### 5. Transfer Tokens Cross-Chain
+
+Now you can send tokens from Stellar to Avalanche Fuji Testnet:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id YOUR_CONTRACT_ADDRESS \
+  --source-account YOUR_ACCOUNT_NAME \
+  -- \
+  transfer_tokens \
+  --caller YOUR_ACCOUNT_NAME \
+  --token_id YOUR_TOKEN_ID \
+  --destination_chain '"Avalanche"' \
+  --destination_address '"YOUR_AVALANCHE_ADDRESS"' \
+  --amount 100000000 \
+  --gas_token_address CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --gas_amount 100000000
+```
+
+> Notes:
+>
+> - Replace `YOUR_TOKEN_ID` with the token ID you received from the deployment (e.g., 76e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b).
+> - Replace `YOUR_AVALANCHE_ADDRESS` with the InterchainToken Service on Avalanche Fuji tesnet (e.g., B5FB4BE02232B1bBA4dC8f81dc24C26980dE9e3C - without 0x prefix). The address is the same for all EVM chains.
+> - The amount is 10 tokens with 7 decimal places (100,000,000 base units).
+
+You will get something like this:
+
+```
+ℹ️  Signing transaction: 6b8cf06327115b803aa465ebc9a12b9682753d89c391cca396bf767c31642fb2
+📅 CCNZ2XJUC3IHIJIB77NOWKHEHQHNYCNQHMZLNLQSAH5YQS7VWVBYBCKX - Event: [{"symbol":"burn"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"}] = {"i128":{"hi":0,"lo":100000000}}
+📅 CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK - Event: [{"symbol":"interchain_transfer_sent"},{"bytes":"76e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"},{"string":"Avalanche"},{"bytes":"b5fb4be02232b1bba4dc8f81dc24c26980de9e3c"},{"i128":{"hi":0,"lo":100000000}}] = {"vec":["void"]}
+📅 CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC - Event: [{"symbol":"transfer"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"},{"address":"CAZUKAFB5XHZKFZR7B5HIKB6BBMYSZIV3V2VWFTQWKYEMONWK2ZLTZCT"},{"string":"native"}] = {"i128":{"hi":0,"lo":10000000000}}
+📅 CAZUKAFB5XHZKFZR7B5HIKB6BBMYSZIV3V2VWFTQWKYEMONWK2ZLTZCT - Event: [{"symbol":"gas_paid"},{"address":"CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK"},{"string":"axelar"},{"string":"axelar1aqcj54lzz0rk22gvqgcn8fr5tx4rzwdv5wv5j9dmnacgefvd7wzsy2j2mr"},{"bytes":"4924e9eeae33b5800cb9418f98a473d14899b034034a9462cd72524697814b69"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"},{"map":[{"key":{"symbol":"address"},"val":{"address":"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"}},{"key":{"symbol":"amount"},"val":{"i128":{"hi":0,"lo":10000000000}}}]}] = {"vec":[{"bytes":""}]}
+📅 CCSNWHMQSPTW4PS7L32OIMH7Z6NFNCKYZKNFSWRSYX7MK64KHBDZDT5I - Event: [{"symbol":"contract_called"},{"address":"CCXT3EAQ7GPQTJWENU62SIFBQ3D4JMNQSB77KRPTGBJ7ZWBYESZQBZRK"},{"string":"axelar"},{"string":"axelar1aqcj54lzz0rk22gvqgcn8fr5tx4rzwdv5wv5j9dmnacgefvd7wzsy2j2mr"},{"bytes":"4924e9eeae33b5800cb9418f98a473d14899b034034a9462cd72524697814b69"}] = {"vec":[{"bytes":"0000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000094176616c616e63686500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000180000000000000000000000000000000000000000000000000000000000000000076e302e75743a189b908c691e481cbc86f7635ae7d56667ebaf44555d8803e0b00000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000005f5e100000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000000384741475a354e5a4a4d584b434f525046514d58595a4a5a545944535a354f505459455044324853564e5755334d4356354a494c364951445000000000000000000000000000000000000000000000000000000000000000000000000000000014b5fb4be02232b1bba4dc8f81dc24c26980de9e3c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}]}
+```
+
+Looking at axelarsscan with the hash: `6b8cf06327115b803aa465ebc9a12b9682753d89c391cca396bf767c31642fb2` you will have https://testnet.axelarscan.io/gmp/6b8cf06327115b803aa465ebc9a12b9682753d89c391cca396bf767c31642fb2.
+
+You can register an existing token to make it an interchain token; however, we will cover that in a different guide.
+
+## Conclusion
+
+You've now learned how to:
+
+1. Deploy a new token on Stellar.
+2. Make it available on an EVM chain.
+3. Transfer tokens between blockchains.

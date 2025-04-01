@@ -1,0 +1,655 @@
+---
+title: "Send cross-chain messages with Axelar General Message Passing (GMP)"
+sidebar_label: "GMP Example"
+sidebar_position: 2
+description: "Send cross-chain messages using Axelar General Message Passing (GMP) on Stellar."
+---
+
+# Send Cross-Chain Message from Stellar to EVM
+
+This guide demonstrates, step by step, how to send messages from a Stellar smart contract to an EVM-compatible blockchain (Avalanche) using Axelar's [General Message Passing (GMP)](https://docs.axelar.dev/dev/general-message-passing/overview/) feature.
+
+We'll build a simple cross-chain application that:
+
+1. Deploy a contract on Stellar to send and receive cross-chain messages.
+2. Deploy a contract on Avalanche Fuji testnet that can send and receive these messages.
+3. Send a message from Stellar to Avalanche Fuji testnet.
+
+## Prerequisites
+
+- [Rust](https://www.rust-lang.org/tools/install) with wasm32 target.
+- [Stellar CLI](https://github.com/stellar/stellar-cli).
+- A Stellar testnet account with funds.
+- [Metamask](https://metamask.io/) configured for Avalanche Fuji testnet or [Rabby](https://rabby.io/) wallet.
+- Some Avalanche Fuji testnet AVAX (from the [Avalanche faucet](https://faucet.avax.network/)).
+
+## Part 1: Deploy the Receiver Contract on Avalanche Fuji Testnet
+
+Deploy the EVM contract that will receive messages from Stellar.
+
+1. Open [Remix IDE](https://remix.ethereum.org/), a free, powerful online tool for developing, deploying, debugging, and testing Ethereum and EVM-compatible smart contracts.
+
+![remix-home](/assets/stellar-axelar/gmp/remix-home.png)
+
+2. Create a new file named `AxelarGMP.sol` and paste the following code:
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import { AxelarExecutable } from '@axelar-network/axelar-gmp-sdk-solidity/contracts/executable/AxelarExecutable.sol';
+import { IAxelarGasService } from '@axelar-network/axelar-gmp-sdk-solidity/contracts/interfaces/IAxelarGasService.sol';
+
+/**
+ * @title Call Contract
+ * @notice Receive a message from Stellar and store the GMP message
+ */
+contract CallContract is AxelarExecutable {
+    string public message;
+    string public sourceChain;
+    string public sourceAddress;
+    IAxelarGasService public immutable gasService;
+    event Executed(bytes32 commandId, string sourceAddress, string message);
+
+    /**
+     * @param gateway address of axelar gateway on deployed chain
+     * @param gasReceiver address of axelar gas service on deployed chain
+     */
+    constructor(address gateway, address gasReceiver) AxelarExecutable(gateway) {
+        gasService = IAxelarGasService(gasReceiver);
+    }
+
+    /**
+     * @notice Send message from chain A to chain B
+     * @param destinationChain name of the dest chain (ex. "Fantom")
+     * @param destinationAddress address on dest chain this tx is going to
+     * @param _message message to be sent
+     */
+    function setRemoteValue(
+        string calldata destinationChain,
+        string calldata destinationAddress,
+        string calldata _message
+    ) external payable {
+        require(msg.value > 0, 'Gas payment is required');
+        bytes memory payload = abi.encode(_message);
+        gasService.payNativeGasForContractCall{ value: msg.value }(
+            address(this),
+            destinationChain,
+            destinationAddress,
+            payload,
+            msg.sender
+        );
+        gateway().callContract(destinationChain, destinationAddress, payload);
+    }
+
+    /**
+     * @notice logic to be executed on the dest chain
+     * @dev this is triggered automatically by the relayer
+     * @param commandId Unique ID for this message
+     * @param _sourceChain blockchain where tx is originating from
+     * @param _sourceAddress address on src chain where tx is originating from
+     * @param _payload encoded gmp message sent from src chain
+     */
+    function _execute(
+        bytes32 commandId,
+        string calldata _sourceChain,
+        string calldata _sourceAddress,
+        bytes calldata _payload
+    ) internal override {
+        (message) = abi.decode(_payload, (string));
+        sourceChain = _sourceChain;
+        sourceAddress = _sourceAddress;
+        emit Executed(commandId, sourceAddress, message);
+    }
+}
+```
+
+In the code snippet above:
+
+- The contract extends `AxelarExecutable` to handle cross-chain messages using Axelar's General Message Passing (GMP).
+- Implements `setRemoteValue()` to send messages to other chains, handling both gas payment and message transmission.
+- The `_execute()` function processes incoming messages from other chains, storing the message content and source information.
+
+3. In Remix, compile the contract using the Solidity Compiler tab as shown below:
+
+![compile-contract](/assets/stellar-axelar/gmp/compile-contract.png)
+
+4. Navigate to the Deploy & Run Transactions tab.
+
+![deploy-contract-tab](/assets/stellar-axelar/gmp/deploy-contract-tab.png)
+
+5. Connect Metamask or Rabby to Avalanche Fuji testnet.
+
+![connect-wallet](/assets/stellar-axelar/gmp/connect-wallet.png)
+
+6. For deployment, you'll need the Axelar Gateway and Gas Service addresses for Avalanche Fuji:
+   - Gateway: `0xC249632c2D40b9001FE907806902f63038B737Ab`
+   - Gas Service: `0xbE406F0189A0B4cf3A05C286473D23791Dd44Cc6`
+
+> **Helpful Resource**: You can find the complete list of Axelar Gateway and Gas Service addresses for all supported testnets in the [Axelar documentation](https://docs.axelar.dev/resources/contract-addresses/testnet/).
+
+7. Deploy the contract, passing these addresses as constructor arguments.
+8. **Save** the deployed contract address for use in the Stellar contract.
+
+![copy-evm-address](/assets/stellar-axelar/gmp/copy-evm-address.png)
+
+You are all set to deploy the receiver contract on Avalanche Fuji Testnet. Next, you will write and deploy a Stellar contract with GMP implementation.
+
+## Part 2: Write and Deploy a Stellar GMP Contract
+
+Let's write and deploy the Stellar contract to start sending messages to the Avalanche Fuji contract.
+
+### 1. Create a new Stellar project
+
+```bash
+stellar contract init axelar-gmp
+cd axelar-gmp
+```
+
+To simplify things, delete the `contracts/hello-world` folder. If there are any other files in the `contracts` directory that you want to keep, move them to the `src/` folder. Make the `src/` folder your main working directory by moving any necessary files from subdirectories into it. Ensure you have only one `cargo.toml` file at the project root.
+
+```bash
+axelar-gmp
+├── src
+│   ├── abi.rs
+│   ├── test.rs
+├── .gitignore
+├── Cargo.lock
+├── Cargo.toml
+├── README.md
+```
+
+### 2. Configure your Cargo.toml
+
+Update your `Cargo.toml` file to include the necessary dependencies:
+
+```
+[package]
+name = "axelar-gmp"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk =  {version = '22.0.6', features = ["alloc"]}
+stellar-axelar-gateway = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", subdir = "contracts/stellar-axelar-gateway", features = [
+    'library',
+] }
+stellar-axelar-gas-service = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", subdir = "contracts/stellar-axelar-gas-service", features = [
+    'library',
+] }
+stellar-axelar-std = { git = "https://github.com/axelarnetwork/axelar-amplifier-stellar", subdir = "packages/stellar-axelar-std" }
+alloy-sol-types = "=0.7.6"
+
+
+[dev-dependencies]
+soroban-sdk = { version = '22.0.6', features = ["testutils"] }
+
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true
+```
+
+This configuration file sets up your Stellar project with all the dependencies needed for Axelar's General Message Passing (GMP) functionality:
+
+- The `[package]` section defines basic project information.
+- The `[lib]` section configures your project as a dynamic library (`cdylib`), which is required for Stellar smart contracts.
+- Under `[dependencies]`:
+  - `soroban-sdk` provides the core framework for Stellar smart contract development.
+  - The `stellar-axelar-*` dependencies pull in Axelar's gateway, gas service, and standard library components directly from their GitHub repository.
+  - `alloy-sol-types` helps handle Solidity type conversions, which is useful for cross-chain compatibility.
+- The `[dev-dependencies]` section adds testing utilities to the Soroban SDK.
+- The `[profile.release-with-logs]` section creates a custom build profile that maintains debug information in release builds, useful for troubleshooting.
+
+### 3. Create the storage.rs file
+
+Create a new file at `src/storage.rs`:
+
+```rust
+use soroban_sdk::contracttype;
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum DataKey {
+    Gateway,
+    GasService,
+    ReceivedMessage
+}
+```
+
+This file defines a simple enum called `DataKey` that will be used for managing persistent storage in your Stellar smart contract. The enum includes three variants:
+
+- `Gateway`: Used to store the address of the Axelar Gateway contract
+- `GasService`: Used to store the address of the Axelar Gas Service contract
+- `ReceivedMessage`: Used to store message data received from other chains
+
+The `#[contracttype]` attribute is a Soroban SDK macro that makes this type usable in contract storage and function parameters/returns. The `#[derive(Clone, Debug)]` attribute implements Clone and Debug traits, allowing the enum to be copied and printed for debugging.
+
+### 4. Create the event.rs file
+
+Create a new file at `src/event.rs`:
+
+```rust
+use stellar_axelar_std::{Bytes, IntoEvent, String};
+
+#[derive(Debug, PartialEq, Eq, IntoEvent)]
+pub struct ExecutedEvent {
+    pub source_chain: String,
+    pub message_id: String,
+    pub source_address: String,
+    #[data]
+    pub payload: Bytes,
+}
+```
+
+This file defines an `ExecutedEvent` struct representing a cross-chain message execution event. The struct includes:
+
+- `source_chain`: The blockchain where the message originated
+- `message_id`: A unique identifier for the message
+- `source_address`: The address that sent the message on the source chain
+- `payload`: The actual message data, marked with the `#[data]` attribute to indicate it contains the primary event content
+
+The `IntoEvent` trait allows this struct to be emitted as a contract event that external applications can monitor.
+
+### 5. Create the interface.rs file
+
+Create a new file at `src/interface.rs` and add the following code snippet:
+
+```rust
+use stellar_axelar_gateway::executable::AxelarExecutableInterface;
+use stellar_axelar_std::types::Token;
+use stellar_axelar_std::{Address, Env, String};
+
+pub trait AxelarGMPInterface: AxelarExecutableInterface {
+    /// Retrieves the address of the gas service.
+    fn gas_service(env: &Env) -> Address;
+
+    /// Sends a message to a specified destination chain.
+    ///
+    /// The function also handles the payment of gas for the cross-chain transaction.
+    ///
+    /// # Arguments
+    /// * caller - The address of the caller initiating the message.
+    /// * destination_chain - The name of the destination chain where the message will be sent.
+    /// * destination_address - The address on the destination chain where the message will be sent.
+    /// * message - The message to be sent.
+    /// * gas_token - An optional gas token used to pay for gas during the transaction.
+    ///
+    /// # Authorization
+    /// - The caller must authorize.
+    fn send(
+        env: &Env,
+        caller: Address,
+        destination_chain: String,
+        destination_address: String,
+        message: String,
+        gas_token: Option<Token>,
+    );
+
+    /// Returns the most recently received message.
+    fn received_message(env: &Env) -> String;
+}
+```
+
+This file defines the core interface for your Axelar GMP contract. It extends the `AxelarExecutableInterface` and adds three methods:
+
+1. `gas_service`: Gets the address of the Axelar Gas Service contract
+2. `send`: The main method for sending cross-chain messages, with parameters for the destination chain, address, message content, and optional gas token
+3. `received_message`: Retrieves the most recently received cross-chain message
+
+### 6. Create the ABI Helper File
+
+Now let's create the `abi.rs` file, which helps our contract talk to other blockchains:
+
+```rust
+use crate::abi::alloc::{string::String as StdString, vec};
+use alloy_sol_types::{sol_data, SolType};
+use soroban_sdk::{contracterror, Bytes, Env, String};
+
+extern crate alloc;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AbiError {
+    InvalidUtf8 = 1,
+}
+
+pub fn abi_encode(env: &Env, message: String) -> Result<Bytes, AbiError> {
+    let message = to_std_string(message)?;
+    let encoded = sol_data::String::abi_encode(&message);
+
+    Ok(Bytes::from_slice(&env, &encoded))
+}
+
+/// Decodes an ABI-encoded `Bytes` (as created by `abi_encode`) back into a Soroban `String`.
+pub fn abi_decode_string(env: &Env, encoded_bytes: Bytes) -> Result<String, AbiError> {
+    // Bytes to Vec<u8> for decoding.
+    let encoded_vec = encoded_bytes.to_alloc_vec();
+
+    //Decode data into Rust String.
+    let rust_string =
+        sol_data::String::abi_decode(&encoded_vec, true).map_err(|_| AbiError::InvalidUtf8)?;
+
+    // Rust String to Soroban String
+    Ok(String::from_str(env, &rust_string))
+}
+
+// soroban string to std string
+fn to_std_string(soroban_string: String) -> Result<StdString, AbiError> {
+    let length = soroban_string.len() as usize;
+    let mut bytes = vec![0u8; length];
+
+    soroban_string.copy_into_slice(&mut bytes);
+    StdString::from_utf8(bytes).map_err(|_| AbiError::InvalidUtf8)
+}
+```
+
+This file is like a translator between different blockchains. When you want to send a message from Stellar to Ethereum (or other chains), you need to format it so they can understand it.
+
+### 7. Build Your Main Contract
+
+Next, let's create the heart of our project, the `contract.rs` file, and update it with the following code snippet:
+
+```rust
+use stellar_axelar_gas_service::AxelarGasServiceClient;
+use stellar_axelar_gateway::executable::{AxelarExecutableInterface, CustomAxelarExecutable};
+use stellar_axelar_gateway::AxelarGatewayMessagingClient;
+use stellar_axelar_std::events::Event;
+use stellar_axelar_std::types::Token;
+use stellar_axelar_std::{
+    contract, contracterror, contractimpl, soroban_sdk, Address, AxelarExecutable,
+    Bytes, Env, String,
+};
+
+use crate::event::ExecutedEvent;
+use crate::interface::AxelarGMPInterface;
+use crate::storage::DataKey;
+use crate::abi::{abi_decode_string, abi_encode};
+
+#[contract]
+#[derive(AxelarExecutable)]
+pub struct AxelarGMP;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum AxelarGMPError {
+    NotApproved = 1,
+    FailedDecoding = 2,
+}
+
+impl CustomAxelarExecutable for AxelarGMP {
+    type Error = AxelarGMPError;
+
+    fn __gateway(env: &Env) -> Address {
+        env.storage().instance().get(&DataKey::Gateway).unwrap()
+    }
+
+    fn __execute(
+        env: &Env,
+        source_chain: String,
+        message_id: String,
+        source_address: String,
+        payload: Bytes,
+    ) -> Result<(), Self::Error> {
+        let decoded_msg = abi_decode_string(env, payload.clone()).map_err(|_| AxelarGMPError::FailedDecoding)?;
+
+        // Store the received message
+        env.storage().instance().set(&DataKey::ReceivedMessage, &decoded_msg);
+
+        // Emit event
+        ExecutedEvent {
+            source_chain,
+            message_id,
+            source_address,
+            payload,
+        }
+        .emit(env);
+
+        Ok(())
+    }
+}
+
+#[contractimpl]
+impl AxelarGMP {
+    pub fn __constructor(
+        env: &Env,
+        gateway: Address,
+        gas_service: Address,
+    ) {
+        env.storage().instance().set(&DataKey::Gateway, &gateway);
+        env.storage().instance().set(&DataKey::GasService, &gas_service);
+    }
+}
+
+#[contractimpl]
+impl AxelarGMPInterface for AxelarGMP {
+    fn gas_service(env: &Env) -> Address {
+        env.storage().instance().get(&DataKey::GasService).unwrap()
+    }
+
+    fn send(
+        env: &Env,
+        caller: Address,
+        destination_chain: String,
+        destination_address: String,
+        message: String,
+        gas_token: Option<Token>,
+    ) {
+        let gateway = AxelarGatewayMessagingClient::new(env, &Self::gateway(env));
+        let gas_service = AxelarGasServiceClient::new(env, &Self::gas_service(env));
+
+        caller.require_auth();
+
+        let encoded_msg = abi_encode(env, message).unwrap();
+
+        if let Some(gas_token) = gas_token {
+            gas_service.pay_gas(
+                &env.current_contract_address(),
+                &destination_chain,
+                &destination_address,
+                &encoded_msg,
+                &caller,
+                &gas_token,
+                &Bytes::new(env),
+            );
+        }
+
+        gateway.call_contract(
+            &env.current_contract_address(),
+            &destination_chain,
+            &destination_address,
+            &encoded_msg,
+        );
+    }
+
+    fn received_message(env: &Env) -> String {
+        env.storage().instance().get(&DataKey::ReceivedMessage)
+            .unwrap_or_else(|| String::from_str(env, ""))
+    }
+}
+```
+
+In the contract above:
+
+- **For receiving messages**: The `__execute` function decodes incoming messages from other chains, stores them, and triggers an event to notify listeners.
+- **For sending messages**: The `send` function prepares your message for cross-chain delivery, handles payment for gas fees if needed, and dispatches it via the Axelar Gateway.
+- **Storage access**: `received_message` retrieves the last message received, and `gas_service` provides the Gas Service contract address.
+- **Security**: Authentication checks ensure only authorized users can send messages.
+
+This contract serves as your bridge for bi-directional communication between Stellar and other blockchains like Ethereum (or other chains).
+
+### 8. Update lib.rs file
+
+Finally, let's update our `lib.rs` file to bring all the pieces together:
+
+```rust
+#![no_std]
+
+mod contract;
+pub mod event;
+pub mod interface;
+mod storage;
+pub mod abi;
+
+pub use contract::{AxelarGMP, AxelarGMPClient};
+```
+
+This is just a simple file that organizes all our code modules. The `#![no_std]` at the top helps keep our contract lightweight by excluding the standard library.
+
+And that's it! You've built a complete cross-chain messaging contract using Axelar's GMP on Stellar. You can send and receive messages between Stellar and other blockchains like Ethereum, Avalanche, and more.
+
+## Part 3: Build and Deploy the Stellar Contract
+
+Now that we've written our code let's get it running on the Stellar network:
+
+### 1. Build your contract
+
+First, make sure you're in your project directory:
+
+```bash
+cd axelar-gmp
+```
+
+Then compile your contract:
+
+```bash
+stellar contract build
+```
+
+This will create a WebAssembly (WASM) file from your Rust code.
+
+### 2. Optimize for deployment
+
+To reduce gas costs and improve performance, optimize the WASM file:
+
+```bash
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/axelar_gmp.wasm
+```
+
+### 3. Deploy the Stellar Contract
+
+Now let's deploy your contract to the Stellar testnet, connecting it to the Axelar network's contracts:
+
+```bash
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/axelar_gmp.optimized.wasm \
+  --source YOUR_ACCOUNT_NAME \
+  --network testnet \
+  -- \
+  --gateway CCSNWHMQSPTW4PS7L32OIMH7Z6NFNCKYZKNFSWRSYX7MK64KHBDZDT5I \
+  --gas_service CAZUKAFB5XHZKFZR7B5HIKB6BBMYSZIV3V2VWFTQWKYEMONWK2ZLTZCT
+```
+
+The `--gateway` and `--gas_service` addresses are official Axelar contracts on the Stellar testnet that enable cross-chain messaging:
+
+- `CCSNWHMQSPTW4PS7L32OIMH7Z6NFNCKYZKNFSWRSYX7MK64KHBDZDT5I` - The Axelar Gateway contract that handles message verification and routing.
+- `CAZUKAFB5XHZKFZR7B5HIKB6BBMYSZIV3V2VWFTQWKYEMONWK2ZLTZCT` - The Axelar Gas Service that handles gas payments for cross-chain transactions.
+
+When the deployment succeeds, you'll see the address of your new contract in the output. It should be similar to what is shown below.
+
+```bash
+ℹ️  Skipping install because wasm already installed
+ℹ️  Using wasm hash af0c998651536dd5296f337bb2879670009c04c36403cff782de1d722907a122
+ℹ️  Simulating deploy transaction…
+ℹ️  Transaction hash is 1e83d56651b8f9eb06de91b35870c541fdd0eb3c28cc254be7cc104b6992bfc9
+🔗 https://stellar.expert/explorer/testnet/tx/1e83d56651b8f9eb06de91b35870c541fdd0eb3c28cc254be7cc104b6992bfc9
+ℹ️  Signing transaction: 1e83d56651b8f9eb06de91b35870c541fdd0eb3c28cc254be7cc104b6992bfc9
+🌎 Submitting deploy transaction…
+🔗 https://stellar.expert/explorer/testnet/contract/CD66IHACNJOMCDCCL53GM3WTM3OHQFHOCOIM7NDJFF7TBPYQEU76OVBQ
+✅ Deployed!
+CD66IHACNJOMCDCCL53GM3WTM3OHQFHOCOIM7NDJFF7TBPYQEU76OVBQ
+```
+
+Save this address; you'll need it to interact with your contract.
+
+> Note: These contract addresses are from the official Axelar deployments list, which can be found in the [axelar-contract-deployments repository](https://github.com/axelarnetwork/axelar-contract-deployments).
+
+## Part 4: Send a Cross-Chain Message
+
+Now let's send a message from your Stellar contract to your contract on Avalanche Fuji testnet:
+
+```bash
+stellar contract invoke \
+  --network testnet \
+  --id YOUR_STELLAR_CONTRACT_ADDRESS \
+  --source-account YOUR_ACCOUNT_NAME \
+  -- \
+  send \
+  --caller YOUR_ACCOUNT_NAME \
+  --destination_chain '"avalanche"' \
+  --message '"Hello from Stellar!"' \
+  --destination_address '"YOUR_AVALANCHE_CONTRACT_ADDRESS"' \
+  --gas_token '{ "address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", "amount": "10000000000" }'
+```
+
+When running this command:
+
+- Replace `YOUR_STELLAR_CONTRACT_ADDRESS` with the address of the contract you just deployed
+- Replace `YOUR_ACCOUNT_NAME` with your Stellar account name
+- Replace `YOUR_AVALANCHE_CONTRACT_ADDRESS` with your destination contract on Avalanche Fuji testnet
+
+> **Important:** The quote formatting is required. Notice how string values need double quotes inside single quotes (e.g., `'"avalanche"'`). This ensures proper JSON parsing of the parameters.
+
+The `gas_token` parameter specifies that you're paying for the cross-chain execution using native XLM tokens (10 XLM in this case). The address `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` is the official XLM token address on Stellar testnet.
+
+You should see something similar to what is shown below on your terminal.
+
+```
+ℹ️  Signing transaction: f05a2850aa49cb7172ac505e7c957a343ef8a21b2f151c9c936f3e8587b0cfa9
+📅 CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC - Event: [{"symbol":"transfer"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"},{"address":"CAZUKAFB5XHZKFZR7B5HIKB6BBMYSZIV3V2VWFTQWKYEMONWK2ZLTZCT"},{"string":"native"}] = {"i128":{"hi":0,"lo":10000000000}}
+📅 CAZUKAFB5XHZKFZR7B5HIKB6BBMYSZIV3V2VWFTQWKYEMONWK2ZLTZCT - Event: [{"symbol":"gas_paid"},{"address":"CD66IHACNJOMCDCCL53GM3WTM3OHQFHOCOIM7NDJFF7TBPYQEU76OVBQ"},{"string":"avalanche"},{"string":"0x88f179ec476447a7219e5dc009cEF6f5848CBd29"},{"bytes":"40359292f954d7616ec60b4c1c79b9b9b02a4afdbadc665a6c0b8a5c09837230"},{"address":"GAGZ5NZJMXKCORPFQMXYZJZTYDSZ5OPTYEPD2HSVNWU3MCV5JIL6IQDP"},{"map":[{"key":{"symbol":"address"},"val":{"address":"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"}},{"key":{"symbol":"amount"},"val":{"i128":{"hi":0,"lo":10000000000}}}]}] = {"vec":[{"bytes":""}]}
+📅 CCSNWHMQSPTW4PS7L32OIMH7Z6NFNCKYZKNFSWRSYX7MK64KHBDZDT5I - Event: [{"symbol":"contract_called"},{"address":"CD66IHACNJOMCDCCL53GM3WTM3OHQFHOCOIM7NDJFF7TBPYQEU76OVBQ"},{"string":"avalanche"},{"string":"0x88f179ec476447a7219e5dc009cEF6f5848CBd29"},{"bytes":"40359292f954d7616ec60b4c1c79b9b9b02a4afdbadc665a6c0b8a5c09837230"}] = {"vec":[{"bytes":"0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001348656c6c6f2066726f6d205374656c6c61722100000000000000000000000000"}]}
+```
+
+The transaction hash is `f05a2850aa49cb7172ac505e7c957a343ef8a21b2f151c9c936f3e8587b0cfa9`.
+
+## Part 5: Track and Verify Your Message
+
+1. After executing the command, you'll receive a transaction hash. Save it!
+
+2. Track your message's journey across chains at:
+
+   ```
+   https://testnet.axelarscan.io/gmp/YOUR_TRANSACTION_HASH
+
+   // example https://testnet.axelarscan.io/gmp/f05a2850aa49cb7172ac505e7c957a343ef8a21b2f151c9c936f3e8587b0cfa9
+   ```
+
+3. The message typically takes a few seconds to be relayed through the Axelar network.
+
+4. Verify your message on Avalanche Fuji testnet. Once Axelar has relayed your message (typically within a few seconds), you can confirm its successful delivery:
+
+- Return to **Remix IDE** and connect to your Avalanche contract
+- Navigate to the **Contract** tab in the left panel
+- Expand your deployed contract to view its functions
+- Check each of these view functions:
+
+| Function | Expected Result | Meaning |
+| --- | --- | --- |
+| `message()` | "Hello from Stellar!" | The content of your cross-chain message |
+| `sourceChain()` | "stellar-2025-q1" | The chain ID that sent the message |
+| `sourceAddress()` | Your Stellar contract address | The contract that originated the message |
+
+![result](/assets/stellar-axelar/gmp/result.png)
+
+Congratulations! You've just sent a message across blockchains, from Stellar to Avalanche Fuji Testnet, using Axelar's General Message Passing. For more information, see the [Axelar documentation](https://docs.axelar.dev/dev/general-message-passing/overview/).
+
+You can find the full code example [here](https://github.com/axelarnetwork/stellar-gmp-example).
+
+## What We've Accomplished
+
+1. Deployed a receiver contract on Avalanche Fuji Testnet.
+2. Written and deployed a Stellar contract with GMP capabilities.
+3. Successfully sent a message from Stellar to Avalanche.
+4. Verified the message was received correctly.
+
+## Next Steps to Explore
+
+1. **Create a Two-Way Bridge**: Try modifying the Avalanche Fuji testnet contract to send messages back to Stellar.
+2. **Add Token Transfer**: Enhance your application to transfer tokens and messages using Axelar's token transfer capabilities.
+3. **Build a UI**: Create a simple web interface that allows users to interact with your cross-chain application.
