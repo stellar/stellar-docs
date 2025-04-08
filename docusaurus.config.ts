@@ -270,6 +270,16 @@ const config: Config = {
             },
             {
               type: 'html',
+              value: '<hr><small>Infra Tools</small>',
+              className: 'subtitle',
+            },  
+            {
+              to: '/docs/tools/infra-tools/cross-chain',
+              label: 'Cross-Chain',
+              activeBasePath: 'docs/tools/infra-tools/cross-chain',
+            },
+            {
+              type: 'html',
               value: '<hr><small>SDF Platforms</small>',
               className: 'subtitle',
             },
