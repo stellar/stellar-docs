@@ -4,6 +4,7 @@ export const CODE_LANGS = {
   curl: 'cURL',
   dart: 'Flutter',
   flutter: 'Flutter',
+  swift: 'Swift',
   docker: 'Dockerfile',
   go: 'Go',
   html: 'html',
