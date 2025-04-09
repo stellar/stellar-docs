@@ -274,9 +274,9 @@ const config: Config = {
               className: 'subtitle',
             },
             {
-              to: '/docs/tools/cross-chain',
+              to: '/docs/tools/infra-tools/cross-chain',
               label: 'Cross-Chain',
-              activeBasePath: 'docs/tools/cross-chain'
+              activeBasePath: 'docs/tools/infra-tools/cross-chain'
             },
             {
               type: 'html',
