@@ -22,7 +22,7 @@ const config: Config = {
   onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
-  favicon: "img/favicon-96x96.png",
+  favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   i18n: {
@@ -45,7 +45,7 @@ const config: Config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml",
-            outputDir: "docs/data/horizon/api-reference",
+            outputDir: "docs/data/apis/horizon/api-reference",
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
@@ -57,6 +57,7 @@ const config: Config = {
     ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
+    require("./src/route-export-plugin"),
   ],
   markdown: {
     mermaid: true,
@@ -126,12 +127,12 @@ const config: Config = {
         autoCollapseCategories: false,
       },
     },
-    image: 'img/dev-docs-preview.png',
+    image: 'img/docusaurus/dev-docs-preview.png',
     navbar: {
       logo: {
         width: 100,
-        src: "img/stellar-logo.svg",
-        srcDark: "img/stellar-logo-dark.svg",
+        src: "img/docusaurus/stellar-logo.svg",
+        srcDark: "img/docusaurus/stellar-logo-dark.svg",
         href: "/",
       },
       items: [
@@ -161,44 +162,74 @@ const config: Config = {
           items: [
             {
               type: 'doc',
-              docId: "data/rpc/README",
-              label: "RPC",
-            },
-            {
-              type: 'doc',
-              docId: "data/hubble/README",
-              label: "Hubble",
-            },
-            {
-              type: 'doc',
-              docId: "data/horizon/README",
-              label: "Horizon",
-            },
-            {
-              type: 'doc',
-              docId: "data/galexie/README",
-              label: "Galexie",
-            },
-            {
-              type: 'doc',
-              docId: "data/data-indexers/README",
-              label: "Data Indexers",
-            },
-            {
-              type: 'doc',
-              docId: "data/oracles/README",
-              label: "Oracles",
+              docId: "data/README",
+              label: "Overview",
             },
             {
               type: 'html',
-              value: '<hr><small>Migration Guides</small>',
-              className: 'subtitle',
+              value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small>',
+              className:'subtitle'
             },
             {
-              type: 'doc',
-              docId: 'data/migrate-from-horizon-to-rpc/README',
-              label: 'Horizon to RPC'
-            }
+              to: '/docs/data/analytics/hubble',
+              label: 'Hubble',
+              activeBasePath: 'docs/data/analytics/hubble'
+            },
+            {
+              to: '/docs/data/analytics/analytics-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/analytics/analytics-providers'
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small>',
+              className:'subtitle'
+            },
+            {
+              to: '/docs/data/apis/rpc',
+              label: 'RPC',
+              activeBasePath: 'docs/data/apis/rpc'
+            },
+            {
+              to: '/docs/data/apis/horizon',
+              label: 'Horizon',
+              activeBasePath: 'docs/data/apis/horizon'
+            },
+            {
+              to: '/docs/data/apis/migrate-from-horizon-to-rpc',
+              label: 'Migrate Horizon to RPC',
+              activeBasePath: 'docs/data/apis/migrate-from-horizon-to-rpc'
+            },
+            {
+              to: '/docs/data/apis/api-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/apis/api-providers'
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
+              className:'subtitle'
+            },
+            {
+              to: '/docs/data/indexers/build-your-own',
+              label: 'Build Your Own',
+              activeBasePath: 'docs/data/indexers/build-your-own'
+            },
+            {
+              to: '/docs/data/indexers/indexer-providers',
+              label: 'Providers',
+              activeBasePath: 'docs/data/indexers/indexer-providers'
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
+              className:'subtitle'
+            },
+            {
+              to: '/docs/data/oracles',
+              label: 'Providers',
+              activeBasePath: 'docs/data/oracles'
+            },
           ]
         },
         {
@@ -209,13 +240,33 @@ const config: Config = {
           activeBaseRegex: `(docs/tools|platforms)`,
           items: [
             {
+              type: 'html',
+              value: '<hr><small>Developer Tools</small>',
+              className: 'subtitle',
+            },
+            {
               to: '/docs/tools/sdks',
               label: 'SDKs',
               activeBasePath: 'docs/tools/sdks'
             },
             {
+              to: '/docs/tools/cli',
+              label: 'Stellar CLI',
+              activeBasePath: 'docs/tools/cli'
+            },
+            {
+              to: '/docs/tools/lab',
+              label: 'Lab',
+              activeBasePath: 'docs/tools/lab'
+            },
+            {
+              to: '/docs/tools/quickstart',
+              label: 'Quickstart',
+              activeBasePath: 'docs/tools/quickstart'
+            },
+            {
               to: '/docs/tools/developer-tools',
-              label: 'Developer Tools'
+              label: 'More Developer Tools'
             },
             {
               type: 'html',

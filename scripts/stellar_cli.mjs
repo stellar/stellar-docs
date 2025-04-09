@@ -1,9 +1,21 @@
 import fs from "fs-extra";
 import path from "path";
 import { execSync } from "child_process";
+import yargs from "yargs";
+import {hideBin} from "yargs/helpers";
 
 const repoUrl = "https://github.com/stellar/stellar-cli.git";
 const localRepoPath = "./stellar-cli-repo";
+
+const argv = yargs(hideBin(process.argv))
+    .parserConfiguration({
+        'strip-dashed': true
+    })
+    .option('cli-ref', {
+        type: 'string',
+        description: 'Cli reference'
+    })
+    .parse()
 
 // Remove the existing repo if it exists
 if (fs.existsSync(localRepoPath)) {
@@ -21,9 +33,12 @@ let latestVersion = execSync(
   .substring(1)
   .trim();
 
-console.log("the latest version is", latestVersion.toString());
+let cliRef = argv.cliRef || `v${latestVersion}`
 
-execSync(`cd ${localRepoPath} && git checkout --quiet v${latestVersion}`);
+console.log("the latest version is", latestVersion.toString());
+console.log("using cli ref to fetch cli docs: ", cliRef.toString());
+
+execSync(`cd ${localRepoPath} && git checkout --quiet ${cliRef}`);
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
@@ -43,7 +58,7 @@ fs.writeFileSync(
 );
 
 fs.writeFileSync(
-  "docs/tools/developer-tools/cli/stellar-cli.mdx",
+  "docs/tools/cli/stellar-cli.mdx",
   modifiedContent,
 );
 
