@@ -12,7 +12,7 @@ const ALLOW_EMPTY_DOCS = true;
 // Set to true for local debugging
 const SHOW_ALL = false;
 
-const WALLET_LANGS = ["kt", "ts", "dart"];
+const WALLET_LANGS = ["kt", "ts", "dart", "swift"];
 
 type WalletCodeExampleProps = {
     children: React.ReactElement;
