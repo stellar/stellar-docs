@@ -43,9 +43,9 @@ Please use `WIPLangs` property to enable it for a language for the page.
 #### WalletCodeExample
 
 This is improved `CodeExample` component. It currently supports dynamic
-switching between TypeScript, Kotlin and Flutter code snippets (depending on the
-user selected language). It will also generate placeholder if code snippet is
-missing. Here's an example on how to use it:
+switching between TypeScript, Kotlin, Flutter and Swift code snippets (depending
+on the user selected language). It will also generate placeholder if code
+snippet is missing. Here's an example on how to use it:
 
 ````mdxjs
 <CodeExample>
@@ -92,5 +92,5 @@ import TsHello from "./component/ts/hello.mdx";
 ```
 
 When user selects Kotlin, "Hello, Kotlin!" is going to be rendered, when
-TypeScript is selected — "Hello, TypeScript!". Finally, for Flutter, nothing
-would be rendered.
+TypeScript is selected — "Hello, TypeScript!". Finally, for Flutter and Swift,
+nothing would be rendered.
