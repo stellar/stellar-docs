@@ -137,22 +137,118 @@ const config: Config = {
       },
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'build',
+          type: "dropdown",
           label: 'Build',
           position: 'left',
+          to: '/docs/build',
+          items: [
+            {
+              type: 'doc',
+              docId: "build/README",
+              label: "Overview",
+            },
+            {
+              to: '/docs/build/smart-contracts',
+              label: 'Write Smart Contracts',
+              activeBasePath: 'docs/build/smart-contracts'
+            },
+            {
+              to: '/docs/build/apps',
+              label: 'Build Applications',
+              activeBasePath: 'docs/build/apps'
+            },
+            {
+              to: '/docs/build/guides',
+              label: 'How-To Guides',
+              activeBasePath: 'docs/build/guides'
+            },
+            {
+              to: '/docs/build/security-docs',
+              label: 'Security Best Practices',
+              activeBasePath: 'docs/build/security-docs'
+            },
+          ]  
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'learn',
+          type: "dropdown",
           label: 'Learn',
           position: 'left',
+          to: '/docs/learn',
+          items: [
+            {
+              type: 'doc',
+              docId: "learn/README",
+              label: "Overview",
+            },
+            {
+              to: '/docs/learn/fundamentals',
+              label: 'Core Concepts',
+              activeBasePath: 'docs/learn/fundamentals'
+            },
+            {
+              to: '/docs/learn/encyclopedia',
+              label: 'Encyclopedia',
+              activeBasePath: 'docs/learn/encyclopedia'
+            },
+            {
+              to: '/docs/learn/glossary',
+              label: 'Glossary',
+              activeBasePath: 'docs/learn/glossary'
+            },
+            {
+              to: '/docs/learn/migrate',
+              label: 'Migrating from Another Chain',
+              activeBasePath: 'docs/learn/migrate'
+            },
+            {
+              to: '/docs/learn/interactive',
+              label: 'Interactive Learning',
+              activeBasePath: 'docs/learn/interactive'
+            },
+          ]
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'tokens',
+          type: "dropdown",
           label: 'Tokens',
           position: 'left',
+          to: '/docs/tokens',
+          items: [
+            {
+              type: 'doc',
+              docId: "tokens/README",
+              label: "Contract Tokens and Stellar Assets",
+            },
+            {
+              to: '/docs/tokens/anatomy-of-an-asset',
+              label: 'Assets Overview',
+              activeBasePath: 'docs/tokens/anatomy-of-an-asset'
+            },
+            {
+              to: '/docs/tokens/control-asset-access',
+              label: 'Asset Design Considerations',
+              activeBasePath: 'docs/tokens/control-asset-access'
+            },
+            {
+              to: '/docs/tokens/stellar-asset-contract',
+              label: 'Stellar Asset Contract',
+              activeBasePath: 'docs/tokens/stellar-asset-contract'
+            },
+            {
+              to: '/docs/tokens/token-interface',
+              label: 'Token Interface',
+              activeBasePath: 'docs/tokens/token-interface'
+            },
+            {
+              to: '/docs/tokens/how-to-issue-an-asset',
+              label: 'Issue an Asset Tutorial',
+              activeBasePath: 'docs/tokens/how-to-issue-an-asset'
+            },
+            {
+              to: '/docs/tokens/publishing-asset-info',
+              label: 'Publish Information About an Asset',
+              activeBasePath: 'docs/tokens/publishing-asset-info'
+            },
+          ]
         },
         {
           type: "dropdown",
