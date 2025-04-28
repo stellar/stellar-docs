@@ -52,9 +52,9 @@ If you have questions, feel free to ask in the [Stellar Developer Discord](https
 
 ## Quick Start
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web]
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web)
 
-[![Open in Codeanywhere](ttps://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs]
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)](https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs)
 
 ### Prerequisites
 
