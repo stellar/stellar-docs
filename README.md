@@ -51,8 +51,10 @@ No matter what you contribute, whether a PR or an issue, you can expect to recei
 If you have questions, feel free to ask in the [Stellar Developer Discord](https://discord.gg/stellardev).
 
 ## Quick Start
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][gitpod]
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web]
+
+[![Open in Codeanywhere](ttps://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs]
 
 ### Prerequisites
 
