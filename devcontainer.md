@@ -36,4 +36,14 @@ kill -9 $(cat run.pid)
 tail -f docs.log
 ```
 
+## Developing in a Github Codespace
 
+You can complete your entire development workflow from within this Github Codespace!
+
+https://docs.github.com/en/codespaces/developing-in-a-codespace/developing-in-a-codespace#working-in-a-codespace-in-the-browser
+
+Commiting
+changes:  https://docs.github.com/en/codespaces/developing-in-a-codespace/using-source-control-in-your-codespace#committing-your-changes
+
+Create a pull
+request: https://docs.github.com/en/codespaces/developing-in-a-codespace/using-source-control-in-your-codespace#raising-a-pull-request
