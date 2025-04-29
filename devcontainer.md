@@ -6,7 +6,9 @@ Running Stellar Docs in a Devcontainer
 
 Docusaurus is running as a background process on port 3000.
 
-On startup you'll see the following:
+[Docusaurus instance on Codespaces](http:localhost:3000/)
+
+On startup, you'll see the following:
 
 ```bash
 Docusaurus running on process: 2363
@@ -36,7 +38,7 @@ kill -9 $(cat run.pid)
 tail -f docs.log
 ```
 
-## Developing in a Github Codespace
+## Developing in a GitHub Codespace
 
 You can complete your entire development workflow from within this Github Codespace!
 
