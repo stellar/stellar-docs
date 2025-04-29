@@ -176,28 +176,108 @@ const config: Config = {
           to: '/docs/learn',
           items: [
             {
-              type: 'doc',
-              docId: "learn/README",
-              label: "Overview",
+              type: 'html',
+              value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small>',
+              className: 'subtitle'
             },
             {
-              to: '/docs/learn/fundamentals',
-              label: 'Core Concepts',
-              activeBasePath: 'docs/learn/fundamentals'
+              to: '/docs/learn/fundamentals/stellar-stack',
+              label: 'Stellar Stack',
+              activeBasePath: 'docs/learn/fundamentals/stellar-stack'
             },
             {
-              to: '/docs/learn/encyclopedia',
-              label: 'Encyclopedia',
-              activeBasePath: 'docs/learn/encyclopedia'
+              to: '/docs/learn/fundamentals/networks',
+              label: 'Networks',
+              activeBasePath: 'docs/learn/fundamentals/networks'
             },
             {
-              to: '/docs/learn/glossary',
-              label: 'Glossary',
-              activeBasePath: 'docs/learn/glossary'
+              to: '/docs/learn/fundamentals/lumens',
+              label: 'Lumens (XLM)',
+              activeBasePath: 'docs/learn/fundamentals/lumens'
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-consensus-protocol',
+              label: 'Stellar Consensus Protocol',
+              activeBasePath: 'docs/learn/fundamentals/stellar-consensus-protocol'
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-data-structures',
+              label: 'Data Structures',
+              activeBasePath: 'docs/learn/fundamentals/stellar-data-structures'
+            },
+            {
+              to: '/docs/learn/fundamentals/transactions',
+              label: 'Operations & Transactions',
+              activeBasePath: 'docs/learn/fundamentals/transactions'
+            },
+            {
+              to: '/docs/learn/fundamentals/fees-resource-limits-metering',
+              label: 'Fees & Metering',
+              activeBasePath: 'docs/learn/fundamentals/fees-resource-limits-metering'
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-ecosystem-proposals',
+              label: 'Stellar Ecosystsem Proposals (SEPs)',
+              activeBasePath: 'docs/learn/fundamentals/stellar-ecosystem-proposals'
+            },
+            {
+              to: '/docs/learn/fundamentals/anchors',
+              label: 'Anchors',
+              activeBasePath: 'docs/learn/fundamentals/anchors'
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/encyclopedia" class="subtitle"><small>Encyclopedia</small>',
+              className: 'subtitle'
+            },
+            {
+              to: '/docs/learn/encyclopedia/contract-development',
+              label: 'Contract Development',
+              activeBasePath: 'docs/learn/encyclopedia/contract-development'
+            },
+            {
+              to: '/docs/learn/encyclopedia/transactions-specialized',
+              label: 'Transactions (specialized)',
+              activeBasePath: '/docs/learn/encyclopedia/transactions-specialized'
+            },
+            {
+              to: '/docs/learn/encyclopedia/security',
+              label: 'Security',
+              activeBasePath: '/docs/learn/encyclopedia/security'
+            },
+            {
+              to: '/docs/learn/encyclopedia/storage',
+              label: 'Storage',
+              activeBasePath: '/docs/learn/encyclopedia/storage'
+            },
+            {
+              to: '/docs/learn/encyclopedia/errors-and-debugging',
+              label: 'Errors & Debugging',
+              activeBasePath: '/docs/learn/encyclopedia/errors-and-debugging'
+            },
+            {
+              to: '/docs/learn/encyclopedia/data-format',
+              label: 'Data Format',
+              activeBasePath: '/docs/learn/encyclopedia/data-format'
+            },
+            {
+              to: '/docs/learn/encyclopedia/network-configuration',
+              label: 'Network Configuration',
+              activeBasePath: '/docs/learn/encyclopedia/network-configuration'
+            },
+            {
+              to: '/docs/learn/encyclopedia/sdex',
+              label: 'SDEX',
+              activeBasePath: '/docs/learn/encyclopedia/sdex'
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/learn/glossary" class="subtitle"><small>Glossary</small>',
+              className: 'subtitle'
             },
             {
               to: '/docs/learn/migrate',
-              label: 'Migrating from Another Chain',
+              label: 'Migrate from Another Chain',
               activeBasePath: 'docs/learn/migrate'
             },
             {
@@ -216,16 +296,16 @@ const config: Config = {
             {
               type: 'doc',
               docId: "tokens/README",
-              label: "Contract Tokens and Stellar Assets",
+              label: "Overview: Contract Tokens and Stellar Assets",
             },
             {
-              to: '/docs/tokens/anatomy-of-an-asset',
-              label: 'Assets Overview',
-              activeBasePath: 'docs/tokens/anatomy-of-an-asset'
+              to: '/docs/tokens/quickstart',
+              label: 'Quickstart Guide',
+              activeBasePath: 'docs/tokens/quickstart'
             },
             {
               to: '/docs/tokens/control-asset-access',
-              label: 'Asset Design Considerations',
+              label: 'Assets Overview',
               activeBasePath: 'docs/tokens/control-asset-access'
             },
             {
@@ -240,12 +320,12 @@ const config: Config = {
             },
             {
               to: '/docs/tokens/how-to-issue-an-asset',
-              label: 'Issue an Asset Tutorial',
+              label: 'Tutorial: Issue an Asset',
               activeBasePath: 'docs/tokens/how-to-issue-an-asset'
             },
             {
               to: '/docs/tokens/publishing-asset-info',
-              label: 'Publish Information About an Asset',
+              label: 'Publish Asset Information',
               activeBasePath: 'docs/tokens/publishing-asset-info'
             },
           ]
