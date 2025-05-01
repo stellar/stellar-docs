@@ -270,6 +270,16 @@ const config: Config = {
             },
             {
               type: 'html',
+              value: '<hr><small>Ramps</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/tools/ramps/moneygram',
+              label: 'MoneyGram Ramps',
+              activeBasePath: '/docs/tools/ramps/moneygram'
+            },
+            {
+              type: 'html',
               value: '<hr><small>SDF Platforms</small>',
               className: 'subtitle',
             },
