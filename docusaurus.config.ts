@@ -183,9 +183,9 @@ const config: Config = {
               activeBasePath: 'docs/build/apps/application-design-considerations',
             },
             {
-              to: '/docs/build/apps/build-a-wallet-with-the-wallet-sdk',
+              to: '/docs/build/apps/wallet/overview',
               label: 'Tutorials',
-              activeBasePath: 'docs/build/apps/build-a-wallet-with-the-wallet-sdk',
+              activeBasePath: 'docs/build/apps/wallet/overview',
             },
             {
               to: '/docs/build/apps/smart-wallets',
