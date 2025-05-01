@@ -137,16 +137,23 @@ const config: Config = {
       },
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'build',
+          type: 'dropdown',
           label: 'Build',
           position: 'left',
+          to: '/docs/build',
+          items: [
+            {
+              to: '/docs/build',
+              label: 'Overview',
+              activeBasePath: 'docs/build',
+            },
+          ],
         },
         {
           type: 'dropdown',
           label: 'Learn',
           position: 'left',
-          to: '/docs/learn/core-concepts',
+          to: '/docs/learn/fundamentals',
           items: [
             {
               type: 'html',
@@ -252,7 +259,7 @@ const config: Config = {
               label: 'Migrate from Another Chain',
             },
             {
-              to: 'docs/learn/interact',
+              to: 'docs/learn/interactive',
               label: 'Interactive Learning',
             },
           ],
