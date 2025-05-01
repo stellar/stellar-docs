@@ -149,10 +149,46 @@ const config: Config = {
           position: 'left',
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'tokens',
+          type: 'dropdown',
           label: 'Tokens',
           position: 'left',
+          to: '/docs/tokens',
+          exact: true,
+          items: [
+            {
+              to: '/docs/tokens',
+              label: 'Stellar Assets & Contract Tokens',
+              exact: true,
+            },
+            {
+              to: 'docs/tokens/anatomy-of-an-asset',
+              label: 'Assets Overview',
+            },
+            {
+              to: '/docs/tokens/quickstart',
+              label: 'Quickstart Guide',
+            },
+            {
+              to: '/docs/tokens/control-asset-access',
+              label: 'Asset Design Considerations',
+            },
+            {
+              to: '/docs/tokens/stellar-asset-contract',
+              label: 'Stellar Asset Contract',
+            },
+            {
+              to: '/docs/tokens/token-interface',
+              label: 'Token Interface',
+            },
+            {
+              to: '/docs/tokens/how-to-issue-an-asset',
+              label: 'Tutorial: Issue an Asset',
+            },
+            {
+              to: '/docs/tokens/publishing-asset-info',
+              label: 'Publish Asset Information',
+            },
+          ],
         },
         {
           type: "dropdown",
@@ -292,7 +328,7 @@ const config: Config = {
           items: [
             {
               to: '/docs/networks',
-              label: 'Networks',
+              label: 'Network Configuration',
               exact: true,
             },
             {
@@ -314,7 +350,7 @@ const config: Config = {
           items: [
             {
               to: 'docs/validators',
-              label: 'Validators',
+              label: 'Validators Introduction',
               exact: true,
             },
             {
