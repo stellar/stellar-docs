@@ -147,6 +147,130 @@ const config: Config = {
               label: 'Overview',
               activeBasePath: 'docs/build',
             },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Write Smart Contracts</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/build/smart-contracts/overview',
+              label: 'Smart Contracts Overview',
+              activeBasePath: 'docs/build/smart-contracts/overview',
+            },
+            {
+              to: '/docs/build/smart-contracts/getting-started',
+              label: 'Getting Started',
+              activeBasePath: 'docs/build/smart-contracts/getting-started',
+            },
+            {
+              to: '/docs/build/smart-contracts/example-contracts',
+              label: 'Example Contracts',
+              activeBasePath: 'docs/build/smart-contracts/example-contracts',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/build/apps/overview',
+              label: 'Applications Overview',
+              activeBasePath: 'docs/build/apps/overview',
+            },
+            {
+              to: '/docs/build/apps/application-design-considerations',
+              label: 'Application Design Considerations',
+              activeBasePath: 'docs/build/apps/application-design-considerations',
+            },
+            {
+              to: '/docs/build/apps/build-a-wallet-with-the-wallet-sdk',
+              label: 'Tutorials',
+              activeBasePath: 'docs/build/apps/build-a-wallet-with-the-wallet-sdk',
+            },
+            {
+              to: '/docs/build/apps/smart-wallets',
+              label: 'Smart Wallets',
+              activeBasePath: 'docs/build/apps/smart-wallets',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/build/guides/conventions',
+              label: 'Contract Conventions',
+              activeBasePath: 'docs/build/guides/conventions',
+            },
+            {
+              to: '/docs/build/guides/events',
+              label: 'Contract Events',
+              activeBasePath: 'docs/build/guides/events',
+            },
+            {
+              to: '/docs/build/guides/storage',
+              label: 'Contract Storage',
+              activeBasePath: 'docs/build/guides/storage',
+            },
+            {
+              to: '/docs/build/guides/testing',
+              label: 'Contract Testing',
+              activeBasePath: 'docs/build/guides/testing',
+            },
+            {
+              to: '/docs/build/guides/dapps',
+              label: 'Dapp Development',
+              activeBasePath: 'docs/build/guides/dapps',
+            },
+            {
+              to: '/docs/build/guides/fees',
+              label: 'Fees & Metering',
+              activeBasePath: 'docs/build/guides/fees',
+            },
+            {
+              to: '/docs/build/guides/freighter',
+              label: 'Freighter Wallet',
+              activeBasePath: 'docs/build/guides/freighter',
+            },
+            {
+              to: '/docs/build/guides/basics',
+              label: 'Stellar Basics',
+              activeBasePath: 'docs/build/guides/basics',
+            },
+            {
+              to: '/docs/build/guides/rpc',
+              label: 'RPC',
+              activeBasePath: 'docs/build/guides/rpc',
+            },
+            {
+              to: '/docs/build/guides/cli',
+              label: 'CLI',
+              activeBasePath: 'docs/build/guides/cli',
+            },
+            {
+              to: '/docs/build/guides/archival',
+              label: 'State Archival',
+              activeBasePath: 'docs/build/guides/archival',
+            },
+            {
+              to: '/docs/build/guides/tokens',
+              label: 'Stellar Asset Contract Tokens',
+              activeBasePath: 'docs/build/guides/tokens',
+            },
+            {
+              to: '/docs/build/guides/transactions',
+              label: 'Transactions',
+              activeBasePath: 'docs/build/guides/transactions',
+            },
+            {
+              to: '/docs/build/guides/conversions',
+              label: 'Type Conversions',
+              activeBasePath: 'docs/build/guides/conversions',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/security-docs" class="dropdown__link">Security Best Practices</a>',
+            },
           ],
         },
         {
