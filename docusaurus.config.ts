@@ -143,10 +143,119 @@ const config: Config = {
           position: 'left',
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'learn',
+          type: 'dropdown',
           label: 'Learn',
           position: 'left',
+          to: '/docs/learn/core-concepts',
+          items: [
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-stack',
+              label: 'Stellar Stack',
+              activeBasePath: 'docs/learn/fundamentals/stellar-stack',
+            },
+            {
+              to: '/docs/learn/fundamentals/networks',
+              label: 'Networks',
+              activeBasePath: 'docs/learn/fundamentals/networks',
+            },
+            {
+              to: '/docs/learn/fundamentals/lumens',
+              label: 'Lumens (XLM)',
+              activeBasePath: 'docs/learn/fundamentals/lumens',
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-consensus-protocol',
+              label: 'Stellar Consensus Protocol (SCP)',
+              activeBasePath: 'docs/learn/fundamentals/stellar-consensus-protocol',
+            },   
+            {
+              to: '/docs/learn/fundamentals/stellar-data-structures',
+              label: 'Data Structures',
+              activeBasePath: 'docs/learn/fundamentals/stellar-data-structures',
+            },
+            {
+              to: '/docs/learn/fundamentals/transactions',
+              label: 'Operations & Transactions',
+              activeBasePath: 'docs/learn/fundamentals/transactions',
+            },
+            {
+              to: '/docs/learn/fundamentals/fees-resource-limits-metering',
+              label: 'Fees & Metering',
+              activeBasePath: 'docs/learn/fundamentals/fees-resource-limits-metering',
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-ecosystem-proposals',
+              label: 'Stellar Ecosystem Proposals (SEPs)',
+              activeBasePath: 'docs/learn/fundamentals/stellar-ecosystem-proposals',
+            },
+            {
+              to: '/docs/learn/fundamentals/anchors',
+              label: 'Ramps (anchors)',
+              activeBasePath: 'docs/learn/fundamentals/anchors',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/learn/encyclopedia" class="subtitle"><small>Encyclopedia</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/learn/encyclopedia/contract-development',
+              label: 'Contract Development',
+              activeBasePath: 'docs/learn/encyclopedia/contract-development',
+            },
+            {
+              to: '/docs/learn/encyclopedia/transactions-specialized',
+              label: 'Transactions (specialized)',
+              activeBasePath: 'docs/learn/encyclopedia/transactions-specialized',
+            },
+            {
+              to: '/docs/learn/encyclopedia/security',
+              label: 'Security',
+              activeBasePath: 'docs/learn/encyclopedia/security',
+            },
+            {
+              to: '/docs/learn/encyclopedia/storage',
+              label: 'Storage',
+              activeBasePath: 'docs/learn/encyclopedia/storage',
+            },
+            {
+              to: '/docs/learn/encyclopedia/errors-and-debugging',
+              label: 'Errors & Debugging',
+              activeBasePath: 'docs/learn/encyclopedia/errors-and-debugging',
+            },
+            {
+              to: '/docs/learn/encyclopedia/data-format',
+              label: 'Data Format',
+              activeBasePath: 'docs/learn/encyclopedia/data-format',
+            },
+            {
+              to: '/docs/learn/encyclopedia/network-configuration',
+              label: 'Network Configuration',
+              activeBasePath: 'docs/learn/encyclopedia/network-configuration',
+            },
+            {
+              to: '/docs/learn/encyclopedia/sdex',
+              label: 'SDEX',
+              activeBasePath: 'docs/learn/encyclopedia/sdex',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/learn/glossary" class="dropdown__link">Glossary</a>',
+            },
+            {
+              to: 'docs/learn/migrate',
+              label: 'Migrate from Another Chain',
+            },
+            {
+              to: 'docs/learn/interact',
+              label: 'Interactive Learning',
+            },
+          ],
         },
         {
           type: 'dropdown',
