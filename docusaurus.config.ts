@@ -284,16 +284,50 @@ const config: Config = {
           ]
         },
         {
-          type: 'docSidebar',
+          type: 'dropdown',
           sidebarId: 'networks',
           label: 'Networks',
           position: 'left',
+          items: [
+            {
+              to: '/docs/networks',
+              label: 'Networks',
+              activeBasePath: 'docs/networks'
+            },
+            {
+              to: '/docs/networks/software-versions',
+              label: 'Software Versions',
+              activeBasePath: 'docs/networks/software-versions'
+            },
+            {
+              to: '/docs/networks/resource-limits-fees',
+              label: 'Resource Limits & Fees',
+              activeBasePath: 'docs/networks/resource-limits-fees'
+            }
+          ]
         },
         {
-          type: 'docSidebar',
+          type: 'dropdown',
           sidebarId: 'validators',
           label: 'Validators',
           position: 'left',
+          items: [
+            {
+              to: 'docs/validators',
+              label: 'Validators',
+              activeBasePath: 'docs/validators'
+            },
+            {
+              to: 'docs/validators/admin-guide',
+              label: 'Admin Guide',
+              activeBasePath: 'docs/validators/admin-guide'
+            },
+            {
+              to: 'docs/validators/tier-1-orgs',
+              label: 'Tier 1 Organizations',
+              activeBasePath: 'docs/validators/tier-1-orgs'
+            }
+          ]
         },
         {
           type: 'docsVersionDropdown',
