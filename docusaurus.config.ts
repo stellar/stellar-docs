@@ -149,7 +149,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Write Smart Contracts</small>',
+              value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small>',
               className: 'subtitle',
             },
             {
@@ -184,8 +184,28 @@ const config: Config = {
             },
             {
               to: '/docs/build/apps/wallet/overview',
-              label: 'Tutorials',
+              label: 'Tutorial: Wallet SDK',
               activeBasePath: 'docs/build/apps/wallet/overview',
+            },
+            {
+              to: '/docs/build/apps/example-application-tutorial/overview',
+              label: 'Tutorial: Payment Application, JavaScript',
+              activeBasePath: 'docs/build/apps/example-application-tutorial/overview',
+            },
+            {
+              to: '/docs/build/apps/ingest-sdk/overview',
+              label: 'Tutorial: Network Ingestion Pipeline',
+              activeBasePath: 'docs/build/apps/ingest-sdk/overview',
+            },
+            {
+              to: '/docs/build/apps/guestbook/overview',
+              label: 'Tutorial: Passkey Dapp',
+              activeBasePath: 'docs/build/apps/guestbook/overview',
+            },
+            {
+              to: '/docs/build/apps/dapp-frontend',
+              label: 'Tutorial: Dapp Frontend',
+              activeBasePath: 'docs/build/apps/dapp-frontend',
             },
             {
               to: '/docs/build/apps/smart-wallets',
@@ -331,52 +351,11 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/learn/encyclopedia" class="subtitle"><small>Encyclopedia</small>',
-              className: 'subtitle',
+              value: '<hr><a href="/docs/learn/encyclopedia" class="dropdown__link">Encyclopedia</a>',
             },
             {
-              to: '/docs/learn/encyclopedia/contract-development',
-              label: 'Contract Development',
-              activeBasePath: 'docs/learn/encyclopedia/contract-development',
-            },
-            {
-              to: '/docs/learn/encyclopedia/transactions-specialized',
-              label: 'Transactions (specialized)',
-              activeBasePath: 'docs/learn/encyclopedia/transactions-specialized',
-            },
-            {
-              to: '/docs/learn/encyclopedia/security',
-              label: 'Security',
-              activeBasePath: 'docs/learn/encyclopedia/security',
-            },
-            {
-              to: '/docs/learn/encyclopedia/storage',
-              label: 'Storage',
-              activeBasePath: 'docs/learn/encyclopedia/storage',
-            },
-            {
-              to: '/docs/learn/encyclopedia/errors-and-debugging',
-              label: 'Errors & Debugging',
-              activeBasePath: 'docs/learn/encyclopedia/errors-and-debugging',
-            },
-            {
-              to: '/docs/learn/encyclopedia/data-format',
-              label: 'Data Format',
-              activeBasePath: 'docs/learn/encyclopedia/data-format',
-            },
-            {
-              to: '/docs/learn/encyclopedia/network-configuration',
-              label: 'Network Configuration',
-              activeBasePath: 'docs/learn/encyclopedia/network-configuration',
-            },
-            {
-              to: '/docs/learn/encyclopedia/sdex',
-              label: 'SDEX',
-              activeBasePath: 'docs/learn/encyclopedia/sdex',
-            },
-            {
-              type: 'html',
-              value: '<hr><a href="/docs/learn/glossary" class="dropdown__link">Glossary</a>',
+              to: 'docs/learn/glossary',
+              label: 'Glossary',
             },
             {
               to: 'docs/learn/migrate',
