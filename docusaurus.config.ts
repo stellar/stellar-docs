@@ -137,22 +137,277 @@ const config: Config = {
       },
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'build',
+          type: 'dropdown',
           label: 'Build',
           position: 'left',
+          to: '/docs/build',
+          items: [
+            {
+              to: '/docs/build',
+              label: 'Overview',
+              activeBasePath: 'docs/build',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/build/smart-contracts/overview',
+              label: 'Smart Contracts Overview',
+              activeBasePath: 'docs/build/smart-contracts/overview',
+            },
+            {
+              to: '/docs/build/smart-contracts/getting-started',
+              label: 'Getting Started',
+              activeBasePath: 'docs/build/smart-contracts/getting-started',
+            },
+            {
+              to: '/docs/build/smart-contracts/example-contracts',
+              label: 'Example Contracts',
+              activeBasePath: 'docs/build/smart-contracts/example-contracts',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/build/apps/overview',
+              label: 'Applications Overview',
+              activeBasePath: 'docs/build/apps/overview',
+            },
+            {
+              to: '/docs/build/apps/application-design-considerations',
+              label: 'Application Design Considerations',
+              activeBasePath: 'docs/build/apps/application-design-considerations',
+            },
+            {
+              to: '/docs/build/apps/wallet/overview',
+              label: 'Tutorial: Wallet SDK',
+              activeBasePath: 'docs/build/apps/wallet/overview',
+            },
+            {
+              to: '/docs/build/apps/example-application-tutorial/overview',
+              label: 'Tutorial: Payment Application, JavaScript',
+              activeBasePath: 'docs/build/apps/example-application-tutorial/overview',
+            },
+            {
+              to: '/docs/build/apps/ingest-sdk/overview',
+              label: 'Tutorial: Network Ingestion Pipeline',
+              activeBasePath: 'docs/build/apps/ingest-sdk/overview',
+            },
+            {
+              to: '/docs/build/apps/guestbook/overview',
+              label: 'Tutorial: Passkey Dapp',
+              activeBasePath: 'docs/build/apps/guestbook/overview',
+            },
+            {
+              to: '/docs/build/apps/dapp-frontend',
+              label: 'Tutorial: Dapp Frontend',
+              activeBasePath: 'docs/build/apps/dapp-frontend',
+            },
+            {
+              to: '/docs/build/apps/smart-wallets',
+              label: 'Smart Wallets',
+              activeBasePath: 'docs/build/apps/smart-wallets',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/build/guides/conventions',
+              label: 'Contract Conventions',
+              activeBasePath: 'docs/build/guides/conventions',
+            },
+            {
+              to: '/docs/build/guides/events',
+              label: 'Contract Events',
+              activeBasePath: 'docs/build/guides/events',
+            },
+            {
+              to: '/docs/build/guides/storage',
+              label: 'Contract Storage',
+              activeBasePath: 'docs/build/guides/storage',
+            },
+            {
+              to: '/docs/build/guides/testing',
+              label: 'Contract Testing',
+              activeBasePath: 'docs/build/guides/testing',
+            },
+            {
+              to: '/docs/build/guides/dapps',
+              label: 'Dapp Development',
+              activeBasePath: 'docs/build/guides/dapps',
+            },
+            {
+              to: '/docs/build/guides/fees',
+              label: 'Fees & Metering',
+              activeBasePath: 'docs/build/guides/fees',
+            },
+            {
+              to: '/docs/build/guides/freighter',
+              label: 'Freighter Wallet',
+              activeBasePath: 'docs/build/guides/freighter',
+            },
+            {
+              to: '/docs/build/guides/basics',
+              label: 'Stellar Basics',
+              activeBasePath: 'docs/build/guides/basics',
+            },
+            {
+              to: '/docs/build/guides/rpc',
+              label: 'RPC',
+              activeBasePath: 'docs/build/guides/rpc',
+            },
+            {
+              to: '/docs/build/guides/cli',
+              label: 'CLI',
+              activeBasePath: 'docs/build/guides/cli',
+            },
+            {
+              to: '/docs/build/guides/archival',
+              label: 'State Archival',
+              activeBasePath: 'docs/build/guides/archival',
+            },
+            {
+              to: '/docs/build/guides/tokens',
+              label: 'Stellar Asset Contract Tokens',
+              activeBasePath: 'docs/build/guides/tokens',
+            },
+            {
+              to: '/docs/build/guides/transactions',
+              label: 'Transactions',
+              activeBasePath: 'docs/build/guides/transactions',
+            },
+            {
+              to: '/docs/build/guides/conversions',
+              label: 'Type Conversions',
+              activeBasePath: 'docs/build/guides/conversions',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/security-docs" class="dropdown__link">Security Best Practices</a>',
+            },
+          ],
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'learn',
+          type: 'dropdown',
           label: 'Learn',
           position: 'left',
+          to: '/docs/learn/fundamentals',
+          items: [
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-stack',
+              label: 'Stellar Stack',
+              activeBasePath: 'docs/learn/fundamentals/stellar-stack',
+            },
+            {
+              to: '/docs/learn/fundamentals/networks',
+              label: 'Networks',
+              activeBasePath: 'docs/learn/fundamentals/networks',
+            },
+            {
+              to: '/docs/learn/fundamentals/lumens',
+              label: 'Lumens (XLM)',
+              activeBasePath: 'docs/learn/fundamentals/lumens',
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-consensus-protocol',
+              label: 'Stellar Consensus Protocol (SCP)',
+              activeBasePath: 'docs/learn/fundamentals/stellar-consensus-protocol',
+            },   
+            {
+              to: '/docs/learn/fundamentals/stellar-data-structures',
+              label: 'Data Structures',
+              activeBasePath: 'docs/learn/fundamentals/stellar-data-structures',
+            },
+            {
+              to: '/docs/learn/fundamentals/transactions',
+              label: 'Operations & Transactions',
+              activeBasePath: 'docs/learn/fundamentals/transactions',
+            },
+            {
+              to: '/docs/learn/fundamentals/fees-resource-limits-metering',
+              label: 'Fees & Metering',
+              activeBasePath: 'docs/learn/fundamentals/fees-resource-limits-metering',
+            },
+            {
+              to: '/docs/learn/fundamentals/stellar-ecosystem-proposals',
+              label: 'Stellar Ecosystem Proposals (SEPs)',
+              activeBasePath: 'docs/learn/fundamentals/stellar-ecosystem-proposals',
+            },
+            {
+              to: '/docs/learn/fundamentals/anchors',
+              label: 'Ramps (anchors)',
+              activeBasePath: 'docs/learn/fundamentals/anchors',
+            },
+            {
+              type: 'html',
+              value: '<hr><a href="/docs/learn/encyclopedia" class="dropdown__link">Encyclopedia</a>',
+            },
+            {
+              to: 'docs/learn/glossary',
+              label: 'Glossary',
+            },
+            {
+              to: 'docs/learn/migrate',
+              label: 'Migrate from Another Chain',
+            },
+            {
+              to: 'docs/learn/interactive',
+              label: 'Interactive Learning',
+            },
+          ],
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'tokens',
+          type: 'dropdown',
           label: 'Tokens',
           position: 'left',
+          to: '/docs/tokens',
+          exact: true,
+          items: [
+            {
+              to: '/docs/tokens',
+              label: 'Stellar Assets & Contract Tokens',
+              exact: true,
+            },
+            {
+              to: 'docs/tokens/anatomy-of-an-asset',
+              label: 'Assets Overview',
+            },
+            {
+              to: '/docs/tokens/quickstart',
+              label: 'Quickstart Guide',
+            },
+            {
+              to: '/docs/tokens/control-asset-access',
+              label: 'Asset Design Considerations',
+            },
+            {
+              to: '/docs/tokens/stellar-asset-contract',
+              label: 'Stellar Asset Contract',
+            },
+            {
+              to: '/docs/tokens/token-interface',
+              label: 'Token Interface',
+            },
+            {
+              to: '/docs/tokens/how-to-issue-an-asset',
+              label: 'Tutorial: Issue an Asset',
+            },
+            {
+              to: '/docs/tokens/publishing-asset-info',
+              label: 'Publish Asset Information',
+            },
+          ],
         },
         {
           type: "dropdown",
@@ -294,16 +549,48 @@ const config: Config = {
           ]
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'networks',
+          type: 'dropdown',
           label: 'Networks',
           position: 'left',
+          to: '/docs/networks',
+          exact: true,
+          items: [
+            {
+              to: '/docs/networks',
+              label: 'Network Configuration',
+              exact: true,
+            },
+            {
+              to: '/docs/networks/software-versions',
+              label: 'Software Versions',
+            },
+            {
+              to: '/docs/networks/resource-limits-fees',
+              label: 'Resource Limits & Fees',
+            }
+          ]
         },
         {
-          type: 'docSidebar',
-          sidebarId: 'validators',
+          type: 'dropdown',
           label: 'Validators',
           position: 'left',
+          to: '/docs/validators',
+          exact: true,
+          items: [
+            {
+              to: 'docs/validators',
+              label: 'Validators Introduction',
+              exact: true,
+            },
+            {
+              to: 'docs/validators/admin-guide',
+              label: 'Admin Guide',
+            },
+            {
+              to: 'docs/validators/tier-1-orgs',
+              label: 'Tier 1 Organizations',
+            }
+          ]
         },
         {
           type: 'docsVersionDropdown',
