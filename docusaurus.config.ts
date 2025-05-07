@@ -289,7 +289,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/security-docs" class="dropdown__link">Security Best Practices</a>',
+              value: '<hr><a href="/docs/build/security-docs" class="dropdown__link">Security Best Practices</a>',
             },
           ],
         },
