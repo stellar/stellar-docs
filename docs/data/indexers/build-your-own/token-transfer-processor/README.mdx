@@ -1,0 +1,200 @@
+---
+title: Token Transfer Processor
+sidebar_position: 0
+---
+
+## Overview
+
+The token transfer processor is a [package](https://github.com/stellar/go/tree/ttp-v1.0.0/ingest/processors/token_transfer) in the [ingest-sdk](../ingest-sdk/README.mdx) that tracks transfers, mints, burns, clawbacks, and fees for assets/tokens on the Stellar network.
+
+The token_transfer package is responsible for processing and generating standardized token transfer events from Stellar ledger operations. It supports both classic Stellar operations as well as Soroban contract events, providing a unified view of all token movements within the network.
+
+The processor parses ledger operations and their results to create structured events that follow the [CAP-67](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md) Unified Events specification.
+
+## Key Features
+
+- Processes all token movement operations - classic and smart contract:
+
+  - Simple Payments
+  - Path payments
+  - Account merges
+  - Trustline Revocations
+  - Claimable balance operations
+  - Liquidity pool operations
+  - Clawback operations
+  - Smart contract events - Stellar Asset Contract events + SEP-41 compliant token events
+
+- Generates standardized events:
+
+  - Transfer: Movement of tokens between accounts
+  - Mint: Creation of new tokens
+  - Burn: Destruction of tokens
+  - Clawback: Asset issuer reclaiming tokens
+  - Fee: Network fees paid
+
+- Handles muxed account information for compliance with CAP-67 multiplexing support
+
+- Reconciliation for older protocol versions to ensure consistency between operation changes and generated events
+
+## Event Structure
+
+Token transfer events follow a standardized structure as defined in the [proto3 specification](https://github.com/stellar/go/blob/ttp-v1.0.0/protos/ingest/processors/token_transfer/token_transfer_event.proto)
+
+```proto
+message TokenTransferEvent {
+  EventMeta meta = 1;
+  oneof event {
+    Transfer transfer = 2;
+    Mint mint = 3;
+    Burn burn = 4;
+    Clawback clawback = 5;
+    Fee fee = 6;
+  }
+}
+```
+
+Each event contains metadata about the operation and specialized fields for the specific event type.
+
+```proto
+message EventMeta {
+  uint32 ledger_sequence = 1;
+  google.protobuf.Timestamp closed_at = 2;
+  string tx_hash = 3;
+  // Index of transaction within this ledger. This is 1-indexed as per SEP-35
+  uint32 transaction_index = 4;
+  // Index of operation within the transaction, if it is not a fee event. This is 1-indexed as per SEP-35
+  optional uint32 operation_index = 5;
+  /* For a classic operation, this contract_address is the ContractID as derived from asset
+     For a smart contract event, this contractId is the id of the contract emiting the core event
+   */
+  string contract_address = 6;
+
+  /*
+   The to_muxed_info follows the spec outlined in section in CAP-67 - https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md#multiplexing-support
+ */
+  MuxedInfo to_muxed_info= 7;
+}
+```
+
+## Chronological Event Ordering
+
+As of protocol 22, events in a ledger follow a specific chronological order:
+
+1. Fee events from all transactions upfront
+2. For each transaction:
+
+- Events from each operation within the transaction
+- Fee refund for the transaction (if any)
+
+## Smart Contract Events
+
+This processor supports both - deriving events from classic operations, and parsing smart contract events emitted in the ledger.
+
+For smart contract events, the parsing logic is as follows:
+
+- Check if the smart contract event is a SEP-41 compliant event.
+- If yes, attempt to further validate if these are Stellar Asset Contract (SAC) tokens
+
+## Usage
+
+### Creating a Processor
+
+<CodeExample>
+
+`````go
+// Create a processor with the network passphrase
+processor := token_transfer.NewEventsProcessor(networkPassphrase)
+
+// Optionally disable contract events
+processor := token_transfer.NewEventsProcessor(networkPassphrase, token_transfer.DisableContractEvents) ````
+`````
+
+</CodeExample>
+
+### Processing a Ledger
+
+<CodeExample>
+
+```go
+// Process all events in a ledger
+var ledgerCloseMeta xdr.LedgerCloseMeta
+...
+...
+events, err := processor.EventsFromLedger(ledgerCloseMeta)
+```
+
+</CodeExample>
+
+### Processing a Transaction
+
+<CodeExample>
+
+```go
+// Process events from a transaction
+var tx ingest.LedgerTransaction
+...
+...
+txEvents, err := processor.EventsFromTransaction(tx)
+// txEvents.FeeEvents contains fee-related events
+// txEvents.OperationEvents contains operation-related events
+```
+
+</CodeExample>
+
+### Processing an Operation
+
+<CodeExample>
+
+```go
+// Process events from a specific operation
+var tx ingest.LedgerTransaction
+var op xdr.Operation
+var opResult xdr.OperationResult
+...
+...
+events, err := processor.EventsFromOperation(tx, opIndex, op, opResult)
+```
+
+</CodeExample>
+
+### Event Verification
+
+The package includes functionality to verify the consistency of events with ledger changes:
+
+<CodeExample>
+
+```go
+// Verify events for a ledger
+err := token_transfer.VerifyEvents(ledgerCloseMeta, networkPassphrase)
+```
+
+</CodeExample>
+
+## Implementation Details
+
+The processor handles various special cases:
+
+1. **Minting and Burning**: Determined by checking if the source or destination is the asset issuer
+2. **Liquidity Pools**: Specialized handling for pool deposits, withdrawals, and revoked trustlines
+3. **Claimable Balances**: Tracks creation, claiming, and clawback operations
+4. **Path Payments**: Processes complex paths with multiple asset conversions
+5. **Muxed Accounts**: Preserves multiplexed account information in relevant events
+6. **Soroban Fees**: Special handling for Soroban transaction fees and refunds
+
+## Event Reconciliation (Legacy Protocol Support)
+
+For ledgers with protocol version less than 8, the processor performs additional reconciliation to ensure consistency between observed balance changes and emitted events. This helps with retroactive event generation for older operations.
+
+## References
+
+- [CAP-67: Unified Events](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md)
+- [SEP-41: Asset Token Contract Specification](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md)
+- [CAP-38: Automated Market Makers](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0038.md)
+
+## Testing
+
+The package includes extensive tests for all supported operations and edge cases. Run tests with:
+
+```bash
+go test ./ingest/processors/token_transfer -v
+```
