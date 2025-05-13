@@ -103,7 +103,7 @@ slug: /my-custom-url
 ---
 // highlight-end
 
-## Markdown heading
+## Markdown heading {#custom-link}
 
 Markdown text with [links](./hello.md)
 ```
