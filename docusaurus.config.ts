@@ -533,6 +533,16 @@ const config: Config = {
               label: 'MoneyGram Ramps',
               activeBasePath: '/docs/tools/ramps/moneygram'
             },
+                        {
+              type: 'html',
+              value: '<hr><small>Infra Tools</small>',
+              className: 'subtitle',
+            },
+            {
+              to: '/docs/tools/infra-tools/cross-chain',
+              label: 'Cross-Chain',
+              activeBasePath: 'docs/tools/infra-tools/cross-chain'
+            },
             {
               type: 'html',
               value: '<hr><small>SDF Platforms</small>',
