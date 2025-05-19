@@ -61,6 +61,8 @@ To begin development on the documentation, you will first need to install the fo
 - Node.js (v22, or higher): see https://nodejs.org/en/download/package-manager for details for your system
 - npm: e.g. `sudo apt install npm` on Ubuntu
 - yarn: `npm install yarn`
+  - If you're getting dependency errors, try using `npm install yarn --legacy-peer-deps`
+  - After `install` command succeeds run `corepack enable && corepack prepare yarn@stable --activate` to actually get yarn
 
 ### Development
 
