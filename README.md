@@ -52,9 +52,9 @@ If you have questions, feel free to ask in the [Stellar Developer Discord](https
 
 ## Quick Start
 
-[![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web)
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
 
-[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)](https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs)
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
 
 ### Prerequisites
 
@@ -250,5 +250,5 @@ const CODE_LANGS = {
 [guide]: https://www.markdownguide.org/
 [alert-example]: https://developers.stellar.org/docs/anchoring-assets/enabling-cross-border-payments/setting-up-test-server
 [prism]: https://github.com/FormidableLabs/prism-react-renderer
-[codespaces]: https://github.com/codespaces/new?hide_repo_select=true&ref=main&repo=521307729&machine=basicLinux32gb&devcontainer_path=.devcontainer%2Fdevcontainer.json&location=EastUs
-[gitpod]: https://gitpod.io/#https://github.com/stellar/stellar-docs
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
