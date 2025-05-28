@@ -17,15 +17,107 @@ Transactions are atomic, meaning that if any operation in a transaction fails, t
 
 Every transaction also incurs a small fee. Like the minimum balance on accounts, this fee deters spam and prevents people from overloading the system. This [base fee](../../../learn/fundamentals/fees-resource-limits-metering.mdx) is very small — 100 stroops per operation where a stroop equals 1 \* 10 ^-7 XLM — and it's charged for each operation in a transaction. A transaction with two operations, for instance, would cost 200 stroops.
 
+With the recent addition of Soroban and smart contracts, Stellar also supports a different way of executing transactions. These use a specific type of operation (`invokeHostFunction`) to invoke a smart contract function, and this contract carries the logic that executes custom functionality and/or payments. By default, all classic assets on Stellar can be represented by a default smart contract called a [Stellar Asset Contract (SAC)](../../../tokens/stellar-asset-contract.mdx), which provides a standardized interface for asset operations through contract logic.
+
+For the purpose of this guide, the payment examples will be segregated between **Classic Payments** (using built-in operations like the traditional `payment` operation) and **SAC Payments** (which make use of the default smart contract and execute payments through contract logic).
+
+Additionally, there are two main options to interact with the Stellar network: the [Horizon API](../../../data/apis/horizon/README.mdx) and [Stellar RPC](../../../data/apis/rpc/README.mdx). Each payment example will be broken down to show how to perform such payments with either option.
+
 <Alert>
 
 In the following code samples, proper error checking is omitted for brevity. However, you should _always_ validate your results, as there are many ways that requests can fail. You should refer to the guide on [Error Handling](../../../data/apis/horizon/api-reference/errors/error-handling.mdx) for tips on error management strategies.
 
 </Alert>
 
-## Send a Payment
+## Classic Payments
 
-Stellar stores and communicates transaction data in a binary format called [XDR](../../../learn/fundamentals/data-format/xdr.mdx), which is optimized for network performance but unreadable to the human eye. Luckily, [Horizon](../../../data/apis/horizon/README.mdx), the Stellar API, and the [Stellar SDKs](../../../tools/sdks/README.mdx) convert XDRs into friendlier formats. Here’s how you might send 10 lumens to an account:
+### Send a Payment
+
+When sending payments on Stellar, you build a transaction with a payment operation, sign it, and submit it to the network. Stellar stores and communicates transaction data in a binary format called [XDR](../../../learn/encyclopedia/data-format/xdr.mdx), which is optimized for network performance but unreadable to the human eye. Luckily, [Horizon API](../../../data/apis/horizon/README.mdx), [Stellar RPC](../../../data/apis/rpc/README.mdx), and the [Stellar SDKs](../../../tools/sdks/README.mdx) convert XDRs into friendlier formats. Here’s how you might send 10 lumens to an account:
+
+#### Using Stellar RPC
+
+<CodeExample>
+
+```js
+var StellarSdk = require("stellar-sdk");
+
+const rpc = new StellarSdk.rpc.Server("https://soroban-testnet.stellar.org");
+const sourceKeys = StellarSdk.Keypair.fromSecret(
+  "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4",
+);
+const destinationId = "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5";
+let transaction;
+
+// First, check to make sure that the destination account exists.
+rpc
+  .getAccount(destinationId)
+  .catch(function (error) {
+    if (error instanceof StellarSdk.NotFoundError) {
+      throw new Error("The destination account does not exist!");
+    } else return error;
+  })
+  .then(function () {
+    return rpc.getAccount(sourceKeys.publicKey());
+  })
+  .then(function (sourceAccount) {
+    transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: StellarSdk.Networks.TESTNET,
+    })
+      .addOperation(
+        StellarSdk.Operation.payment({
+          destination: destinationId,
+          asset: StellarSdk.Asset.native(),
+          amount: "10",
+        })
+      )
+      .addMemo(StellarSdk.Memo.text("Test Transaction"))
+      .setTimeout(180)
+      .build();
+
+    transaction.sign(sourceKeys);
+
+    return rpc
+      .sendTransaction(transaction)
+      .then(async (reply) => {
+        if (reply.status !== "PENDING") {
+          throw reply;
+        }
+
+        return rpc.pollTransaction(reply.hash, {
+          sleepStrategy: (_iter: number) => 500,
+          attempts: 5,
+        });
+      })
+      .then((finalStatus) => {
+        switch (finalStatus.status) {
+          case StellarSdk.rpc.Api.GetTransactionStatus.FAILED:
+          case StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND:
+            throw new Error(`Transaction failed with status: ${finalStatus.status}`);
+          case StellarSdk.rpc.Api.GetTransactionStatus.SUCCESS:
+            return finalStatus;
+        }
+      });
+  })
+  .then(function (result) {
+    console.log("Success! Results:", result);
+  })
+  .catch(function (error) {
+    console.error("Something went wrong!", error);
+  });
+```
+
+</CodeExample>
+
+The key differences when using RPC instead of Horizon:
+
+1. **Instant submission**: `rpc.sendTransaction()` returns immediately with a "PENDING" status
+2. **Active polling required**: You must poll `rpc.pollTransaction()` to get the final result
+3. **Polling configuration**: You can customize polling intervals and retry attempts
+4. **Status handling**: Check for SUCCESS, FAILED, or NOT_FOUND status in the final result
+
+#### Using the Horizon API
 
 <CodeExample>
 
@@ -264,6 +356,8 @@ except (BadRequestError, BadResponseError) as err:
 
 </CodeExample>
 
+#### Step-by-Step Breakdown
+
 What exactly happened there? Let’s break it down.
 
 1. Confirm that the account ID (aka the _public key_) you are sending to actually exists by loading the associated account data from the Stellar network. It's okay to skip this step, but it gives you an opportunity to avoid making a transaction that will inevitably fail.
@@ -271,6 +365,12 @@ What exactly happened there? Let’s break it down.
 <CodeExample>
 
 ```js
+// Using RPC
+rpc.getAccount(destinationId).then(function (account) {
+  /* validate the account */
+});
+
+// Using Horizon
 server.loadAccount(destinationId).then(function (account) {
   /* validate the account */
 });
@@ -300,9 +400,15 @@ server.load_account(destination_id)
 <CodeExample>
 
 ```js
-.then(function() {
-return server.loadAccount(sourceKeys.publicKey());
-})
+// Using RPC
+rpc.getAccount(sourceKeys.publicKey()).then(function (sourceAccount) {
+  /* use sourceAccount to build transaction */
+});
+
+// Using Horizon
+server.loadAccount(sourceKeys.publicKey()).then(function (sourceAccount) {
+  /* use sourceAccount to build transaction */
+});
 ```
 
 ```java
@@ -452,7 +558,24 @@ transaction.sign(source_key)
 <CodeExample>
 
 ```js
-server.submitTransaction(transaction);
+// Using RPC - requires polling for final status
+rpc
+  .sendTransaction(transaction)
+  .then(async (reply) => {
+    if (reply.status !== "PENDING") {
+      throw reply;
+    }
+    return rpc.pollTransaction(reply.hash);
+  })
+  .then((finalStatus) => {
+    // Check status: SUCCESS, FAILED, or NOT_FOUND
+    console.log("Final status:", finalStatus.status);
+  });
+
+// Using Horizon - returns final status immediately
+server.submitTransaction(transaction).then((result) => {
+  console.log("Success! Results:", result);
+});
 ```
 
 ```java
@@ -472,9 +595,17 @@ server.submit_transaction(transaction)
 
 </CodeExample>
 
-In this example, we're submitting the transaction to the SDF-maintained public testnet instance of Horizon, the Stellar API. When submitting transactions to a Horizon server — which is what most people do — it's possible that you will not receive a response from the server due to a bug, network conditions, etc. In such a situation it's impossible to determine the status of your transaction. That's why you should always save a built transaction (or transaction encoded in XDR format) in a variable or a database and resubmit it if you don't know its status. If the transaction has already been successfully applied to the ledger, Horizon will simply return the saved result and not attempt to submit the transaction again. Only in cases where a transaction’s status is unknown (and thus will have a chance of being included into a ledger) will a resubmission to the network occur.
+In this example, we're submitting the transaction to either the SDF-maintained public testnet instance of Horizon (the Stellar API) or to a Stellar RPC server. When submitting transactions to either a Horizon server or RPC server — which is what most people do — it's possible that you will not receive a response from the server due to a bug, network conditions, etc. In such a situation it's impossible to determine the status of your transaction.
 
-## Receive a Payment
+That's why you should always save a built transaction (or transaction encoded in XDR format) in a variable or a database and resubmit it if you don't know its status. If the transaction has already been successfully applied to the ledger, both Horizon and RPC will simply return the saved result and not attempt to submit the transaction again. Only in cases where a transaction's status is unknown (and thus will have a chance of being included into a ledger) will a resubmission to the network occur.
+
+### Receive a Payment
+
+#### Using RPC
+
+{/* Classic receive payment via RPC content goes here */}
+
+#### Using Horizon
 
 You don’t actually need to do anything to receive payments into a Stellar account: if a payer makes a successful transaction to send assets to you, those assets will automatically be added to your account.
 
@@ -794,6 +925,28 @@ payments_next = payments.next()
 ```
 
 </CodeExample>
+
+## Stellar Asset Contract (SAC) Payments
+
+### Send a Payment
+
+#### Using RPC
+
+{/* SAC send payment via RPC content goes here */}
+
+#### Using Horizon
+
+{/* SAC send payment via Horizon content goes here */}
+
+### Receive a Payment
+
+#### Using RPC
+
+{/* SAC receive payment via RPC content goes here */}
+
+#### Using Horizon
+
+{/* SAC receive payment via Horizon content goes here */}
 
 ## Transacting in Other Currencies
 
