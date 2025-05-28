@@ -344,6 +344,11 @@ const config: Config = {
               label: 'Stellar Ecosystem Proposals (SEPs)',
               activeBasePath: 'docs/learn/fundamentals/stellar-ecosystem-proposals',
             },
+                        {
+              to: '/docs/learn/fundamentals/data-format',
+              label: 'Data Formats',
+              activeBasePath: 'docs/learn/fundamentals/data-format',
+            },
             {
               to: '/docs/learn/fundamentals/anchors',
               label: 'Ramps (anchors)',
