@@ -346,7 +346,7 @@ const config: Config = {
             },
                         {
               to: '/docs/learn/fundamentals/data-format',
-              label: 'Data Formats',
+              label: 'Data Format',
               activeBasePath: 'docs/learn/fundamentals/data-format',
             },
             {
