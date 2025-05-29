@@ -154,7 +154,7 @@ const config: Config = {
             },
             {
               to: '/docs/build/smart-contracts/overview',
-              label: 'Smart Contracts Overview',
+              label: 'Introduction',
               activeBasePath: 'docs/build/smart-contracts/overview',
             },
             {
@@ -174,7 +174,7 @@ const config: Config = {
             },
             {
               to: '/docs/build/apps/overview',
-              label: 'Applications Overview',
+              label: 'Introduction',
               activeBasePath: 'docs/build/apps/overview',
             },
             {
