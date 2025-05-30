@@ -17,15 +17,107 @@ Transactions are atomic, meaning that if any operation in a transaction fails, t
 
 Every transaction also incurs a small fee. Like the minimum balance on accounts, this fee deters spam and prevents people from overloading the system. This [base fee](../../../learn/fundamentals/fees-resource-limits-metering.mdx) is very small — 100 stroops per operation where a stroop equals 1 \* 10 ^-7 XLM — and it's charged for each operation in a transaction. A transaction with two operations, for instance, would cost 200 stroops.
 
+With the recent addition of Soroban and smart contracts, Stellar also supports a different way of executing transactions. These use a specific type of operation (`invokeHostFunction`) to invoke a smart contract function, and this contract carries the logic that executes custom functionality and/or payments. By default, all classic assets on Stellar can be represented by a default smart contract called a [Stellar Asset Contract (SAC)](../../../tokens/stellar-asset-contract.mdx), which provides a standardized interface for asset operations through contract logic.
+
+For the purpose of this guide, the payment examples will be segregated between **Classic Payments** (using built-in operations like the traditional `payment` operation) and **SAC Payments** (which make use of the default smart contract and execute payments through contract logic).
+
+Additionally, there are two main options to interact with the Stellar network: the [Horizon API](../../../data/apis/horizon/README.mdx) and [Stellar RPC](../../../data/apis/rpc/README.mdx). Each payment example will be broken down to show how to perform such payments with either option.
+
 <Alert>
 
 In the following code samples, proper error checking is omitted for brevity. However, you should _always_ validate your results, as there are many ways that requests can fail. You should refer to the guide on [Error Handling](../../../data/apis/horizon/api-reference/errors/error-handling.mdx) for tips on error management strategies.
 
 </Alert>
 
-## Send a Payment
+## Classic Payments
 
-Stellar stores and communicates transaction data in a binary format called [XDR](../../../learn/fundamentals/data-format/xdr.mdx), which is optimized for network performance but unreadable to the human eye. Luckily, [Horizon](../../../data/apis/horizon/README.mdx), the Stellar API, and the [Stellar SDKs](../../../tools/sdks/README.mdx) convert XDRs into friendlier formats. Here’s how you might send 10 lumens to an account:
+### Send a Payment
+
+When sending payments on Stellar, you build a transaction with a payment operation, sign it, and submit it to the network. Stellar stores and communicates transaction data in a binary format called [XDR](../../../learn/fundamentals/data-format/xdr.mdx), which is optimized for network performance but unreadable to the human eye. Luckily, [Horizon API](../../../data/apis/horizon/README.mdx), [Stellar RPC](../../../data/apis/rpc/README.mdx), and the [Stellar SDKs](../../../tools/sdks/README.mdx) convert XDRs into friendlier formats. Here’s how you might send 10 lumens to an account:
+
+#### Using the Stellar RPC
+
+<CodeExample>
+
+```js
+var StellarSdk = require("stellar-sdk");
+
+const rpc = new StellarSdk.rpc.Server("https://soroban-testnet.stellar.org");
+const sourceKeys = StellarSdk.Keypair.fromSecret(
+  "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4",
+);
+const destinationId = "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5";
+let transaction;
+
+// First, check to make sure that the destination account exists.
+rpc
+  .getAccount(destinationId)
+  .catch(function (error) {
+    if (error instanceof StellarSdk.NotFoundError) {
+      throw new Error("The destination account does not exist!");
+    } else return error;
+  })
+  .then(function () {
+    return rpc.getAccount(sourceKeys.publicKey());
+  })
+  .then(function (sourceAccount) {
+    transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: StellarSdk.Networks.TESTNET,
+    })
+      .addOperation(
+        StellarSdk.Operation.payment({
+          destination: destinationId,
+          asset: StellarSdk.Asset.native(),
+          amount: "10",
+        })
+      )
+      .addMemo(StellarSdk.Memo.text("Test Transaction"))
+      .setTimeout(180)
+      .build();
+
+    transaction.sign(sourceKeys);
+
+    return rpc
+      .sendTransaction(transaction)
+      .then(async (reply) => {
+        if (reply.status !== "PENDING") {
+          throw reply;
+        }
+
+        return rpc.pollTransaction(reply.hash, {
+          sleepStrategy: (_iter: number) => 500,
+          attempts: 5,
+        });
+      })
+      .then((finalStatus) => {
+        switch (finalStatus.status) {
+          case StellarSdk.rpc.Api.GetTransactionStatus.FAILED:
+          case StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND:
+            throw new Error(`Transaction failed with status: ${finalStatus.status}`);
+          case StellarSdk.rpc.Api.GetTransactionStatus.SUCCESS:
+            return finalStatus;
+        }
+      });
+  })
+  .then(function (result) {
+    console.log("Success! Results:", result);
+  })
+  .catch(function (error) {
+    console.error("Something went wrong!", error);
+  });
+```
+
+</CodeExample>
+
+The key differences when using RPC instead of Horizon:
+
+1. **Instant submission**: `rpc.sendTransaction()` returns immediately with a "PENDING" status
+2. **Active polling required**: You must poll `rpc.pollTransaction()` to get the final result
+3. **Polling configuration**: You can customize polling intervals and retry attempts
+4. **Status handling**: Check for SUCCESS, FAILED, or NOT_FOUND status in the final result
+
+#### Using the Horizon API
 
 <CodeExample>
 
@@ -264,6 +356,8 @@ except (BadRequestError, BadResponseError) as err:
 
 </CodeExample>
 
+#### Step-by-Step Breakdown
+
 What exactly happened there? Let’s break it down.
 
 1. Confirm that the account ID (aka the _public key_) you are sending to actually exists by loading the associated account data from the Stellar network. It's okay to skip this step, but it gives you an opportunity to avoid making a transaction that will inevitably fail.
@@ -271,6 +365,12 @@ What exactly happened there? Let’s break it down.
 <CodeExample>
 
 ```js
+// Using RPC
+rpc.getAccount(destinationId).then(function (account) {
+  /* validate the account */
+});
+
+// Using Horizon
 server.loadAccount(destinationId).then(function (account) {
   /* validate the account */
 });
@@ -300,9 +400,15 @@ server.load_account(destination_id)
 <CodeExample>
 
 ```js
-.then(function() {
-return server.loadAccount(sourceKeys.publicKey());
-})
+// Using RPC
+rpc.getAccount(sourceKeys.publicKey()).then(function (sourceAccount) {
+  /* use sourceAccount to build transaction */
+});
+
+// Using Horizon
+server.loadAccount(sourceKeys.publicKey()).then(function (sourceAccount) {
+  /* use sourceAccount to build transaction */
+});
 ```
 
 ```java
@@ -452,7 +558,24 @@ transaction.sign(source_key)
 <CodeExample>
 
 ```js
-server.submitTransaction(transaction);
+// Using RPC - requires polling for final status
+rpc
+  .sendTransaction(transaction)
+  .then(async (reply) => {
+    if (reply.status !== "PENDING") {
+      throw reply;
+    }
+    return rpc.pollTransaction(reply.hash);
+  })
+  .then((finalStatus) => {
+    // Check status: SUCCESS, FAILED, or NOT_FOUND
+    console.log("Final status:", finalStatus.status);
+  });
+
+// Using Horizon - returns final status immediately
+server.submitTransaction(transaction).then((result) => {
+  console.log("Success! Results:", result);
+});
 ```
 
 ```java
@@ -472,13 +595,19 @@ server.submit_transaction(transaction)
 
 </CodeExample>
 
-In this example, we're submitting the transaction to the SDF-maintained public testnet instance of Horizon, the Stellar API. When submitting transactions to a Horizon server — which is what most people do — it's possible that you will not receive a response from the server due to a bug, network conditions, etc. In such a situation it's impossible to determine the status of your transaction. That's why you should always save a built transaction (or transaction encoded in XDR format) in a variable or a database and resubmit it if you don't know its status. If the transaction has already been successfully applied to the ledger, Horizon will simply return the saved result and not attempt to submit the transaction again. Only in cases where a transaction’s status is unknown (and thus will have a chance of being included into a ledger) will a resubmission to the network occur.
+In this example, we're submitting the transaction to either the SDF-maintained public testnet instance of Horizon (the Stellar API) or to a Stellar RPC server. When submitting transactions to either a Horizon server or RPC server — which is what most people do — it's possible that you will not receive a response from the server due to a bug, network conditions, etc. In such a situation it's impossible to determine the status of your transaction.
 
-## Receive a Payment
+That's why you should always save a built transaction (or transaction encoded in XDR format) in a variable or a database and resubmit it if you don't know its status. If the transaction has already been successfully applied to the ledger, both Horizon and RPC will simply return the saved result and not attempt to submit the transaction again. Only in cases where a transaction's status is unknown (and thus will have a chance of being included into a ledger) will a resubmission to the network occur.
+
+### Receive a Payment
 
 You don’t actually need to do anything to receive payments into a Stellar account: if a payer makes a successful transaction to send assets to you, those assets will automatically be added to your account.
 
 However, you may want to keep an eye out for incoming payments. A simple program that watches the network for payments and prints each one might look like:
+
+{/* Using RPC will be introduced later once we have events launched for classic asset effects */}
+
+#### Using Horizon
 
 <CodeExample title="Receive Payments">
 
@@ -795,8 +924,371 @@ payments_next = payments.next()
 
 </CodeExample>
 
+## Stellar Asset Contract (SAC) Payments
+
+When sending payments using Stellar Asset Contracts, you invoke smart contract functions instead of using classic payment operations. SAC payments utilize the `invokeHostFunction` operation to call contract methods like `transfer`, which provides the same payment functionality but through contract logic. This approach offers additional flexibility and programmability while maintaining compatibility with Stellar's asset system.
+
+In the example below, we're using SAC as a smart contract interface for the native asset, so the end result is the same as if a native payment operation had been executed. However, the same process can be applied for any smart contract transfer involving standardized custom tokens that follow the [custom token interface](../../../tokens/token-interface.mdx). This makes SAC payments a unified approach for handling both native assets and custom tokens through a consistent contract-based interface.
+
+Here's how you might send 10 lumens using a SAC:
+
+<Alert>
+  To use the RPC example below you should first generate the contract bindings so the
+  client can be used accordingly. This can be achieved through the [Stellar
+  CLI](../../../tools/cli/README.mdx).
+
+E.g.: Generating the typescript bindings for the `sac` contract of a given asset:
+
+```bash
+ stellar contract bindings typescript --network=testnet --contract-id=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --output-dir=./bindings
+```
+
+</Alert>
+
+### Send a Payment
+
+<CodeExample>
+
+```js
+import { Asset, Keypair, Networks, TransactionBuilder } from "stellar-sdk";
+import { Client } from "sac";
+
+// Source account secret key (in production, store this securely)
+const sourceKeys = Keypair.fromSecret(
+  "SAMAJBEGN2743SLFDSBSVRCTQ7AC33XFZHWJVCJ2UMOIVH4MUJ7WWHEJ",
+);
+
+// Destination account public key
+const destinationId =
+  "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5";
+
+// Create a SAC client for native XLM using the contract address
+// This client can be generated using the Stellar CLI to create bindings
+// for a given contract.
+const xlmClient = new Client({
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: Networks.TESTNET,
+  contractId: Asset.native().contractId(Networks.TESTNET),
+  publicKey: sourceKeys.publicKey(),
+  // Custom transaction signing function
+  signTransaction: async (txXdr) => {
+    const tx = await TransactionBuilder.fromXDR(txXdr, Networks.TESTNET);
+    tx.sign(sourceKeys);
+    return {
+      signedTxXdr: tx.toXDR(),
+      signerAddress: sourceKeys.publicKey(),
+    };
+  },
+});
+
+// Execute the SAC transfer operation
+xlmClient
+  .transfer({
+    to: destinationId,
+    amount: BigInt(10_0000000), // Amount in stroops (1 XLM = 10,000,000 stroops)
+    from: sourceKeys.publicKey(),
+  })
+  .then((tx) => {
+    // Sign and submit the transaction to the network
+    tx.signAndSend()
+      .then((result) => {
+        console.log(
+          "Transaction successful:",
+          result.getTransactionResponse?.txHash,
+        );
+      })
+      .catch((error) => {
+        console.error("Transaction failed:", error);
+      });
+  })
+  .catch((error) => {
+    console.error("Error during transfer:", error);
+  });
+```
+
+</CodeExample>
+
+#### Step-by-Step Breakdown
+
+What exactly happened in the SAC payment example? Let's break it down:
+
+1. Import the generated contract client from the CLI-produced bindings. This client provides typed methods for interacting with the Stellar Asset Contract.
+
+<CodeExample>
+
+```js
+import { Client } from "sac";
+```
+
+</CodeExample>
+
+2. Initialize the SAC client with connection details and a custom signing function. The client needs the RPC endpoint, network passphrase, contract ID for the asset, and your account's public key. A signing function can also be provided to automatically handle transaction signing when invoking contract methods with this client.
+
+<CodeExample>
+
+```js
+const xlmClient = new Client({
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: Networks.TESTNET,
+  contractId: Asset.native().contractId(Networks.TESTNET),
+  publicKey: sourceKeys.publicKey(),
+  signTransaction: async (txXdr) => {
+    const tx = await TransactionBuilder.fromXDR(txXdr, Networks.TESTNET);
+    tx.sign(sourceKeys);
+    return {
+      signedTxXdr: tx.toXDR(),
+      signerAddress: sourceKeys.publicKey(),
+    };
+  },
+});
+```
+
+</CodeExample>
+
+3. Initiate the transfer by calling the contract's `transfer` method. This returns an assembled transaction ready for signing and submission.
+
+<CodeExample>
+
+```js
+xlmClient.transfer({
+  to: destinationId,
+  amount: BigInt(10_0000000), // Amount in stroops (1 XLM = 10,000,000 stroops)
+  from: sourceKeys.publicKey(),
+});
+```
+
+</CodeExample>
+
+4. Sign and submit the transaction using `signAndSend()`. The client handles simulation, signing (using your provided function), submission to the network, and polling for the final result.
+
+<CodeExample>
+
+```js
+.then((tx) => {
+  tx.signAndSend()
+    .then((result) => {
+      console.log("Transaction successful:", result.getTransactionResponse?.txHash);
+    })
+    .catch((error) => {
+      console.error("Transaction failed:", error);
+    });
+})
+```
+
+</CodeExample>
+
+### Receive a Payment
+
+You don't need to do anything special to receive SAC payments into a Stellar account: if a payer makes a successful contract transfer to you, those assets will automatically be added to your account.
+
+However, you may want to monitor for incoming SAC payments. Since SAC payments generate contract events rather than traditional payment operations, you'll need to watch for contract events instead of using Horizon's payment streams. Here's how you can monitor for incoming Smart Contract transfers:
+
+<CodeExample>
+
+```js
+import { Server } from "stellar-sdk/rpc";
+import { xdr, Asset, Networks, Address } from "stellar-sdk";
+
+// RPC server for testnet
+const rpc = new Server("https://soroban-testnet.stellar.org");
+
+// Get the native XLM contract ID for testnet
+const contractId = Asset.native().contractId(Networks.TESTNET);
+
+// The address we want to monitor for incoming payments
+const monitoredAddress = new Address(
+  "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5"
+);
+
+// Paging state for event polling (similar to useSubscription hook)
+let lastLedgerStart: number | undefined;
+let pagingToken: string | undefined;
+
+async function pollForTransfers() {
+  try {
+    // Set starting ledger if not set (get the latest ledger as starting point)
+    if (!lastLedgerStart) {
+      const latestLedger = await rpc.getLatestLedger();
+      lastLedgerStart = latestLedger.sequence;
+    }
+    console.log(`> Monitoring transfers for ledger: ${lastLedgerStart}`);
+
+    // Get events for "transfer" topic from the native asset contract
+    const response = await rpc.getEvents({
+      startLedger: !pagingToken ? lastLedgerStart : undefined,
+      cursor: pagingToken,
+      filters: [
+        {
+          contractIds: [contractId],
+          // Filter for transfer events to the monitored address
+          // Using wildcards (*) to match any sender and asset
+          // Event structure: ["transfer", fromAddress, toAddress, assetName]
+          topics: [
+            [
+              xdr.ScVal.scvSymbol("transfer").toXDR("base64"),
+              "*",
+              monitoredAddress.toScVal().toXDR("base64"),
+              "*",
+            ],
+          ],
+          type: "contract",
+        },
+      ],
+      limit: 10,
+    });
+
+    // Update paging tokens for next poll
+    pagingToken = undefined;
+    if (response.latestLedger) {
+      lastLedgerStart = response.latestLedger;
+    }
+
+    // Process events and check for payments to our monitored address
+    if (response.events) {
+      response.events.forEach((event) => {
+        try {
+          const topics = event.topic;
+          console.log(
+            `📜 Processing event: ${event.txHash} at ledger ${event.ledger}`
+          );
+          if (topics && topics.length >= 3) {
+            // Extract recipient address from event topics
+            const toAddress = Address.fromScAddress(
+              topics[2].address()
+            ).toString();
+
+            // Check if the payment is to our monitored address
+            if (toAddress === monitoredAddress.toString()) {
+              console.log("PAYMENT RECEIVED!");
+              console.log(`  Transaction: ${event.txHash}`);
+              console.log(`  Ledger: ${event.ledger}`);
+              console.log(
+                `  Sender: ${Address.fromScAddress(
+                  topics[1].address()
+                ).toString()}`
+              );
+              console.log(`  Amount: ${event.value.i128().lo().toBigInt()}`);
+            }
+          }
+        } catch (error) {
+          console.error("Error processing event:", error);
+        } finally {
+          // Update paging token for next poll
+          pagingToken = event.pagingToken;
+        }
+      });
+    }
+  } catch (error) {
+    console.error("Poll Events error:", error);
+  } finally {
+    // Continue polling after 4 seconds
+    setTimeout(pollForTransfers, 4000);
+  }
+}
+
+// Start monitoring for payment events
+console.log(`Starting payment monitor for: ${monitoredAddress}`);
+pollForTransfers();
+```
+
+</CodeExample>
+
+#### Step-by-Step Breakdown
+
+What exactly happened in the SAC receive payment example? Let's break it down:
+
+1. Set up the RPC connection and get the contract ID for the asset you want to monitor. For native XLM, we use the built-in contract ID.
+
+<CodeExample>
+
+```js
+const rpc = new Server("https://soroban-testnet.stellar.org");
+const contractId = Asset.native().contractId(Networks.TESTNET);
+const monitoredAddress = new Address(
+  "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5",
+);
+```
+
+</CodeExample>
+
+2. Initialize the polling system by getting the latest ledger sequence as a starting point for monitoring events.
+
+<CodeExample>
+
+```js
+if (!lastLedgerStart) {
+  const latestLedger = await rpc.getLatestLedger();
+  lastLedgerStart = latestLedger.sequence;
+}
+```
+
+</CodeExample>
+
+3. Query contract events using specific filters for transfer events. The filter targets the contract ID and listens for "transfer" events where your address is the recipient. The topics array defines the event structure: the first element is the event name ("transfer"), the second is the sender (wildcard "_" to match any), the third is the recipient (your monitored address), and the fourth is the asset (wildcard "_" for any asset).
+
+<CodeExample>
+
+```js
+const response = await rpc.getEvents({
+  startLedger: !pagingToken ? lastLedgerStart : undefined,
+  cursor: pagingToken,
+  filters: [
+    {
+      contractIds: [contractId],
+      // Topics filter structure: ["event_name", "from_address", "to_address", "asset"]
+      // Using wildcards (*) allows matching any value in that position
+      topics: [
+        [
+          xdr.ScVal.scvSymbol("transfer").toXDR("base64"), // Event name: "transfer"
+          "*", // From: any address
+          monitoredAddress.toScVal().toXDR("base64"), // To: our monitored address
+          "*", // Asset: any asset
+        ],
+      ],
+      type: "contract",
+    },
+  ],
+  limit: 10,
+});
+```
+
+</CodeExample>
+
+4. Process the events by extracting transfer details from the event topics and values, then continue polling for new events after a short delay.
+
+<CodeExample>
+
+```js
+response.events.forEach((event) => {
+  const topics = event.topic;
+  if (topics && topics.length >= 3) {
+    const toAddress = Address.fromScAddress(topics[2].address()).toString();
+
+    if (toAddress === monitoredAddress.toString()) {
+      console.log("PAYMENT RECEIVED!");
+      console.log(`Amount: ${event.value.i128().lo().toBigInt()}`);
+    }
+  }
+});
+
+// Continue polling
+setTimeout(pollForTransfers, 4000);
+```
+
+</CodeExample>
+
+**Key Differences from Classic Payment Monitoring:**
+
+- **Event-based**: Monitors contract events instead of payment operations
+- **RPC Only**: Uses RPC endpoints exclusively, no Horizon support
+- **Topic Filtering**: Uses event topics to filter for specific transfer patterns
+- **Active Polling**: Requires continuous polling rather than streaming
+- **Event Structure**: Extracts payment data from contract event topics and values rather than operation fields
+
 ## Transacting in Other Currencies
 
 One of the amazing things about the Stellar network is that you can create, hold, send, receive, and trade any type of asset. Many organizations issue assets on Stellar that represent real-world currencies such as US dollars or Nigerian naira or other cryptocurrencies such as bitcoin or ether.
 
-Each of these redeemable assets — _anchored_ in the Stellar vernacular — is essentially a credit issued by a particular account that represents reserves those accounts hold outside the network. That's why the assets in the example above had both a `code` and an `issuer`: the `issuer` is the public key of the account that created the asset, an account owned by the organization that ultimately honors the credit that asset represents.
+Each of these redeemable assets — _anchored_ in the Stellar vernacular — is essentially a credit issued by a particular account that represents reserves those accounts hold outside the network. That's why the assets in the example above had both a `code` and an `issuer`: the `issuer` is the public key of the account that created the asset, an account owned by the organization that ultimately honors the credit that asset represents. Additionally, with the introduction of smart contracts, the classic assets can also be represented by a `contract id` [(SAC Interface)](../../../tokens/stellar-asset-contract.mdx)) which allows for more complex interactions and interoperability with the smart contract applications.
+
+Other custom tokens, built entirely with smart contracts are also represented by their own `contract id` and should offer a similar interface for interaction when following the [token interface](https://soroban.stellar.org/docs/reference/interfaces/token-interface).
