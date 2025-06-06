@@ -237,7 +237,7 @@ const CODE_LANGS = {
 **Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
 
 [docs]: https://developers.stellar.org/docs
-[api]: https://developers.stellar.org/api
+[api]: https://developers.stellar.org/docs/data/apis
 [stellar]: https://stellar.org
 [contrib]: https://github.com/stellar/.github/blob/master/CONTRIBUTING.md
 [coc]: https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md
