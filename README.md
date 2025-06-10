@@ -252,4 +252,3 @@ const CODE_LANGS = {
 [prism]: https://github.com/FormidableLabs/prism-react-renderer
 [open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web
 [open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs
-
