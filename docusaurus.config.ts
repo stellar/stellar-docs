@@ -154,7 +154,7 @@ const config: Config = {
             },
             {
               to: '/docs/build/smart-contracts/overview',
-              label: 'Smart Contracts Overview',
+              label: 'Introduction',
               activeBasePath: 'docs/build/smart-contracts/overview',
             },
             {
@@ -174,7 +174,7 @@ const config: Config = {
             },
             {
               to: '/docs/build/apps/overview',
-              label: 'Applications Overview',
+              label: 'Introduction',
               activeBasePath: 'docs/build/apps/overview',
             },
             {
@@ -344,7 +344,12 @@ const config: Config = {
               label: 'Stellar Ecosystem Proposals (SEPs)',
               activeBasePath: 'docs/learn/fundamentals/stellar-ecosystem-proposals',
             },
-                        {
+            {
+              to: '/docs/learn/fundamentals/contract-development',
+              label: 'Smart Contracts',
+              activeBasePath: 'docs/learn/fundamentals/contract-development',
+            },
+            {
               to: '/docs/learn/fundamentals/data-format',
               label: 'Data Format',
               activeBasePath: 'docs/learn/fundamentals/data-format',
