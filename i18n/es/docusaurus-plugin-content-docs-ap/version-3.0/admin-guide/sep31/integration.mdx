@@ -1,0 +1,669 @@
+---
+title: Integración
+sidebar_position: 30
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Integrarse con la Anchor Platform para facilitar pagos transnacionales implica implementar lo siguiente, como mínimo:
+
+- [`GET /customer`][get-customer] y [`PUT /customer`][put-customer] puntos finales de la API KYC para solicitar y recolectar los datos KYC de los clientes
+- [`GET /rate`][get-rate] punto final de la API RFQ para proporcionar tasas de FX entre los activos on-chain y off-chain admitidos
+- `GET /transactions` solicitudes para obtener actualizaciones sobre el estado de las transacciones de la Anchor Platform (documentación próximamente)
+- [`JSON-RPC`][json-rpc-methods] solicitudes para actualizar los estados de las transacciones de la Anchor Platform
+
+Lo siguiente también puede ser requerido dependiendo de tu caso de uso:
+
+- [`DELETE /customer`][delete-customer] si tu negocio quiere o está obligado a permitir que los emisores soliciten la eliminación de datos de clientes
+
+## Crear un Servidor Empresarial
+
+Primero, vamos a crear un servidor empresarial y añadirlo a nuestro archivo de docker compose.
+
+<CodeExample>
+
+```yaml
+version: "3.8"
+
+services:
+  sep-server:
+    image: stellar/anchor-platform:3.0.4
+    command: --sep-server
+    env_file:
+      - ./dev.env
+    volumes:
+      - ./config:/home
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+  platform-server:
+    image: stellar/anchor-platform:3.0.4
+    command: --platform-server
+    env_file:
+      - ./dev.env
+    volumes:
+      - ./config:/home
+    ports:
+      - "8085:8085"
+    depends_on:
+      - db
+
+  server:
+    build: .
+    ports:
+      - "8081:8081"
+    env_file:
+      - ./dev.env
+  db:
+    image: postgres:14
+    ports:
+      - "5432:5432"
+    env_file:
+      - ./dev.env
+```
+
+</CodeExample>
+
+A continuación, crea un servidor web simple utilizando tu lenguaje de programación preferido y un `Dockerfile` que inicie el servidor. `docker compose up` debería iniciar exitosamente los tres servicios.
+
+Esta guía no proporciona un ejemplo de implementación de los puntos finales, pero puedes encontrar más información sobre los esquemas de solicitud y respuesta en la [Referencia de la API de Anchor Platform][ap-api], y las secciones a continuación ampliarán los conceptos importantes para entender al implementar los puntos finales.
+
+## Puntos finales de devolución de llamada del cliente
+
+The Anchor Platform never stores your customers' PII, and instead acts as a proxy server between client applications and your business, forwarding requests and responses to the other party. Actualmente, las solicitudes y respuestas son casi idénticas a las definidas en la [Especificación de la API KYC SEP-12][sep12].
+
+### Identificando Clientes
+
+Los clientes pueden ser identificados utilizando dos enfoques.
+
+El primer enfoque utiliza una cuenta Stellar y un memo. Al usar la Anchor Platform para facilitar pagos transnacionales, la organización emisora utiliza su propia cuenta Stellar, la que se usa para autenticar a través de [SEP-10 Autenticación Stellar][ap-sep10], al registrar clientes en tu negocio. Los memos se utilizan para distinguir clientes únicos que provienen de la misma organización emisora.
+
+El segundo enfoque utiliza identificadores de cliente generados por tu servicio. Por ejemplo, si una organización emisora está registrando un cliente, tu negocio recibirá una solicitud `PUT /customer` como la siguiente:
+
+<CodeExample>
+
+```json
+{
+  "account": "GDJUOFZGW5WYBK4GIETCSSM6MTTIJ4SUMCQITPTLUWMQ6B4UIX2IEX47",
+  "memo": "780284017",
+  "type": "sep31-sender",
+  "first_name": "John",
+  "last_name": "Doe",
+  "email": "johndoe@example.com"
+}
+```
+
+</CodeExample>
+
+En este ejemplo, la clave pública `GDJ...X47` identifica a la organización emisora, y el memo `780284017` identifica al cliente. Los memos suelen ser enteros de 64 bits, pero también pueden ser otros tipos de datos, por lo que deben ser guardados como cadenas. En respuesta, tu negocio debería devolver un ID de cliente.
+
+<CodeExample>
+
+```json
+{
+  "id": "fb5ddc93-1d5d-490d-ba5f-2c361cea41f7"
+}
+```
+
+</CodeExample>
+
+Tu servidor empresarial puede usar cualquier identificador para los clientes mientras sea una cadena.
+
+Después del registro de un cliente, la organización emisora puede usar cualquiera de los enfoques al verificar el estado del cliente. Por ejemplo, puedes recibir una solicitud `GET /customer` como la siguiente:
+
+<CodeExample>
+
+```
+/customer?account=GDJUOFZGW5WYBK4GIETCSSM6MTTIJ4SUMCQITPTLUWMQ6B4UIX2IEX47&memo=780284017&type=sep31-sender
+```
+
+</CodeExample>
+
+O, la organización emisora podría usar el identificador que devolviste cuando originalmente registraron al cliente.
+
+<CodeExample>
+
+```
+/customer?id=fb5ddc93-1d5d-490d-ba5f-2c361cea41f7&type=sep31-sender
+```
+
+</CodeExample>
+
+Tu negocio necesitará mantener un mapeo entre la cuenta y el memo que se usó para registrar originalmente al cliente y el ID que devuelves en la respuesta, así como los datos KYC proporcionados. En futuras iteraciones de la Anchor Platform, podríamos mantener este mapeo para tu negocio para que solo tengas que trabajar con los IDs que generas.
+
+### Tipos de Clientes
+
+Tu negocio probablemente requiere diferentes conjuntos de información KYC dependiendo del tipo de cliente. Puedes definir las etiquetas para cada uno de estos tipos de clientes en tu archivo `dev.assets.yaml`, y tus organizaciones emisoras necesitarán entender qué etiqueta usar al registrar o consultar el estado de los clientes.
+
+En las solicitudes `PUT /customer`, deberías usar el tipo pasado para evaluar si el emisor ha proporcionado todos los campos requeridos. En las solicitudes `GET /customer`, deberías usar el tipo para determinar el estado del cliente.
+
+### Prueba con la Billetera Demo
+
+Puedes probar tu implementación con la [Billetera Demo Stellar][demo-wallet] siguiendo los pasos a continuación.
+
+1. Selecciona "Generar keypair para nueva cuenta"
+2. Selecciona "Crear cuenta"
+3. Selecciona "Agregar Activo" e introduce el código del activo y el dominio de la Anchor Platform, `localhost:8080`
+4. Selecciona "Agregar line de confianza"
+5. Financia tu cuenta con un saldo del activo
+6. Selecciona "SEP-31 Enviar" en el menú desplegable
+
+Deberías ver que la billetera demo encuentre las URLs de tu servicio, se autentique y verifique qué campos KYC necesita recolectar. Luego debería presentar un formulario para que ingreses los detalles KYC del emisor y el receptor.
+
+[![billetera demo después de iniciar una transacción](../../assets/anchor-platform-sep31-demo-wallet-widget.png)](../../assets/anchor-platform-sep31-demo-wallet-widget.png)
+
+Una vez que hayas ingresado la información solicitada, se enviará esa información a la Anchor Platform, que la enviará a tu servidor empresarial. Una vez que la billetera demo tenga los IDs de los clientes que generaste, iniciará una transacción que debería fallar.
+
+## Punto final de devolución de llamada de tasas
+
+Una vez que la organización emisora haya registrado a los clientes involucrados en la transacción, necesitará solicitar una cotización, o tasa de FX, de tu negocio. La Anchor Platform solicita esta información a tu servidor empresarial utilizando el [`GET /rate` endpoint][get-rate].
+
+### Cotizaciones Firmes vs. Indicativas
+
+Las solicitudes de cotizaciones tendrán un parámetro `type` que es [`indicative`][indicative] o [`firm`][firm]. Si `type=firm`, tu respuesta debe incluir el campo `id` y `expires_at` y reservar la liquidez necesaria para cumplir con esta cotización hasta que expire. Si `type=indicative`, no devuelvas los campos `id` o `expires_at` porque la tasa proporcionada no se utilizará en una transacción.
+
+Ten en cuenta que el cliente puede solicitar que la cotización expire después de una fecha y hora específicas utilizando el parámetro `expires_after`. Tu negocio debe honrar esta solicitud devolviendo un valor `expires_at` que esté en o después de la fecha y hora solicitadas o rechazar la solicitud con una respuesta de 400 Bad Request, que se reenviará al cliente.
+
+### Usando el ID del Cliente
+
+Las solicitudes pueden incluir un parámetro `client_id` que identifica a la organización emisora que solicita la tasa. Puedes usar este parámetro para adherirte a los términos comerciales acordados con esa organización emisora, como ofrecer tasas con descuento. `client_id` puede no estar presente en solicitudes indicativas, en cuyo caso debería devolverse tu precio de mercado. Actualmente, `client_id` siempre será la clave pública Stellar que la organización emisora utilizó para autenticarse con la Anchor Platform.
+
+### Métodos de Entrega
+
+Es común que las tasas y tarifas de las empresas difieran dependiendo de las vías de pago utilizadas para enviar fondos al destinatario. Si tus métodos de entrega están configurados en tu archivo `asset.yaml`, los clientes siempre proporcionarán la vía de pago que desean que use tu negocio para solicitudes de cotización firmes.
+
+Debido a que este endpoint actualmente solo se utiliza para pagar remesas en activos off-chain, se utilizará `buy_delivery_method`. Si este endpoint se utiliza en otros flujos de transacción como depósitos SEP-24, entonces `sell_delivery_method` también puede ser pasado para negocios que apoyen estos tipos de transacciones.
+
+## Obteniendo Actualizaciones sobre el Estado de la Transacción
+
+Para facilitar pagos transnacionales, necesitarás poder detectar cuándo una organización emisora ha enviado un pago on-chain a tu negocio y determinar qué transacción ese pago estaba destinado a cumplir.
+
+La forma más fácil de hacerlo es ejecutar el Stellar Observer, que detectará estos pagos y actualizará el registro de transacción correspondiente con información sobre el pago. Tu negocio puede detectar estas actualizaciones consultando el endpoint de la API de la Plataforma `GET /transactions`.
+
+### Ejecutando el Stellar Observer
+
+The Stellar Observer monitors the Stellar ledger for payments made to your account(s) and updates the corresponding transaction records with on-chain payment information. Para ejecutar el observador, añade lo siguiente a tu archivo de docker compose.
+
+<CodeExample>
+
+```yaml
+services:
+  ...
+  observer:
+    image: stellar/anchor-platform:3.0.4
+    command: --stellar-observer
+    env_file:
+      - ./dev.env
+    volumes:
+      - ./config:/home
+```
+
+</CodeExample>
+
+### Consultando por Pagos Recibidos
+
+El Stellar Observer realiza solicitudes JSON-RPC a la API de la Plataforma siempre que detecta pagos recibidos para transacciones iniciadas por organizaciones emisoras, actualizando así la fecha y hora de `transfer_received_at` de la transacción.
+
+Tu negocio debe consultar periódicamente el endpoint de la API de la Plataforma `GET /transactions` para detectar estas actualizaciones. Puedes referirte al siguiente ejemplo:
+
+<CodeExample>
+
+```bash
+curl http://localhost:8080/transactions?sep=31&order_by=transfer_received_at&order=desc
+```
+
+</CodeExample>
+
+La respuesta incluirá una lista de transacciones de pago transnacional iniciadas por las organizaciones emisoras. Esta lista estará ordenada de acuerdo con el momento en que se recibió un pago para esa transacción. Para cada transacción devuelta, tu negocio debería verificar si ya ha detectado el pago para esa transacción. If it has, you have detected all payments made to your account(s).
+
+## Actualizando la Transacción a Través de JSON-RPC
+
+El diagrama de flujo SEP-31 define la secuencia/reglas de la transición de estado de la transacción y un conjunto de métodos JSON-RPC que deben ser llamados para cambiar ese estado. No puedes definir el estado que deseas configurar para una transacción específica en tus solicitudes. Cada método JSON-RPC define estructuras de datos que espera en la solicitud. Si la solicitud no contiene los atributos requeridos, la Anchor Platform devolverá un error y no cambiará el estado de la transacción.
+
+[![diagrama de flujo sep31](../../assets/sep31-transition-diagram.png)](../../assets/sep31-transition-diagram.png)
+
+:::tip
+
+Los estados en <span style={{color: "green"}}>verde</span> son obligatorios y definen el flujo más corto.
+
+Los estados en <span style={{color: "#B0BF1A"}}>amarillo</span> son opcionales y pueden ser omitidos.
+
+Los estados en <span style={{color: "red"}}>rojo</span> significan que la transacción está en un estado de error o ha caducado.
+
+:::
+
+Puedes crear una [plantilla][sep24-integration-make-json-rpc-request] para hacer solicitudes JSON-RPC a la Anchor Platform.
+
+Este capítulo también contiene información sobre el formato de [solicitud][sep24-integration-rpc-request]/[respuesta][sep24-integration-rpc-response] y [códigos de error][sep24-integration-error-codes] que podrían ser devueltos por la Anchor Platform.
+
+### Listo para Recibir Fondos
+
+Las transacciones SEP-31 deberían estar inicialmente en el estado `pending_receiver`. Para solicitar fondos de la Anchor Enviadora, la Anchor Receptora debería cambiar el estado de la transacción a `pending_sender` haciendo la siguiente solicitud RPC:
+
+<CodeExample>
+
+```json
+// request-onchain-funds.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "request_onchain_funds",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Request onchain funds",
+      "destination_account": "GD...G",
+      "memo": "12345",
+      "memo_type": "id"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh request-onchain-funds.json
+```
+
+</CodeExample>
+
+El estado de la transacción se cambiará a `pending_sender`.
+
+### Fondos Recibidos
+
+Si la Anchor Enviadora ha enviado los fondos, la Anchor Receptora debería cambiar el estado de la transacción a `pending_receiver` haciendo la siguiente solicitud JSON-RPC:
+
+<CodeExample>
+
+```json
+// onchain-funds-received.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_onchain_funds_received",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Onchain funds received",
+      "stellar_transaction_id": "7...9",
+      "amount_in": {
+        "amount": 10
+      },
+      "amount_out": {
+        "amount": 9
+      },
+      "fee_details": {
+        "total": 1
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh onchain-funds-received.json
+```
+
+</CodeExample>
+
+El estado de la transacción se cambiará a `pending_receiver`.
+
+### Fondos Offchain Enviados
+
+Para completar la transacción y cambiar su estado a `completed`, necesitas hacer una solicitud JSON-RPC `notify_offchain_funds_sent`.
+
+<CodeExample>
+
+```json
+// offchain-funds-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds sent",
+      "funds_sent_at": "2023-07-04T12:34:56Z",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-sent.json
+```
+
+</CodeExample>
+
+### Fondos Offchain Pendientes
+
+Otra opción es mover el estado de la transacción a `pending_external`. Este estado significa que el pago ha sido enviado a la red externa, pero aún no está confirmado.
+
+<CodeExample>
+
+```json
+// offchain-funds-pending.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_pending",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds pending",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-pending.json
+```
+
+</CodeExample>
+
+### Verificando Información del Cliente
+
+En algunos casos, la Anchor Receptora podría necesitar solicitar información actualizada de la Anchor Emisora. Por ejemplo, el banco le dice a la Anchor Receptora que el nombre del Cliente Receptor proporcionado es incorrecto o carece de un segundo nombre. Dado que esta información fue enviada a través de SEP-12, la transacción debería pasar al estado `pending_customer_info_update` hasta que la Anchor Emisora realice otra solicitud `PUT /customer` de SEP-12 para actualizar. La Anchor Emisora puede verificar qué campos necesitan ser actualizados haciendo una solicitud `GET /customer` de SEP-12 que incluya los parámetros id o cuenta y memo. La Anchor Receptora debería responder con un estado `NEEDS_INFO` y con `last_name` incluido en los campos descritos.
+
+Después de que la Anchor Emisora haga una solicitud `PUT /customer` de SEP-12, llama al método JSON-RPC `notify_customer_info_updated` nuevamente para actualizar el estado de la transacción. Además, llama a este método cada vez que cambia el estado SEP-12 para un cliente, como cuando la información del cliente está siendo validada y el estado cambia de `NEEDS_INFO` a `PROCESSING`. Esto asegura que cualquier cliente configurado con una URL de devolución de llamada sea notificado del último estado del cliente, permitiendo que el cliente le pida al usuario que actualice su información.
+
+<CodeExample>
+
+```json
+// notify-customer-info-updated.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_customer_info_updated",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Customer info updated",
+      "customer_id": "45f8884d-d6e1-477f-a680-503179263359",
+      "customer_type": "sep31-receiver" // or sep31-sender
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh notify-customer-info-updated.json
+```
+
+</CodeExample>
+
+### Hacer un Reembolso Stellar
+
+Integrarse con el servicio de custodia te permite hacer un reembolso a través del servicio de custodia, como Fireblocks.
+
+<CodeExample>
+
+```json
+// do-stellar-refund.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "do_stellar_refund",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Do stellar refund",
+      "refund": {
+        "amount": {
+          "amount": 9,
+          "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+        },
+        "amount_fee": {
+          "amount": 1,
+          "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+        }
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh do-stellar-refund.json
+```
+
+</CodeExample>
+
+:::note
+
+No puedes hacer múltiples reembolsos en el flujo SEP-31. Por esta razón, el total del monto del reembolso más la tarifa debe ser igual a `amount_in`. De lo contrario, recibirás un error.
+
+:::
+
+### Reembolso Enviado
+
+Es posible enviar todos los fondos de vuelta a la `Anchor Enviadora` (reembolso). Necesitas reembolsar toda la suma (reembolso total).
+
+<CodeExample>
+
+```json
+// refund-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_refund_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Refund sent",
+      "refund": {
+        "id": "1c186184-09ee-486c-82a6-aa7a0ab1119c",
+        "amount": {
+          "amount": 10,
+          "asset": "iso4217:USD"
+        },
+        "amount_fee": {
+          "amount": 1,
+          "asset": "iso4217:USD"
+        }
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh refund-sent.json
+```
+
+</CodeExample>
+
+:::note
+
+No puedes hacer múltiples reembolsos en el flujo SEP-31. Por esta razón, el monto a reembolsar más la tarifa debe ser igual a `amount_in`. De lo contrario, recibirás un error.
+
+:::
+
+### Error de Transacción
+
+Si encuentras un error irrecuperable al procesar la transacción, es necesario establecer el estado de la transacción a `error`. Puedes usar el campo de mensaje para describir los detalles del error.
+
+<CodeExample>
+
+```json
+// transaction-error.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_error",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Error occurred"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-error.json
+```
+
+</CodeExample>
+
+:::tip
+
+Si un usuario ha realizado una transferencia, debes hacer una recuperación de la transacción, y luego puedes intentar procesar la transacción nuevamente o iniciar un reembolso.
+
+:::
+
+### Transacción Caducada
+
+Tu negocio puede querer caducar aquellas transacciones que han sido abandonadas por el usuario después de un tiempo. Es una buena práctica limpiar transacciones inactivas en estado `incomplete`. Para hacerlo, simplemente cambia el estado de la transacción a `expired`.
+
+<CodeExample>
+
+```json
+// transaction-expired.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_expired",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction expired"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-expired.json
+```
+
+</CodeExample>
+
+:::tip
+
+Este método JSON-RPC no se puede usar después de que el usuario ha realizado una transferencia.
+
+:::
+
+### Recuperación de Transacción
+
+El estado de la transacción puede cambiarse de `error/expired` a `pending-anchor`. Después de la recuperación, puedes reembolsar los activos recibidos o proceder con el procesamiento de la transacción. Para recuperar la transacción, es necesario realizar la siguiente solicitud JSON-RPC:
+
+<CodeExample>
+
+```json
+// transaction-recovery.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_recovery",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction recovered"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-recovery.json
+```
+
+</CodeExample>
+
+### Configuración
+
+Puedes habilitar estos tipos de transacciones actualizando la configuración de tu archivo `assets.yaml`:
+
+<CodeExample>
+
+```yaml
+items:
+  - ...
+    sep31:
+      quotes_required: false
+```
+
+</CodeExample>
+
+[ap-api]: ../../README.mdx
+[ap-sep10]: ../sep10/README.mdx
+[sep12]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0012.md
+[demo-wallet]: https://demo-wallet.stellar.org
+[indicativo]: https://www.investopedia.com/terms/i/indicativequote.asp
+[firme]: https://www.investopedia.com/terms/f/firmquote.asp
+[get-customer]: ../../api-reference/callbacks/get-customer.api.mdx
+[put-customer]: ../../api-reference/callbacks/put-customer.api.mdx
+[get-rate]: ../../api-reference/callbacks/get-rates.api.mdx
+[put-customer-callback]: ../../api-reference/callbacks/put-customer.api.mdx
+[delete-customer]: ../../api-reference/callbacks/del-customer.api.mdx
+[json-rpc-methods]: ../../api-reference/platform/rpc/methods/README.mdx
+[sep24-integration-make-json-rpc-request]: ../sep24/integration.mdx#making-json-rpc-requests
+[sep24-integration-rpc-request]: ../sep24/integration.mdx#json-rpc-request
+[sep24-integration-rpc-response]: ../sep24/integration.mdx#json-rpc-response
+[sep24-integration-error-codes]: ../sep24/integration.mdx#error-codes

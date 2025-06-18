@@ -1,0 +1,438 @@
+---
+title: Ejemplo
+sidebar_position: 40
+---
+
+Integrarse con la Anchor Platform implica tres áreas clave:
+
+- Crear una experiencia de usuario basada en la web que se pueda abrir en una vista web móvil
+- Proporcionar actualizaciones del estado de las transacciones a la Anchor Platform
+- Obtener actualizaciones del estado de las transacciones de la Anchor Platform
+
+## Crear una experiencia de usuario basada en la web
+
+La Anchor Platform no ofrece una interfaz de usuario de marca blanca que tu negocio pueda utilizar y, en su lugar, espera que el negocio cree su propia interfaz de usuario y sistema backend. No vamos a crear una experiencia de usuario completa de entrada y salida en esta guía, pero cubriremos las maneras en que tu producto existente debería actualizarse para ser compatible con la Anchor Platform.
+
+### Autenticación
+
+Si tu negocio tiene un producto de entrada y salida existente, probablemente tengas un sistema existente para la autenticación de usuarios. Sin embargo, debido a que la Anchor Platform autentica al usuario antes de proporcionar la URL del negocio, requerir que el usuario pase por otra forma de autenticación es en realidad innecesario. De esta manera, se puede pensar en la Anchor Platform como que proporciona una forma alternativa de autenticación.
+
+El negocio es libre de continuar requiriendo a los usuarios que se autentiquen utilizando su sistema existente, pero la experiencia de usuario ideal evitaría este paso y crearía una sesión autenticada para el usuario si ya se ha autenticado usando su cuenta Stellar.
+
+La Anchor Platform añade un parámetro de consulta JWT `token` a la URL del negocio proporcionada a la aplicación de billetera. Este token está firmado por el valor `SECRET_SEP24_INTERACTIVE_URL_JWT_SECRET` previamente configurado e incluye la información que necesitas para identificar al usuario. El proceso debería verse algo así:
+
+1. Pasa el `token` añadido a la URL de tu sistema backend
+2. Verifica la firma del `token` y verifica su caducidad
+3. Crea una sesión autenticada para el usuario identificado por `token.sub`
+
+El contenido decodificado del `token` se verá algo así:
+
+<CodeExample>
+
+```json
+{
+  "jti": "e26cf292-814f-4918-9b40-b4f76a300f98",
+  "sub": "GB244654NC6YPEFU3AY7L25COGES445P3Q63W6Q76JHR3UBJMLT2XBOB:1234567",
+  "exp": 1516239022,
+  "data": {
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "johndoe@example.com"
+  }
+}
+```
+
+</CodeExample>
+
+Ten en cuenta que el valor `sub` identifica al usuario usando una cuenta Stellar y un número entero. Este es el valor que tendrá cuando las aplicaciones de custodia que utilizan una cuenta omnibus se autentiquen con tu servicio. Cuando las billeteras no custodiales se autentiquen, el token puede verse un poco diferente.
+
+<CodeExample>
+
+```json
+{
+  "jti": "e26cf292-814f-4918-9b40-b4f76a300f98",
+  "sub": "GB244654NC6YPEFU3AY7L25COGES445P3Q63W6Q76JHR3UBJMLT2XBOB",
+  "exp": 1516239022,
+  "data": {
+    "client_domain": "api.vibrantapp.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "johndoe@example.com"
+  }
+}
+```
+
+</CodeExample>
+
+El valor `sub` aquí solo contiene una clave pública para identificar al usuario, y el campo `data.client_domain` identifica la aplicación de billetera utilizada para autenticarse.
+
+En ambos casos, toda la información en el objeto `data` es opcional y solo estará presente si la billetera proporciona esa información.
+
+Vamos a añadir un servidor backend a nuestro archivo de composición que se usará para verificar el token y crear sesiones web autenticadas para los usuarios que inician transacciones.
+
+<CodeExample>
+
+```yaml
+# docker-compose.yaml
+---
+business-server:
+  build: .
+  ports:
+    - "8081:8081"
+  env_file:
+    - ./dev.env
+  depends_on:
+    - platform-server
+```
+
+</CodeExample>
+
+Vamos a crear un contenedor de Docker simple para nuestra aplicación.
+
+<CodeExample>
+
+```docker
+FROM node:19
+
+WORKDIR /home
+COPY . .
+RUN npm install
+
+CMD ["node", "server.js"]
+```
+
+</CodeExample>
+
+Ahora vamos a crear una aplicación NodeJS mínima.
+
+<CodeExample>
+
+```bash
+yarn init -y
+yarn add express jsonwebtoken
+touch server.js
+```
+
+</CodeExample>
+
+A continuación se muestra un ejemplo de un servidor backend autenticando a un usuario utilizando NodeJS.
+
+<CodeExample>
+
+```js
+# server.js
+const express = require("express");
+const jwt = require("jsonwebtoken");
+const app = express();
+const port = process.env.BUSINESS_SERVER_PORT;
+
+app.use(express.json());
+
+/*
+ * We'll store user session data in memory, but production systems
+ * should store this data somewhere more persistent.
+ */
+const sessions = {};
+
+/*
+ * Create an authenticated session for the user.
+ *
+ * Return a session token to be used in future requests as well as the
+ * user data. Note that you may not have a user for the stellar account
+ * provided, in which case the user should go through your onboarding
+ * process.
+ */
+app.post("/session", async (req, res) => {
+  let decodedPlatformToken;
+  try {
+    decodedPlatformToken = validatePlatformToken(req.body.platformToken);
+  } catch (err) {
+    res.status = 400;
+    res.send({ "error": err });
+    return;
+  }
+  let user = getUser(decodedPlatformToken.sub);
+  let sessionToken = jwt.sign(
+    { "jti": decodedPlatformToken.jti },
+    process.env.SESSION_JWT_SECRET
+  );
+  sessions[sessionToken] = user;
+  res.send({
+    "token": sessionToken,
+    "user": user
+  });
+});
+
+/*
+ * Validate the signature and contents of the platform's token
+ */
+function validatePlatformToken(token) {
+  if (!token) {
+    throw "missing 'platformToken'";
+  }
+  let decodedToken;
+  try {
+    decodedToken = jwt.verify(token, process.env.SECRET_SEP10_JWT_SECRET);
+  } catch {
+    throw "invalid 'platformToken'";
+  }
+  if (!decodedToken.jti) {
+    throw "invalid 'platformToken': missing 'jti'";
+  }
+  return decodedToken;
+}
+
+/*
+ * Query your own database for the user based on account:memo string parameter
+ */
+function getUser(sub) {
+  return null;
+}
+
+app.listen(port, () => {
+    console.log(`business server listening on port ${port}`);
+});
+```
+
+</CodeExample>
+
+Ejecuta esto con el servidor de la plataforma y la base de datos e inicia una nueva transacción con la [billetera de demostración][stellar-demo-wallet]. Luego, enviaremos el token a nuestro servidor.
+
+<CodeExample>
+
+```bash
+curl \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"platformToken": "<paste the token from the URL here>"}' \
+  http://localhost:8081/session | jq
+```
+
+</CodeExample>
+
+## Proporcionando Actualizaciones a la Plataforma
+
+Vamos a crear un endpoint para nuestro servidor de negocio que acepte la información recopilada en nuestra interfaz de usuario.
+
+<CodeExample>
+
+```js
+# server.js
+
+// Production systems should either let the Anchor Platform generate its own memos
+// or have your custodial service generate a memo for each transaction.
+const transactionMemos = {};
+
+app.post("/transaction", async (req, res) => {
+  let sessionToken;
+  try {
+    sessionToken = validateSessionToken(req.headers.get("authorization"));
+  } catch (err) {
+    res.status = 400;
+    res.send({ "error": err })
+    return;
+  }
+  // assuming this is a withdrawal transaction, we'll provide a memo, which is
+  // required by our third-party custodian to credit us the payment. When the
+  // payment is made with this memo, we can match the on-chain payment with the
+  // transaction in the Anchor Platform's database.
+  transactionMemos[req.body.transaction.id] = parseInt(Math.random() * 100000);
+  let rpcRequestBody = [
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "request_onchain_funds",
+      "params": {
+        "transaction_id": req.body.transaction.id,,
+        "message": "waiting for the user to provide off-chain funds.",
+        "amount_in": {
+          "amount": req.body.amount_in.amount,
+          "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+        },
+        "amount_out": {
+          "amount": req.body.amount_out.amount,
+          "asset": "iso4217:USD"
+        },
+        "amount_fee": {
+          "amount": req.body.amount_fee.amount,
+          "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+        },
+        "destination_account": "GD...G",
+        "memo": transactionMemos[req.body.transaction.id],
+        "memo_type": "id"
+      }
+    }
+  ];
+  let platformResponse;
+  try {
+    platformResponse = await updatePlatformTransaction(rpcRequestBody);
+  } catch (err) {
+    res.status = 500;
+    res.send({ "error": err })
+    return;
+  }
+  res.send({
+    "transaction": platformResponse.records[0]
+  });
+});
+
+function validateSessionToken(authorizationHeader) {
+    let parts = authorizationHeader.split(" ");
+    if (parts.length != 2 || parts[0] != "Bearer") {
+        throw "invalid authorization header format";
+    }
+    let sessionToken = parts[1];
+    try {
+        jwt.verify(sessionToken, process.env.SESSION_JWT_SECRET);
+    } catch {
+        throw "invalid session token";
+    }
+    if (!sessions[sessionToken]) {
+        throw "expired session";
+    }
+    return sessionToken;
+}
+
+async function updatePlatformTransaction(requestBody) {
+  let response = await fetch(
+    `${process.env.PLATFORM_SERVER}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    }
+  );
+  if (response.status != 200) {
+    throw `unexpected status code: ${response.status}`;
+  }
+  return await response.json();
+}
+```
+
+</CodeExample>
+
+Esto actualizará la base de datos de la Anchor Platform con la información proporcionada y permitirá que las aplicaciones de billetera obtengan esta información actualizada para poder transmitirla de nuevo al usuario. Ya deberías haber informado al usuario sobre las cantidades de la transacción y que tu negocio está esperando que llegue el pago on-chain, pero proporcionar estas actualizaciones permite a los usuarios ver los estados de sus transacciones a través de su aplicación móvil sin tener que abrir de nuevo la interfaz de usuario del negocio.
+
+:::note
+
+En este momento, la Anchor Platform no envía notificaciones a la aplicación de billetera cuando cambian los estados de las transacciones, sin embargo, está en nuestra hoja de ruta agregar estas notificaciones o "solicitudes de callback" para que las aplicaciones de billetera no tengan que sondear la Anchor Platform en busca de actualizaciones.
+
+:::
+
+## Obteniendo Actualizaciones de la Plataforma
+
+Si solo usas la Anchor Platform para exponer las API SEP a las aplicaciones de billetera, entonces no tendrás una razón fuerte para obtener actualizaciones del estado de las transacciones de la Anchor Platform, principalmente porque no actualizará el estado de la transacción hasta que realices solicitudes de la `API JSON-RPC`.
+
+Sin embargo, si usas la Anchor Platform para monitorear la red Stellar para pagos entrantes (asociados a transacciones de retirada de fondos), la Anchor Platform actualizará los estados de las transacciones cuando los pagos sean recibidos.
+
+Hay dos formas de obtener actualizaciones de la Anchor Platform,
+
+- Sondeando el endpoint `GET /transactions/:id` de la API de la Plataforma para las transacciones que esperas que reciban un pago
+- Transmitiendo eventos de cambio de estado de transacciones desde un clúster de Kafka
+
+Si bien transmitir cambios de estado de transacciones desde un clúster de Kafka puede ser un enfoque más robusto y escalable, vamos a utilizar el método de sondeo en esta guía. Configurar y usar un clúster de Kafka será el tema de una sección diferente de la documentación.
+
+Primero, configuremos la Anchor Platform para observar la red Stellar en busca de pagos entrantes.
+
+<CodeExample>
+
+```yaml
+# docker-compose.yml
+---
+stellar-observer:
+  image: stellar/anchor-platform:2.10.0
+  command: --stellar-observer
+  env_file:
+    - ./dev.env
+  volumes:
+    - ./config:/home
+  depends_on:
+    - db
+```
+
+</CodeExample>
+
+El comando `--stellar-observer` inicia un proceso que monitorea las cuentas de distribución configuradas en tu archivo `config.yaml` en busca de pagos de retirada de fondos.
+
+Si se envía un pago a una de estas cuentas y el memo adjunto a la transacción coincide con un valor `memo` proporcionado o generado por la Anchor Platform, la Anchor Platform considerará la transacción cuyo memo está asociado como recibida y actualizará el estado de la transacción a `pending_anchor`. Hace esto realizando una solicitud a la `API JSON-RPC`, así que necesitamos configurar la URL que debería usar.
+
+<CodeExample>
+
+```bash
+# dev.env
+PLATFORM_API_BASE_URL=http://platform-server:8085
+```
+
+</CodeExample>
+
+Vamos a hacer algunas adiciones al archivo `server.js` para que podamos sondear la Anchor Platform para nuestros pagos esperados.
+
+<CodeExample>
+
+```js
+// server.js
+...
+/*
+ * Fetch the transaction data from the Platform API
+ *
+ * Production systems should have proper retry mechanisms.
+ */
+async function getPlatformTransaction(transactionId) {
+  let response = await fetch(`${process.env.PLATFORM_SERVER}/transactions/${transactionId}`)
+  if (response.status != 200) {
+    throw `unexpected status code: ${response.status}`;
+  }
+  return await response.json();
+}
+
+(async () => {
+  while (true) {
+    await new Promise(r => setTimeout(r, 2000));
+    let requestPromises;
+    for (const transactionId in transactionMemos) {
+      requestPromises.push(getPlatformTransaction(transactionId))
+    }
+    let transactions = await new Promise.all(requestPromises);
+    for (const transaction in transactions) {
+      // assuming all requests were successful
+      if (transaction.status == "pending_anchor") {
+        // initiate off-chain delivery of funds
+        console.log(`received payment for transaction ${transaction.id}`);
+      }
+    }
+  }
+})()
+```
+
+</CodeExample>
+
+## Implementación de Ejemplo Completo
+
+Stellar proporciona un ejemplo de implementación de servidor de negocio para SEP-24. Se divide en dos partes: 1) una interfaz de usuario web, accesible para el usuario final; y 2) una implementación de backend, utilizada para obtener y enviar actualizaciones desde/hacia la Anchor Platform.
+
+El código para la interfaz de usuario web se puede encontrar [aquí][sep-24-ref-ui]
+
+El código para el backend es parte de la Anchor Platform y está disponible como [submódulo][sep-24-ref].
+
+[sep-1]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
+[sep-9]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0009.md
+[sep-24]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md
+[sep-38]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0038.md
+[sep24-get-info]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md#info
+[anchor-platform-image]: https://hub.docker.com/r/stellar/anchor-platform
+[docker-compose]: https://docs.docker.com/compose/
+[minikube]: https://minikube.sigs.k8s.io/docs/
+[kubernetes]: https://kubernetes.io/
+[nginx]: https://www.nginx.com/
+[ap-default-values]: https://github.com/stellar/java-stellar-anchor-sdk/blob/develop/platform/src/main/resources/config/anchor-config-default-values.yaml
+[stellar-demo-wallet]: https://demo-wallet.stellar.org
+[stellar-lab]: https://lab.stellar.org/
+[postgresql]: https://www.postgresql.org/
+[aurora-postgresql]: https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.AuroraPostgreSQL.html
+[h2]: https://www.h2database.com/html/main.html
+[sqlite]: https://www.sqlite.org/index.html
+[flyway]: https://documentation.red-gate.com/fd/redgate-flyway-documentation-138346877.html
+[sep-24-ref-ui]: https://github.com/stellar/sep24-reference-ui
+[sep-24-ref]: https://github.com/stellar/java-stellar-anchor-sdk/tree/develop/kotlin-reference-server

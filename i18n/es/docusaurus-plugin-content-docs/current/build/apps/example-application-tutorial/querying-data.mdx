@@ -1,0 +1,345 @@
+---
+title: Consulta de Datos
+sidebar_position: 70
+---
+
+Tu aplicación estará consultando datos de Horizon (una de las APIs de Stellar) a lo largo de su funcionalidad. Información como saldos de cuentas, historial de transacciones, números de secuencia de transacciones, disponibilidad de activos y más se almacenan en la base de datos de Horizon.
+
+Aquí hay una lista de algunas consultas comunes que realizarás.
+
+:::note
+
+In other places in this tutorial, we have omitted the JSDoc descriptions and typing for the sake of clean presentation. Aquí, estamos incluyendo eso para hacer que estas funciones sean más fáciles de copiar/pegar.
+
+:::
+
+## Importaciones y tipos
+
+```js title="/src/lib/stellar/horizonQueries.js"
+import { error } from "@sveltejs/kit";
+import {
+  Server,
+  TransactionBuilder,
+  Networks,
+  StrKey,
+  Asset,
+} from "stellar-sdk";
+
+const horizonUrl = "https://horizon-testnet.stellar.org";
+const server = new Server(horizonUrl);
+
+/**
+ * @module $lib/stellar/horizonQueries
+ * @description A collection of function that helps query various information
+ * from the [Horizon API](https://developers.stellar.org/api/horizon). This
+ * allows us to abstract and simplify some interactions so we don't have to have
+ * _everything_ contained within our `*.svelte` files.
+ */
+
+// We'll import some type definitions that already exists within the
+// `stellar-sdk` package, so our functions will know what to expect.
+/** @typedef {import('stellar-sdk').ServerApi.AccountRecord} AccountRecord */
+/** @typedef {import('stellar-sdk').Horizon.ErrorResponseData} ErrorResponseData */
+/** @typedef {import('stellar-sdk').ServerApi.PaymentOperationRecord} PaymentOperationRecord */
+/** @typedef {import('stellar-sdk').Horizon.BalanceLine} BalanceLine */
+/** @typedef {import('stellar-sdk').Horizon.BalanceLineAsset} BalanceLineAsset */
+/** @typedef {import('stellar-sdk').Transaction} Transaction */
+/** @typedef {import('stellar-sdk').ServerApi.PaymentPathRecord} PaymentPathRecord */
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+## fetchAccount
+
+Devuelve el número de secuencia de una cuenta, saldos de activos y líneas de confianza.
+
+```js title="/src/lib/stellar/horizonQueries.js"
+/**
+ * Fetches and returns details about an account on the Stellar network.
+ * @async
+ * @function fetchAccount
+ * @param {string} publicKey Public Stellar address to query information about
+ * @returns {Promise<AccountRecord>} Object containing whether or not the account is funded, and (if it is) account details
+ * @throws {error} Will throw an error if the account is not funded on the Stellar network, or if an invalid public key was provided.
+ */
+export async function fetchAccount(publicKey) {
+  if (StrKey.isValidEd25519PublicKey(publicKey)) {
+    try {
+      let account = await server.accounts().accountId(publicKey).call();
+      return account;
+    } catch (err) {
+      // @ts-ignore
+      if (err.response?.status === 404) {
+        throw error(404, "account not funded on network");
+      } else {
+        // @ts-ignore
+        throw error(err.response?.status ?? 400, {
+          // @ts-ignore
+          message: `${err.response?.title} - ${err.response?.detail}`,
+        });
+      }
+    }
+  } else {
+    throw error(400, { message: "invalid public key" });
+  }
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+## fetchAccountBalances
+
+Obtiene saldos existentes para un `publicKey` dado.
+
+```js title="/src/lib/stellar/horizonQueries.js"
+/**
+ * Fetches and returns balance details for an account on the Stellar network.
+ * @async
+ * @function fetchAccountBalances
+ * @param {string} publicKey Public Stellar address holding balances to query
+ * @returns {Promise<BalanceLine[]>} Array containing balance information for each asset the account holds
+ */
+export async function fetchAccountBalances(publicKey) {
+  const { balances } = await fetchAccount(publicKey);
+  return balances;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+## fetchRecentPayments
+
+Encuentra cualquier pago realizado a o desde el `publicKey` dado (incluye: pagos, pagos de rutas y fusiones de cuentas).
+
+```js title="/src/lib/stellar/horizonQueries.js"
+/**
+ * Fetches and returns recent `payment`, `createAccount` operations that had an effect on this account.
+ * @async
+ * @function fetchRecentPayments
+ * @param {string} publicKey Public Stellar address to query recent payment operations to/from
+ * @param {number} [limit] Number of operations to request from the server
+ * @returns {Promise<PaymentOperationRecord[]>} Array containing details for each recent payment
+ */
+export async function fetchRecentPayments(publicKey, limit = 10) {
+  const { records } = await server
+    .payments()
+    .forAccount(publicKey)
+    .limit(limit)
+    .order("desc")
+    .call();
+  return records;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+## submit
+
+Envía una transacción firmada a la red Stellar.
+
+```js title="/src/lib/stellar/horizonQueries.js"
+/**
+ * Submits a Stellar transaction to the network for inclusion in the ledger.
+ * @async
+ * @function submit
+ * @param {Transaction} transaction Built transaction to submit to the network
+ * @throws Will throw an error if the transaction is not submitted successfully.
+ */
+export async function submit(transaction) {
+  try {
+    await server.submitTransaction(transaction);
+  } catch (err) {
+    throw error(400, {
+      // @ts-ignore
+      message: `${err.response?.title} - ${err.response?.data.extras.result_codes}`,
+    });
+  }
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+## fetchAssetsWithHomeDomains
+
+Creamos un nuevo tipo `HomeDomainBalanceLine` que incluye la información del saldo de una línea de confianza de un usuario y también agrega el `home_domain` del emisor del activo. Si estás utilizando algo más para la seguridad de tipos (o nada en absoluto), siéntete libre de adaptar o ignorar los `@typedef`s que hemos incluido aquí.
+
+Luego, revisa todas las cuentas emisoras y devuelve solo las que tengan un `home_domain` establecido en la cuenta.
+
+```js title="/src/lib/stellar/horizonQueries.js"
+/**
+ * @typedef {Object} HomeDomainObject
+ * @property {string} home_domain Domain name the issuer of this asset has set for their account on the Stellar network.
+ */
+
+/** @typedef {BalanceLineAsset & HomeDomainObject} HomeDomainBalanceLine */
+
+/**
+ * Fetches `home_domain` from asset issuer accounts on the Stellar network and returns an array of balances.
+ * @async
+ * @function fetchAssetsWithHomeDomains
+ * @param {BalanceLine[]} balances Array of balances to query issuer accounts of
+ * @returns {Promise<HomeDomainBalanceLine[]>} Array of balance details for assets that do have a `home_domain` setting
+ */
+export async function fetchAssetsWithHomeDomains(balances) {
+  let homeDomains = await Promise.all(
+    balances.map(async (asset) => {
+      // We are only interested in issued assets (i.e., not LPs and not XLM)
+      if ("asset_issuer" in asset) {
+        // Fetch the account from the network, and add its info to the array, along with the home_domain
+        let account = await fetchAccount(asset.asset_issuer);
+        if ("home_domain" in account) {
+          return {
+            ...asset,
+            home_domain: account.home_domain,
+          };
+        }
+      }
+    }),
+  );
+
+  // Filter out any null array entries before returning
+  // @ts-ignore
+  return homeDomains.filter((balance) => balance);
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+## findStrictSendPaths
+
+Encuentra las rutas de envío estrictas disponibles entre un activo/cantidad de origen y una cuenta receptora.
+
+```js title="/src/lib/stellar/horizonQueries.js"
+/**
+ * Fetches available paths on the Stellar network between the destination account, and the asset sent by the source account.
+ * @async
+ * @function findStrictSendPaths
+ * @param {Object} opts Options object
+ * @param {string} opts.sourceAsset Stellar asset which will be sent from the source account
+ * @param {string|number} opts.sourceAmount Amount of the Stellar asset that should be debited from the srouce account
+ * @param {string} opts.destinationPublicKey Public Stellar address that will receive the destination asset
+ * @returns {Promise<PaymentPathRecord[]>} Array of payment paths that can be selected for the transaction
+ * @throws Will throw an error if there are no available payment paths.
+ */
+export async function findStrictSendPaths({
+  sourceAsset,
+  sourceAmount,
+  destinationPublicKey,
+}) {
+  let asset =
+    sourceAsset === "native"
+      ? Asset.native()
+      : new Asset(sourceAsset.split(":")[0], sourceAsset.split(":")[1]);
+  let response = await server
+    .strictSendPaths(asset, sourceAmount.toString(), destinationPublicKey)
+    .call();
+  if (response.records.length > 0) {
+    return response.records;
+  } else {
+    throw error(400, { message: "no strict send paths available" });
+  }
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+## findStrictReceivePaths
+
+Encuentra las rutas de recepción estrictas disponibles entre una cuenta de origen y un activo/cantidad receptora.
+
+```js title="/src/lib/stellar/horizonQueries.js"
+/**
+ * Fetches available paths on the Stellar network between the source account, and the asset to be received by the destination.
+ * @async
+ * @function findStrictReceivePaths
+ * @param {Object} opts Options object
+ * @param {string} opts.sourcePublicKey Public Stellar address that will be the source of the payment operation
+ * @param {string} opts.destinationAsset Stellar asset which should be received in the destination account
+ * @param {string|number} opts.destinationAmount Amount of the Stellar asset that should be credited to the destination account
+ * @returns {Promise<PaymentPathRecord[]>} Array of payment paths that can be selected for the transaction
+ * @throws Will throw an error if there are no available payment paths.
+ */
+export async function findStrictReceivePaths({
+  sourcePublicKey,
+  destinationAsset,
+  destinationAmount,
+}) {
+  let asset =
+    destinationAsset === "native"
+      ? Asset.native()
+      : new Asset(
+          destinationAsset.split(":")[0],
+          destinationAsset.split(":")[1],
+        );
+  let response = await server
+    .strictReceivePaths(sourcePublicKey, asset, destinationAmount.toString())
+    .call();
+  if (response.records.length > 0) {
+    return response.records;
+  } else {
+    throw error(400, { message: "no strict receive paths available" });
+  }
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+## Consulta Stellar Expert
+
+Stellar Expert es un explorador de bloques de terceros que es indispensable como herramienta para entender lo que está sucediendo en la red Stellar. En nuestra página `/dashboard/assets`, estamos pre-poblando una lista de líneas de confianza de activos que un usuario podría elegir agregar a su cuenta de Stellar. Obtenemos esta lista de activos de la API de Stellar Expert.
+
+:::note
+
+Stellar Expert emplea su propio algoritmo para determinar la calidad de un activo. Este algoritmo considera cosas como el número de pagos realizados utilizando un activo, el número de cuentas que poseen ese activo, cuánto del activo está disponible en el DEX o en fondos de liquidez, y así sucesivamente. Estos rankings no son una "determinación final" de la calidad de un activo de ninguna manera, y son más como una observación de cuáles activos de Stellar ven más uso y actividad en la red.
+
+:::
+
+Hemos creado nuestro propio tipo `RankedAsset` para que BasicPay sepa cómo interactuar con estos objetos. Y luego estamos recuperando los diez activos mejor valorados de la API de Stellar Expert.
+
+```js title="/src/lib/utils/stellarExpert.js"
+const network = "testnet";
+const baseUrl = `https://api.stellar.expert/explorer/${network}`;
+
+/**
+ * An asset object that has been returned by our query to Stellar.Expert
+ * @typedef {Object} RankedAsset
+ * @property {string} asset Asset identifier
+ * @property {number} traded_amount Total traded amount (in stroops)
+ * @property {number} payments_amount Total payments amount (in stroops)
+ * @property {number} created Timestamp of the first recorder operation with asset
+ * @property {number} supply Total issued asset supply
+ * @property {Object} trustlines Trustlines established to an asset
+ * @property {number} trades Total number of trades
+ * @property {number} payments Total number of payments
+ * @property {string} domain Associated `home_domain`
+ * @property {Object} tomlInfo Asset information from stellar.toml file
+ * @property {Object} rating Composite asset rating
+ * @property {number} paging_token Paging token
+ * @see {@link https://stellar.expert/openapi.html#tag/Asset-Info-API/operation/getAllAssets}
+ */
+
+/**
+ * Fetches and returns the most highly rated assets, according to the Stellar.Expert calculations.
+ * @async
+ * @function fetchAssets
+ * @returns {Promise<RankedAsset[]>} Array of objects containing details for each asset
+ */
+export async function fetchAssets() {
+  let res = await fetch(
+    `${baseUrl}/asset?${new URLSearchParams({
+      // these are all the defaults, but you could customize them if needed
+      search: "",
+      sort: "rating",
+      order: "desc",
+      limit: "10",
+      cursor: "0",
+    })}`,
+  );
+  let json = await res.json();
+
+  let records = json._embedded.records;
+  return records;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/utils/stellarExpert.js

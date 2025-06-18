@@ -1,0 +1,253 @@
+---
+title: Configurar Claves de Acceso
+sidebar_position: 50
+---
+
+Ahora que tenemos las cuentas, tokens, etc. requeridos creados, ¡estamos listos para empezar a poner a trabajar el `passkey-kit`, conectando a nuestros usuarios!
+
+## Cliente de Clave de Acceso
+
+Empezaremos creando una instancia de la clase `PasskeyKit`. La llamaremos `cuenta`, y esta `cuenta` será el **punto** de interacción **principal** para la dapp y la clave de acceso del usuario. Cada transacción se firmará usando `account.sign()`, los usuarios se registrarán con `account.createWallet()`, los usuarios iniciarán sesión con `account.connectWallet()`. ¡Esta `cuenta` es una verdadera máquina de trabajo! Hagámoslo realidad.
+
+Estamos creando esto en `src/lib/passkeyClient.ts` para que esté disponible en el resto de nuestro código de frontend. El [alias de importación `$lib`](https://svelte.dev/docs/kit/$lib) es algo de SvelteKit, pero lo importante es que queremos que este archivo (y sus exportaciones) estén disponibles en **todos** nuestros archivos de frontend. Cómo hacer que eso funcione para otros frameworks es un ejercicio que dejo al lector.
+
+```js title="src/lib/passkeyClient.ts"
+import { PasskeyKit } from "passkey-kit";
+import {
+  PUBLIC_STELLAR_RPC_URL,
+  PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+  PUBLIC_WALLET_WASM_HASH,
+} from "$env/static/public";
+
+export const account = new PasskeyKit({
+  rpcUrl: PUBLIC_STELLAR_RPC_URL,
+  networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+  walletWasmHash: PUBLIC_WALLET_WASM_HASH,
+});
+```
+
+La variable `PUBLIC_WALLET_WASM_HASH` es el hash Wasm del código del contrato de la billetera inteligente. Este hash Wasm identifica el código ejecutable que se desplegará para nuevas billeteras inteligentes y es simplemente el hash Sha256 del archivo ejecutable compilado del contrato. Este hash se devuelve durante la instalación de un contrato compilado en la red.
+
+¡Eso es todo lo que hay al respecto! ¡Esta `cuenta` estará completamente lista para autenticar usuarios y firmar transacciones! (¡Es incluso más fácil que todos los requisitos previos, ¿verdad?!)
+
+Ahora, también hemos añadido algunos "ayudantes" útiles en el archivo `$lib/passkeyClient.ts` en nuestra plantilla. El [archivo de código fuente](https://github.com/ElliotFriend/soroban-template-sveltekit-passkeys/blob/main/src/lib/passkeyClient.ts) está comentado para reflejar qué son estos ayudantes y cómo funcionan. Sin embargo, son estrictamente por conveniencia. Podrías detenerte aquí y salir con transacciones de claves de acceso firmadas perfectamente válidas. Estos ayudantes son:
+
+- Una instancia configurada de la clase `rpc.Server` para que podamos realizar solicitudes RPC sin tener que conocer/importar la URL del RPC todo el tiempo.
+
+  ```js title="src/lib/passkeyClient.ts"
+  import { Server } from "@stellar/stellar-sdk/rpc";
+
+  /**
+   * A configured Stellar RPC server instance used to interact with the network
+   */
+  export const rpc = new Server(PUBLIC_STELLAR_RPC_URL);
+  ```
+
+- Un cliente SAC para interactuar con el contrato nativo de activos XLM. Estamos haciendo la suposición de que los lumens nativos son una interacción de activos "suficientemente buena" para hacer funcionar el tutorial, y para jugar en Testnet. Podrías exportar fácilmente _otro_ cliente SAC para interactuar con USDC, por ejemplo. La dirección del contrato nativo se puede obtener con Stellar-CLI usando el comando `stellar contract id asset --asset native`.
+
+  ```js title="src/lib/passkeyClient.ts"
+  import { SACClient } from "passkey-kit";
+  import { PUBLIC_NATIVE_CONTRACT_ADDRESS } from "$env/static/public";
+
+  /**
+   * A client allowing us to easily create SAC clients for any asset on the
+   * network.
+   */
+  const sac = new SACClient({
+    rpcUrl: PUBLIC_STELLAR_RPC_URL,
+    networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+  });
+
+  /**
+   * A SAC client for the native XLM asset.
+   */
+  export const native = sac.getSACClient(PUBLIC_NATIVE_CONTRACT_ADDRESS);
+  ```
+
+## Servidor de Clave de Acceso
+
+Así que eso es el código de clave de acceso del lado del cliente (y algunos ayudantes) tratado. ¿Qué sucede con el lado del servidor, donde queremos tener cuidado de no filtrar secretos y tokens?!
+
+Estamos configurando esto en `src/lib/server/passkeyServer.ts`, por razones similares a las que enumeramos anteriormente. Esto nos da una instancia de `servidor` importable que se puede acceder y utilizar en otra lógica del lado del servidor. Svelte nos brinda el beneficio adicional de [mantener el código en este directorio seguro](https://svelte.dev/docs/kit/server-only-modules#Your-modules). Cuando queremos proteger credenciales y secretos, podemos colocar cualquier código sensible en el directorio `$lib/server`.
+
+```js title="src/lib/server/passkeyServer.ts"
+import { PasskeyServer } from "passkey-kit";
+
+import {
+  PUBLIC_LAUNCHTUBE_URL,
+  PUBLIC_MERCURY_URL,
+  PUBLIC_STELLAR_RPC_URL,
+} from "$env/static/public";
+import {
+  PRIVATE_LAUNCHTUBE_JWT,
+  PRIVATE_MERCURY_JWT,
+} from "$env/static/private";
+
+export const server = new PasskeyServer({
+  rpcUrl: PUBLIC_STELLAR_RPC_URL,
+  launchtubeUrl: PUBLIC_LAUNCHTUBE_URL,
+  launchtubeJwt: PRIVATE_LAUNCHTUBE_JWT,
+  mercuryUrl: PUBLIC_MERCURY_URL,
+  mercuryJwt: PRIVATE_MERCURY_JWT,
+  // mercuryKey: PRIVATE_MERCURY_KEY, // optionally
+});
+```
+
+¡Y has terminado con el `PasskeyServer`! ¡Bien hecho!
+
+Esta instancia de `servidor` se utilizará para enviar transacciones (a través de Launchtube) y buscar direcciones de contratos a partir de un ID de clave de acceso conocido (a través de Mercury).
+
+### Rutas de API
+
+Ahora, necesitaremos una forma de utilizar algunas de las funcionalidades de este `servidor` desde el cliente sin exponer ninguna de la información sensible. Para eso, configuraremos una colección de rutas (SvelteKit) para actuar como un backend, y _esas rutas_ (no el código del lado del cliente) utilizarán la instancia de `servidor`. Estos archivos viven en `src/routes/api/*` en el repositorio del proyecto.
+
+Algunas de las estructuras aquí son un poco específicas de Svelte, pero deberían ser bastante fáciles de entender para los desarrolladores que no son de Svelte de todos modos. La única cosa específica de SvelteKit que hay que tener en cuenta es que cualquier archivo llamado `*server.{ts,svelte}` **solo** se ejecutará [en el servidor](https://svelte.dev/docs/kit/routing#server). Tus secretos, tokens, credenciales, etc. se consideran seguros para usar dentro de estos archivos.
+
+#### `/api/send`
+
+Este endpoint de API enviará una transacción a la red, a través de Launchtube. Recibe una solicitud `POST`, cuyo objeto `body` contiene una transacción codificada en base64.
+
+:::warning
+
+Si estás creando un método `yourdomain.com/api/send`, probablemente necesitarás hacer "algo" para asegurarte de que solamente los "tipos" correctos de transacciones se envíen realmente a la red. Es decir, asegúrate de que provenga de tu dapp, de tus usuarios, etc. De lo contrario, sería posible que un actor malintencionado descubriera que podría usar esto para enviar sus propias transacciones, ¡mientras tú pagas el costo de las tarifas!
+
+La implementación de esto está fuera del alcance de este tutorial, pero asegúrate de considerar este tipo de riesgos mientras te preparas para un despliegue de nivel de producción.
+
+:::
+
+```js title="src/routes/api/send/+server.ts"
+import { server } from "$lib/server/passkeyServer";
+import { json } from "@sveltejs/kit";
+import type { RequestHandler } from "./$types";
+
+export const POST: RequestHandler = async ({ request }) => {
+  const { xdr } = await request.json();
+  const res = await server.send(xdr);
+  return json(res);
+};
+```
+
+#### `/api/contract/[signer]`
+
+Este endpoint buscará en reversa (a través de Mercury) una dirección de contrato dada una ID de clave de acceso. El parámetro de ruta `[signer]` es cómo le daremos la ID de clave de acceso a la solicitud de API `GET`.
+
+```js title="src/routes/api/contract/\[signer]/+server.ts"
+
+import { server } from '$lib/server/passkeyServer';
+import type { RequestHandler } from './$types';
+
+export const GET: RequestHandler = async ({ params }) => {
+    const contractId = await server.getContractId(params.signer!);
+
+    return new Response(String(contractId));
+};
+```
+
+#### `/api/fund/[address]`
+
+¡Este es otro ayudante, pero del lado de la API! [Friendbot](../../../learn/fundamentals/networks.mdx#friendbot) no admite direcciones `C...` para financiamiento en Testnet. Así que, estamos configurando un endpoint para poder añadir algunos fondos a las billeteras de los usuarios de la dapp. Esto les da algunos tokens para jugar, y nos permite _a nosotros_ recibir esas donaciones del libro de visitas!
+
+Este endpoint de API no es estrictamente necesario. Pero, es una forma útil de ver cómo este tipo de interacciones pueden ocurrir entre una dirección `G...` "regular" y una dirección de contrato soroban `C...`.
+
+```js title="src/routes/api/fund/\[address]/+server.ts"
+
+import { error, json } from '@sveltejs/kit';
+import { PRIVATE_FUNDER_SECRET_KEY } from '$env/static/private';
+import { native } from '$lib/passkeyClient';
+import type { RequestHandler } from './$types';
+import { Keypair } from '@stellar/stellar-sdk';
+import { basicNodeSigner } from '@stellar/stellar-sdk/contract';
+import { PUBLIC_STELLAR_NETWORK_PASSPHRASE } from '$env/static/public';
+
+export const GET: RequestHandler = async ({ params, fetch }) => {
+    const fundKeypair = Keypair.fromSecret(PRIVATE_FUNDER_SECRET_KEY);
+    const fundSigner = basicNodeSigner(fundKeypair, PUBLIC_STELLAR_NETWORK_PASSPHRASE);
+
+    try {
+        const { built, ...transfer } = await native.transfer({
+            from: fundKeypair.publicKey(),
+            to: params.address,
+            amount: BigInt(25 * 10_000_000),
+        });
+
+        await transfer.signAuthEntries({
+            publicKey: fundKeypair.publicKey(),
+            signAuthEntry: (auth) => fundSigner.signAuthEntry(auth),
+        });
+
+        await fetch('/api/send', {
+            method: 'POST',
+            body: JSON.stringify({
+                xdr: built!.toXDR(),
+            }),
+        });
+
+        return json({
+            status: 200,
+            message: 'Smart wallet successfully funded',
+        });
+    } catch (err) {
+        console.error(err);
+        error(500, {
+            message: 'Error when funding smart wallet',
+        });
+    }
+};
+```
+
+### Ayudantes del Cliente de Clave de Acceso
+
+Cada uno de esos endpoints de API recibe una función correspondiente en el archivo `$lib/passkeyClient.ts`, solo para facilitar un poco más del lado del cliente el uso de las rutas de API que acabamos de crear.
+
+Esto nos permite escribir el código `fetch` una vez y usarlo consistentemente en todas partes. Son bastante sencillos y realmente no necesitan mucha explicación. Los añadiremos al final del archivo:
+
+```js title="src/lib/passkeyClient.ts"
+/**
+ * A wrapper function so it's easier for our client-side code to access the
+ * `/api/send` endpoint we have created.
+ *
+ * @param xdr - The base64-encoded, signed transaction. This transaction
+ * **must** contain a Soroban operation
+ * @returns JSON object containing the RPC's response
+ */
+export async function send(xdr: string) {
+  return fetch("/api/send", {
+    method: "POST",
+    body: JSON.stringify({
+      xdr,
+    }),
+  }).then(async (res) => {
+    if (res.ok) return res.json();
+    else throw await res.text();
+  });
+}
+
+/**
+ * A wrapper function so it's easier for our client-side code to access the
+ * `/api/contract/[signer]` endpoint we have created.
+ *
+ * @param signer - The passkey ID we want to find an associated smart wallet for
+ * @returns The contract address to which the specified signer has been added
+ */
+export async function getContractId(signer: string) {
+  return fetch(`/api/contract/${signer}`).then(async (res) => {
+    if (res.ok) return res.text();
+    else throw await res.text();
+  });
+}
+
+/**
+ * A wrapper function so it's easier for our client-side code to access the
+ * `/api/fund/[address]` endpoint we have created.
+ *
+ * @param address - The contract address to fund on the Testnet
+ */
+export async function fundContract(address: string) {
+  return fetch(`/api/fund/${address}`).then(async (res) => {
+    if (res.ok) return res.json();
+    else throw await res.text();
+  });
+}
+```
+
+¿Sigues con nosotros?! ¡Increíble! ¡Eres una estrella de rock! ¡Y estás listo para entrar en las interacciones con el contrato inteligente! ¡Nos vemos en la próxima página!

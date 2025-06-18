@@ -1,0 +1,64 @@
+---
+title: Diseño y Arquitectura
+sidebar_position: 20
+---
+
+La Stellar Disbursement Platform consta de cuatro servicios desplegados juntos:
+
+- **Dashboard**: la interfaz de usuario que utilizan los administradores para iniciar y rastrear el progreso de las distribuciones
+- **SDP Core Service**: el servicio backend central que realiza varias funciones:
+  - **Dashboard API**: the API used by the front-end UI for all disbursement requests. La API está documentada [aquí](../api-reference/admin)
+  - **Admin API**: la API utilizada por la organización anfitriona para gestionar la provisión y configuración de inquilinos. La API está documentada [aquí](../api-reference/admin)
+  - **Messaging Service**: un proceso recurrente que envía mensajes de texto a los usuarios para incitarlos a descargar la billetera seleccionada para una distribución particular y verificar su teléfono con un OTP
+  - **Wallet Registration UI**: a web application that collects and verifies the recipient’s OTP code and verification information via Stellar’s [SEP-24: Hosted Deposit and Withdrawal](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md) protocol
+- **Anchor Platform Service**: the API server that the wallet uses to authenticate and initiate the recipient’s registration process through the SEP-24 deposit flow
+- **Transaction Submission Service**: el servicio que envía todas las transacciones de pago a la red Stellar. This service is designed to maximize payment throughput, handle queuing, and graceful resubmission/error handling
+
+## Dependencias {#dependencies}
+
+- **Container Orchestration**: el SDP se empaqueta como contenedores Docker y se puede desplegar en Kubernetes o AWS Fargate. SDF provides a Helm Chart for Kubernetes
+- **Postgres**: the SDP uses a Postgres database server for all of its services
+- **Apache Kafka**: el SDP opcionalmente utiliza Kafka para transmitir eventos entre servicios. This is primarily used between SDP Core Service and Transaction Submission Service
+- **Twilio or AWS SNS and SES**: the SDP’s messaging service uses SMS messages via Twilio or AWS SNS and administrative emails for organization account setup and recovery via AWS SES or Twilio SendGrid
+- **Stellar Accounts**:
+  - Distribution Account: the SDP requires access to at least one funded Stellar account to make payments to the recipient
+  - SEP-10 Auth Account: the SDP requires a Stellar account for the mutual authentication protocol [SEP-10: Stellar Web Authentication](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md) used to connect to wallet applications
+
+## Diagrama de Arquitectura
+
+![Diagrama de Arquitectura](/assets/SDP/SDP2.png)
+
+## Base de Datos & Esquemas {#database}
+
+El SDP utiliza una base de datos Postgres para todos sus servicios. El esquema de la base de datos es gestionado por el SDP Core Service y está versionado en la base de código. El esquema de la base de datos está diseñado para ser consciente de los inquilinos, lo que significa que cada inquilino tiene su propio conjunto de tablas y datos. Esto permite que el SDP sea multitenencia y soporte múltiples organizaciones utilizando la misma instancia.
+
+Hay 3 tipos de esquemas en la base de datos:
+
+- **Admin Schema**: contiene tablas para gestionar inquilinos. Este esquema es utilizado por el Admin API para gestionar la configuración y provisión de inquilinos.
+- **TSS Schema**: contiene tablas para gestionar transacciones. Este esquema es utilizado por el Transaction Submission Service para gestionar el estado de las transacciones de pago.
+- **Tenant Schemas**: cada inquilino tiene su propio esquema que contiene tablas para gestionar distribuciones, destinatarios y otros datos específicos del inquilino. Estos esquemas comienzan con `sdp_`.
+
+## Multitenencia {#multi-tenancy}
+
+El SDP puede ser desplegado en una configuración multitenencia, donde múltiples organizaciones comparten la misma instancia del SDP. Cada organización se refiere como un inquilino y tiene su propio conjunto de datos y configuración. Una organización anfitriona puede gestionar múltiples inquilinos y gestionar su configuración a través del Admin API.
+
+### Resolución de Inquilinos {#tenant-resolution}
+
+El SDP utiliza una estrategia de resolución de inquilinos para determinar a qué inquilino pertenece una solicitud. La resolución de inquilinos solo es requerida para solicitudes no autenticadas, ya que las solicitudes autenticadas incluyen la información del inquilino ya en el token JWT.
+
+- **Header**: el encabezado `SDP-Tenant-Name` se utiliza para especificar el nombre del inquilino en la solicitud. Cuando está presente, este encabezado se utiliza para intentar resolver el inquilino.
+- **Subdominio**: el SDP puede utilizar el subdominio de la URL de solicitud para resolver el inquilino. Por ejemplo, `tenant1.sdp.backend.test` se resolvería al inquilino `tenant1`.
+
+La prioridad de resolución es la siguiente: token JWT (solicitudes autenticadas) > Header > Subdominio.
+
+#### Modo de Inquilino Único {#single-tenant-mode}
+
+Cuando se habilita el modo de inquilino único utilizando la variable de entorno `SINGLE_TENANT_MODE`, todos los inquilinos se resolverán automáticamente al inquilino predeterminado. Un inquilino predeterminado se establece llamando a la API [`POST /tenants/default-tenant`](../api-reference/default-tenant.api.mdx).
+
+El inquilino predeterminado es útil para fines de desarrollo o cuando el SDP es utilizado por una única organización. Esto permite que la organización omita especificar el inquilino en cada solicitud y simplifica la configuración operativa del SDP al eliminar la necesidad de proporcionar certificados TLS comodín para configuraciones multitenencia.
+
+#### Resolución de Subdominio {#subdomain-resolution}
+
+Al ejecutar el SDP en modo multitenencia, el SDP utiliza el subdominio de la URL de solicitud para resolver el inquilino. Por ejemplo, `tenant1.sdp.backend.test` se resolvería al inquilino `tenant1`. Esto permite que el SDP diferencie entre inquilinos sin requerir que se especifique el nombre del inquilino en la solicitud.
+
+La resolución de subdominio es particularmente importante para el proceso de Registro de Billetera, ya que el SDP depende de subdominios para diferenciar entre inquilinos durante el flujo de depósito SEP-24. Los dominios principales, que contienen el nombre del inquilino como un subdominio, se utilizan durante el proceso de registro por el SDP para identificar al inquilino y dirigir la solicitud de registro de billetera al contexto correcto del inquilino.

@@ -1,0 +1,350 @@
+---
+title: Implementar archivo de estado en dapps
+description: Aprender cómo implementar archivo de estado en tu dapp
+---
+
+Al desarrollar aplicaciones descentralizadas en Stellar, el archivo de estado es parte de lo que necesitamos considerar debido a cómo se almacena la información en la red. Esta guía te ayudará a entender cómo trabajar con el archivo de estado en tu dapp.
+
+Algunos términos de archivo del estado que utilizaremos en esta guía se describen en la [sección de archivo del estado](/docs/learn/fundamentals/contract-development/storage/state-archival#terms-and-semantics).
+
+## Por qué gestionar el archivo de estado es importante para las aplicaciones
+
+Gestionar el archivo de estado es crucial para las dapps de Stellar por varias razones:
+
+- Accesibilidad de datos: Los datos archivados se vuelven inaccesibles, lo que podría romper la funcionalidad de la aplicación, por lo que es importante gestionar el ciclo de vida de los datos y saber cuándo restaurar.
+- Eficiencia de costos: Diferentes tipos de almacenamiento tienen tarifas y comportamientos de archivo variables, lo que permite a los desarrolladores optimizar costos. Debido a esto, algunos datos pueden ser más rentables de almacenar de una manera que causa que se archiven después de un cierto período.
+- Gestión del ciclo de vida de los datos: Una gestión adecuada asegura que los datos importantes permanezcan accesibles mientras se permite que los datos temporales caduquen.
+- Continuidad de la aplicación: Asegurar que las instancias del contrato y el código Wasm permanezcan en vivo es esencial para un funcionamiento ininterrumpido de la dapp. Es esencial verificar la disponibilidad del contrato antes de intentar interactuar con el contrato después de un largo período de inactividad.
+
+## Métodos para implementar archivo de estado en el lado del cliente
+
+### 1. Extender TTL desde el contrato inteligente
+
+Este método implica invocar el [`extend_ttl()` method](https://docs.rs/soroban-sdk/latest/soroban_sdk/storage/struct.Instance.html#method.extend_ttl) desde tu contrato inteligente para extender el TTL de la instancia del contrato y sus datos asociados. Este método es útil cuando quieres mantener los datos accesibles por un período más largo. Para usar este método, tu contrato no debe estar archivado en el momento de la llamada.
+
+`extend_ttl()` tiene dos parámetros importantes (T,N):
+
+- T es el umbral, la altura del ledger actual en la que debe ocurrir la extensión.
+- N es la nueva altura del ledger en la que los datos caducarán.
+- El TTL actual debe ser menor que T para que la extensión ocurra.
+- Si N es menor que la altura actual del ledger, el TTL no se extenderá y la llamada se considerará un no-op.
+- Si N es mayor que la altura actual del ledger, el TTL se extenderá a N.
+
+Veamos un ejemplo de cómo podemos implementar esto en un contrato inteligente:
+
+```rust
+#![no_std]
+/// This is a simple contract that just extends TTL for its keys.
+/// It's main purpose is to demonstrate how TTL extension can be tested,
+use soroban_sdk::{contract, contractimpl, contracttype, Env};
+
+#[contracttype]
+pub enum DataKey {
+    MyKey,
+}
+
+#[contract]
+pub struct TtlContract;
+
+#[contractimpl]
+impl TtlContract {
+    /// Creates a contract entry in every kind of storage.
+    pub fn setup(env: Env) {
+        env.storage().persistent().set(&DataKey::MyKey, &0);
+        env.storage().instance().set(&DataKey::MyKey, &1);
+        env.storage().temporary().set(&DataKey::MyKey, &2);
+    }
+
+    /// Extend the persistent entry TTL to 5000 ledgers, when its
+    /// TTL is smaller than 1000 ledgers.
+    pub fn extend_persistent(env: Env) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::MyKey, 1000, 5000);
+    }
+
+    /// Extend the instance entry TTL to become at least 10000 ledgers,
+    /// when its TTL is smaller than 2000 ledgers.
+    pub fn extend_instance(env: Env) {
+        env.storage().instance().extend_ttl(2000, 10000);
+    }
+
+    /// Extend the temporary entry TTL to become at least 7000 ledgers,
+    /// when its TTL is smaller than 3000 ledgers.
+    pub fn extend_temporary(env: Env) {
+        env.storage()
+            .temporary()
+            .extend_ttl(&DataKey::MyKey, 3000, 7000);
+    }
+}
+
+mod test;
+```
+
+:::info
+
+El contrato anterior muestra cómo extender el TTL de una entrada de datos `Persistent`, `Instance` y `Temporary`. El método `extend_ttl()` se usa para extender el TTL de la entrada de datos a una nueva altura del ledger.
+
+:::
+
+#### Usando el método Extender TTL en tu contrato
+
+Cuando creamos DApps, no solemos crear botones para extender el TTL de las entradas de datos. En cambio, podemos crear una función que extienda el TTL de las entradas de datos cuando se utiliza la DApp.
+
+Por ejemplo, podemos aumentar el TTL de una entrada de datos temporal llamada `highestBid` en un DApp de subastas cuando se realiza una nueva oferta. Esto asegurará que los datos de la oferta permanezcan accesibles durante el tiempo que se necesiten.
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, contracttype, Env};
+
+#[contracttype]
+pub enum DataKey {
+    HighestBid,
+}
+
+#[contract]
+pub struct BiddingContract;
+
+#[contractimpl]
+impl BiddingContract {
+    /// Creates a contract entry in every kind of storage.
+    pub fn setup(env: Env) {
+        env.storage().temporary().set(&DataKey::HighestBid, &0);
+    }
+
+    /// Place a bid and extend the TTL of the highest bid data entry.
+    pub fn place_bid(env: Env, bid: u64) {
+        let highest_bid: u64 = env.storage().temporary().get(&DataKey::HighestBid).unwrap_or(0);
+        if bid > highest_bid {
+            env.storage().temporary().set(&DataKey::HighestBid, &bid);
+            env.storage().temporary().extend_ttl(&DataKey::HighestBid, 1000, 5000);
+        }
+    }
+}
+```
+
+### 2. Restaurar datos archivados
+
+Al desarrollar un dapp en Stellar, puedes encontrar situaciones donde los datos del contrato o la instancia del contrato han sido archivados debido a inactividad. Vamos a recorrer el proceso de restaurar datos archivados usando el SDK de JavaScript y la billetera Freighter.
+
+#### Requisitos
+
+- Stellar SDK: `npm install @stellar/stellar-sdk`
+- Freighter API: `npm install @stellar/freighter-api`
+- Un punto final RPC de Stellar (por ejemplo, `https://soroban-testnet.stellar.org`)
+
+#### Paso 1: Configurar el SDK y Freighter
+
+Primero, importamos los componentes necesarios:
+
+```javascript
+import * as StellarSdk from "@stellar/stellar-sdk";
+import {
+  isConnected,
+  setAllowed,
+  getPublicKey,
+  signTransaction,
+} from "@stellar/freighter-api";
+
+import { Api } from "@stellar/stellar-sdk/rpc";
+const rpcUrl = "https://soroban-testnet.stellar.org";
+const server = new StellarSdk.rpc.Server(rpcUrl);
+const networkPassphrase = StellarSdk.Networks.TESTNET; // Use PUBLIC for production
+```
+
+Esta configuración proporciona la base para interactuar con la red Stellar y la billetera Freighter.
+
+#### Paso 2: Crear una función de ayuda para la restauración
+
+Creamos una función de ayuda que intenta enviar una transacción, y si falla debido a datos archivados, restaurará los datos y volverá a intentar:
+
+```javascript
+async function submitOrRestoreAndRetry(contractId, method, ...args) {
+  try {
+    let hasFreighter = await isConnected();
+    if (!hasFreighter) {
+      return alert("Freighter wallet is required for transactions");
+    }
+
+    const isAllowed = await setAllowed();
+    if (!isAllowed) {
+      return alert("Please allow the transaction in Freighter wallet");
+    }
+
+    const accountId = await getPublicKey();
+    const contract = new StellarSdk.Contract(contractId);
+    const account = await server.getAccount(accountId);
+    const fee = StellarSdk.BASE_FEE;
+
+    const transaction = new StellarSdk.TransactionBuilder(account, {
+      fee,
+      networkPassphrase,
+    })
+      .addOperation(contract.call(method, ...args))
+      .setTimeout(30)
+      .build();
+
+    let preparedTransaction = await server.prepareTransaction(transaction);
+
+    let signedXDR = await signTransaction(preparedTransaction.toXDR());
+    let signedTransaction = StellarSdk.TransactionBuilder.fromXDR(
+      signedXDR,
+      networkPassphrase,
+    );
+
+    // Try to send the transaction
+    const sim = await server.simulateTransaction(signedTransaction);
+
+    // Other failures are out of scope of this tutorial.
+    if (!Api.isSimulationSuccess(sim)) {
+      throw sim;
+    }
+
+    // If simulation didn't fail, we don't need to restore anything! Just send it.
+    if (Api.isSimulationRestore(sim)) {
+      console.log("Data archived. Attempting restoration...");
+
+      // Prepare restoration transaction
+      const restoreTx = new StellarSdk.TransactionBuilder(account, { fee })
+        .setNetworkPassphrase(networkPassphrase)
+        .addOperation(StellarSdk.Operation.restoreFootprint({}))
+        .setTimeout(30)
+        .build();
+
+      let preparedRestoreTx = await server.prepareTransaction(restoreTx);
+      let signedRestoreXDR = await signTransaction(preparedRestoreTx.toXDR());
+      let signedRestoreTx = StellarSdk.TransactionBuilder.fromXDR(
+        signedRestoreXDR,
+        networkPassphrase,
+      );
+
+      await server.sendTransaction(signedRestoreTx);
+      console.log("Restoration complete. Retrying original transaction...");
+
+      // Retry the original transaction
+      return submitOrRestoreAndRetry(contractId, method, ...args);
+    }
+
+    const result = await server.sendTransaction(signedTransaction);
+
+    return result;
+  } catch (error) {
+    console.error("Transaction failed:", error);
+    throw error;
+  }
+}
+```
+
+Esta función ahora utiliza Freighter para firmar transacciones. Primero verifica si Freighter está conectado y autorizado, luego procede con la transacción. Si se necesita restauración (indicado por un `HostStorageError`), crea una transacción de restauración separada, la firma con Freighter y la envía antes de volver a intentar la transacción original.
+
+#### Paso 3: Usa la función de ayuda en tu dapp
+
+Ahora puedes usar esta función para hacer llamadas al contrato que manejan automáticamente la restauración:
+
+```javascript
+async function performContractAction(contractId, method, ...args) {
+  try {
+    const result = await submitOrRestoreAndRetry(contractId, method, ...args);
+    console.log("Transaction successful:", result);
+    return result;
+  } catch (error) {
+    console.error("Error performing contract action:", error);
+    // Handle the error appropriately in your UI
+  }
+}
+```
+
+#### Paso 4: Manejo de la restauración de la instancia del contrato
+
+Para restaurar una instancia completa del contrato, es posible que necesites una función separada:
+
+Aquí estaremos utilizando el [método `getLedgerEntries`](/docs/data/apis/rpc/api-reference/methods/getLedgerEntries#requesting-a-contracts-wasm-code) para obtener el código WASM del contrato y también la [operación `restoreFootprint`](/docs/learn/fundamentals/transactions/list-of-operations#restore-footprint) para restaurar la instancia del contrato.
+
+```javascript
+async function restoreContractInstance(contractId) {
+  try {
+    let hasFreighter = await isConnected();
+    if (!hasFreighter) {
+      return alert("Freighter wallet is required for transactions");
+    }
+
+    const isAllowed = await setAllowed();
+    if (!isAllowed) {
+      return alert("Please allow the transaction in Freighter wallet");
+    }
+
+    const accountId = await getPublicKey();
+    const account = await server.getAccount(accountId);
+    const fee = StellarSdk.BASE_FEE;
+
+    const contract = new StellarSdk.Contract(contractId);
+    const instance = contract.getFootprint();
+
+    window.ins = instance;
+
+    // Fetch the WASM entry from the ledger
+
+    const wasmEntry = await server.getLedgerEntries(instance);
+
+    const restoreTx = new StellarSdk.TransactionBuilder(account, {
+      fee: StellarSdk.BASE_FEE,
+    })
+      .setNetworkPassphrase(StellarSdk.Networks.TESTNET)
+      .setSorobanData(
+        // Set the restoration footprint (remember, it should be in the
+        // read-write part!)
+        new StellarSdk.SorobanDataBuilder()
+          .setReadWrite([
+            instance,
+            ...wasmEntry.entries.map((entry) => entry.key),
+          ])
+          .build(),
+      )
+      .setTimebounds(0, Date.now() + 10000)
+      .addOperation(StellarSdk.Operation.restoreFootprint({}))
+      .build();
+
+    let preparedTx = await server.prepareTransaction(restoreTx);
+    let signedXDR = await signTransaction(preparedTx.toXDR(), {
+      networkPassphrase: networkPassphrase,
+    });
+    let signedTx = StellarSdk.TransactionBuilder.fromXDR(
+      signedXDR,
+      networkPassphrase,
+    );
+
+    return server.sendTransaction(signedTx);
+  } catch (error) {
+    console.error("Error restoring contract instance:", error);
+    throw error;
+  }
+}
+
+// Helper function to get the ledger key for the WASM entry
+function getWasmLedgerKey(entry) {
+  return StellarSdk.xdr.LedgerKey.contractCode(
+    new StellarSdk.xdr.LedgerKeyContractCode({
+      hash: entry.val().instance().wasmHash(),
+    }),
+  );
+}
+```
+
+:::info
+
+Esta función específicamente restaura una instancia del contrato y su código Wasm asociado. Recupera la huella del contrato y la entrada Wasm, crea una transacción de restauración, que luego se firma usando Freighter y se envía a la red.
+
+:::
+
+## Cuándo usar estas funciones
+
+1. El ayudante [`performContractAction`](#step-3-use-the-helper-function-in-your-dapp) puede ser utilizado cuando se intenta invocar una función de contrato inteligente. Puede ayudar a restaurar datos persistentes asociados a la llamada.
+2. El ayudante [`restoreContractInstance`](#step-4-handling-contract-instance-restoration) puede ser utilizado durante la inicialización de la app después de que no se haya utilizado durante mucho tiempo. Usar un indexador para obtener esta información (cuándo se usó la última vez la app) es un gran enfoque.
+
+## Conclusión
+
+Al implementar estas técnicas de archivo de estado y restauración, tu dapp podrá manejar situaciones donde los datos o instancias del contrato han sido archivados, asegurando una experiencia de usuario más fluida incluso después de períodos de inactividad. El uso de billeteras como Freighter para la firma de transacciones proporciona una forma segura y fácil de usar para que los usuarios interactúen con tu dapp.
+
+Recuerda manejar los errores adecuadamente y proporcionar retroalimentación clara a los usuarios durante todo el proceso de restauración. También puedes querer implementar un indicador de carga en tu interfaz de usuario mientras se está llevando a cabo la restauración, ya que puede tardar un momento en completarse.
+
+Comprender y gestionar eficazmente el archivo de estado es crucial para crear dapps robustas y eficientes basadas en Stellar que puedan mantener la funcionalidad y la integridad de los datos a lo largo del tiempo.

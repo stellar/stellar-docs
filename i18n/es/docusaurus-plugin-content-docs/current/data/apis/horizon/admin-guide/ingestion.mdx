@@ -1,0 +1,97 @@
+---
+title: Ingestión
+sidebar_position: 45
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+La API de Horizon proporciona la mayor parte de su utilidad a través de datos ingeridos, y tu servidor Horizon puede configurarse para escuchar e ingresar los resultados de transacciones de la red Stellar. La ingestion permite el acceso a la API tanto al estado actual (por ejemplo, el saldo de alguien) como al estado histórico (por ejemplo, el historial de transacciones de alguien).
+
+## Tipos de Ingestión
+
+Hay dos casos de uso principales de ingesta para operaciones de Horizon:
+
+- Ingresar datos **en vivo** para mantenerse actualizado con los últimos ledgers de la red, acumulando una ventana de deslizamiento de ledgers antiguos;
+- Ingresar datos **históricos** para agregar retroactivamente datos de la red de un rango de tiempo en el pasado a la base de datos.
+
+## Determinar el Espacio de Almacenamiento
+
+Debes pensar cuidadosamente sobre el marco temporal histórico de los datos ingeridos que deseas conservar en la base de datos de Horizon. Los requisitos de almacenamiento para transacciones en la red Stellar son sustanciales y están creciendo sin límites con el tiempo. Esto es algo que puedes necesitar monitorear y reevaluar continuamente a medida que la red sigue creciendo. Hemos encontrado que la mayoría de las organizaciones solo necesitan una pequeña fracción de datos históricos recientes para satisfacer sus casos de uso. A través del análisis de los patrones de tráfico en la instancia de Horizon de SDF, vemos que la mayoría de las solicitudes son para datos muy recientes.
+
+Para mantener tu huella de almacenamiento pequeña, recomendamos lo siguiente:
+
+- Usa la ingesta **en vivo**, utiliza la ingesta **histórica** solo en casos excepcionales limitados.
+- Si tu aplicación requiere acceso a todos los datos de la red, no se puede realizar filtrado, recomendamos limitar la retención histórica de los datos ingeridos a una ventana deslizante de 1 mes (HISTORY_RETENTION_COUNT=518400) que es el valor por defecto establecido por Horizon.
+- Si tu aplicación puede trabajar con un [conjunto de datos de red filtrado](./ingestion-filtering.mdx) basado en cuentas y activos específicos, entonces recomendamos aplicar reglas de filtrado de ingesta. Al usar reglas de filtrado, se obtiene el beneficio de la opción de una mayor retención histórica durante un periodo de tiempo ya que el filtrado reduce el tamaño general de la base de datos, de tal manera que la retención histórica (HISTORY_RETENTION_COUNT) puede establecerse en términos de años en lugar de meses o incluso desactivarse (HISTORY_RETENTION_COUNT=0).
+- Si no puedes limitar tu ventana de retención de historia a 30 días y no puedes usar reglas de filtrado, te recomendamos considerar el [Almacén de Datos de Stellar Hubble](../../../analytics/hubble/README.mdx) para cualquier dato histórico.
+
+### Ingresar Datos en Vivo
+
+Esta opción está habilitada por defecto y es el modo de ingesta recomendado para ejecutar. Se controla con la configuración de entorno con la bandera `INGEST`. Consulta [Configuración](./configuring.mdx) para ver cómo una instancia de Horizon realiza el papel de ingesta.
+
+Para requisitos de alta disponibilidad, **recomendamos desplegar más de una instancia de ingesta en vivo**, ya que esto facilita evitar el tiempo de inactividad durante las actualizaciones y agrega resistencia, asegurando que siempre tengas los últimos datos de la red (consulta [Instancia de Papel de Ingesta](./configuring.mdx#multiple-instance-deployment)).
+
+### Ingresar Datos Históricos
+
+Importar datos de la red de un rango de fechas pasadas a la base de datos:
+
+<CodeExample>
+
+```
+stellar-horizon db reingest range <start> <end>
+```
+
+</CodeExample>
+
+Ejecutar cualquier rango de ingesta histórica requiere coordinación con la configuración de retención de datos elegida. Al establecer un límite temporal en la historia con `HISTORY_RETENTION_COUNT=<LEDGER_COUNT>`, el límite temporal tiene prioridad, y cualquier dato ingresado más allá de ese límite será purgado automáticamente.
+
+Normalmente, la única vez que necesitas ejecutar la ingesta histórica es una vez al inicializar un sistema después del primer despliegue, a partir de ese punto, la ingesta **en vivo** mantendrá la base de datos completada con la ventana de deslizamiento esperada de datos históricos rezagados. Quizás una excepción es si piensas que tienes un vacío en la base de datos causado por la ingesta **en vivo** que está caída, en cuyo caso puedes ejecutar un rango de ingesta histórica para llenar esencialmente el vacío.
+
+Puedes ejecutar la ingesta histórica en paralelo en segundo plano mientras tu servidor principal de Horizon realiza la ingesta **en vivo** por separado. Si el rango especificado se superpone con los datos ya en la base de datos, está bien y simplemente será sobrescrito, de manera efectiva idempotente.
+
+#### Trabajadores de Ingestión Paralelos
+
+Puedes paralelizar la ingesta del rango de ledger histórico objetivo dividiéndolo en porciones secuenciales de rangos más pequeños y ejecutar el comando de rango de reingesto de db para cada sub-rango en paralelo como un proceso separado en la misma máquina o en una diferente. La regla abreviada para el mejor rendimiento es identificar la cantidad de núcleos de CPU disponibles por máquina objetivo, si es multi-core, entonces agrega `--parallel-workers <num de núcleos>` al comando, esto habilitará el comando para paralelizar aún más internamente dentro de un solo proceso utilizando múltiples hilos y rangos más pequeños subdivididos.
+
+<CodeExample>
+
+```
+# target range 1 30000, on single machine with 1 CPU core
+horizon1> stellar-horizon db reingest range 1 30000
+
+# target range 1 30000, on single machine with 4 CPU cores
+horizon1> stellar-horizon db reingest range 1 30000 --parallel-workers 4
+
+# target range 1 30000, on two machines, each has 2 CPU cores
+horizon1> stellar-horizon db reingest range 1 15000 --parallel-workers 2
+horizon2> stellar-horizon db reingest range 15001 30000 --parallel-workers 2
+```
+
+</CodeExample>
+
+### Notas
+
+#### Algunos endpoints pueden informar no disponibles durante la ingesta **en vivo**
+
+- Los endpoints que muestran información de estado actual de la ingesta **en vivo** pueden devolver el error `503 Servicio No Disponible`/`Aún Ingresando`. Un ejemplo es el endpoint `/paths` (desarrollado con ofertas). Tales endpoints estarán disponibles después de que la ingesta **en vivo** haya terminado la sincronización de la red y alcanzado (generalmente dentro de un par de minutos).
+
+#### Si han pasado más de cinco minutos sin nuevos datos ingeridos:
+
+- Verifica que la máquina host cumpla con los [Requisitos previos](./prerequisites.mdx) recomendados.
+
+- Revisa la salida del log de Horizon.
+  - Si hay muchos mensajes de `nivel=error`, puede indicar un problema ambiental, incapacidad para acceder a la base de datos.
+  - La ingesta **en vivo** emitirá dos líneas de log clave aproximadamente cada 5 segundos basadas en el último ledger emitido por la red. Sigue la salida del log de Horizon y busca la presencia de estas líneas con un filtro:
+    ```
+    tail -f horizon.log | | grep -E 'Processed ledger|Closed ledger'
+    ```
+    Si no ves salida de este pipeline cada pocos segundos para un nuevo ledger, entonces la ingesta no está avanzando, revisa los registros completos y verifica si hay mensajes alternativos que indiquen lo contrario. Puede que veas líneas que mencionen 'sincronizándose' al conectarte a pubnet, ya que puede tardar hasta 5 minutos para que el proceso de núcleo cautivo iniciado por Horizon se sincronice con la red pubnet.
+  - Verifica el uso de RAM en la máquina, es posible que el sistema se haya quedado sin RAM y esté utilizando memoria swap, lo que resultará en un rendimiento lento. Verifica que la máquina host cumpla con los requisitos mínimos de RAM [requisitos previos](./prerequisites.mdx).
+  - Verifica las velocidades de rendimiento de lectura/escritura en el volumen que el directorio de trabajo actual para el proceso de horizon está utilizando. Según los [requisitos previos](./prerequisites.mdx), el volumen debe tener al menos 10mb/s, una forma de verificar esto bridamente en la máquina host (línea de comando linux/mac):
+    ```
+    sudo dd if=/dev/zero of=/tmp/test_speed.img bs=1G count=1
+    ```
+
+#### Monitoreando el Proceso de Ingestión
+
+Para despliegues de alta disponibilidad, se recomienda implementar monitoreo del proceso de ingesta para visibilidad sobre el rendimiento/salud. Consulta [Monitoreo](./monitoring.mdx) para acceder a los logs y métricas de Horizon. Stellar publica el ejemplo del [Tablero de Grafana de Horizon](https://grafana.com/grafana/dashboards/13793-stellar-horizon/), que demuestra consultas contra métricas clave de ingesta de Horizon, específicamente mira la `Demora de Ingesta Local [Ledgers]` y la `Edad del Último ledger` en el panel `Resumen de Salud`.

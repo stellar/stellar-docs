@@ -1,0 +1,215 @@
+---
+sidebar_position: 40
+title: Simulación de transacciones
+description: Simula una interacción con un contrato contenida en una transacción Stellar.
+---
+
+## Footprint
+
+Como se menciona en la sección de [persistencia de datos](../storage/persisting-data.mdx), un contrato sólo puede cargar o almacenar entradas `CONTRACT_DATA` que estén declaradas en una _footprint_ asociada a su invocación.
+
+Un footprint es un conjunto de claves del libro mayor (ledger), cada una marcada como sólo lectura o lectura-escritura. Las claves sólo de lectura están disponibles para la transacción para lectura; las claves de lectura-escritura están disponibles para lectura, escritura o ambas.
+
+Cualquier transacción Soroban enviada por un usuario debe ir acompañada de esta footprint. Un único footprint abarca _todos_ los datos leídos y escritos por _todos_ los contratos invocados transitivamente por la transacción: no solo el contrato inicial que la transacción llama, sino también todos los contratos que llama, y así sucesivamente.
+
+Como puede ser difícil para un usuario saber qué entradas del libro mayor intentará leer o escribir una llamada a contrato dada (especialmente las entradas causadas por otros contratos profundos en una transacción), el host proporciona un mecanismo auxiliar `simulateTransaction` que ejecuta una transacción contra una _instantánea_ temporal y posiblemente desactualizada del libro mayor. El mecanismo `simulateTransaction` _no_ está restringido solo a leer o escribir el contenido de una footprint; más bien _registra_ una footprint que describe la ejecución de la transacción, descarta los efectos de la ejecución y luego devuelve la footprint registrada a su llamante.
+
+Esta footprint proporcionada por la simulación puede usarse para acompañar una "verdadera" presentación de la misma transacción a la red para su ejecución real. Si el estado del libro mayor ha cambiado demasiado entre el momento de la simulación y la presentación real, la footprint puede estar demasiado obsoleta y dejar de identificar con precisión las _claves_ que la transacción necesita leer y/o escribir, en cuyo caso la simulación debe repetirse para actualizar la footprint.
+
+En cualquier caso (ya sea que tenga éxito o falle), la transacción real se ejecutará de forma atómica, determinista y con semánticas de consistencia serializable. Una footprint incorrecta simplemente causa un fallo determinista de la transacción, no una anomalía de lectura obsoleta. Todos los efectos de dicha transacción fallida se descartan, como sucedería con cualquier otro error.
+
+## Autorización
+
+Consulta la [visión general de autorizaciones](../authorization.mdx) y la sección de autorización de transacciones [auth-data] para información general sobre la autorización en Soroban: esta sección se refiere específicamente a cómo funciona la simulación junto con los requisitos de autorización.
+
+El [mecanismo de simulación de transacciones][sim-tx] de Soroban puede usarse para precomputar los árboles de [`SorobanAuthorizedInvocation`][auth-invoke] que deben ser autorizados por las `Address` para que todas las comprobaciones `require_auth` pasen. Puede invocarse de dos formas diferentes:
+
+### Modo de Grabación
+
+El entorno host de Soroban proporciona un modo de simulación que registra el contexto completo (dirección, ID del contrato, función, argumentos, etc.) involucrado en las llamadas a `require_auth`.
+
+Estos registros se agregan a un árbol de [`SorobanAuthorizedInvocation`][auth-invoke] y se marcan como exitosos. Luego, tras terminar la invocación, la simulación de transacciones devuelve todos los árboles registrados, así como valores nonce generados aleatoriamente para las firmas esperadas.
+
+Con esta información desde la simulación, el cliente solo necesita proporcionar estos árboles y nonces a las `Address` involucradas en la invocación para firmar, y luego construir la transacción final combinando la salida de la simulación con las firmas correspondientes.
+
+Nota que el modo de autenticación "grabación" _nunca_ emula fallos de autorización. Esto ocurre porque un fallo en la autorización siempre es una situación "excepcional" (es decir, las `Address` para las cuales no esperas que la autorización tenga éxito no deberían usarse desde el principio). Es similar a cómo, por ejemplo, el mecanismo [`simulateTransaction`][sim-tx] no emula fallos causados por una footprint incorrecta.
+
+Si quieres validar firmas, debes usar [`simulateTransaction`][sim-tx] en modo de autorización ["enforcement"](#enforcing-mode), que verificará las firmas antes de ejecutar la transacción en la cadena.
+
+### Modo de Enforcement
+
+El modo de grabación de autenticación es una opción para [`simulateTransaction`][sim-tx]. Sin embargo, al tratar con contratos de cuenta personalizados, por ejemplo, puede ser necesario simular el código `__check_auth` de la cuenta personalizada (que simplemente se _omite_ en el modo de grabación), para obtener su footprint del libro mayor.
+
+Esto se denomina ejecutar la simulación en modo de autenticación "enforcement". Esto es básicamente equivalente a ejecutar la transacción en la cadena (con posiblemente un estado del libro ligeramente desactualizado); por lo tanto, requiere que todas las firmas sean válidas.
+
+Desde la perspectiva del desarrollador, la diferencia entre estos modos es si las entradas de autorización están presentes en la operación [`InvokeHostFunction`](../../../../learn/fundamentals/transactions/list-of-operations.mdx#invoke-host-function) enviada a [`simulateTransaction`][sim-tx]. Los [ejemplos a continuación](#typescript-utilities) detallan esta distinción, pero en resumen, pasar `auth` a [`Operation.invokeContractFunction`](https://stellar.github.io/js-stellar-sdk/Operation.html#.invokeContractFunction) (que es una envoltura conveniente para [`invokeHostFunction`](https://stellar.github.io/js-stellar-sdk/Operation.html#.invokeHostFunction)) implicará el modo enforcement.
+
+### Uso del SDK
+
+A continuación, demostraremos las diferentes formas en que puedes invocar la simulación de transacciones y destacaremos algunas utilidades disponibles en el [SDK de TypeScript](https://stellar.github.io/js-stellar-sdk/) para autorización.
+
+Cubriremos tres tipos de invocaciones:
+
+- Una invocación simple en la que la cuenta fuente de la transacción es el único firmante para el árbol de invocación.
+- Una invocación en la que se necesitan las firmas de dos cuentas para el árbol de invocación.
+- Una invocación en modo enforcement para confirmar que las firmas son correctas.
+
+#### Ejemplo 1: autorización de la cuenta fuente.
+
+En esta variante, usaremos la variante de "autorización de cuenta fuente": es cuando la cuenta fuente en la transacción es la única que necesita firmar la invocación (ver la variante "cuenta fuente" de [`SorobanCredentials`](https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-transaction.x#L586-L595)). En este escenario, la firma en la transacción en sí implica directamente la firma de la invocación.
+
+<CodeExample>
+
+```javascript
+import {
+  Asset,
+  Keypair,
+  Networks,
+  Operation,
+  authorizeEntry,
+  TransactionBuilder,
+  xdr,
+} from "@stellar/stellar-sdk";
+import { Server, assembleTransaction } from "@stellar/stellar-sdk/rpc";
+
+const s = Server("https://soroban-testnet.stellar.org");
+
+// Pretend is is a real, funded account.
+const signer = Keypair.random();
+const xlmContract = Asset.native().contractId(Networks.TESTNET);
+
+async function main() {
+  const tx = new TransactionBuilder(await s.loadAccount(signer.publicKey()), {
+    networkPassphrase: Networks.TESTNET,
+    fee: BASE_FEE,
+  })
+    .addOperation(
+      Operation.invokeContractFunction(
+        xlmContract,
+        [
+          ["balance", "symbol"],
+          [signer.publicKey(), "address"],
+        ].map((val, type) => nativeToScVal(val, { type })),
+      ),
+    )
+    .build();
+
+  const preppedTx = s.prepareTransaction(tx);
+  preppedTx.sign(signer);
+
+  const sendTx = await s.sendTransaction(preppedTx);
+  return s.pollTransaction(sendTx.hash);
+}
+
+main().catch((e) => console.error(e));
+```
+
+</CodeExample>
+
+Observa que, en contraste con el ejemplo siguiente, no necesitamos hacer la simulación por separado. Esto es porque podemos firmar la transacción tal cual en lugar de inspeccionar sus entradas de autorización.
+
+#### Ejemplo 2: autenticación multipartita.
+
+En esta variante, extenderemos las firmas requeridas a más de una parte, de modo que la cuenta fuente ya no sea suficiente. Usaremos el [helper `authorizeEntry`](https://stellar.github.io/js-stellar-sdk/global.html#authorizeEntry), diseñado específicamente para facilitar la firma de las entradas devueltas por la simulación de transacciones.
+
+<CodeExample>
+
+```typescript
+import {
+  Asset,
+  Keypair,
+  Networks,
+  Operation,
+  authorizeEntry,
+  TransactionBuilder,
+  xdr,
+} from "@stellar/stellar-sdk";
+import { Server, assembleTransaction } from "@stellar/stellar-sdk/rpc";
+
+const s = Server("https://soroban-testnet.stellar.org");
+
+// Pretend these are real, funded accounts.
+const signers = [Keypair.random(), Keypair.random()];
+const xlmContract = Asset.native().contractId(Networks.TESTNET);
+
+async function main() {
+  // Notice that the source account is the first keypair, but the transfer
+  // occurs *from* the second keypair, which means the second keypair will
+  // need to sign for an authorization entry to approve the transfer.
+  const tx = new TransactionBuilder(
+    await s.loadAccount(signers[0].publicKey()),
+    {
+      networkPassphrase: Networks.TESTNET,
+      fee: BASE_FEE,
+    },
+  )
+    .addOperation(
+      Operation.invokeContractFunction(
+        xlmContract,
+        [
+          ["transfer", "symbol"],
+          [signers[1].publicKey(), "address"], // from
+          [signers[0].publicKey(), "address"], // to
+          [1000, "i128"], // amount
+        ].map((val, type) => nativeToScVal(val, { type })),
+      ),
+    )
+    .build();
+
+  const simResult = s.simulateTransaction(tx);
+
+  // For every auth entry that needs signing, sign it with the correct keypair.
+  //
+  // Inject the auths back into the simulation result so they
+  // get assembled into our transaction.
+  simResult.result.auth = simResult.result.auth.map((entry) =>
+    authorizeEntry(
+      entry,
+      // Ignore source account entries, which is handled as a no-op.
+      entry.credentials().switch() !==
+        xdr.SorobanCredentialsType.sorobanCredentialsSourceAccount()
+        ? signers.find(
+            // Find the keypair that matches the entry's address.
+            (signer) =>
+              Address.fromScAddress(
+                entry.credentials().address().address(),
+              ).toString() === signer.publicKey(),
+          )
+        : null,
+      response.latestLedger + 12, // signature is valid for ~1m
+      Networks.TESTNET,
+    ),
+  );
+
+  const preppedTx = assembleTransaction(tx, simResult);
+  preppedTx.sign(signers[0]);
+
+  const sendTx = await s.sendTransaction(preppedTx);
+  return s.pollTransaction(sendTx.hash);
+}
+
+main().catch((e) => console.error(e));
+```
+
+</CodeExample>
+
+Alternativamente, podríamos ir un nivel más bajo en la pila y construir nosotros mismos las entradas de autorización usando [`authorizeInvocation`](https://stellar.github.io/js-stellar-sdk/global.html#authorizeInvocation), dándonos control total sobre la "pila de llamadas" que se está invocando. Esto puede ser útil si quieres autorizar invocaciones específicas, construir las invocaciones tú mismo, o reducir el ancho de banda que usas al compartir entradas para que otros firmen.
+
+#### Ejemplo 3: modo enforcement.
+
+En este ejemplo, usaremos el modo de autorización ["enforcement"](#enforcing-mode) de la simulación de transacciones [simulation][sim-tx], que, al recibir entradas de autorización firmadas, asegura que sean las firmas necesarias y suficientes para la ejecución de la transacción.
+
+Para mantener las cosas muy simples, no haremos mucha codificación. En cambio, sólo mostraremos la diferencia con el ejemplo anterior: todo lo que necesitamos es ejecutar la simulación una vez más.
+
+```diff
+-  preppedTx.sign(signers[0]);
+-
+-  const sendTx = await s.sendTransaction(preppedTx);
++  const resimTx = await s.prepareTransaction(preppedTx);
++  resimTx.sign(signers[0]);
++  const sendTx = await s.sendTransaction(resimTx);
+```
+
+[auth-data]: stellar-transaction.mdx#authorization-data
+[auth-invoke]: https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-transaction.x#L558
+[sim-tx]: ../../../../data/apis/rpc/api-reference/methods/simulateTransaction.mdx

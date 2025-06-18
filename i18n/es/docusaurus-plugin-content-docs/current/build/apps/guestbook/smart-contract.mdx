@@ -1,0 +1,381 @@
+---
+title: El contrato del libro de visitas
+sidebar_position: 20
+---
+
+El corazón de este proyecto comienza con nuestro contrato inteligente. Este contrato inteligente actuará, en esencia, como una base de datos para nuestros mensajes de libro de visitas. Los usuarios podrán escribir mensajes, leerlos y editar su(s) propios mensajes enviados anteriormente. Además, el contrato será actualizable y requerirá inicialización.
+
+## Funcionalidad requerida
+
+Toda la "lógica de negocio" siguiente será manejada por nuestro contrato inteligente:
+
+- **Un medio para escribir mensajes.** Los usuarios pueden invocar esta función para dejar un mensaje para el responsable del sitio. Tendrán que autenticar esta función, y debe contener un campo `title` y un campo `text` (ambos cadenas). La función devolverá el número de ID del mensaje, que se incrementa secuencialmente.
+- **Un medio para leer mensajes.** Esta función permitirá a un usuario "consultar" el contrato por un mensaje del libro de visitas, proporcionando el ID del mensaje. IDs que no existen resultarán en un error.
+- **Un medio para editar mensajes (con autenticación).** Si un usuario necesita modificar su mensaje escrito anteriormente, puede utilizar esta función para hacerlo. Deben proporcionar la autorización adecuada para hacerlo, y deben proporcionar ya sea un campo `title` o un campo `text` (no pueden estar ambos vacíos, pero uno de ellos podría).
+- **Un medio para recuperar donaciones y transferirlas a la dirección "admin".** La arrogancia asociada con solicitar donaciones en un sitio como este dice mucho del sentido de sí mismo del mantenedor. Sin embargo, proporcionar esta funcionalidad es un excelente ejercicio en interacciones de activos dentro del contrato inteligente.
+- También necesitaremos algunas funciones utilitarias que el contrato utilizará internamente, así como un `__constructor` y una función `upgrade`, en caso de que necesitemos actualizar nuestro contrato inteligente en el futuro.
+
+:::note
+
+Profundizaremos en cada una de las funciones principales a continuación, pero si deseas ver el contrato inteligente completo sin interrupciones, se puede encontrar aquí: [https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/contracts/ye_olde_guestbook/src/lib.rs](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/contracts/ye_olde_guestbook/src/lib.rs)
+
+:::
+
+## Cómo funciona
+
+### Funciones del contrato
+
+#### `__constructor`
+
+Con la publicación y la votación exitosa de validadores del Protocolo 22, ¡los contratos inteligentes ahora pueden utilizar una función `__constructor`! Anteriormente, cualquier inicialización de un contrato inteligente tenía que hacerse en una invocación posterior del contrato tras la acción de `deploy`. Ahora, es posible realizar esa inicialización en el momento del despliegue. Esto previene el front-running y mantiene el contrato que has desplegado siempre bajo tu control.
+
+Las funciones del constructor _lucen_ prácticamente igual que las funciones `init` utilizadas anteriormente. La única diferencia es _cuándo_ se ejecuta la función.
+
+```rust
+/// Initializes the guestbook with a warm welcome message for prospective
+/// signers to read.
+///
+/// # Arguments
+///
+/// * `admin` - The address which will be the owner and administrator of the
+///   guestbook.
+/// * `title` - The title or subject of the welcome message.
+/// * `text` - The body or contents of the welcome message.
+///
+/// # Panics
+///
+/// * If the `title` argument is empty or missing.
+/// * If the `text` argument is empty or missing.
+pub fn __constructor(
+    env: Env,
+    admin: Address,
+    title: String,
+    text: String,
+) -> Result<(), Error> {
+    check_string_not_empty(&env, &title);
+    check_string_not_empty(&env, &text);
+
+    admin.require_auth();
+    env.storage().instance().set(&DataKey::Admin, &admin);
+
+    let first_message = Message {
+        author: admin,
+        ledger: env.ledger().sequence(),
+        title,
+        text,
+    };
+
+    save_message(&env, first_message);
+    Ok(())
+}
+```
+
+#### `write_message`
+
+Primero lo primero, necesitamos una función que permita que un mensaje sea escrito en el libro de visitas. Se crea una estructura simple y se almacena en el almacenamiento persistente del contrato. Esta es una función bastante simple que toma tres piezas de datos de la invocación (`author`, `title` y `text`) y luego crea una estructura para almacenar en las entradas de almacenamiento persistente del contrato. Aquí hay algunas cosas a tener en cuenta:
+
+- Estamos utilizando una función auxiliar llamada `check_string_not_empty` para asegurar que se haya pasado un valor no vacío tanto para los argumentos `title` como `text`. Más sobre esta función más adelante.
+- Estamos requiriendo autenticación de la dirección del autor, para asegurar que han autorizado la entrada del mensaje a asociarse con ellos.
+- Estamos utilizando una función utilitaria `save_message` para hacer la lectura/escritura de la entrada de almacenamiento. Más sobre los detalles de esta función [más adelante](#save_message), pero por ahora solo debes saber que está almacenando la estructura `new_message` y devolviendo el ID del mensaje almacenado.
+
+```rust
+/// Write a message to the guestbook.
+///
+/// # Arguments
+///
+/// * `author` - The sender of the message.
+/// * `title` - The title or subject of the guestbook message.
+/// * `text` - The body or contents of the guestbook message.
+///
+/// # Panics
+///
+/// * If the `title` argument is empty or missing.
+/// * If the `text` argument is empty or missing.
+pub fn write_message(
+    env: Env,
+    author: Address,
+    title: String,
+    text: String,
+) -> Result<u32, Error> {
+    check_string_not_empty(&env, &title);
+    check_string_not_empty(&env, &text);
+    author.require_auth();
+
+    let new_message = Message {
+        author,
+        ledger: env.ledger().sequence(),
+        title,
+        text,
+    };
+
+    let message_id = save_message(&env, new_message);
+    return Ok(message_id);
+}
+```
+
+#### `edit_message`
+
+También haremos posible que un usuario edite un mensaje que ya ha sido escrito. En el caso de que solo se necesiten cambiar el `text` o el `title`, permitiremos pasar cadenas vacías como argumentos aquí. Sin embargo, aseguraremos que _ambos_ no estén vacíos. Estamos utilizando una función utilitaria `get_message` aquí para leer los datos de las entradas de almacenamiento del contrato. Recuperar un mensaje es relativamente común en este contrato, por lo que hemos creado una utilidad para minimizar el código duplicado.
+
+Modificamos el mensaje al:
+
+- recuperarlo del almacenamiento (en una variable mutable),
+- asignar los campos de la estructura al valor editado (o al original si un argumento está vacío), y
+- actualizar el número de ledger del mensaje al valor del ledger actual.
+
+Es importante notar que _no_ estamos requiriendo autenticación de un argumento `Address` pasado. En su lugar, recuperamos primero la estructura del mensaje y requerimos autenticación del autor almacenado.
+
+El proceso de guardar este objeto de mensaje editado es bastante similar a la función `write_message`, excepto que no estamos modificando el `MessageCount`, ya que solo estamos _modificando_ y no _agregando_ un mensaje.
+
+```rust
+/// Edit a specified message in the guestbook.
+///
+/// # Arguments
+///
+/// * `message_id` - The ID number of the message to edit.
+/// * `title` - The title or subject of the guestbook message.
+/// * `text` - The body or contents of the guestbook message.
+///
+/// # Panics
+///
+/// * If both the `title` AND `text` arguments are empty or missing.
+/// * If there is no authorization from the original message author.
+pub fn edit_message(
+    env: Env,
+    message_id: u32,
+    title: String,
+    text: String,
+) -> Result<(), Error> {
+    if title.is_empty() {
+        check_string_not_empty(&env, &text);
+    }
+
+    if text.is_empty() {
+        check_string_not_empty(&env, &title);
+    }
+
+    let mut message = get_message(&env, message_id);
+    message.author.require_auth();
+
+    let edited_title = if title.is_empty() {
+        message.title
+    } else {
+        title
+    };
+    let edited_text = if text.is_empty() { message.text } else { text };
+
+    message.title = edited_title;
+    message.text = edited_text;
+    message.ledger = env.ledger().sequence();
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Message(message_id), &message);
+    return Ok(());
+}
+```
+
+#### `read_message`
+
+Leer un mensaje deseado es tan simple como consultar el almacenamiento persistente del contrato y devolver la estructura `Message` del contrato. Nuevamente, estamos utilizando la función utilitaria `get_message`, así que cubriremos los [detalles de eso más adelante](#get_message). Brevemente por ahora, estamos pasando el ID del mensaje y devolviendo el mensaje correspondiente, produciendo un error en el camino si el ID del mensaje no existe en el almacenamiento del contrato.
+
+```rust
+/// Read a specified message from the guestbook.
+///
+/// # Arguments
+///
+/// * `message_id` - The ID number of the message to retrieve.
+///
+/// # Panics
+///
+/// * If the message ID is not associated with a message.
+pub fn read_message(env: Env, message_id: u32) -> Result<Message, Error> {
+    let message = get_message(&env, message_id);
+    Ok(message)
+}
+```
+
+#### `read_latest`
+
+Pero, ¿y si alguien solo quiere leer el _último_ mensaje y no sabe cuál es su número de ID? Bueno, estamos proporcionando una función precisamente para eso. Sin argumentos que pasar. Sin autenticación. Solo extrae el mensaje del almacenamiento persistente del contrato y devuelve la estructura (o produce un pánico si el contrato no tiene mensajes aún). Fácil fácil.
+
+```rust
+/// Read the latest message to be sent to the guestbook.
+pub fn read_latest(env: Env) -> Result<Message, Error> {
+    let latest_id = env
+        .storage()
+        .instance()
+        .get(&DataKey::MessageCount)
+        .unwrap();
+    let latest_message = get_message(&env, latest_id);
+    Ok(latest_message)
+}
+```
+
+#### `claim_donations`
+
+:::info
+
+Dejaremos de lado si el mantenedor del libro de visitas _debería_ estar solicitando donaciones, y simplemente asumiremos que _quiere_. Es una gran manera de pensar sobre la interoperabilidad de activos en tus contratos inteligentes, ¡así que vamos por ello!
+
+:::
+
+La función `claim_donations` permitirá al invocador de la función enviar un saldo de cualquier token al administrador del contrato del libro de visitas. Dirigiremos tu atención a dos aspectos de esta función, en particular.
+
+Primero, estamos requiriendo un `Address` para el token que debe ser reclamado. Puede que sea tu primera instinto codificar y predeterminar el XLM nativo para estas donaciones. Esto ciertamente se puede hacer, pero la dirección de ese contrato será diferente en Mainnet, Testnet o Futurenet, y el contrato tendría que ser modificado y recompilado para cada red a la que desees desplegar. Un enfoque más "universalmente" aplicable es tomar la dirección del token como argumento para esta función, y permitir que los donantes y el administrador usen cualquier token que consideren adecuado para la situación.
+
+En segundo lugar, no estamos requiriendo ninguna autenticación para esta función. No es realmente necesario agregar esa lógica a la mezcla, porque no habrá un daño real si un no-administrador invoca la función:
+
+- No hay riesgo de que los fondos sean enviados a la dirección equivocada. La dirección del administrador se está leyendo del almacenamiento de la instancia del contrato.
+- No hay riesgo de que el administrador reciba tokens no deseados. Si el token requiere una trustline, y una no existe en la cuenta (es decir, el administrador no ha optado por mantener ese activo), la invocación simplemente fallará. If it's a Soroban-only contract token, the storage entry of the new balance will be paid by the invoker of this function. El administrador no pierde ningún fondo, y el saldo no tendrá un impacto significativo en su cuenta.
+- El mejor de los casos sería que una persona altruista _realmente_ quiere que el administrador tenga los tokens que han donado, así que pagará el dinero de gas para activar el envío de los tokens mantenidos por el contrato al administrador.
+
+Además de esas dos cosas, todo lo demás es bastante sencillo. Creamos un cliente de token, verificamos el saldo del contrato de ese token, y si hay un saldo positivo, entonces enviamos los tokens a la dirección del administrador.
+
+```rust
+/// Claim any donations that have been made to the guestbook contract.
+///
+/// # Panics
+///
+/// * If the contract is not holding any donations balance.
+pub fn claim_donations(env: Env, token: Address) -> Result<i128, Error> {
+    let token_client = token::TokenClient::new(&env, &token);
+    let contract_balance = token_client.balance(&env.current_contract_address());
+
+    if contract_balance == 0 {
+        panic_with_error!(&env, Error::NoDonations);
+    }
+
+    let admin_address: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    token_client.transfer(
+        &env.current_contract_address(),
+        &admin_address,
+        &contract_balance,
+    );
+
+    Ok(contract_balance)
+}
+```
+
+### Funciones utilitarias
+
+También tenemos algunas funciones utilitarias que no están expuestas para ser invocadas por el contrato inteligente en una transacción. Estas funciones existen para que no tengamos que codificar la misma lógica una y otra vez (es decir, leer un mensaje del almacenamiento del contrato). Este es un enfoque bastante común para reducir el tamaño del contrato y hacer que la lógica del contrato sea más consistente.
+
+#### `check_string_not_empty`
+
+Aquí, simplemente estamos abstraiendo un chequeo que se realiza múltiples veces a lo largo del contrato. De este modo, podemos estar seguros de que _cada_ vez que queremos comprobar que una cadena no está vacía, lo estamos revisando de la misma manera exacta.
+
+```rust
+// Make sure the provided string is not empty.
+fn check_string_not_empty(env: &Env, sus_string: &String) {
+    if sus_string.is_empty() {
+        panic_with_error!(env, Error::InvalidMessage);
+    }
+}
+```
+
+#### `get_message`
+
+Esta función recupera una entrada de mensaje del almacenamiento del contrato del libro de visitas. Si la entrada no se encuentra, entraremos en pánico con un mensaje de error. Si se encuentra, devolvemos la estructura de mensaje completa `struct`.
+
+```rust
+// Read a message from persistent storage.
+fn get_message(env: &Env, message_id: u32) -> Message {
+    if !env
+        .storage()
+        .persistent()
+        .has(&DataKey::Message(message_id))
+    {
+        panic_with_error!(env, Error::NoSuchMessage);
+    }
+
+    let message: Message = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Message(message_id))
+        .unwrap();
+    return message;
+}
+```
+
+#### `save_message`
+
+Estamos abstraiendo el método que estamos utilizando para escribir un mensaje en el almacenamiento del contrato porque se utiliza en dos lugares: las funciones `initialize` y `write_message`. Queremos que ambas almacenen mensajes de la misma manera, por lo que estamos imponiendo eso utilizando esta función utilitaria.
+
+Estamos almacenando un `MessageCount` en el almacenamiento de la instancia del contrato, para ayudarnos en el guardado, lectura, edición, etc. de mensajes. Esto ciertamente se podría hacer de otra manera, pero será conveniente para nosotros cuando se trate de guardar nuevos mensajes, leer mensajes del contrato, consultar el estado del contrato en el frontend, etc.
+
+```rust
+// Write a message to persistent storage.
+fn save_message(env: &Env, message: Message) -> u32 {
+    let mut num_messages = env
+        .storage()
+        .instance()
+        .get(&DataKey::MessageCount)
+        .unwrap_or(0 as u32);
+    num_messages += 1;
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Message(num_messages), &message);
+    env.storage()
+        .instance()
+        .set(&DataKey::MessageCount, &num_messages);
+
+    return num_messages;
+}
+```
+
+### Tipos de contrato
+
+Además de las funciones anteriores, tenemos algunos tipos personalizados escritos para nuestro contrato inteligente. Estos pueden verse en el [`types.rs file`](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/contracts/ye_olde_guestbook/src/types.rs) en el repositorio del código fuente.
+
+#### `Message`
+
+El tipo `Message` es una estructura `struct` que contendrá toda la información sobre un mensaje que ha sido escrito en el libro de visitas. Llevamos un registro del título del mensaje, texto, autor y en qué número de ledger fue escrito. Algunas de estas no son estrictamente necesarias aquí y probablemente podrían manejarse fuera del contrato inteligente (utilizando un indexador de datos, por ejemplo). Sin embargo, para los propósitos de este tutorial, mantendremos estos mensajes en entradas persistentes en el almacenamiento del contrato.
+
+```rust
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Message {
+    pub author: Address,
+    pub ledger: u32,
+    pub title: String,
+    pub text: String,
+}
+```
+
+#### `DataKey`
+
+Esta es una estructura que se utiliza en otros lugares del contrato para definir las claves para las diversas entradas de almacenamiento que mantendrá el contrato. Nada innovador o notable aquí, para ser honesto, pero aún vale la pena mostrarlo. El `Message(ID_NUMBER)` se utilizará como la clave para almacenar una estructura `Message` en on-chain como el valor correspondiente.
+
+```rust
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    Admin,
+    MessageCount,
+    Message(u32),
+}
+```
+
+#### `Error`
+
+Estamos adhiriéndonos a las convenciones típicas del [contrato](https://developers.stellar.org/docs/build/guides/conventions/error-enum) y creando un `enum` para llevar un seguimiento de nuestros errores.
+
+```rust
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    InvalidMessage = 1,     // The provided message is malformed in some way.
+    NoSuchMessage = 2,      // The message requested does not exist.
+    UnauthorizedToEdit = 3, // Address is not allowed to edit this message.
+    NoDonations = 4,        // Contract has no donations to claim.
+}
+```
+
+#### Pruebas
+
+Hemos escrito algunas pruebas que trabajan a través de muchos patrones de uso (previstos) para este contrato inteligente. Es demasiado extenso para profundizar aquí, pero vale la pena revisar el [código fuente](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/contracts/ye_olde_guestbook/src/test.rs) para entender la lógica de cómo se supone que las diversas funciones del contrato funcionen juntas.
+
+A continuación, veremos cómo pasamos de este contrato desplegado a un paquete NPM que se pueda importar y usar en un proyecto frontend fácilmente, y con total seguridad de tipo.

@@ -1,0 +1,323 @@
+---
+title: "SEP-6: API de Depósito y Retirada"
+sidebar_position: 30
+---
+
+import useBaseUrl from "@docusaurus/useBaseUrl";
+
+SEP-6 permite que las billeteras y otros clientes interactúen directamente con los anchors sin que el usuario necesite abandonar la billetera para ir al sitio del anchor. En esta integración, la información KYC de un usuario es recopilada y gestionada por la billetera y enviada al anchor _en nombre de_ el usuario.
+
+## Encuentra el `TRANSFER_SERVER` del anchor
+
+Antes de que podamos preguntar algo sobre _cómo_ hacer una transferencia SEP-6, tenemos que averiguar _dónde_ descubrir esa información. Afortunadamente, el protocolo SEP-1 describe campos estandarizados para averiguar lo que necesitamos.
+
+```js title=/src/lib/stellar/sep1.js
+// Fetches and returns the endpoint used for SEP-6 transfer interactions.
+export async function getTransferServerSep6(domain) {
+  let { TRANSFER_SERVER } = await fetchStellarToml(domain);
+  return TRANSFER_SERVER;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep1.js
+
+## Obtener `/info`
+
+Ahora que sabemos dónde se encuentra el servidor de transferencia, BasicPay necesita obtener el endpoint `/info` del servidor de transferencia del anchor para entender los métodos de transferencia admitidos ([depositar, retirar, depositar-intercambio y retirar-intercambio](https://stellar.org/protocol/sep-6#info)) y los endpoints disponibles, así como características adicionales que pueden estar disponibles durante las transferencias.
+
+:::note
+
+En este momento, BasicPay solo admite los métodos de transferencia `depositar` y `retirar`. Una futura versión de este tutorial incorporará los métodos de transferencia `*-intercambio`.
+
+:::
+
+```js title=/src/lib/stellar/sep6.js
+import { getTransferServerSep6 } from "$lib/stellar/sep1";
+
+// Fetches and returns basic information about what the SEP-6 transfer server suppports.
+export async function getSep6Info(domain) {
+  let transferServer = await getTransferServerSep6(domain);
+  let res = await fetch(`${transferServer}/info`);
+  let json = await res.json();
+  return json;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep6.js
+
+## Mostrar elementos interactivos
+
+Dado que muchos de los endpoints SEP-6 (y SEP-24) requieren autenticación, esperamos hasta que nuestro usuario esté [autenticado con SEP-10](./sep10.mdx) antes de mostrar qué tipos de transferencias están disponibles. Cuando tengan un token de autenticación válido, podemos mostrar algunos botones que el usuario puede usar para iniciar una transferencia.
+
+El usuario puede entonces iniciar uno de los métodos de transferencia (en BasicPay, solo se admiten depósitos y retiros) al hacer clic en el botón “Depositar” o “Retirar” debajo de un activo admitido.
+
+![sep6](/assets/basic-pay/sep6_deposit_withdraw.png)
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* This <script> tag has been abbreviated for simplicity */
+
+  // We import things from external packages that will be needed
+  import { LogInIcon, LogOutIcon } from "svelte-feather-icons";
+
+  // We import some of our `$lib` functions
+  import { getSep6Info } from "$lib/stellar/sep6";
+
+  // The `open` Svelte context is used to open the confirmation modal
+  import { getContext } from "svelte";
+  const { open } = getContext("simple-modal");
+
+  /* ... */
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+## Un componente modal SEP-6 especial
+
+Si recuerdas nuestra [sección del modal de confirmación](../confirmation-modal.mdx), diseñamos nuestro componente modal para ser útil para cualquier cosa que pudiéramos requerir. Bueno, eso es _casi_ cierto. El hecho es que las interacciones con SEP-6 son simplemente complejas. Para facilitar esa complejidad, hemos creado un modal de transferencia SEP-6 diseñado específicamente. Hay **tanto** en ello que no podríamos cubrir todo lo que hace aquí. Sin embargo, cubriremos los puntos principales y enlazaremos a los archivos fuente relevantes.
+
+El componente modal en sí se ha dividido en varios componentes Svelte más pequeños. Consulta este archivo fuente para comenzar a mirar cómo lo hemos ensamblado: https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/components/TransferModalSep6.svelte
+
+### Lanzando el modal SEP-6
+
+Los botones anteriores utilizarán la función `launchTransferModalSep6` para mostrar el modal al usuario. Así es como se define en ese mismo archivo.
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* This <script> tag has been abbreviated for simplicity */
+
+  // We import any Svelte components we will need
+  import TransferModalSep6 from "./components/TransferModalSep6.svelte";
+
+  // Launch the SEP-6 modal to begin the transfer process and gather information from the user.
+  const launchTransferModalSep6 = ({
+    homeDomain,
+    assetCode,
+    assetIssuer,
+    endpoint,
+    sep6Info,
+  }) => {
+    // Open the SEP-6 transfer modal, supplying the relevant props for our
+    // desired type of transfer.
+    open(TransferModalSep6, {
+      homeDomain: homeDomain,
+      assetIssuer: assetIssuer,
+      transferData: {
+        endpoint: endpoint,
+      },
+      formData: {
+        account: data.publicKey,
+        asset_code: assetCode,
+      },
+      sep6Info: sep6Info,
+      // This `submitPayment` function is described later on.
+      submitPayment: submitPayment,
+    });
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+Una vez lanzado, el `TransferModalSep6` guiará al usuario a través de un "asistente" para recopilar toda la información requerida y, en última instancia, crear la transferencia.
+
+### Paso del modal 1: Detalles de la transferencia
+
+BasicPay solicita al usuario que ingrese información adicional, como tipo de transferencia, destino y cantidad. Parte de esto se completa automáticamente según el botón que presionó el usuario. Sin embargo, el usuario puede cambiar cualquiera de los campos si así lo elige.
+
+Vamos a omitir el ejemplo de código en esta sección, ya que principalmente son cosas de Svelte. Puedes ver el código fuente aquí: https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/components/TransferDetails.svelte
+
+<img
+  src={useBaseUrl("/assets/basic-pay/sep6_transfer_details.png")}
+  width="45%"
+/>
+
+### Paso del modal 2: Recopilar información KYC
+
+Para averiguar qué infraestructura ha puesto a nuestra disposición el anchor, necesitamos consultar el archivo `stellar.toml` del anchor para el campo `KYC_SERVER`. Si no se define esto, BasicPay recurrirá al uso del `TRANSFER_SERVER` para estas solicitudes.
+
+```js title=/src/lib/stellar/sep1.js
+// Fetches and returns the endpoint used for SEP-12 KYC interactions.
+export async function getKycServer(domain) {
+  let { KYC_SERVER, TRANSFER_SERVER } = await fetchStellarToml(domain);
+  // If `KYC_SERVER` is undefined in the domain's TOML file, `TRANSFER_SERVER`
+  // will be used
+  return KYC_SERVER ?? TRANSFER_SERVER;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep1.js
+
+Nuestro modal SEP-6 luego consulta el endpoint SEP-12 del anchor para los campos KYC requeridos con una solicitud `GET`, y presentamos estos campos para que el usuario los complete.
+
+<img src={useBaseUrl("/assets/basic-pay/sep6_kyc.png")} width="45%" />
+
+```js title=/src/lib/stellar/sep12.js
+import { getKycServer } from "$lib/stellar/sep1";
+
+// Sends a `GET` request to query KYC status for a customer, returns current status of KYC submission
+export async function getSep12Fields({ authToken, homeDomain }) {
+  let kycServer = await getKycServer(homeDomain);
+
+  let res = await fetch(`${kycServer}/customer`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+  });
+  let json = await res.json();
+
+  return json;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep12.js
+
+Una vez más, la presentación de los campos que el usuario debe completar está más del lado de Svelte, así que no compartiremos esos detalles aquí. Sin embargo, la fuente para este componente está disponible aquí: https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/components/KYCInformation.svelte
+
+### Paso del modal 3: Poner campos KYC y reportar estado
+
+Ahora que el usuario ha proporcionado la información necesaria para los requisitos KYC del anchor, podemos enviarlos al servidor KYC del anchor con una solicitud `PUT`.
+
+```js title=/src/lib/stellar/sep12.js
+// Sends a `PUT` request to the KYC server, submitting the supplied fields for the customer's record.
+export async function putSep12Fields({ authToken, fields, homeDomain }) {
+  let kycServer = await getKycServer(homeDomain);
+
+  let res = await fetch(`${kycServer}/customer`, {
+    method: "PUT",
+    mode: "cors",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify(fields),
+  });
+  let json = await res.json();
+
+  return json;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep12.js
+
+BasicPay recibe de vuelta del anchor un mensaje de estado para que el usuario lo vea. Una vez que el mensaje de estado es `ACEPTADO`, ¡podemos finalmente enviar la solicitud de transferencia real!
+
+<img src={useBaseUrl("/assets/basic-pay/kyc_accepted.png")} width="50%" />
+
+Este componente del modal SEP-6, como la mayoría de ellos, está casi completamente relacionado con Svelte. Por lo tanto, para mantener este tutorial (algo) despejado, te referiremos a la fuente del componente, que puedes encontrar aquí: https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/components/KYCStatus.svelte
+
+### Paso del modal 4: Enviar transferencia
+
+BasicPay realiza esta solicitud tomando todos los campos que se han recopilado durante este proceso y envolviéndolos en una URL que contiene parámetros de consulta: [ejemplo](https://testanchor.stellar.org/sep6/deposit?account=GAXQIC2BSZ5HZP3BD6RZQSD3LB66TB6A2TA5W3LZX2VDFMBAKHC4B62J&asset_code=SRT&type=bank_account&amount=11)
+
+Enviamos una solicitud `GET` a la URL con nuestro token de autorización en los encabezados, y el anchor se encarga de eso!
+
+```js title=/src/lib/stellar/sep6.js
+// Initiates a transfer using the SEP-6 protocol.
+export async function initiateTransfer6({
+  authToken,
+  endpoint,
+  formData,
+  domain,
+}) {
+  let transferServer = await getTransferServerSep6(domain);
+  let searchParams = new URLSearchParams(formData);
+
+  let res = await fetch(`${transferServer}/${endpoint}?${searchParams}`, {
+    method: "GET",
+    mode: "cors",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+  });
+  let json = await res.json();
+
+  if (!res.ok) {
+    throw error(res.status, {
+      message: json.error,
+    });
+  } else {
+    return json;
+  }
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep12.js
+
+Luego almacenamos los detalles de la transferencia en la tienda `transfersStore` y mostramos la respuesta del servidor de transferencia al usuario. Luego esperamos a que cierren el modal.
+
+:::note
+
+La única razón por la que estamos almacenando algo sobre la transferencia en BasicPay es para ayudarnos a llevar un registro de con qué anchors el usuario ha iniciado transferencias. De lo contrario, no podríamos consultar un historial de transferencias (como en la página `/dashboard`).
+
+:::
+
+### (A veces) Paso del modal 5: Enviar un pago Stellar
+
+En una transacción de retirada de fondos, BasicPay también desarrollará y presentará al usuario una transacción Stellar para que firme con su PIN. Aquí finalmente volveremos a nuestro modal "regular" que _es_ tan bueno en tantas cosas!
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* This <script> tag has been abbreviated for simplicity */
+
+  // Define some component variables that will be used throughout the page
+  let paymentXDR = "";
+  let paymentNetwork = "";
+
+  // After a withdraw transaction has been presented to the user, and they've confirmed with the correct pincode, sign and submit the transaction to the Stellar network.
+  const onPaymentConfirm = async (pincode) => {
+    // Use the walletStore to sign the transaction
+    let signedTransaction = await walletStore.sign({
+      transactionXDR: paymentXDR,
+      network: paymentNetwork,
+      pincode: pincode,
+    });
+    // Submit the transaction to the Stellar network
+    await submit(signedTransaction);
+  };
+
+  // Builds a Stellar payment to present to the user which will complete a transfer to the Anchor.
+  let submitPayment = async ({
+    withdrawDetails,
+    assetCode,
+    assetIssuer,
+    amount,
+  }) => {
+    let { transaction, network_passphrase } = await createPaymentTransaction({
+      source: data.publicKey,
+      destination: withdrawDetails.account_id,
+      asset: `${assetCode}:${assetIssuer}`,
+      amount: amount,
+      memo: withdrawDetails.memo
+        ? Buffer.from(withdrawDetails.memo, "base64")
+        : undefined,
+    });
+
+    // Set the component variables to hold the transaction details
+    paymentXDR = transaction;
+    paymentNetwork = network_passphrase;
+
+    // We close the SEP-6 modal, and open the regular confirmation modal
+    close();
+    open(ConfirmationModal, {
+      transactionXDR: paymentXDR,
+      transactionNetwork: paymentNetwork,
+      onConfirm: onPaymentConfirm,
+    });
+  };
+
+  /* ... */
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte

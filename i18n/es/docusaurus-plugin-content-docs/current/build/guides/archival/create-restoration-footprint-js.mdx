@@ -1,0 +1,110 @@
+---
+title: Crear manualmente una huella de restauración para restaurar datos archivados usando el SDK de JavaScript
+hide_table_of_contents: true
+description: Configurar manualmente una huella de restauración con el SDK de JavaScript
+---
+
+En esta guía, crearemos un método utilitario llamado `createRestorationFootprint` que se utiliza para crear manualmente una huella de restauración y restaurar datos archivados en un contrato.
+
+Primero revisemos cómo se almacenan los datos en un contrato inteligente con los tres tipos diferentes de archivo de estado:
+
+| Temporal                                    | Instancia                                                       | Persistente                                                     |
+| ------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
+| Opción más económica                        | Opción costosa                                                  | Opción costosa                                                  |
+| Eliminado después de que el TTL alcance `0` | Archivado cuando el TTL alcance `0`                             | Archivado cuando el TTL alcance `0`                             |
+| No se puede restaurar                       | Se puede restaurar utilizando la operación `RestoreFootprintOp` | Se puede restaurar utilizando la operación `RestoreFootprintOp` |
+| Cantidad ilimitada de almacenamiento        | Cantidad limitada de almacenamiento disponible                  | Cantidad ilimitada de almacenamiento                            |
+
+Como se ve arriba, todos los datos del contrato se archivan automáticamente cuando el TTL alcanza `0`, excepto las entradas `Temporal`, que se eliminan permanentemente del ledger.
+
+Ambos tipos `Instancia` y `Persistente` son adecuados para almacenar datos que no se pueden recrear fácilmente, con la matiz de que `Instancia` comparte el mismo TTL que la instancia del contrato mientras que `Persistente` no, y, si la instancia del contrato no se archiva, los datos `Persistente` pueden ser archivados y necesitar ser restaurados antes de invocar el contrato.
+
+Para una explicación detallada del archivado de datos de contratos, consulta la [sección Archivado del Estado](./../../../learn/fundamentals/contract-development/storage/state-archival.mdx) en la Enciclopedia.
+
+```typescript
+import {
+  Contract,
+  Networks,
+  Keypair,
+  Operation,
+  TransactionBuilder,
+  xdr,
+  Address,
+  Account,
+  Transaction,
+} from "@stellar/stellar-sdk";
+
+async function createRestorationFootprint(
+  account: Account,
+  contractAddress: string,
+  fee: string,
+  dataKey: xdr.ScVal,
+  signer: Keypair,
+) {
+  // Initialise contract & address
+  const contract: Contract = new Contract(contractAddress);
+  const address: Address = Address.fromString(contract.contractId());
+  // Setup contract data
+  const contractDataXDR = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: address.toScAddress(),
+      key: dataKey,
+      durability: xdr.ContractDataDurability.persistent(),
+    }),
+  );
+  // Prepare transaction data
+  const restoreData: xdr.SorobanTransactionData =
+    new xdr.SorobanTransactionData({
+      resources: new xdr.SorobanResources({
+        footprint: new xdr.LedgerFootprint({
+          readOnly: [],
+          readWrite: [contractDataXDR],
+        }),
+        instructions: 0,
+        readBytes: 0,
+        writeBytes: 0,
+      }),
+      resourceFee: xdr.Int64.fromString("0"),
+      // @ts-ignore
+      ext: new xdr.ExtensionPoint(0),
+    });
+  // Restore transaction with created restoration footprint
+  const restoreTx: Transaction = new TransactionBuilder(account, { fee: fee })
+    .setNetworkPassphrase(Networks.TESTNET)
+    .setSorobanData(restoreData)
+    .addOperation(Operation.restoreFootprint({}))
+    .build();
+
+  restoreTx.sign(signer);
+}
+```
+
+## Revisión del código
+
+Como estamos utilizando [Stellar SDK para JavaScript](https://stellar.github.io/js-stellar-sdk/) `js-stellar-sdk`, primero importamos el módulo.
+
+Nuestra función requerirá los siguientes parámetros:
+
+- `account`: La cuenta de Stellar desde la cual se enviará la transacción.
+- `contractAddress`: La dirección del contrato que se va a restaurar.
+- `fee`: La tarifa de la transacción.
+- `dataKey`: La clave para los datos del contrato que se van a restaurar.
+- `signer`: El keypair que firmará la transacción.
+
+Después de inicializar las instancias de contrato y dirección, creamos una representación XDR de los datos del contrato que incluye:
+
+- `contract`: La dirección del contrato.
+- `key`: La clave para los datos del contrato.
+- `durability`: Especifica que los datos del contrato son persistentes - asumimos que es `Persistente`.
+
+A continuación, estamos preparando los datos de la transacción (Soroban) con:
+
+- `resources`: Especifica los recursos necesarios para la transacción.
+- `footprint`: Define qué partes del ledger se leerán y se escribirán.
+- `instructions`, `readBytes`, `writeBytes`: Establece los límites de recursos (todos establecidos en 0 aquí).
+- `resourceFee`: Establece la tarifa de recursos en 0 (marcador).
+- `ext`: Punto de extensión para uso futuro (establecido en 0).
+
+Ten en cuenta que para las huellas de restauración solo necesitamos completar `readWrite`.
+
+La transacción ahora se puede enviar a la red Stellar (de prueba) y firmarse para restaurar los datos del contrato especificado.
