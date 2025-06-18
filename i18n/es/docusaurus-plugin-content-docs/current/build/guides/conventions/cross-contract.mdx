@@ -1,0 +1,130 @@
+---
+title: Hacer llamadas entre contratos
+description: Llamar a un contrato inteligente desde otro contrato inteligente
+---
+
+Al igual que desarrollar software en cualquier idioma, desarrollar un contrato inteligente Stellar con un conjunto de características ricas puede ser una tarea desafiante y que consume mucho tiempo. Afortunadamente, alguien más podría haber resuelto parte de tus incidencias o construir componentes que podrían ser reutilizados. La comunidad de código abierto es vibrante y la comunidad de Stellar no decepciona.
+
+Hay dos tipos de dependencias que se pueden introducir en un contrato inteligente Stellar:
+
+1. Se pueden usar otros crates de Rust (siempre que sean compatibles con el [dialecto Rust](../../../learn/fundamentals/contract-development/rust-dialect.mdx) de Soroban);
+2. Se puede usar otro contrato inteligente. Esto se conoce como una [llamada entre contratos](../../../learn/fundamentals/contract-development/contract-interactions/cross-contract.mdx).
+
+En lo siguiente, veremos cómo se pueden aprovechar los contratos desde dentro de otro contrato.
+
+## Contrato como dependencia
+
+Si bien encontrar un contrato está fuera del alcance de esta guía, hay varios lugares que hay que tener en cuenta. La mayoría de los proyectos y dApps divulgan públicamente la dirección de su contrato inteligente Stellar en su sitio web. Con esta información, un [explorador de bloques](../../../tools/developer-tools/block-explorers.mdx) es una herramienta poderosa para entender cómo se está utilizando un contrato. Algunos exploradores también te permiten descargar el contrato compilado como un archivo Wasm. También hay proyectos que proporcionan un enlace para acceder al código mismo.
+
+:::info[Contract dirección]
+
+Para depender de un proyecto, necesitamos conocer la dirección del contrato del que vamos a depender.
+
+:::
+
+## API pública
+
+Se pueden llamar todas las funciones públicas de un contrato. Usar un explorador de red puede ser útil, ya que algunos proponen ver la interfaz de Rust de un contrato. Los bindings también se pueden generar usando el CLI:
+
+```bash
+stellar contract bindings rust --network --contract-id ... --output-dir ...
+```
+
+## Haciendo una llamada entre contratos
+
+Una vez que sabemos qué función llamar y qué argumentos usar, hay dos maneras principales de hacer una llamada entre contratos: podemos cargar el Wasm o llamar al contrato.
+
+Empecemos usando solo la dirección de un contrato. En este ejemplo, tenemos un contrato externo con una función pública llamada `add_with` que toma dos `u32` como valores de entrada para sumarlos.
+
+```rust
+#[contract]
+pub struct ContractB;
+
+#[contractimpl]
+impl ContractB {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        env.invoke_contract(&contract, symbol_short!("add"), vec![&env, x.to_val(), y.to_val()])
+    }
+}
+```
+
+Usar solo el contrato viene con sus propios desafíos. Debido a que no tenemos acceso al código Wasm, no tenemos ninguna inferencia de tipos y tenemos que convertir manualmente las entradas de la función a `Val`. Si queremos más herramientas que nos ayuden, podemos cargar el código Wasm en el contrato. Esto nos permite pasar tipos normales sin necesitar conversiones manuales de nuestra parte. Detrás de escena, esta manera de hacerlo es simplemente un envoltorio conveniente alrededor de `env.invoke_contract`.
+
+```rust
+mod contract_a {
+    soroban_sdk::contractimport!(
+        file = "soroban_contract_a.wasm"
+    );
+}
+
+#[contract]
+pub struct ContractB;
+
+#[contractimpl]
+impl ContractB {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        let client = contract_a::Client::new(&env, &contract);
+        client.add(&x, &y)
+    }
+}
+```
+
+Aunque tenemos acceso al Wasm, aún necesitamos una dirección de contrato porque podría haber múltiples contratos desplegados en la cadena que usan el mismo código subyacente. Esto puede ser importante si, por ejemplo, la función que necesitas requiere acceso a valores almacenados de otros usuarios.
+
+:::tip[Address y Wasm]
+
+Gracias a los bindings de Rust del contrato externo, también podemos usar cualquier enumeración pública del contrato como si las hubiéramos definido dentro de nuestro propio contrato.
+
+```rust
+client::ContractAEnum::SomeField
+```
+
+:::
+
+## Manejo de respuestas
+
+En los ejemplos anteriores, hemos utilizado `env.invoke_contract` y `client.some_function`. En ambos casos, si hay un problema con la llamada al contrato subyacente, el contrato entrará en pánico. Este podría ser un enfoque válido, pero en algunos casos queremos capturar errores y manejarlos dependiendo del resultado. Esto es para transmitir un mensaje de error personalizado, o incluso desencadenar un camino de código alternativo.
+
+Ingresa `try_`. Al usar `env.try_invoke_contract` o `client.try_some_function`, los errores subyacentes no harán que el contrato entre en pánico. En su lugar, los errores se envolverán y se pueden manejar. Por ejemplo, si quisiéramos establecer como predeterminado 0 en caso de un error:
+
+```rust
+client.try_add(&x, &y).unwrap_or(Ok(0)).unwrap()
+```
+
+Por supuesto, podríamos tener un manejo de errores mucho más complejo aprovechando la declaración `match`:
+
+```rust
+match client.try_add(&x, &y) {
+    // the contract returned a value
+    Ok(Ok(number)) => todo!("do something with the number returned"),
+    Ok(Err(ConversionError)) => todo!("got a value back, but it wasn't a number like we expected"),
+
+    // the contract errored
+    Err(Ok(Error::AnError)) => todo!("do something when an error occurs that the contract included in its contract spec"),
+    Err(Err(status)) => todo!("do something when an unrecognized error, or system error, occurs"),
+}
+```
+
+## Dependiendo de otro contrato
+
+Felicidades, ahora puedes aprovechar eficazmente todo el ecosistema de Soroban y su multitud de contratos inteligentes. Hay un último punto a discutir antes de cerrar: **dependencia**.
+
+Al igual que al llamar a cualquier contrato inteligente, depender de un contrato inteligente externo debe hacerse con cuidado. Es aconsejable hacer tu propia investigación y análisis sobre el contrato que deseas utilizar. Como los contratos se pueden actualizar sin que su dirección cambie, es importante prestar atención a cualquier cambio en el código subyacente.
+
+:::tip[Contract Wasm]
+
+Se puede obtener el Wasm utilizando el [Stellar CLI](../../../tools/cli/README.mdx). Esto puede servir como una manera rápida de (por ejemplo) automatizar una verificación de hash en un sistema de integración continua. Sin embargo, tal verificación no proporcionaría fuertes garantías en la cadena, ¡pero uno podría construir un contrato para eso!
+
+```bash
+stellar contract fetch --id C... --network ... > contract.wasm
+```
+
+:::
+
+Además de esta consideración de seguridad, actualizar un contrato es una parte integral del ciclo de vida de un contrato. Se añaden nuevas características, se corrigen errores y se realizan cambios en la API pública. Aquí también, es importante observar cualquier desarrollo en estos contratos para garantizar el funcionamiento continuo de tu propio contrato.
+
+## Ejemplos
+
+Consulta el siguiente ejemplo completo con pruebas:
+
+- [Llamadas entre contratos](../../smart-contracts/example-contracts/cross-contract-call.mdx) muestra cómo crear dos contratos, desplegarlos y luego cómo llamar a uno desde el otro.

@@ -1,0 +1,96 @@
+---
+title: Restaurar datos de contrato archivados utilizando el SDK de JavaScript
+hide_table_of_contents: true
+description: Restaurar datos de contrato persistentes archivados utilizando el SDK de JavaScript
+---
+
+Esta es una ocurrencia bastante probable: mi pieza de datos persistentes está archivada porque no he interactuado con mi contrato en un tiempo. ¿Cómo puedo hacerlo accesible de nuevo?
+
+Si descubres que un fragmento de datos persistentes está archivado, se puede restaurar utilizando una transacción Stellar que contenga una operación `RestoreFootprintOp`. Haremos dos suposiciones para el bien de esta guía:
+
+- La instancia del contrato en sí aún está en vivo (es decir, otros han estado extendiendo su TTL mientras has estado ausente).
+- No sabes cómo se representa tu dato archivado en el ledger.
+
+El proceso de restauración que utilizaremos implica tres pasos discretos:
+
+1. Simular nuestra transacción como lo haríamos normalmente.
+2. Si la simulación lo indica, realizamos la restauración con una operación `RestoreFootprintOp` utilizando las pistas que obtuvimos de la simulación.
+3. Volvemos a intentar ejecutar nuestra transacción inicial.
+
+Aquí hay una función llamada `submitOrRestoreAndRetry()` que se encargará de todos esos pasos por nosotros:
+
+:::info
+
+Esta guía utiliza la función (convenientemente llamada) `submitTx` que creamos en [otra guía](../transactions/submit-transaction-wait-js.mdx).
+
+:::
+
+```typescript
+import {
+  BASE_FEE,
+  Networks,
+  Keypair,
+  TransactionBuilder,
+  SorobanDataBuilder,
+  rpc as StellarRpc,
+  xdr,
+} from "@stellar/stellar-sdk"; // add'l imports to submitTx
+const { Api, assembleTransaction } = StellarRpc;
+
+// assume that `server` is the Server() instance from the submitTx
+
+async function submitOrRestoreAndRetry(
+  signer: Keypair,
+  tx: Transaction,
+): Promise<Api.GetTransactionResponse> {
+  // We can't use `prepareTransaction` here because we want to do
+  // restoration if necessary, basically assembling the simulation ourselves.
+  const sim = await server.simulateTransaction(tx);
+
+  // Other failures are out of scope of this tutorial.
+  if (!Api.isSimulationSuccess(sim)) {
+    throw sim;
+  }
+
+  // If simulation didn't fail, we don't need to restore anything! Just send it.
+  if (!Api.isSimulationRestore(sim)) {
+    const prepTx = assembleTransaction(tx, sim);
+    prepTx.sign(signer);
+    return submitTx(prepTx);
+  }
+
+  // Build the restoration operation using the RPC server's hints.
+  const account = await server.getAccount(signer.publicKey());
+  let fee = parseInt(BASE_FEE);
+  fee += parseInt(sim.restorePreamble.minResourceFee);
+
+  const restoreTx = new TransactionBuilder(account, { fee: fee.toString() })
+    .setNetworkPassphrase(Networks.TESTNET)
+    .setSorobanData(sim.restorePreamble.transactionData.build())
+    .addOperation(Operation.restoreFootprint({}))
+    .build();
+
+  restoreTx.sign(signer);
+
+  const resp = await submitTx(restoreTx);
+  if (resp.status !== Api.GetTransactionStatus.SUCCESS) {
+    throw resp;
+  }
+
+  // now that we've restored the necessary data, we can retry our tx using
+  // the initial data from the simulation (which, hopefully, is still
+  // up-to-date)
+  const retryTxBuilder = TransactionBuilder.cloneFrom(tx, {
+    fee: (parseInt(tx.fee) + parseInt(sim.minResourceFee)).toString(),
+    sorobanData: sim.transactionData.build(),
+  });
+  // because we consumed a sequence number when restoring, we need to make sure
+  // we set the correct value on this copy
+  retryTxBuilder.source.incrementSequenceNumber();
+
+  const retryTx = retryTxBuilder.build();
+  retryTx.sign(signer);
+
+  return submitTx(retryTx);
+}
+```
