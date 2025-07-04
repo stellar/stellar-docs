@@ -110,6 +110,28 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Bridge Integration",
+      link: {
+        type: "doc",
+        id: "api-reference/bridge-integration",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/get-bridge-integration",
+          label: "Get Bridge Integration Status",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/update-bridge-integration",
+          label: "Update Bridge Integration Status",
+          className: "api-method patch",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "Disbursements",
       link: {
         type: "doc",
