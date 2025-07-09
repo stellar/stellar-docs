@@ -272,6 +272,12 @@ const sidebar: SidebarsConfig = {
           label: "Retrieve a Payment",
           className: "api-method get",
         },
+        {
+          type: "doc",
+          id: "api-reference/create-direct-payment",
+          label: "Create a Direct Payment",
+          className: "api-method post",
+        },
       ],
     },
     {
