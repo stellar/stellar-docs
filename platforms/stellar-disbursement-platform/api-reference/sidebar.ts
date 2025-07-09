@@ -94,6 +94,46 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Authentication (API Keys)",
+      link: {
+        type: "doc",
+        id: "api-reference/api-keys",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/create-api-key",
+          label: "Create API Key",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "api-reference/list-api-keys",
+          label: "List API Keys",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/get-api-key",
+          label: "Get API Key",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "api-reference/update-api-key",
+          label: "Update API Keys",
+          className: "api-method patch",
+        },
+        {
+          type: "doc",
+          id: "api-reference/delete-api-key",
+          label: "Delete API Key",
+          className: "api-method delete",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "Balances",
       link: {
         type: "doc",
@@ -312,6 +352,12 @@ const sidebar: SidebarsConfig = {
       items: [
         {
           type: "doc",
+          id: "api-reference/create-receiver",
+          label: "Create Receiver",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
           id: "api-reference/list-all-receivers",
           label: "List All Receivers",
           className: "api-method get",
@@ -483,6 +529,12 @@ const sidebar: SidebarsConfig = {
           id: "api-reference/update-wallet",
           label: "Update Wallet",
           className: "api-method patch",
+        },
+        {
+          type: "doc",
+          id: "api-reference/create-wallet",
+          label: "Create Wallet",
+          className: "api-method post",
         },
       ],
     },
