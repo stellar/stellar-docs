@@ -328,11 +328,13 @@ const config: Config = {
               to: '/docs/learn/fundamentals/stellar-data-structures',
               label: 'Data Structures',
               activeBasePath: 'docs/learn/fundamentals/stellar-data-structures',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/learn/fundamentals/transactions',
               label: 'Operations & Transactions',
               activeBasePath: 'docs/learn/fundamentals/transactions',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/learn/fundamentals/fees-resource-limits-metering',
@@ -348,11 +350,13 @@ const config: Config = {
               to: '/docs/learn/fundamentals/contract-development',
               label: 'Smart Contracts',
               activeBasePath: 'docs/learn/fundamentals/contract-development',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/learn/fundamentals/data-format',
               label: 'Data Format',
               activeBasePath: 'docs/learn/fundamentals/data-format',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/learn/fundamentals/anchors',
