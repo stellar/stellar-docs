@@ -161,11 +161,13 @@ const config: Config = {
               to: '/docs/build/smart-contracts/getting-started',
               label: 'Getting Started',
               activeBasePath: 'docs/build/smart-contracts/getting-started',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/build/smart-contracts/example-contracts',
               label: 'Example Contracts',
               activeBasePath: 'docs/build/smart-contracts/example-contracts',
+              className: 'has-nested-items',
             },
             {
               type: 'html',
@@ -289,7 +291,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/build/security-docs" class="dropdown__link">Security Best Practices</a>',
+              value: '<hr><a href="/docs/build/security-docs" class="dropdown__link has-nested-items">Security Best Practices</a>',
             },
           ],
         },
@@ -535,7 +537,8 @@ const config: Config = {
             },
             {
               to: '/docs/tools/developer-tools',
-              label: 'More Developer Tools'
+              label: 'More Developer Tools',
+              className: 'has-nested-items',
             },
             {
               type: 'html',
