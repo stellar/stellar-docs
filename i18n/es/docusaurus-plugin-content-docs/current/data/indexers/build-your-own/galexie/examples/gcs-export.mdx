@@ -1,0 +1,143 @@
+---
+title: Exportar a GCS
+sidebar_position: 20
+---
+
+# Exportar a GCS
+
+## Objetivos
+
+- Los metadatos del libro mayor se almacenan en Google Cloud Storage (GCS).
+- Los consumidores descendentes necesitan acceso a los datos más recientes de la red con una latencia mínima.
+  - Los metadatos del libro mayor para cada libro mayor recién cerrado en Stellar Testnet deben exportarse rápidamente a GCS.
+- La implementación se realizará completamente en la nube, utilizando GCP para todas las necesidades de almacenamiento y computación.
+
+## Solución - Canal del Publicador
+
+Ejecuta la imagen de Dockerhub Galexie, [stellar/stellar-galexie](https://hub.docker.com/r/stellar/stellar-galexie) como una instancia en [GCP Compute Engines](https://cloud.google.com/run/docs/create-jobs) y exporta los metadatos del libro mayor al almacenamiento [de almacenamiento en GCS](https://cloud.google.com/storage/docs/json_api/v1/buckets).
+
+[Galexie](/data/indexers/build-your-own/galexie/README.mdx) en este ejemplo, realiza los roles principales del canal de datos. Actúa como el `origin` y `publisher` de los metadatos del libro mayor hacia el bucket de Google Cloud Storage que es el `sink`.
+
+### Prepara el archivo de configuración de Galexie localmente
+
+#### `testnet-config.toml`
+
+<CodeExample>
+
+```
+[datastore_config]
+type = "GCS"
+
+[datastore_config.params]
+destination_bucket_path = "galexie-data/ledgers/testnet"
+
+[datastore_config.schema]
+ledgers_per_file = 1
+files_per_partition = 10
+
+[stellar_core_config]
+  network = "testnet"
+```
+
+</CodeExample>
+
+### Establece la zona y el proyecto predeterminados en gcloud
+
+Haz esto una vez, para que no tengas que repetirlo en todos los comandos posteriores. Los comandos de ejemplo suponen que esto está hecho, asegurando que todos los recursos creados estén en el mismo proyecto y zona de GCP, si corresponde, como para computación.
+
+<CodeExample>
+
+```
+gcloud config set compute/zone {your zone here}
+gcloud config set project {your GCP project name}
+```
+
+</CodeExample>
+
+### Almacena el archivo de configuración de galexie en un disco de cómputo
+
+Crea un nuevo disco de cómputo de GCP que solo contenga el archivo de configuración para Galexie. Se utilizará en el siguiente paso como un montaje de volumen para que el contenedor de Galexie pueda acceder a él.
+
+<CodeExample>
+
+```
+// create the raw disk in GCP project
+$ gcloud compute disks create galexie-config-disk \
+  --size=10GB \
+  --type=pd-standard
+
+// need to format this raw disk
+// create a temp instance, attach the new galexie disk to the instance
+$ gcloud compute instances create temp-instance \
+  --machine-type=e2-medium \
+  --disk=name=galexie-config-disk,device-name=galexie-config-disk,mode=rw,auto-delete=no
+
+// shell into the temp instance
+$ gcloud compute ssh temp-instance
+
+// find the unformatted, attached disk device
+// it will be listed with no mountpoint and 10GB
+temp-instance:~$ lsblk
+
+// format the empty disk
+temp-instance:~$ sudo mkfs.ext4 -F /dev/sda
+
+// mount the formatted disk in the instance
+temp-instance:~$ sudo mkdir -p /mnt/my-disk; chmod a+rw /mnt/my-disk
+temp-instance:~$ sudo mount /dev/sda /mnt/my-disk
+temp-instance:~$ exit
+
+// copy the local testnet-config.toml file onto the formatted galexie-config-disk
+$ gcloud compute scp testnet-config.toml temp-instance:/mnt/my-disk
+
+// discard the temp instance, no longer needed, the disk will remain.
+$ gcloud compute instances delete temp-instance
+
+```
+
+</CodeExample>
+
+### Crea un nuevo bucket de gcloud para el almacenamiento de metadatos del libro mayor exportado
+
+<CodeExample>
+
+```
+$ gcloud storage buckets create gs://galexie-data
+```
+
+</CodeExample>
+
+### Usa gcloud para implementar y ejecutar Galexie como instancia de cómputo.
+
+Configura el montaje del volumen en la instancia para que Galexie cargue el archivo de configuración desde el disco de cómputo existente creado en el paso anterior. Especifica la secuencia de libro mayor inicial para que Galexie comience a exportar los metadatos de libro mayor. Los requisitos para esta implementación son comenzar con lo más reciente de la red, que se puede obtener inicialmente de cualquier explorador de bloques, como lo reportado por [stellar.expert/explorer/testnet](https://stellar.expert/explorer/testnet).
+
+En este ejemplo, el tipo de máquina `e2-medium`, debería ser suficiente para los [Requisitos Previos de Galexie](../admin_guide/prerequisites.mdx).
+
+<CodeExample>
+
+```
+gcloud compute instances create-with-container galexie-instance \
+  --scopes=cloud-platform \
+  --machine-type=e2-medium \
+  --container-image=stellar/stellar-galexie \
+  --disk=name=galexie-config-disk,device-name=galexie-config-disk,mode=ro,auto-delete=no \
+  --container-mount-disk=mount-path=/mnt/config,mode=ro,name=galexie-config-disk \
+  --container-arg="append" \
+  --container-arg="--start" \
+  --container-arg="1554952" \
+  --container-arg="--config-file" \
+  --container-arg="/mnt/config/testnet-config.toml"
+```
+
+</CodeExample>
+
+### Monitorea el estado de exportación de Galexie
+
+Accede a la consola de GCP:
+
+- `Cloud Storage->Buckets`, ver el contenido del bucket de GCS `galexie-data`, deberías ver nuevos archivos que representan los metadatos del libro mayor más recientes de Testnet llegando al bucket cada minuto.
+- `Compute Engine->Virtual Machines`, verifica la salida del registro de `galexie-instance`, verás líneas `level=info msg="Uploaded ..` que indican cada vez que se carga un nuevo archivo de metadatos del libro mayor en el bucket de GCS.
+
+## Siguiente paso - Canal del Consumidor
+
+Los metadatos del libro mayor ahora se están acumulando como archivos en tu bucket de GCS. Puedes comenzar a explorar las opciones para que las aplicaciones consuman estos datos de red precomputados utilizando el [Ingest SDK](../../ingest-sdk/README.mdx) para ensamblar canalizaciones de datos impulsadas por el consumidor capaces de importar y analizar los datos para derivar modelos de datos personalizados y enriquecidos. Consulta el [canal del consumidor del bucket de GCS](https://developers.stellar.org/docs/build/apps/ingest-sdk/overview#ledger-metadata-consumer-pipeline) para código de ejemplo relevante.

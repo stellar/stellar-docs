@@ -1,0 +1,1483 @@
+---
+title: Usar __check_auth de maneras interesantes
+description: Dos guías que explican cómo usar __check_auth
+---
+
+<head>
+  <title>Usar __check_auth de maneras interesantes</title>
+  <meta charSet="utf-8" />
+  <meta property="og:title" content="Usar __check_auth de maneras interesantes" />
+  <meta
+    property="og:description"
+    content="Esta guía te explicará maneras interesantes en las que puedes usar __check_auth en tus aplicaciones Soroban"
+  />
+</head>
+
+## Tutorial 1: restricción basada en tiempo en transferencias de tokens
+
+Imagina un contrato de cuenta multi-firma donde ciertas acciones, como transferir tokens, deben ser controladas por el tiempo transcurrido entre transferencias consecutivas. Por ejemplo, una transferencia de tokens solo debería permitirse si ha pasado un cierto período de tiempo desde la última transferencia. Esto puede ser útil en escenarios donde deseas limitar la frecuencia de las transacciones para prevenir el mal uso o implementar límites de tasa.
+
+### Conceptos básicos
+
+#### Restricciones basadas en tiempo
+
+La idea es hacer cumplir un intervalo de tiempo mínimo entre transferencias de tokens consecutivas. Cada token puede tener su propio límite de tiempo, y el contrato rastreará el tiempo de la última transferencia para cada token.
+
+#### Almacenamiento de datos
+
+El contrato almacenará el límite de tiempo y el tiempo de la última transferencia para cada token en su almacenamiento para mantener un registro de estos valores a través de las transacciones.
+
+### Revisión del código
+
+#### Estructura del contrato e importaciones
+
+```rust
+#![no_std]
+
+use soroban_sdk::{
+    auth::{Context, CustomAccountInterface}, contract, contracterror, contractimpl, contracttype, symbol_short, Address,
+    BytesN, Env, Symbol, Vec,
+};
+#[contract]
+struct AccountContract;
+
+#[contracttype]
+#[derive(Clone)]
+pub struct Signature {
+    pub public_key: BytesN<32>,
+    pub signature: BytesN<64>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+enum DataKey {
+    SignerCnt,
+    Signer(BytesN<32>),
+    TimeLimit(Address),
+    LastTransferTime(Address),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum AccError {
+    NotEnoughSigners = 1,
+    NegativeAmount = 2,
+    BadSignatureOrder = 3,
+    UnknownSigner = 4,
+    InvalidContext = 5,
+    TimeLimitExceeded = 6,
+}
+
+const TRANSFER_FN: Symbol = symbol_short!("transfer");
+
+```
+
+#### Inicialización del contrato
+
+1. Inicializa el contrato con una lista de las claves públicas de los firmantes
+2. Almacena el conteo de firmantes en el almacenamiento del contrato
+
+```rust
+#[contractimpl]
+impl AccountContract {
+
+    pub fn init(env: Env, signers: Vec<BytesN<32>>) {
+        for signer in signers.iter() {
+            env.storage().instance().set(&DataKey::Signer(signer), &());
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::SignerCnt, &signers.len());
+    }
+}
+```
+
+#### Establecer límites de tiempo
+
+1. Permite establecer un límite de tiempo para un token específico
+2. Asegura que solo el contrato mismo pueda establecer estos límites al requerir la autorización del contrato
+
+```rust
+#[contractimpl]
+
+impl AccountContract {
+    pub fn set_time(env: Env, token: Address, time_limit: u64) {
+        env.current_contract_address().require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::TimeLimit(token), &time_limit);
+    }
+}
+```
+
+#### Autenticación y autorización personalizadas
+
+1. Autentica las firmas
+2. Verifica si todos los firmantes requeridos han firmado
+3. Itera a través del contexto de autorización para verificar la política de autorización
+
+```rust
+#[contractimpl]
+impl CustomAccountInterface for AccountContract {
+
+    type Error = AccError;
+    type Signature = Vec<Signature>;
+
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,
+        signature_payload: BytesN<32>,
+        signatures: Vec<Signature>,
+        auth_context: Vec<Context>,
+    ) -> Result<(), AccError> {
+        authenticate(&env, &signature_payload, &signatures)?;
+
+        let tot_signers: u32 = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SignerCnt)
+            .unwrap();
+
+        let all_signed = tot_signers == signatures.len();
+
+        let curr_contract = env.current_contract_address();
+
+        for context in auth_context.iter() {
+            verify_authorization_policy(
+                &env,
+                &context,
+                &curr_contract,
+                all_signed,
+            )?;
+        }
+        Ok(())
+    }
+
+}
+```
+
+#### Lógica de autenticación
+
+1. Verifica que las firmas estén en el orden correcto y que cada firmante esté autorizado
+2. Usa la función [ed25519_verify](https://docs.rs/soroban-sdk/latest/soroban_sdk/crypto/struct.Crypto.html#method.ed25519_verify) para verificar cada firma
+
+```rust
+ fn authenticate(
+        env: &Env,
+        signature_payload: &BytesN<32>,
+        signatures: &Vec<Signature>,
+) -> Result<(), AccError> {
+    for i in 0..signatures.len() {
+        let signature = signatures.get_unchecked(i);
+        if i > 0 {
+            let prev_signature = signatures.get_unchecked(i - 1);
+            if prev_signature.public_key >= signature.public_key {
+                return Err(AccError::BadSignatureOrder);
+            }
+        }
+        if !env
+            .storage()
+            .instance()
+            .has(&DataKey::Signer(signature.public_key.clone()))
+        {
+            return Err(AccError::UnknownSigner);
+        }
+        env.crypto().ed25519_verify(
+            &signature.public_key,
+            &signature_payload.clone().into(),
+            &signature.signature,
+        );
+    }
+    Ok(())
+}
+```
+
+#### Verificación de la política de autorización
+
+1. Verifica si la función que se está llamando es una función de transferencia o de aprobación
+2. Forzar la restricción basada en tiempo comparando el tiempo actual con el tiempo de la última transferencia
+3. Actualiza el tiempo de la última transferencia si se permite la transferencia
+
+```rust
+fn verify_authorization_policy(
+        env: &Env,
+        context: &Context,
+        curr_contract: &Address,
+        all_signed: bool,
+    ) -> Result<(), AccError> {
+        let contract_context = match context {
+            Context::Contract(c) => {
+                if &c.contract == curr_contract {
+                    if !all_signed {
+                        return Err(AccError::NotEnoughSigners);
+                    }
+                }
+                c
+            }
+            Context::CreateContractHostFn(_) => return Err(AccError::InvalidContext),
+        };
+
+        if contract_context.fn_name != TRANSFER_FN
+            && contract_context.fn_name != Symbol::new(env, "approve")
+        {
+            return Ok(());
+        }
+
+        let current_time = env.ledger().timestamp();
+        let time_limit: Option<u64> =
+            env.storage()
+                .instance()
+                .get::<_, u64>(&DataKey::TimeLimit(contract_context.contract.clone()));
+
+        if let Some(limit) = time_limit {
+            let last_transfer_time: u64 = env.storage()
+                .instance()
+                .get::<_, u64>(&DataKey::LastTransferTime(contract_context.contract.clone()))
+                .unwrap_or(0);
+
+            if current_time - last_transfer_time < limit {
+                return Err(AccError::TimeLimitExceeded);
+            }
+
+            env.storage()
+                .instance()
+                .set(&DataKey::LastTransferTime(contract_context.contract.clone()), &current_time);
+        }
+        Ok(())
+}
+```
+
+#### Resumen
+
+El contrato comienza inicializándose con un conjunto de firmantes autorizados. Permite establecer un límite de tiempo para transferencias de tokens, que controla con qué frecuencia un token puede ser transferido. La función __check_auth es el núcleo del proceso de autorización, asegurando que todas las firmas necesarias sean válidas y verificando la restricción basada en tiempo para transferencias de tokens. Si el tiempo requerido no ha pasado desde la última transferencia, el contrato negará la operación, haciendo cumplir el límite de tasa deseado. Al rastrear el tiempo de la última transferencia y hacer cumplir un intervalo mínimo de tiempo entre transferencias, el contrato limita efectivamente la frecuencia de las transferencias de tokens, resolviendo el problema del abuso potencial a través de transacciones consecutivas rápidas.
+
+#### Código completo
+
+Aquí están todos los fragmentos apilados juntos en un solo archivo para conveniencia:
+
+```rust
+#![no_std]
+use soroban_sdk::{
+    auth::{Context, CustomAccountInterface}, contract, contracterror, contractimpl, contracttype, symbol_short, Address,
+    BytesN, Env, Symbol, Vec,
+};
+#[contract]
+struct AccountContract;
+
+#[contracttype]
+#[derive(Clone)]
+pub struct Signature {
+    pub public_key: BytesN<32>,
+    pub signature: BytesN<64>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+enum DataKey {
+    SignerCnt,
+    Signer(BytesN<32>),
+    TimeLimit(Address),
+    LastTransferTime(Address),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum AccError {
+    NotEnoughSigners = 1,
+    NegativeAmount = 2,
+    BadSignatureOrder = 3,
+    UnknownSigner = 4,
+    InvalidContext = 5,
+    TimeLimitExceeded = 6,
+}
+
+const TRANSFER_FN: Symbol = symbol_short!("transfer");
+
+#[contractimpl]
+impl AccountContract {
+    pub fn init(env: Env, signers: Vec<BytesN<32>>) {
+        for signer in signers.iter() {
+            env.storage().instance().set(&DataKey::Signer(signer), &());
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::SignerCnt, &signers.len());
+    }
+
+    pub fn set_time(env: Env, token: Address, time_limit: u64) {
+        env.current_contract_address().require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::TimeLimit(token), &time_limit);
+    }
+}
+
+#[contractimpl]
+impl CustomAccountInterface for AccountContract {
+
+    type Error = AccError;
+    type Signature = Vec<Signature>;
+
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,
+        signature_payload: BytesN<32>,
+        signatures: Vec<Signature>,
+        auth_context: Vec<Context>,
+    ) -> Result<(), AccError> {
+        authenticate(&env, &signature_payload, &signatures)?;
+
+        let tot_signers: u32 = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SignerCnt)
+            .unwrap();
+
+        let all_signed = tot_signers == signatures.len();
+
+        let curr_contract = env.current_contract_address();
+
+        for context in auth_context.iter() {
+            verify_authorization_policy(
+                &env,
+                &context,
+                &curr_contract,
+                all_signed,
+            )?;
+        }
+        Ok(())
+    }
+
+}
+
+fn authenticate(
+    env: &Env,
+    signature_payload: &BytesN<32>,
+    signatures: &Vec<Signature>,
+) -> Result<(), AccError> {
+    for i in 0..signatures.len() {
+        let signature = signatures.get_unchecked(i);
+        if i > 0 {
+            let prev_signature = signatures.get_unchecked(i - 1);
+            if prev_signature.public_key >= signature.public_key {
+                return Err(AccError::BadSignatureOrder);
+            }
+        }
+        if !env
+            .storage()
+            .instance()
+            .has(&DataKey::Signer(signature.public_key.clone()))
+        {
+            return Err(AccError::UnknownSigner);
+        }
+        env.crypto().ed25519_verify(
+            &signature.public_key,
+            &signature_payload.clone().into(),
+            &signature.signature,
+        );
+    }
+    Ok(())
+}
+
+fn verify_authorization_policy(
+    env: &Env,
+    context: &Context,
+    curr_contract: &Address,
+    all_signed: bool,
+) -> Result<(), AccError> {
+    let contract_context = match context {
+        Context::Contract(c) => {
+            if &c.contract == curr_contract {
+                if !all_signed {
+                    return Err(AccError::NotEnoughSigners);
+                }
+            }
+            c
+        }
+        Context::CreateContractHostFn(_) => return Err(AccError::InvalidContext),
+    };
+
+    if contract_context.fn_name != TRANSFER_FN
+        && contract_context.fn_name != Symbol::new(env, "approve")
+    {
+        return Ok(());
+    }
+
+    let current_time = env.ledger().timestamp();
+    let time_limit: Option<u64> =
+        env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::TimeLimit(contract_context.contract.clone()));
+
+    if let Some(limit) = time_limit {
+        let last_transfer_time: u64 = env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::LastTransferTime(contract_context.contract.clone()))
+            .unwrap_or(0);
+
+        if current_time - last_transfer_time < limit {
+            return Err(AccError::TimeLimitExceeded);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::LastTransferTime(contract_context.contract.clone()), &current_time);
+    }
+    Ok(())
+}
+
+mod test;
+```
+
+Estos son los casos de prueba:
+
+```rust
+#![cfg(test)]
+extern crate std;
+
+use ed25519_dalek::Keypair;
+use ed25519_dalek::Signer;
+use rand::thread_rng;
+use soroban_sdk::auth::ContractContext;
+use soroban_sdk::symbol_short;
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::AuthorizedFunction;
+use soroban_sdk::testutils::AuthorizedInvocation;
+use soroban_sdk::Val;
+use soroban_sdk::{
+    auth::Context, testutils::BytesN as _, vec, Address, BytesN, Env, IntoVal, Symbol,
+};
+use soroban_sdk::testutils::Ledger;
+use soroban_sdk::testutils::LedgerInfo;
+use crate::AccError;
+use crate::{AccountContract, AccountContractClient, Signature};
+
+fn generate_keypair() -> Keypair {
+    Keypair::generate(&mut thread_rng())
+}
+
+fn signer_public_key(e: &Env, signer: &Keypair) -> BytesN<32> {
+    signer.public.to_bytes().into_val(e)
+}
+
+fn create_account_contract(e: &Env) -> AccountContractClient {
+    AccountContractClient::new(e, &e.register_contract(None, AccountContract {}))
+}
+
+fn sign(e: &Env, signer: &Keypair, payload: &BytesN<32>) -> Val {
+    Signature {
+        public_key: signer_public_key(e, signer),
+        signature: signer
+            .sign(payload.to_array().as_slice())
+            .to_bytes()
+            .into_val(e),
+    }
+    .into_val(e)
+}
+
+fn token_auth_context(e: &Env, token_id: &Address, fn_name: Symbol, amount: i128) -> Context {
+    Context::Contract(ContractContext {
+        contract: token_id.clone(),
+        fn_name,
+        args: ((), (), amount).into_val(e),
+    })
+}
+
+#[test]
+fn test_token_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let account_contract = create_account_contract(&env);
+
+    let mut signers = [generate_keypair(), generate_keypair()];
+    if signers[0].public.as_bytes() > signers[1].public.as_bytes() {
+        signers.swap(0, 1);
+    }
+    account_contract.init(&vec![
+        &env,
+        signer_public_key(&env, &signers[0]),
+        signer_public_key(&env, &signers[1]),
+    ]);
+
+    let payload = BytesN::random(&env);
+    let token = Address::generate(&env);
+
+    env.try_invoke_contract_check_auth::<AccError>(
+        &account_contract.address,
+        &payload,
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
+        &vec![
+            &env,
+            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1000),
+        ],
+    )
+    .unwrap();
+    env.try_invoke_contract_check_auth::<AccError>(
+        &account_contract.address,
+        &payload,
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
+        &vec![
+            &env,
+            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1000),
+        ],
+    )
+    .unwrap();
+
+    // Add a time limit of 1000 seconds for the token.
+    account_contract.set_time(&token, &1000);
+
+    assert_eq!(
+        env.auths(),
+        std::vec![(
+            account_contract.address.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    account_contract.address.clone(),
+                    symbol_short!("set_time"),
+                    (token.clone(), 1000_u64).into_val(&env),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+
+    // Attempting a transfer within the time limit should fail.
+    env.ledger().set(LedgerInfo {
+        timestamp: 0,
+        protocol_version: 1,
+        sequence_number: 10,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_temp_entry_ttl: 16,
+        min_persistent_entry_ttl: 16,
+        max_entry_ttl: 100_000,
+    });
+
+    env.try_invoke_contract_check_auth::<AccError>(
+        &account_contract.address,
+        &payload,
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
+        &vec![
+            &env,
+            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1001)
+        ],
+    )
+    .err()
+    .unwrap()
+    .unwrap() == AccError::TimeLimitExceeded;
+
+    // Simulate passing of time to allow the next transfer.
+    env.ledger().set(LedgerInfo {
+        timestamp: 1000,
+        protocol_version: 1,
+        sequence_number: 10,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_temp_entry_ttl: 16,
+        min_persistent_entry_ttl: 16,
+        max_entry_ttl: 100_000,
+    });
+
+    env.try_invoke_contract_check_auth::<AccError>(
+        &account_contract.address,
+        &payload,
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
+        &vec![
+            &env,
+            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1001),
+        ],
+    )
+    .unwrap();
+}
+```
+
+## Tutorial 2: implementar una billetera inteligente (WebAuthn)
+
+Imagina un mundo donde las contraseñas tradicionales son obsoletas. En este mundo, WebAuthn (Autenticación Web) se ha convertido en el estándar para interacciones en línea seguras. Alice, una entusiasta de blockchain, quiere crear una billetera que aproveche la tecnología WebAuthn para una mayor seguridad. Decide implementar una billetera WebAuthn en Stellar, permitiendo a los usuarios gestionar sus activos digitales utilizando las características biométricas de su dispositivo o claves de seguridad (por ejemplo, YubiKey, Google Titan Security Key, etc.).
+
+### Conceptos básicos
+
+WebAuthn es un estándar web para autenticación sin contraseña. Permite a los usuarios autenticarse utilizando biometría (como huellas dactilares o reconocimiento facial).
+
+La billetera WebAuthn implementada en este tutorial será capaz de:
+
+1. Registrar y gestionar credenciales de usuario (claves públicas)
+2. Autenticar a los usuarios para la firma de transacciones
+3. Diferenciar entre administradores y usuarios regulares
+4. Permitir actualizaciones de contrato para futuras mejoras
+
+:::info
+
+El crédito de código de este tutorial va al trabajo de [@kalepail](https://github.com/kalepail) sobre claves de acceso, que puedes explorar más [aquí](https://github.com/kalepail/passkey-kit).
+
+:::
+
+### Revisión del código
+
+#### Estructura del contrato e importaciones
+
+Esta sección establece la estructura del contrato y importa los componentes necesarios del SDK de Soroban.
+
+```rust
+#![no_std]
+
+use soroban_sdk::{
+    auth::{Context, CustomAccountInterface},
+    contract, contracterror, contractimpl, contracttype,
+    crypto::Hash,
+    panic_with_error, symbol_short, Bytes, BytesN, Env, FromVal, Symbol, Vec,
+};
+
+#[contract]
+pub struct Contract;
+```
+
+#### Definiciones de errores
+
+Esta enumeración define los posibles errores que pueden ocurrir durante la ejecución del contrato.
+
+```rust
+#[contracterror]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Error {
+    NotFound = 1,
+    NotPermitted = 2,
+    ClientDataJsonChallengeIncorrect = 3,
+    Secp256r1PublicKeyParse = 4,
+    Secp256r1SignatureParse = 5,
+    Secp256r1VerifyFailed = 6,
+    JsonParseError = 7,
+}
+```
+
+#### Funciones principales del contrato
+
+Estas funciones manejan la adición y eliminación de firmantes, actualización del contrato y gestión de cuentas de administrador.
+
+```rust
+// Implementing the Contract struct with various methods
+#[contractimpl]
+impl Contract {
+    // Method to add a new signer, potentially as an admin
+    pub fn add(env: Env, id: Bytes, pk: BytesN<65>, mut admin: bool) -> Result<(), Error> {
+        // Check if the instance storage has the ADMIN_SIGNER_COUNT key
+        if env.storage().instance().has(&ADMIN_SIGNER_COUNT) {
+            // Require authentication from the current contract address
+            env.current_contract_address().require_auth();
+        } else {
+            // If it's the first signer, ensure they are an admin
+            admin = true;
+        }
+
+        // Get the maximum time-to-live (TTL) for the storage entries
+        let max_ttl = env.storage().max_ttl();
+
+        // If the signer is an admin
+        if admin {
+            // Check if the ID exists in temporary storage
+            if env.storage().temporary().has(&id) {
+                // Remove the ID from temporary storage
+                env.storage().temporary().remove(&id);
+            }
+
+            // Update the admin signer count by incrementing it
+            Self::update_admin_signer_count(&env, true);
+
+            // Store the public key in persistent storage with the given ID
+            env.storage().persistent().set(&id, &pk);
+
+            // Extend the TTL for the persistent storage entry
+            env.storage()
+                .persistent()
+                .extend_ttl(&id, max_ttl - WEEK_OF_LEDGERS, max_ttl);
+        } else {
+            // If the signer is not an admin
+            // Check if the ID exists in persistent storage
+            if env.storage().persistent().has(&id) {
+                // Update the admin signer count by decrementing it
+                Self::update_admin_signer_count(&env, false);
+
+                // Remove the ID from persistent storage
+                env.storage().persistent().remove(&id);
+            }
+
+            // Store the public key in temporary storage with the given ID
+            env.storage().temporary().set(&id, &pk);
+
+            // Extend the TTL for the temporary storage entry
+            env.storage()
+                .temporary()
+                .extend_ttl(&id, max_ttl - WEEK_OF_LEDGERS, max_ttl);
+        }
+
+        // Extend the TTL for the instance storage
+        env.storage()
+            .instance()
+            .extend_ttl(max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+        // Publish an event indicating a new signer has been added
+        env.events()
+            .publish((EVENT_TAG, symbol_short!("add"), id, pk), admin);
+
+        // Return Ok indicating success
+        Ok(())
+    }
+
+    // Method to remove a signer
+    pub fn remove(env: Env, id: Bytes) -> Result<(), Error> {
+        // Require authentication from the current contract address
+        env.current_contract_address().require_auth();
+
+        // Check if the ID exists in temporary storage
+        if env.storage().temporary().has(&id) {
+            // Remove the ID from temporary storage
+            env.storage().temporary().remove(&id);
+        } else if env.storage().persistent().has(&id) {
+            // If the ID exists in persistent storage, decrement the admin signer count
+            Self::update_admin_signer_count(&env, false);
+
+            // Remove the ID from persistent storage
+            env.storage().persistent().remove(&id);
+        }
+
+        // Get the maximum time-to-live (TTL) for the storage entries
+        let max_ttl = env.storage().max_ttl();
+
+        // Extend the TTL for the instance storage
+        env.storage()
+            .instance()
+            .extend_ttl(max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+        // Publish an event indicating a signer has been removed
+        env.events()
+            .publish((EVENT_TAG, symbol_short!("remove"), id), ());
+
+        // Return Ok indicating success
+        Ok(())
+    }
+
+    // Method to update the contract with new WASM code
+    pub fn update(env: Env, hash: BytesN<32>) -> Result<(), Error> {
+        // Require authentication from the current contract address
+        env.current_contract_address().require_auth();
+
+        // Update the contract's WASM code with the new hash
+        env.deployer().update_current_contract_wasm(hash);
+
+        // Get the maximum time-to-live (TTL) for the storage entries
+        let max_ttl = env.storage().max_ttl();
+
+        // Extend the TTL for the instance storage
+        env.storage()
+            .instance()
+            .extend_ttl(max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+        // Return Ok indicating success
+        Ok(())
+    }
+
+    // Helper method to update the count of admin signers
+    fn update_admin_signer_count(env: &Env, add: bool) {
+        // Get the current count of admin signers from instance storage, defaulting to 0
+        let count = env
+            .storage()
+            .instance()
+            .get::<Symbol, i32>(&ADMIN_SIGNER_COUNT)
+            .unwrap_or(0)
+            + if add { 1 } else { -1 };
+
+        // If the count is less than or equal to 0, trigger an error
+        if count <= 0 {
+            panic_with_error!(env, Error::NotPermitted)
+        }
+
+        // Update the admin signer count in instance storage
+        env.storage()
+            .instance()
+            .set::<Symbol, i32>(&ADMIN_SIGNER_COUNT, &count);
+    }
+}
+
+```
+
+#### Estructura de la firma
+
+Esta estructura representa una firma WebAuthn.
+
+```rust
+#[contracttype]
+pub struct Signature {
+    pub id: Bytes,
+    pub authenticator_data: Bytes,
+    pub client_data_json: Bytes,
+    pub signature: BytesN<64>,
+}
+```
+
+#### Implementación de CustomAccountInterface
+
+Esto implementa la lógica de autenticación principal para la billetera WebAuthn.
+
+```rust
+#[contractimpl]
+impl CustomAccountInterface for Contract {
+    // Defining the error and signature types for the trait
+    type Error = Error;
+    type Signature = Signature;
+
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,                         // The environment context
+        signature_payload: Hash<32>,      // The payload that needs to be signed
+        signature: Signature,             // The signature provided by the client
+        auth_contexts: Vec<Context>,      // Contexts for authentication
+    ) -> Result<(), Error> {
+        // Destructure the signature into its components
+        let Signature {
+            id,
+            mut authenticator_data,
+            client_data_json,
+            signature,
+        } = signature;
+
+        // Set the maximum time-to-live (TTL) for storage entries
+        let max_ttl = env.storage().max_ttl();
+
+        // Try to retrieve the public key associated with the id from temporary storage
+        let pk = match env.storage().temporary().get(&id) {
+            Some(pk) => {
+                // Check if a session signer is trying to perform protected actions
+                for context in auth_contexts.iter() {
+                    match context {
+                        // If the context is a contract call
+                        Context::Contract(c) => {
+                            // Ensure that the current contract is not performing restricted actions
+                            if c.contract == env.current_contract_address()
+                                && (c.fn_name != symbol_short!("remove")
+                                    || (c.fn_name == symbol_short!("remove")
+                                        && Bytes::from_val(&env, &c.args.get(0).unwrap()) != id))
+                            {
+                                return Err(Error::NotPermitted);
+                            }
+                        }
+                        _ => {} // Allow other contexts (e.g., deploying new contracts)
+                    };
+                }
+
+                // Extend the TTL for the temporary storage entry
+                env.storage()
+                    .temporary()
+                    .extend_ttl(&id, max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+                pk // Return the public key
+            }
+            // If not found in temporary storage, try persistent storage
+            None => {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&id, max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+                env.storage().persistent().get(&id).ok_or(Error::NotFound)?
+            }
+        };
+
+        // Extend the authenticator data with the SHA-256 hash of the client data JSON
+        authenticator_data.extend_from_array(&env.crypto().sha256(&client_data_json).to_array());
+
+        // Verify the signature using the secp256r1 elliptic curve algorithm
+        env.crypto()
+            .secp256r1_verify(&pk, &env.crypto().sha256(&authenticator_data), &signature);
+
+        // Parse the client data JSON, extracting the base64 URL encoded challenge
+        let client_data_json = client_data_json.to_buffer::<1024>();
+        let client_data_json = client_data_json.as_slice();
+        let (client_data_json, _): (ClientDataJson, _) =
+            serde_json_core::de::from_slice(client_data_json).map_err(|_| Error::JsonParseError)?;
+
+        // Build the expected challenge from the signature payload
+        let mut expected_challenge = [0u8; 43];
+        base64_url::encode(&mut expected_challenge, &signature_payload.to_array());
+
+        // Check that the challenge inside the client data JSON matches the expected challenge
+        if client_data_json.challenge.as_bytes() != expected_challenge {
+            return Err(Error::ClientDataJsonChallengeIncorrect);
+        }
+
+        // Extend the TTL for the instance storage
+        env.storage()
+            .instance()
+            .extend_ttl(max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+        Ok(()) // Return success
+    }
+}
+```
+
+#### Codificación de url Base64
+
+Esta función proporciona la funcionalidad de codificación URL Base64 utilizada en el proceso WebAuthn.
+
+```rust
+// Define the Base64 URL alphabet as a constant byte array.
+const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+// The `encode` function takes a mutable reference to a destination byte array `dst` and a source byte array `src`.
+pub fn encode(dst: &mut [u8], src: &[u8]) {
+    // Initialize destination index `di` and source index `si` to 0.
+    let mut di: usize = 0;
+    let mut si: usize = 0;
+    // Calculate the length of the source array that is a multiple of 3.
+    let n = (src.len() / 3) * 3;-
+
+    // Process the source array in chunks of 3 bytes.
+    while si < n {
+        // Combine 3 bytes into a single 24-bit value.
+        let val = (src[si] as usize) << 16 | (src[si + 1] as usize) << 8 | (src[si + 2] as usize);
+        // Encode the 24-bit value into 4 Base64 characters.
+        dst[di] = ALPHABET[val >> 18 & 0x3F];
+        dst[di + 1] = ALPHABET[val >> 12 & 0x3F];
+        dst[di + 2] = ALPHABET[val >> 6 & 0x3F];
+        dst[di + 3] = ALPHABET[val & 0x3F];
+        // Increment the source index by 3 and the destination index by 4.
+        si += 3;
+        di += 4;
+    }
+
+    // Calculate the remaining number of bytes in the source array.
+    let remain = src.len() - si;
+
+    // If there are no remaining bytes, return early.
+    if remain == 0 {
+        return;
+    }
+
+    // Initialize a 24-bit value with the remaining byte(s).
+    let mut val = (src[si] as usize) << 16;
+
+    // If there are 2 remaining bytes, add the second byte to the 24-bit value.
+    if remain == 2 {
+        val |= (src[si + 1] as usize) << 8;
+    }
+
+    // Encode the remaining bytes into 2 or 3 Base64 characters.
+    dst[di] = ALPHABET[val >> 18 & 0x3F];
+    dst[di + 1] = ALPHABET[val >> 12 & 0x3F];
+
+    // If there are 2 remaining bytes, encode the third Base64 character.
+    if remain == 2 {
+        dst[di + 2] = ALPHABET[val >> 6 & 0x3F];
+    }
+}
+
+```
+
+#### Explicación escrita del código
+
+El contrato de la billetera WebAuthn gestiona las credenciales de usuario y la autenticación. Permite agregar y eliminar firmantes, diferenciando entre administradores y usuarios regulares. La función de añadir registra nuevos firmantes, almacenando claves de administrador de manera persistente y claves regulares de forma temporal. La función de eliminar borra firmantes, y actualizar permite mejoras del contrato. El núcleo de la seguridad de la billetera es la función `__check_auth`, que verifica las firmas WebAuthn. Verifica la firma contra la clave pública almacenada, valida el JSON de datos del cliente y asegúrate de que el desafío coincida con el valor esperado. El contrato utiliza las capacidades de almacenamiento de Soroban para gestionar claves y cantidades de administradores, con diferentes TTL (Tiempo de Vida) para almacenamiento persistente y temporal.
+
+#### Casos de prueba
+
+Estos son casos de prueba para asegurar que nuestra billetera WebAuthn esté funcionando correctamente. Utilizaremos las utilidades de prueba del SDK de Soroban para crear y ejecutar estas pruebas.
+
+```rust
+#[cfg(test)]
+mod test {
+    use std::println;
+    extern crate std;
+
+    use soroban_sdk::{
+        vec,
+        Bytes,
+        BytesN,
+        Env,
+        IntoVal,
+    };
+
+    use crate::{Contract, ContractClient, Error, Signature};
+
+    #[test]
+    fn test() {
+        let env = Env::default();
+        let deployee_address = env.register_contract(None, Contract);
+        let deployee_client = ContractClient::new(&env, &deployee_address);
+
+        // Test data
+        let id = Bytes::from_array(
+            &env,
+            &[243, 248, 216, 74, 226, 218, 85, 102, 196, 167, 14, 151, 124, 42, 73, 136, 138, 102, 187, 140],
+        );
+        let pk = BytesN::from_array(
+            &env,
+            &[4, 163, 142, 245, 242, 113, 55, 104, 189, 52, 128, 238, 206, 174, 194, 177, 4, 100,
+              161, 243, 177, 255, 10, 53, 57, 194, 205, 45, 208, 10, 131, 167, 93, 44, 123, 126, 95,
+              219, 207, 230, 175, 90, 96, 41, 121, 197, 127, 180, 74, 236, 160, 0, 60, 185, 211, 174,
+              133, 215, 200, 208, 230, 51, 210, 94, 214],
+        );
+
+        // Test adding a signer
+        deployee_client.add(&id, &pk, &true);
+
+        // Test authentication
+        let signature_payload = BytesN::from_array(
+            &env,
+            &[150, 22, 248, 96, 91, 4, 111, 72, 170, 101, 57, 225, 210, 199, 91, 29, 159, 227, 209,
+              6, 231, 63, 222, 209, 232, 57, 112, 98, 140, 118, 206, 245],
+        );
+
+        let signature = Signature {
+            authenticator_data: Bytes::from_array(
+                &env,
+                &[75, 74, 206, 229, 181, 139, 119, 89, 254, 159, 95, 149, 227, 164, 109, 143, 188,
+                  228, 143, 219, 181, 216, 77, 123, 142, 172, 60, 20, 162, 154, 181, 187, 29, 0, 0, 0, 0],
+            ),
+            client_data_json: Bytes::from_array(
+                &env,
+                &[123, 34, 116, 121, 112, 101, 34, 58, 34, 119, 101, 98, 97, 117, 116, 104, 110, 46,
+                  103, 101, 116, 34, 44, 34, 99, 104, 97, 108, 108, 101, 110, 103, 101, 34, 58, 34,
+                  108, 104, 98, 52, 89, 70, 115, 69, 98, 48, 105, 113, 90, 84, 110, 104, 48, 115,
+                  100, 98, 72, 90, 95, 106, 48, 81, 98, 110, 80, 57, 55, 82, 54, 68, 108, 119, 89,
+                  111, 120, 50, 122, 118, 85, 34, 44, 34, 111, 114, 105, 103, 105, 110, 34, 58, 34,
+                  104, 116, 116, 112, 115, 58, 47, 47, 112, 97, 115, 115, 107, 101, 121, 45, 107,
+                  105, 116, 45, 100, 101, 109, 111, 46, 112, 97, 103, 101, 115, 46, 100, 101, 118, 34, 125],
+            ),
+            id: id.clone(),
+            signature: BytesN::from_array(
+                &env,
+                &[74, 48, 29, 120, 181, 135, 255, 178, 105, 76, 82, 118, 29, 135, 193, 72, 123, 144,
+                  138, 214, 125, 27, 33, 159, 169, 200, 151, 55, 7, 250, 111, 172, 86, 89, 162, 167,
+                  148, 105, 144, 68, 21, 249, 61, 253, 80, 61, 54, 29, 14, 162, 12, 173, 206, 194,
+                  144, 227, 11, 225, 74, 254, 191, 221, 103, 86],
+            ),
+        };
+
+        let result: Result<(), Result<Error, _>> = env.try_invoke_contract_check_auth(
+            &deployee_address,
+            &signature_payload,
+            signature.into_val(&env),
+            &vec![&env],
+        );
+
+        println!("{:?}", result);
+        assert!(result.is_ok());
+
+    }
+}
+```
+
+#### Resumen
+
+Esta implementación de billetera WebAuthn proporciona una manera segura y fácil de gestionar activos digitales en Stellar. Aprovecha los beneficios de seguridad de WebAuthn mientras mantiene la flexibilidad necesaria para interacciones en blockchain.
+
+#### Código completo
+
+Aquí están todos los fragmentos apilados juntos en un solo archivo para conveniencia:
+
+```rust
+#![no_std]
+
+use soroban_sdk::{
+    auth::{Context, CustomAccountInterface},
+    contract, contracterror, contractimpl, contracttype,
+    crypto::Hash,
+    panic_with_error, symbol_short, Bytes, BytesN, Env, FromVal, Symbol, Vec,
+};
+
+#[contract]
+pub struct Contract;
+
+// Error definitions for the contract
+#[contracterror]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Error {
+    NotFound = 1,
+    NotPermitted = 2,
+    ClientDataJsonChallengeIncorrect = 3,
+    Secp256r1PublicKeyParse = 4,
+    Secp256r1SignatureParse = 5,
+    Secp256r1VerifyFailed = 6,
+    JsonParseError = 7,
+}
+
+// Structure representing a WebAuthn signature
+#[contracttype]
+pub struct Signature {
+    pub id: Bytes,
+    pub authenticator_data: Bytes,
+    pub client_data_json: Bytes,
+    pub signature: BytesN<64>,
+}
+
+// Implementing the Contract struct with various methods
+#[contractimpl]
+impl Contract {
+    // Method to add a new signer, potentially as an admin
+    pub fn add(env: Env, id: Bytes, pk: BytesN<65>, mut admin: bool) -> Result<(), Error> {
+        // Check if the instance storage has the ADMIN_SIGNER_COUNT key
+        if env.storage().instance().has(&ADMIN_SIGNER_COUNT) {
+            // Require authentication from the current contract address
+            env.current_contract_address().require_auth();
+        } else {
+            // If it's the first signer, ensure they are an admin
+            admin = true;
+        }
+
+        // Get the maximum time-to-live (TTL) for the storage entries
+        let max_ttl = env.storage().max_ttl();
+
+        // If the signer is an admin
+        if admin {
+            // Check if the ID exists in temporary storage
+            if env.storage().temporary().has(&id) {
+                // Remove the ID from temporary storage
+                env.storage().temporary().remove(&id);
+            }
+
+            // Update the admin signer count by incrementing it
+            Self::update_admin_signer_count(&env, true);
+
+            // Store the public key in persistent storage with the given ID
+            env.storage().persistent().set(&id, &pk);
+
+            // Extend the TTL for the persistent storage entry
+            env.storage()
+                .persistent()
+                .extend_ttl(&id, max_ttl - WEEK_OF_LEDGERS, max_ttl);
+        } else {
+            // If the signer is not an admin
+            // Check if the ID exists in persistent storage
+            if env.storage().persistent().has(&id) {
+                // Update the admin signer count by decrementing it
+                Self::update_admin_signer_count(&env, false);
+
+                // Remove the ID from persistent storage
+                env.storage().persistent().remove(&id);
+            }
+
+            // Store the public key in temporary storage with the given ID
+            env.storage().temporary().set(&id, &pk);
+
+            // Extend the TTL for the temporary storage entry
+            env.storage()
+                .temporary()
+                .extend_ttl(&id, max_ttl - WEEK_OF_LEDGERS, max_ttl);
+        }
+
+        // Extend the TTL for the instance storage
+        env.storage()
+            .instance()
+            .extend_ttl(max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+        // Publish an event indicating a new signer has been added
+        env.events()
+            .publish((EVENT_TAG, symbol_short!("add"), id, pk), admin);
+
+        // Return Ok indicating success
+        Ok(())
+    }
+
+    // Method to remove a signer
+    pub fn remove(env: Env, id: Bytes) -> Result<(), Error> {
+        // Require authentication from the current contract address
+        env.current_contract_address().require_auth();
+
+        // Check if the ID exists in temporary storage
+        if env.storage().temporary().has(&id) {
+            // Remove the ID from temporary storage
+            env.storage().temporary().remove(&id);
+        } else if env.storage().persistent().has(&id) {
+            // If the ID exists in persistent storage, decrement the admin signer count
+            Self::update_admin_signer_count(&env, false);
+
+            // Remove the ID from persistent storage
+            env.storage().persistent().remove(&id);
+        }
+
+        // Get the maximum time-to-live (TTL) for the storage entries
+        let max_ttl = env.storage().max_ttl();
+
+        // Extend the TTL for the instance storage
+        env.storage()
+            .instance()
+            .extend_ttl(max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+        // Publish an event indicating a signer has been removed
+        env.events()
+            .publish((EVENT_TAG, symbol_short!("remove"), id), ());
+
+        // Return Ok indicating success
+        Ok(())
+    }
+
+    // Method to update the contract with new WASM code
+    pub fn update(env: Env, hash: BytesN<32>) -> Result<(), Error> {
+        // Require authentication from the current contract address
+        env.current_contract_address().require_auth();
+
+        // Update the contract's WASM code with the new hash
+        env.deployer().update_current_contract_wasm(hash);
+
+        // Get the maximum time-to-live (TTL) for the storage entries
+        let max_ttl = env.storage().max_ttl();
+
+        // Extend the TTL for the instance storage
+        env.storage()
+            .instance()
+            .extend_ttl(max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+        // Return Ok indicating success
+        Ok(())
+    }
+
+    // Helper method to update the count of admin signers
+    fn update_admin_signer_count(env: &Env, add: bool) {
+        // Get the current count of admin signers from instance storage, defaulting to 0
+        let count = env
+            .storage()
+            .instance()
+            .get::<Symbol, i32>(&ADMIN_SIGNER_COUNT)
+            .unwrap_or(0)
+            + if add { 1 } else { -1 };
+
+        // If the count is less than or equal to 0, trigger an error
+        if count <= 0 {
+            panic_with_error!(env, Error::NotPermitted)
+        }
+
+        // Update the admin signer count in instance storage
+        env.storage()
+            .instance()
+            .set::<Symbol, i32>(&ADMIN_SIGNER_COUNT, &count);
+    }
+}
+
+// Implementing the core authentication logic for the WebAuthn wallet
+#[contractimpl]
+impl CustomAccountInterface for Contract {
+    // Defining the error and signature types for the trait
+    type Error = Error;
+    type Signature = Signature;
+
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,                         // The environment context
+        signature_payload: Hash<32>,      // The payload that needs to be signed
+        signature: Signature,             // The signature provided by the client
+        auth_contexts: Vec<Context>,      // Contexts for authentication
+    ) -> Result<(), Error> {
+        // Destructure the signature into its components
+        let Signature {
+            id,
+            mut authenticator_data,
+            client_data_json,
+            signature,
+        } = signature;
+
+        // Get the maximum time-to-live (TTL) for storage entries
+        let max_ttl = env.storage().max_ttl();
+
+        // Try to retrieve the public key associated with the id from temporary storage
+        let pk = match env.storage().temporary().get(&id) {
+            Some(pk) => {
+                // Check if a session signer is trying to perform protected actions
+                for context in auth_contexts.iter() {
+                    match context {
+                        // If the context is a contract call
+                        Context::Contract(c) => {
+                            // Ensure that the current contract is not performing restricted actions
+                            if c.contract == env.current_contract_address()
+                                && (c.fn_name != symbol_short!("remove")
+                                    || (c.fn_name == symbol_short!("remove")
+                                        && Bytes::from_val(&env, &c.args.get(0).unwrap()) != id))
+                            {
+                                return Err(Error::NotPermitted);
+                            }
+                        }
+                        _ => {} // Allow other contexts (e.g., deploying new contracts)
+                    };
+                }
+
+                // Extend the TTL for the temporary storage entry
+                env.storage()
+                    .temporary()
+                    .extend_ttl(&id, max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+                pk // Return the public key
+            }
+            // If not found in temporary storage, try persistent storage
+            None => {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&id, max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+                env.storage().persistent().get(&id).ok_or(Error::NotFound)?
+            }
+        };
+
+        // Extend the authenticator data with the SHA-256 hash of the client data JSON
+        authenticator_data.extend_from_array(&env.crypto().sha256(&client_data_json).to_array());
+
+        // Verify the signature using the secp256r1 elliptic curve algorithm
+        env.crypto()
+            .secp256r1_verify(&pk, &env.crypto().sha256(&authenticator_data), &signature);
+
+        // Parse the client data JSON, extracting the base64 URL encoded challenge
+        let client_data_json = client_data_json.to_buffer::<1024>();
+        let client_data_json = client_data_json.as_slice();
+        let (client_data_json, _): (ClientDataJson, _) =
+            serde_json_core::de::from_slice(client_data_json).map_err(|_| Error::JsonParseError)?;
+
+        // Build the expected challenge from the signature payload
+        let mut expected_challenge = [0u8; 43];
+        base64_url::encode(&mut expected_challenge, &signature_payload.to_array());
+
+        // Check that the challenge inside the client data JSON matches the expected challenge
+        if client_data_json.challenge.as_bytes() != expected_challenge {
+            return Err(Error::ClientDataJsonChallengeIncorrect);
+        }
+
+        // Extend the TTL for the instance storage
+        env.storage()
+            .instance()
+            .extend_ttl(max_ttl - WEEK_OF_LEDGERS, max_ttl);
+
+        Ok(()) // Return success
+    }
+}
+
+// Define the Base64 URL alphabet as a constant byte array.
+const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+// The `encode` function takes a mutable reference to a destination byte array `dst` and a source byte array `src`.
+pub fn encode(dst: &mut [u8], src: &[u8]) {
+    // Initialize destination index `di` and source index `si` to 0.
+    let mut di: usize = 0;
+    let mut si: usize = 0;
+    // Calculate the length of the source array that is a multiple of 3.
+    let n = (src.len() / 3) * 3;
+
+    // Process the source array in chunks of 3 bytes.
+    while si < n {
+        // Combine 3 bytes into a single 24-bit value.
+        let val = (src[si] as usize) << 16 | (src[si + 1] as usize) << 8 | (src[si + 2] as usize);
+        // Encode the 24-bit value into 4 Base64 characters.
+        dst[di] = ALPHABET[val >> 18 & 0x3F];
+        dst[di + 1] = ALPHABET[val >> 12 & 0x3F];
+        dst[di + 2] = ALPHABET[val >> 6 & 0x3F];
+        dst[di + 3] = ALPHABET[val & 0x3F];
+        // Increment the source index by 3 and the destination index by 4.
+        si += 3;
+        di += 4;
+    }
+
+    // Calculate the remaining number of bytes in the source array.
+    let remain = src.len() - si;
+
+    // If there are no remaining bytes, return early.
+    if remain == 0 {
+        return;
+    }
+
+    // Initialize a 24-bit value with the remaining byte(s).
+    let mut val = (src[si] as usize) << 16;
+
+    // If there are 2 remaining bytes, add the second byte to the 24-bit value.
+    if remain == 2 {
+        val |= (src[si + 1] as usize) << 8;
+    }
+
+    // Encode the remaining bytes into 2 or 3 Base64 characters.
+    dst[di] = ALPHABET[val >> 18 & 0x3F];
+    dst[di + 1] = ALPHABET[val >> 12 & 0x3F];
+
+    // If there are 2 remaining bytes, encode the third Base64 character.
+    if remain == 2 {
+        dst[di + 2] = ALPHABET[val >> 6 & 0x3F];
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::println;
+    extern crate std;
+
+    use soroban_sdk::{
+        vec,
+        Bytes,
+        BytesN,
+        Env,
+        IntoVal,
+    };
+
+    use crate::{Contract, ContractClient, Error, Signature};
+
+    #[test]
+    fn test() {
+        let env = Env::default();
+        let deployee_address = env.register_contract(None, Contract);
+        let deployee_client = ContractClient::new(&env, &deployee_address);
+
+        // Test data
+        let id = Bytes::from_array(
+            &env,
+            &[243, 248, 216, 74, 226, 218, 85, 102, 196, 167, 14, 151, 124, 42, 73, 136, 138, 102, 187, 140],
+        );
+        let pk = BytesN::from_array(
+            &env,
+            &[4, 163, 142, 245, 242, 113, 55, 104, 189, 52, 128, 238, 206, 174, 194, 177, 4, 100,
+              161, 243, 177, 255, 10, 53, 57, 194, 205, 45, 208, 10, 131, 167, 93, 44, 123, 126, 95,
+              219, 207, 230, 175, 90, 96, 41, 121, 197, 127, 180, 74, 236, 160, 0, 60, 185, 211, 174,
+              133, 215, 200, 208, 230, 51, 210, 94, 214],
+        );
+
+        // Test adding a signer
+        deployee_client.add(&id, &pk, &true);
+
+        // Test authentication
+        let signature_payload = BytesN::from_array(
+            &env,
+            &[150, 22, 248, 96, 91, 4, 111, 72, 170, 101, 57, 225, 210, 199, 91, 29, 159, 227, 209,
+              6, 231, 63, 222, 209, 232, 57, 112, 98, 140, 118, 206, 245],
+        );
+
+        let signature = Signature {
+            authenticator_data: Bytes::from_array(
+                &env,
+                &[75, 74, 206, 229, 181, 139, 119, 89, 254, 159, 95, 149, 227, 164, 109, 143, 188,
+                  228, 143, 219, 181, 216, 77, 123, 142, 172, 60, 20, 162, 154, 181, 187, 29, 0, 0, 0, 0],
+            ),
+            client_data_json: Bytes::from_array(
+                &env,
+                &[123, 34, 116, 121, 112, 101, 34, 58, 34, 119, 101, 98, 97, 117, 116, 104, 110, 46,
+                  103, 101, 116, 34, 44, 34, 99, 104, 97, 108, 108, 101, 110, 103, 101, 34, 58, 34,
+                  108, 104, 98, 52, 89, 70, 115, 69, 98, 48, 105, 113, 90, 84, 110, 104, 48, 115,
+                  100, 98, 72, 90, 95, 106, 48, 81, 98, 110, 80, 57, 55, 82, 54, 68, 108, 119, 89,
+                  111, 120, 50, 122, 118, 85, 34, 44, 34, 111, 114, 105, 103, 105, 110, 34, 58, 34,
+                  104, 116, 116, 112, 115, 58, 47, 47, 112, 97, 115, 115, 107, 101, 121, 45, 107,
+                  105, 116, 45, 100, 101, 109, 111, 46, 112, 97, 103, 101, 115, 46, 100, 101, 118, 34, 125],
+            ),
+            id: id.clone(),
+            signature: BytesN::from_array(
+                &env,
+                &[74, 48, 29, 120, 181, 135, 255, 178, 105, 76, 82, 118, 29, 135, 193, 72, 123, 144,
+                  138, 214, 125, 27, 33, 159, 169, 200, 151, 55, 7, 250, 111, 172, 86, 89, 162, 167,
+                  148, 105, 144, 68, 21, 249, 61, 253, 80, 61, 54, 29, 14, 162, 12, 173, 206, 194,
+                  144, 227, 11, 225, 74, 254, 191, 221, 103, 86],
+            ),
+        };
+
+        let result: Result<(), Result<Error, _>> = env.try_invoke_contract_check_auth(
+            &deployee_address,
+            &signature_payload,
+            signature.into_val(&env),
+            &vec![&env],
+        );
+
+        println!("{:?}", result);
+        assert!(result.is_ok());
+
+    }
+}
+```
