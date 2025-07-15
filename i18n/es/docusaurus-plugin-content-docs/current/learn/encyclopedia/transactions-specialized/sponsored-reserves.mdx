@@ -1,0 +1,550 @@
+---
+title: Reservas Patrocinadas
+sidebar_position: 80
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Las reservas patrocinadas se introdujeron en [CAP-0033](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0033.md) y permiten que una cuenta (cuenta patrocinadora) pague las reservas base para otra cuenta (cuenta patrocinada). Mientras esta relación exista, los requisitos de reserva base que normalmente se acumularían en la cuenta patrocinada ahora se acumulan en la cuenta patrocinadora.
+
+Ambas operaciones Comenzar a Patrocinar Reservas Futuras y Terminar Patrocinio de Reservas Futuras deben aparecer en la transacción de patrocinio, garantizando que ambas cuentas acuerden el patrocinio.
+
+Cualquier cosa que incremente el saldo mínimo puede ser patrocinada (creación de cuentas, ofertas, líneas de confianza, entradas de datos, firmantes, saldos reclamables).
+
+Para aprender sobre las reservas base, consulta nuestra sección sobre [Lumens](../../fundamentals/lumens.mdx#base-reserves).
+
+## Operaciones de reservas patrocinadas
+
+### Comenzar y finalizar patrocinios
+
+Para crear una reserva patrocinada, debes utilizar una transacción tipo sándwich que incluya tres operaciones.
+
+- La primera operación: Comenzar a Patrocinar Reservas Futuras inicia el patrocinio y requiere la firma de la cuenta patrocinadora.
+- La segunda operación: especifica qué está siendo patrocinado.
+- La tercera operación: Terminar Patrocinio de Reservas Futuras permite que la cuenta patrocinada acepte el patrocinio y requiere la firma de la cuenta patrocinada.
+
+Comenzar a Patrocinar Reservas Futuras establece la relación is-sponsoring-future-reserves-for donde la cuenta patrocinadora es la cuenta fuente de la operación. La cuenta especificada en la operación es la cuenta patrocinada.
+
+Terminar Patrocinio de Reservas Futuras finaliza la actual relación is-sponsoring-future-reserves-for para la cuenta fuente de la operación.
+
+Al final de cualquier transacción, no debe haber relaciones is-sponsoring-future-reserves-for en curso, por lo que estas dos operaciones deben usarse juntas en una sola transacción.
+
+Consulta los detalles de la operación en nuestra [sección de Lista de Operaciones](../../fundamentals/transactions/list-of-operations.mdx).
+
+### Revocar patrocinio
+
+Permite que la cuenta patrocinadora elimine o transfiera patrocinios de ledgerEntries y firmantes existentes. Si el ledgerEntry o firmante no está patrocinado, el propietario del ledgerEntry o firmante puede establecer un patrocinio si es el beneficiario de una relación is-sponsoring-future-reserves-for.
+
+Lógica de operación
+
+- Entry/firman está patrocinado
+  - La cuenta fuente es actualmente beneficiaria de una relación is-sponsoring-future-reserves-for
+    - Transferir patrocinio de entry/firman de la cuenta fuente a la cuenta que está patrocinando la cuenta fuente
+  - La cuenta fuente no es beneficiaria de una relación is-sponsoring-future-reserves-for
+    - Eliminar el patrocinio de la entry/firman
+- Entry/firman no está patrocinado
+  - La cuenta fuente es actualmente beneficiaria de una relación is-sponsoring-future-reserves-for
+    - Establecer patrocinio entre entry/firman y la cuenta que está patrocinando la cuenta fuente
+  - La cuenta fuente no es beneficiaria de una relación is-sponsoring-future-reserves-for
+    - No-Op
+
+Consulta los detalles de la operación en nuestra [sección de Lista de Operaciones](../../fundamentals/transactions/list-of-operations.mdx#begin-sponsoring-future-reserves).
+
+## Efecto en el saldo mínimo
+
+Una vez que se introducen los patrocinios, el cálculo del saldo mínimo es: (2 reservas base + `numSubEntries` + `numSponsoring` - `numSponsored`) \* `baseReserve` + `liabilities.selling`.
+
+Cuando la cuenta A está patrocinando reservas futuras para la cuenta B, cualquier requerimiento de reserva que normalmente se acumularía en B se acumulará en A, mostrado en `numSponsoring`. El hecho de que estas reservas sean proporcionadas por otra cuenta se reflejará en B en `numSponsored`, lo que cancela el aumento en `numSubEntries`, manteniendo el saldo mínimo sin cambios para B.
+
+Cuando una entry o subentry patrocinada es eliminada, `numSponsoring` disminuye en la cuenta patrocinadora y `numSponsored` disminuye en la cuenta patrocinada.
+
+Para aprender más sobre los requisitos de saldo mínimo, consulta nuestra sección sobre [Lumens](../../fundamentals/lumens.mdx#minimum-balance).
+
+## Efecto en los saldos reclamables
+
+Todos los saldos reclamables son patrocinados a través de la lógica incorporada en las operaciones de saldo reclamable. La cuenta que crea el saldo reclamable paga la reserva base para obtener el saldo reclamable en el ledger. Cuando el saldo reclamable es reclamado por el/los reclamante(s), el saldo reclamable se elimina del ledger, y la cuenta que lo creó recupera la reserva base.
+
+Lee más sobre los saldos reclamables en nuestra [Entrada de Enciclopedia sobre Saldos Reclamables](./claimable-balances.mdx).
+
+## Ejemplos
+
+Cada uno de los siguientes ejemplos se basa en sí mismo, haciendo referencia a variables de fragmentos anteriores. Los siguientes ejemplos demostrarán:
+
+1. Patrocinar la creación de una línea de confianza para otra cuenta
+2. Patrocinar dos líneas de confianza para una cuenta a través de dos patrocinadores diferentes
+3. Transferir la responsabilidad del patrocinio de una cuenta a otra
+4. Revocar el patrocinio de una cuenta por completo
+
+Para mayor brevedad en los ejemplos de Golang, asumiremos la existencia de un `SignAndSend`(...) método (definido a continuación) que crea y envía una transacción con los parámetros adecuados y una verificación básica de errores.
+
+### Preámbulo
+
+Comenzaremos incluyendo el boilerplate de creación de cuentas y activos.
+
+<CodeExample>
+
+```js
+const sdk = require("stellar-sdk");
+const http = require("got");
+
+let server = new sdk.Server("https://horizon-testnet.stellar.org");
+
+async function main() {
+  // Create & fund the new accounts.
+  let keypairs = [
+    sdk.Keypair.random(),
+    sdk.Keypair.random(),
+    sdk.Keypair.random(),
+  ];
+
+  for (const keypair of keypairs) {
+    const base = "https://friendbot.stellar.org/?";
+    const path = base + "addr=" + encodeURIComponent(keypair.publicKey());
+
+    console.log(`Funding:\n ${keypair.secret()}\n ${keypair.publicKey()}`);
+
+    // We use the "got" library here to do the HTTP request synchronously, but
+    // you can obviously use any method you'd like for this.
+    const response = await http(path).catch(function (error) {
+      console.error("  failed:", error.response.body);
+    });
+  }
+
+  // Arbitrary assets to sponsor trustlines for. Let's assume they make sense.
+  let S1 = keypairs[0], A = keypairs[1], S2 = keypairs[2];
+  let assets = [
+    new sdk.Asset("ABCD", S1.publicKey()),
+    new sdk.Asset("EFGH", S1.publicKey()),
+    new sdk.Asset("IJKL", S2.publicKey()),
+  ];
+
+  // ...
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+
+    sdk "github.com/stellar/go/clients/horizonclient"
+    "github.com/stellar/go/keypair"
+    "github.com/stellar/go/network"
+    protocol "github.com/stellar/go/protocols/horizon"
+    "github.com/stellar/go/txnbuild"
+)
+
+func main() {
+    client := sdk.DefaultTestNetClient
+
+    // Both S1 and S2 will be sponsors for A at various points in time.
+    S1, A, S2 := keypair.MustRandom(), keypair.MustRandom(), keypair.MustRandom()
+    addressA := A.Address()
+
+    for _, pair := range []*keypair.Full{S1, A, S2} {
+        resp, err := http.Get("https://friendbot.stellar.org/?addr=" + pair.Address())
+        check(err)
+        resp.Body.Close()
+        fmt.Println("Funded", pair.Address())
+    }
+
+    // Load the corresponding account for both A and C.
+    s1Account, err := client.AccountDetail(sdk.AccountRequest{AccountID: S1.Address()})
+    check(err)
+    aAccount, err := client.AccountDetail(sdk.AccountRequest{AccountID: addressA})
+    check(err)
+    s2Account, err := client.AccountDetail(sdk.AccountRequest{AccountID: S2.Address()})
+    check(err)
+
+    // Arbitrary assets to sponsor trustlines for. Let's assume they make sense.
+    assets := []txnbuild.CreditAsset{
+        txnbuild.CreditAsset{Code: "ABCD", Issuer: S1.Address()},
+        txnbuild.CreditAsset{Code: "EFGH", Issuer: S1.Address()},
+        txnbuild.CreditAsset{Code: "IJKL", Issuer: S2.Address()},
+    }
+
+    // ...
+```
+
+</CodeExample>
+
+### 1. Patrocinio de líneas de confianza
+
+Ahora, vamos a patrocinar líneas de confianza para la Cuenta A. Nota cómo la operación `CHANGE_TRUST` está enmarcada entre las operaciones de inicio y finalización de patrocinio y que todas las cuentas relevantes deben firmar la transacción.
+
+<CodeExample>
+
+```js
+//
+// 1. S1 will sponsor a trustline for Account A.
+//
+let s1Account = await server.loadAccount(S1.publicKey()).catch(accountFail);
+let tx = new sdk.TransactionBuilder(s1Account, { fee: sdk.BASE_FEE })
+  .addOperation(
+    sdk.Operation.beginSponsoringFutureReserves({
+      sponsoredId: A.publicKey(),
+    }),
+  )
+  .addOperation(
+    sdk.Operation.changeTrust({
+      source: A.publicKey(),
+      asset: assets[0],
+      limit: "1000", // This limit can vary according with your application;
+      // if left empty, it defaults to the max limit.
+    }),
+  )
+  .addOperation(
+    sdk.Operation.endSponsoringFutureReserves({
+      source: A.publicKey(),
+    }),
+  )
+  .setNetworkPassphrase(sdk.Networks.TESTNET)
+  .setTimeout(180)
+  .build();
+
+// Note that while either can submit this transaction, both must sign it.
+tx.sign(S1, A);
+let txResponse = await server.submitTransaction(tx).catch(txCheck);
+if (!txResponse) {
+  return;
+}
+
+console.log("Sponsored a trustline of", A.publicKey());
+
+//
+// 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
+//
+let aAccount = await server.loadAccount(A.publicKey()).catch(accountFail);
+let tx = new sdk.TransactionBuilder(aAccount, { fee: sdk.BASE_FEE })
+  .addOperation(
+    sdk.Operation.beginSponsoringFutureReserves({
+      source: S1.publicKey(),
+      sponsoredId: A.publicKey(),
+    }),
+  )
+  .addOperation(
+    sdk.Operation.changeTrust({
+      asset: assets[1],
+      limit: "5000",
+    }),
+  )
+  .addOperation(sdk.Operation.endSponsoringFutureReserves())
+
+  .addOperation(
+    sdk.Operation.beginSponsoringFutureReserves({
+      source: S2.publicKey(),
+      sponsoredId: A.publicKey(),
+    }),
+  )
+  .addOperation(
+    sdk.Operation.changeTrust({
+      asset: assets[2],
+      limit: "2500",
+    }),
+  )
+  .addOperation(sdk.Operation.endSponsoringFutureReserves())
+  .setNetworkPassphrase(sdk.Networks.TESTNET)
+  .setTimeout(180)
+  .build();
+
+// Note that all 3 accounts must approve/sign this transaction.
+tx.sign(S1, S2, A);
+let txResponse = await server.submitTransaction(tx).catch(txCheck);
+if (!txResponse) {
+  return;
+}
+
+console.log("Sponsored two trustlines of", A.publicKey());
+```
+
+```go
+    //
+    // 1. S1 will sponsor a trustline for Account A.
+    //
+    sponsorTrustline := []txnbuild.Operation{
+        &txnbuild.BeginSponsoringFutureReserves{
+            SourceAccount: s1Account.AccountID,
+            SponsoredID:   addressA,
+        },
+        &txnbuild.ChangeTrust{
+            Line:  &assets[0],
+            Limit: txnbuild.MaxTrustlineLimit,
+        },
+        &txnbuild.EndSponsoringFutureReserves{},
+    }
+
+    // Note that while A can submit this transaction, both sign it.
+    SignAndSend(client, aAccount.AccountID, []*keypair.Full{S1, A}, sponsorTrustline...)
+    fmt.Println("Sponsored a trustline of", A.Address())
+
+    //
+    // 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
+    //
+    sponsorTrustline = []txnbuild.Operation{
+        &txnbuild.BeginSponsoringFutureReserves{
+            SourceAccount: s1Account.AccountID,
+            SponsoredID:   addressA,
+        },
+        &txnbuild.ChangeTrust{
+            Line:          &assets[1],
+            Limit:         txnbuild.MaxTrustlineLimit,
+        },
+        &txnbuild.EndSponsoringFutureReserves{},
+
+        &txnbuild.BeginSponsoringFutureReserves{
+            SourceAccount: s2Account.AccountID,
+            SponsoredID:   addressA,
+        },
+        &txnbuild.ChangeTrust{
+            Line:          &assets[2],
+            Limit:         txnbuild.MaxTrustlineLimit,
+        },
+        &txnbuild.EndSponsoringFutureReserves{},
+    }
+
+    // Note that all 3 accounts must approve/sign this transaction.
+    SignAndSend(client, aAccount.AccountID, []*keypair.Full{S1, S2, A}, sponsorTrustline...)
+    fmt.Println("Sponsored two trustlines of", A.Address())
+```
+
+</CodeExample>
+
+### 2. Transferencia de patrocinio
+
+Supongamos que ahora el Firmante 1 quiere transferir la responsabilidad de patrocinar reservas para la línea de confianza al Patrocinador 2. Esto se logra enmarcando la transferencia entre las operaciones `BEGIN/END_SPONSORING_FUTURE_RESERVES`. Ambos participantes deben firmar la transacción, aunque cualquiera de los dos puede enviarla.
+
+Una forma intuitiva de pensar en una transferencia de patrocinio es que el propio acto de patrocinio está siendo patrocinado por una nueva cuenta. Es decir, el nuevo patrocinador asume las responsabilidades del antiguo patrocinador al patrocinar una revocación.
+
+<CodeExample>
+
+```js
+//
+// 3. Transfer sponsorship of B's second trustline from S1 to S2.
+//
+let tx = new sdk.TransactionBuilder(s1Account, { fee: sdk.BASE_FEE })
+  .addOperation(
+    sdk.Operation.beginSponsoringFutureReserves({
+      source: S2.publicKey(),
+      sponsoredId: S1.publicKey(),
+    }),
+  )
+  .addOperation(
+    sdk.Operation.revokeTrustlineSponsorship({
+      account: A.publicKey(),
+      asset: assets[1],
+    }),
+  )
+  .addOperation(sdk.Operation.endSponsoringFutureReserves())
+  .setNetworkPassphrase(sdk.Networks.TESTNET)
+  .setTimeout(180)
+  .build();
+
+// Notice that while the old sponsor *sends* the transaction, both sponsors
+// must *approve* the transfer.
+tx.sign(S1, S2);
+let txResponse = await server.submitTransaction(tx).catch(txCheck);
+if (!txResponse) {
+  return;
+}
+
+console.log("Transferred sponsorship for", A.publicKey());
+```
+
+```go
+    //
+    // 3. Transfer sponsorship of B's second trustline from S1 to S2.
+    //
+    transferOps := []txnbuild.Operation{
+        &txnbuild.BeginSponsoringFutureReserves{
+            SourceAccount: s2Account.AccountID,
+            SponsoredID:   S1.Address(),
+        },
+        &txnbuild.RevokeSponsorship{
+            SponsorshipType: txnbuild.RevokeSponsorshipTypeTrustLine,
+            Account:         &addressA,
+            TrustLine: &txnbuild.TrustLineID{
+                Account: addressA,
+                Asset:   assets[1],
+            },
+        },
+        &txnbuild.EndSponsoringFutureReserves{},
+    }
+
+    // Notice that while the old sponsor *sends* the transaction (in this case),
+    // both sponsors must *approve* the transfer.
+    SignAndSend(client, s1Account.AccountID, []*keypair.Full{S1, S2}, transferOps...)
+    fmt.Println("Transferred sponsorship for", A.Address())
+```
+
+</CodeExample>
+
+En este punto, el Firmante 1 solo está patrocinando el primer activo (categóricamente codificado como ABCD), mientras que el Firmante 2 está patrocinando los otros dos activos. (Recuerda que al principio el Firmante 1 también estaba patrocinando EFGH.)
+
+### 3. Revocación de patrocinio
+
+Finalmente, podemos demostrar la revocación completa de los patrocinios. A continuación, el Firmante 2 se elimina de toda responsabilidad sobre las dos líneas de confianza de activos. Observa que la Cuenta A no está involucrada en absoluto, ya que la revocación debe ser realizable puramente a discreción del patrocinador.
+
+<CodeExample>
+
+```js
+  //
+  // 4. S2 revokes sponsorship of B's trustlines entirely.
+  //
+  let s2Account = await server.loadAccount(S2.publicKey()).catch(accountFail);
+  let tx = new sdk.TransactionBuilder(s2Account, {fee: sdk.BASE_FEE})
+    .addOperation(sdk.Operation.revokeTrustlineSponsorship({
+      account: A.publicKey(),
+      asset: assets[1],
+    }))
+    .addOperation(sdk.Operation.revokeTrustlineSponsorship({
+      account: A.publicKey(),
+      asset: assets[2],
+    }))
+    .setNetworkPassphrase(sdk.Networks.TESTNET)
+    .setTimeout(180)
+    .build();
+
+  tx.sign(S2);
+  let txResponse = await server.submitTransaction(tx).catch(txCheck);
+  if (!txResponse) { return; }
+
+  console.log("Revoked sponsorship for", A.publicKey());
+} // ends main()
+```
+
+```go
+    //
+    // 4. S2 revokes sponsorship of B's trustlines entirely.
+    //
+    revokeOps := []txnbuild.Operation{
+        &txnbuild.RevokeSponsorship{
+            SponsorshipType: txnbuild.RevokeSponsorshipTypeTrustLine,
+            Account:         &addressA,
+            TrustLine: &txnbuild.TrustLineID{
+                Account: addressA,
+                Asset:   assets[1],
+            },
+        },
+        &txnbuild.RevokeSponsorship{
+            SponsorshipType: txnbuild.RevokeSponsorshipTypeTrustLine,
+            Account:         &addressA,
+            TrustLine: &txnbuild.TrustLineID{
+                Account: addressA,
+                Asset:   assets[2],
+            },
+        },
+    }
+
+    SignAndSend(client, s2Account.AccountID, []*keypair.Full{S2}, revokeOps...)
+    fmt.Println("Revoked sponsorship for", A.Address())
+} // ends main()
+```
+
+</CodeExample>
+
+### Cuentas de Origen de Patrocinio
+
+Cuando se trata de los campos SourceAccount de la transacción tipo sándwich de patrocinio, es importante referirse a la sabiduría de [CAP-33](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0033.md#abstract):
+
+> Esta relación es iniciada por `BeginSponsoringFutureReservesOp`, donde la cuenta patrocinadora es la cuenta fuente, y es terminada por `EndSponsoringFutureReserveOp`, donde la cuenta patrocinada es la cuenta fuente.
+
+Dado que la cuenta fuente por defecto es la del remitente de la transacción cuando se omite, este campo siempre debe establecerse para ya sea el `Begin` o el `End`.
+
+Por ejemplo, la siguiente es una expresión idéntica del ejemplo anterior de Golang de patrocinio de una línea de confianza, solo que presentada por el patrocinador (Patrocinador 1) en lugar de la cuenta patrocinada (Cuenta A). Nota las diferencias en donde se establece `SourceAccount`:
+
+<CodeExample>
+
+```go
+    sponsorTrustline := []txnbuild.Operation{
+        &txnbuild.BeginSponsoringFutureReserves{
+            SponsoredID: addressA,
+        },
+        &txnbuild.ChangeTrust{
+            SourceAccount: aAccount.AccountID,
+            Line:          &assets[0],
+            Limit:         txnbuild.MaxTrustlineLimit,
+        },
+        &txnbuild.EndSponsoringFutureReserves{
+            SourceAccount: aAccount.AccountID,
+        },
+    }
+
+    // Again, both participants must still sign the transaction: the sponsored
+    // account must consent to the sponsorship.
+    SignAndSend(client, s1Account.AccountID, []*keypair.Full{S1, A}, sponsorTrustline...)
+```
+
+</CodeExample>
+
+### Otros ejemplos
+
+Si deseas otros ejemplos o quieres ver un desglose de pseudo-código más genérico de estos escenarios de patrocinio, puedes referirte directamente a [CAP-0033](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0033.md#example-revoke-sponsorship).
+
+### Nota al pie
+
+Para los ejemplos anteriores, una implementación de SignAndSend (Golang) y algún código (muy) rudimentario de verificación de errores (todos los idiomas) podría parecerse a esto:
+
+<CodeExample>
+
+```js
+function txCheck(err) {
+  console.error("Transaction submission failed:", err);
+  if (err.response != null && err.response.data != null) {
+    console.error("More details:", err.response.data.extras);
+  } else {
+    console.error("Unknown reason:", err);
+  }
+}
+
+function accountFail(err) {
+  console.error(" Failed to load account:", err.response.body);
+}
+```
+
+```go
+// Builds a transaction containing `operations...`, signed (by `signers`), and
+// submitted using the given `client` on behalf of `account`.
+func SignAndSend(
+    client *sdk.Client,
+    account txnbuild.Account,
+    signers []*keypair.Full,
+    operations ...txnbuild.Operation,
+) protocol.Transaction {
+    // Build, sign, and submit the transaction
+    tx, err := txnbuild.NewTransaction(
+        txnbuild.TransactionParams{
+            SourceAccount:        account,
+            IncrementSequenceNum: true,
+            BaseFee:              txnbuild.MinBaseFee,
+            Timebounds:           txnbuild.NewInfiniteTimeout(),
+            Operations:           operations,
+        },
+    )
+    check(err)
+
+    for _, signer := range signers {
+        tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+        check(err)
+    }
+
+    txResp, err := client.SubmitTransaction(tx)
+    if err != nil {
+        if prob := sdk.GetError(err); prob != nil {
+            fmt.Printf("  problem: %s\n", prob.Problem.Detail)
+            fmt.Printf("  extras: %s\n", prob.Problem.Extras["result_codes"])
+        }
+        check(err)
+    }
+
+    return txResp
+}
+
+func check(err error) {
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
+</CodeExample>
