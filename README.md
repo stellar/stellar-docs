@@ -89,6 +89,12 @@ npm run check:mdx # this will search for problems in the MDX files
 npm run format:mdx # this will fix any problems that were found
 ```
 
+After that you need to build the `routes.txt` file, to do that run the next command
+
+```bash
+yarn build
+```
+
 ## Repository Structure
 
 - `/docs/` Contains all the documentation content. If you're contributing to the
