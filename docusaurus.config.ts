@@ -536,7 +536,7 @@ const config: Config = {
               activeBasePath: 'docs/tools/quickstart'
             },
             {
-              to: '/docs/tools/developer-tools/openzepplin-contracts',
+              to: '/docs/tools/developer-tools/openzeppelin-contracts',
               label: 'OpenZeppelin Contracts',
               activeBasePath: 'docs/tools/developer-tools/openzeppelin-contracts'
             },
