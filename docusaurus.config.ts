@@ -366,6 +366,11 @@ const config: Config = {
               activeBasePath: 'docs/learn/fundamentals/anchors',
             },
             {
+              to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
+              label: 'SDEX',
+              activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
+            },
+            {
               type: 'html',
               value: '<hr><a href="/docs/learn/encyclopedia" class="dropdown__link">Encyclopedia</a>',
             },
