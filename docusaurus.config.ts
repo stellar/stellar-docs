@@ -220,6 +220,11 @@ const config: Config = {
               className: 'subtitle',
             },
             {
+              to: '/docs/build/guides/auth',
+              label: 'Contract Authorization',
+              activeBasePath: 'docs/build/guides/auth',
+            },
+            {
               to: '/docs/build/guides/conventions',
               label: 'Contract Conventions',
               activeBasePath: 'docs/build/guides/conventions',
