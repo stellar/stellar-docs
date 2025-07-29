@@ -541,6 +541,11 @@ const config: Config = {
               activeBasePath: 'docs/tools/quickstart'
             },
             {
+              to: '/docs/tools/developer-tools/openzeppelin-contracts',
+              label: 'OpenZeppelin Contracts',
+              activeBasePath: 'docs/tools/developer-tools/openzeppelin-contracts'
+            },
+            {
               to: '/docs/tools/developer-tools',
               label: 'More Developer Tools',
               className: 'has-nested-items',
