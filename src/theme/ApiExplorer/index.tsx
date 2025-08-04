@@ -16,7 +16,7 @@ export default function ApiExplorerWrapper(props: Props): ReactNode {
       {props?.item?.["x-supports-streaming"] && (
         <Admonition type="tip" title="Supports Streaming">
           This endpoint supports streaming. To read more about this, visit the
-          <Link className="padding-horiz--xs" to="/docs/data/horizon/api-reference/structure/streaming">
+          <Link className="padding-horiz--xs" to="/docs/data/apis/horizon/api-reference/structure/streaming">
             streaming section.
           </Link>
         </Admonition>

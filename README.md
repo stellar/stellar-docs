@@ -51,8 +51,10 @@ No matter what you contribute, whether a PR or an issue, you can expect to recei
 If you have questions, feel free to ask in the [Stellar Developer Discord](https://discord.gg/stellardev).
 
 ## Quick Start
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][gitpod]
+
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
 
 ### Prerequisites
 
@@ -61,6 +63,8 @@ To begin development on the documentation, you will first need to install the fo
 - Node.js (v22, or higher): see https://nodejs.org/en/download/package-manager for details for your system
 - npm: e.g. `sudo apt install npm` on Ubuntu
 - yarn: `npm install yarn`
+  - If you're getting dependency errors, try using `npm install yarn --legacy-peer-deps`
+  - After `install` command succeeds run `corepack enable && corepack prepare yarn@stable --activate` to actually get yarn
 
 ### Development
 
@@ -83,6 +87,12 @@ MDX file formatting and style across the repository:
 ```bash
 npm run check:mdx # this will search for problems in the MDX files
 npm run format:mdx # this will fix any problems that were found
+```
+
+After that you need to build the `routes.txt` file, to do that run the next command
+
+```bash
+yarn build
 ```
 
 ## Repository Structure
@@ -235,7 +245,7 @@ const CODE_LANGS = {
 **Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
 
 [docs]: https://developers.stellar.org/docs
-[api]: https://developers.stellar.org/api
+[api]: https://developers.stellar.org/docs/data/apis
 [stellar]: https://stellar.org
 [contrib]: https://github.com/stellar/.github/blob/master/CONTRIBUTING.md
 [coc]: https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md
@@ -246,5 +256,5 @@ const CODE_LANGS = {
 [guide]: https://www.markdownguide.org/
 [alert-example]: https://developers.stellar.org/docs/anchoring-assets/enabling-cross-border-payments/setting-up-test-server
 [prism]: https://github.com/FormidableLabs/prism-react-renderer
-[codespaces]: https://github.com/codespaces/new?hide_repo_select=true&ref=main&repo=521307729&machine=basicLinux32gb&devcontainer_path=.devcontainer%2Fdevcontainer.json&location=EastUs
-[gitpod]: https://gitpod.io/#https://github.com/stellar/stellar-docs
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs
