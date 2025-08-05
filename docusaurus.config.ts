@@ -220,6 +220,11 @@ const config: Config = {
               className: 'subtitle',
             },
             {
+              to: '/docs/build/guides/auth',
+              label: 'Contract Authorization',
+              activeBasePath: 'docs/build/guides/auth',
+            },
+            {
               to: '/docs/build/guides/conventions',
               label: 'Contract Conventions',
               activeBasePath: 'docs/build/guides/conventions',
@@ -534,6 +539,11 @@ const config: Config = {
               to: '/docs/tools/quickstart',
               label: 'Quickstart',
               activeBasePath: 'docs/tools/quickstart'
+            },
+            {
+              to: '/docs/tools/developer-tools/openzeppelin-contracts',
+              label: 'OpenZeppelin Contracts',
+              activeBasePath: 'docs/tools/developer-tools/openzeppelin-contracts'
             },
             {
               to: '/docs/tools/developer-tools',
