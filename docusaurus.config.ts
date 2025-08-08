@@ -377,11 +377,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/learn/encyclopedia" class="dropdown__link">Encyclopedia</a>',
-            },
-            {
-              to: 'docs/learn/glossary',
-              label: 'Glossary',
+              value: '<hr><a href="/docs/learn/glossary" class="dropdown__link">Glossary</a>',
             },
             {
               to: 'docs/learn/migrate',
