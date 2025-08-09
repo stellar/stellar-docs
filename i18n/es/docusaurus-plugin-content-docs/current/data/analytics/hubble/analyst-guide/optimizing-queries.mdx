@@ -1,0 +1,231 @@
+---
+title: Optimizar Consultas
+sidebar_position: 30
+---
+
+Hubble tiene terabytes de datos para explorar&mdash;¡eso es mucho dato! Con acceso a tantos datos al alcance de tu mano, es crucial ajustar el rendimiento de tus consultas.
+
+Una de las fortalezas de BigQuery también es su trampa: tienes acceso a capacidades de computación tremendas, pero pagas por lo que usas. Si ajustas tus consultas, tendrás acceso a poderosos insights a una fracción del costo de mantener un almacén de datos tú mismo. Sin embargo, es fácil incurrir en costos altos si no tienes cuidado.
+
+## Prácticas Recomendadas
+
+### Presta atención a la estructura de la tabla.
+
+Las tablas grandes están particionadas y agrupadas de acuerdo a patrones de acceso comunes. Elimina solo las particiones que necesitas y filtra o agrega por campos agrupados cuando sea posible.
+
+Unir tablas por cadenas es costoso. Evita unir por claves de cadena si puedes utilizar claves enteras en su lugar.
+
+Lee la documentación sobre [Visualización de Metadatos](./viewing-metadata.mdx) para aprender más sobre los metadatos de la tabla.
+
+#### Ejemplo - Tipos de Operaciones de Perfilado
+
+Digamos que quieres perfilar los [tipos de operaciones](../../../../learn/fundamentals/transactions/list-of-operations.mdx) enviadas a la Red Stellar mensualmente. ======== Digamos que quieres perfilar los [tipos de operaciones](../../../../learn/fundamentals/transactions/list-of-operations.mdx) enviadas a la Red Stellar mensualmente.
+
+<CodeExample>
+
+```sql
+# Inefficient query
+select datetime_trunc(batch_run_date, month) as `month`,
+  type_string,
+  count(id) as count_operations
+from `crypto-stellar.crypto_stellar.history_operations`
+group by `month`,
+  type_string
+order by `month`
+```
+
+</CodeExample>
+
+La tabla `history_operations` está particionada por `batch_run_date` y agrupada por `transaction_id`, `source_account` y `type`. Los costos de consulta se reducen considerablemente al eliminar particiones no utilizadas. En este caso, podrías filtrar las operaciones enviadas antes de 2023. Esto reduce el costo de la consulta en 4x.
+
+<CodeExample>
+
+```sql
+# Prune out partitions you do not need
+select datetime_trunc(batch_run_date, month) as `month`,
+  type_string,
+  count(id) as count_operations
+from `crypto-stellar.crypto_stellar.history_operations`
+-- batch_run_date is a datetime object, formatted as ISO 8601
+where batch_run_date > '2023-01-01T00:00:00'
+group by `month`,
+  type_string
+order by `month`
+```
+
+</CodeExample>
+
+Cambiar el campo de agregación a `type`, que es un campo agrupado, reducirá los costos en un tercio:
+
+<CodeExample>
+
+```sql
+# Prune out partitions you do not need
+# Aggregate by clustered field, `type`
+select datetime_trunc(batch_run_date, month) as `month`,
+  `type`,
+  count(id) as count_operations
+from `crypto-stellar.crypto_stellar.history_operations`
+where batch_run_date >= '2023-01-01T00:00:00'
+group by `month`,
+  `type`
+order by `month`
+```
+
+</CodeExample>
+
+**Resumen del Rendimiento**
+
+Al eliminar particiones y agregar con un campo agrupado, los costos de procesamiento de consultas se reducen a un factor de 8.
+
+|                     | Bytes Procesados | Costo   |
+| ------------------- | ---------------- | ------- |
+| Consulta Original   | 408,1 GB         | $2,041  |
+| Consulta Mejorada 1 | 83,06 GB         | $0,415  |
+| Consulta Mejorada 2 | 54,8 GB          | $0,274  |
+
+### Sé lo más específico posible.
+
+No escribas declaraciones `SELECT *` a menos que necesites que se devuelvan todas las columnas en la respuesta de la consulta. Dado que BigQuery es una base de datos columnar, puede omitir la lectura de datos por completo si las columnas no están incluidas en la declaración select. Cuanto más amplia sea la tabla, más crucial es seleccionar _solo_ lo que necesitas.
+
+#### Ejemplo - Tarifas de Transacción
+
+Digamos que necesitas ver las tarifas de todas las transacciones enviadas en mayo de 2023. ¿Qué pasa si escribes un `SELECT *`?
+
+<CodeExample>
+
+```sql
+# Inefficient query
+select *
+from `crypto-stellar.crypto_stellar.history_transactions`
+where batch_run_date >= '2023-05-01'
+  and batch_run_date < '2023-06-01'
+```
+
+</CodeExample>
+
+¡Se estima que esta consulta costará casi $4!
+
+Si solo necesitas información de tarifas, puedes filtrar los datos, reduciendo los costos de consulta en un factor de 50x:
+
+<CodeExample>
+
+```sql
+# Select only the columns you need
+select id,
+  transaction_hash,
+  ledger_sequence,
+  account,
+  fee_account,
+  max_fee,
+  fee_charged,
+  new_max_fee
+from `crypto-stellar.crypto_stellar.history_transactions`
+where batch_run_date >= '2023-05-01'
+  and batch_run_date < '2023-06-01'
+```
+
+</CodeExample>
+
+**Resumen del Rendimiento**
+
+Hubble almacena tablas amplias. El rendimiento de las consultas mejora considerablemente al seleccionar solo los datos que necesitas. Este principio es crítico al explorar las tablas de operaciones y transacciones, que son las tablas más grandes de Hubble.
+
+|                   | Bytes Procesados | Costo   |
+| ----------------- | ---------------- | ------- |
+| Consulta Original | 769,45 GB        | $3,847  |
+| Consulta Mejorada | 16,6 GB          | $0,083  |
+
+:::tip
+
+La consola de BigQuery te permite ver datos de la tabla de forma gratuita, lo cual es equivalente a escribir un `SELECT *`. Haz clic en el nombre de la tabla y abre el panel de vista previa.
+
+:::
+
+### Filtrar temprano.
+
+Al escribir consultas complejas, filtra los datos lo antes posible. Empuja las cláusulas `WHERE` y `GROUP BY` hacia arriba en la consulta para reducir la cantidad de datos escaneados.
+
+:::caution
+
+Las cláusulas `LIMIT` aceleran el rendimiento, pero **no** reducen la cantidad de datos escaneados. Solo los _resultados finales_ devueltos al usuario están limitados. Usa con precaución.
+
+:::
+
+Empuja transformaciones y funciones matemáticas al final de la consulta cuando sea posible. Funciones como `TRIM()`, `CAST()`, `SUM()`, y `REGEXP_*` son intensivas en recursos y deben ser aplicadas solo a los resultados finales de la tabla.
+
+## Estimando Costos
+
+Si necesitas estimar costos antes de ejecutar una consulta, tienes varias opciones disponibles:
+
+### Consola de BigQuery
+
+La Consola de BigQuery incluye un validador de consultas incorporado. Verifica la sintaxis de la consulta y proporciona una estimación de la cantidad de bytes procesados. El validador se puede encontrar en la esquina superior derecha del Editor de Consultas, junto al marcado de verificación verde.
+
+Para calcular el costo de la consulta, convierte el número de bytes procesados en terabytes y multiplica el resultado por $5:
+
+`(bytes leídos estimados / 1TB) * $5`
+
+Pega la siguiente consulta en el Editor para ver los bytes procesados estimados.
+
+<CodeExample>
+
+```sql
+select timestamp_trunc(closed_at, month) as month,
+  sum(tx_set_operation_count) as total_operations
+from `crypto-stellar.crypto_stellar.history_ledgers`
+where batch_run_date >= '2023-01-01T00:00:00'
+  and batch_run_date < '2023-06-01T00:00:00'
+  and closed_at >= '2023-01-01T00:00:00'
+  and closed_at < '2023-06-01T00:00:00'
+group by month
+```
+
+</CodeExample>
+
+El validador estima que se leerán 51.95MB de datos.
+
+0,00005195 TB \* $5 = $0,000259. _¡Esa es una consulta barata!_
+
+### Parámetro de configuración dryRun
+
+Si envías una consulta a través de una [biblioteca de clientes de BigQuery](https://cloud.google.com/bigquery/docs/reference/libraries), puedes realizar una ejecución en modo de prueba para estimar el total de bytes procesados antes de enviar el trabajo de consulta.
+
+<CodeExample>
+
+```python
+from google.cloud import bigquery
+
+# Construct a BigQuery client object
+client = bigquery.Client()
+
+# Set dry run to True to get bytes processed
+job_config = bigquery.QueryJobConfig(dry_run=True, use_query_cache=False)
+
+# Pass in job config
+sql = """
+    select timestamp_trunc(closed_at, month) as month,
+      sum(tx_set_operation_count) as total_operations
+    from `crypto-stellar.crypto_stellar.history_ledgers`
+    where batch_run_date >= '2023-01-01T00:00:00'
+      and batch_run_date < '2023-06-01T00:00:00'
+      and closed_at >= '2023-01-01T00:00:00+00'
+      and closed_at < '2023-06-01T00:00:00'
+    group by month
+"""
+
+# Make API request
+query_job = client.query((sql), job_config = job_config)
+
+# Calculate the cost
+cost = (query_job.total_bytes_processed / 1000000000000) * 5
+
+print(f'This query will process {query_job.total_bytes_processed} bytes')
+print(f'This query will cost approximately ${cost}')
+```
+
+</CodeExample>
+
+También hay [plugins de IDE](https://plugins.jetbrains.com/plugin/15884-bigquery-query-size-estimator) que pueden aproximar el costo.
+
+Para más información sobre los costos de consultas, lee la [documentación de BigQuery](https://cloud.google.com/bigquery/docs/estimate-costs).

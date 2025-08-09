@@ -1,0 +1,795 @@
+---
+title: Pruebas de Fuzz
+description: Aumentar la confianza en la corrección de un contrato con pruebas de fuzz.
+sidebar_position: 160
+---
+
+<head>
+  <title>
+    {`Aumentar la confianza en la corrección de un contrato con pruebas de fuzz.`}
+  </title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Aumentar la confianza en la corrección de un contrato con pruebas de fuzz."
+  />
+  <meta
+    property="og:description"
+    content="Prueba de fuzz para contratos inteligentes con cargo-fuzz y personaliza la entrada para las pruebas de fuzz con crate arbitrario; demuestra cómo adaptar las pruebas de fuzz a pruebas de propiedad reutilizables."
+  />
+</head>
+
+El [ejemplo de fuzzing] demuestra cómo probar contratos Soroban con [`cargo-fuzz`] y personalizar la entrada para las pruebas de fuzz con crate [`arbitrary`]. También demuestra cómo adaptar las pruebas de fuzz en pruebas de propiedad reutilizables con los crates [`proptest`] y [`proptest-arbitrary-interop`]. Se basa en el [ejemplo de timelock].
+
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
+[ejemplo de fuzzing]: https://github.com/stellar/soroban-examples/tree/v22.0.1/fuzzing
+[`cargo-fuzz`]: https://docs.rs/cargo-fuzz
+[`arbitrary`]: https://docs.rs/arbitrary
+[`proptest`]: https://docs.rs/proptest
+[`proptest-arbitrary-interop`]: https://docs.rs/proptest-arbitrary-interop
+[ejemplo de timelock]: https://github.com/stellar/soroban-examples/tree/v22.0.1/timelock
+
+## Ejecutar el Ejemplo
+
+Primero, pasa por el proceso de [configuración] para configurar tu entorno de desarrollo, luego clona la etiqueta `v22.0.1` del repositorio `soroban-examples`:
+
+[configuración]: ../../smart-contracts/getting-started/setup.mdx
+
+```shell
+git clone -b v22.0.1 https://github.com/stellar/soroban-examples
+```
+
+También necesitarás la herramienta `cargo-fuzz`, y para ejecutar `cargo-fuzz` necesitarás un toolchain Rust nightly:
+
+```shell
+cargo install cargo-fuzz
+rustup install nightly
+```
+
+Para ejecutar una de las pruebas de fuzz, navega al directorio `fuzzing` y ejecuta el subcomando `cargo fuzz` con el toolchain `nightly`:
+
+```shell
+cd fuzzing
+cargo +nightly fuzz run fuzz_target_1
+```
+
+:::info
+
+Si estás desarrollando en MacOS, puede que necesites añadir el flag `--sanitizer=thread` para corregir algunos [errores de enlace conocidos](https://github.com/stellar/rs-soroban-sdk/issues/1056).
+
+:::
+
+Deberías ver una salida que comienza así:
+
+```shell
+$ cargo +nightly fuzz run fuzz_target_1
+   Compiling soroban-fuzzing-contract v0.0.0 (/home/azureuser/data/stellar/soroban-examples/fuzzing)
+   Compiling soroban-fuzzing-contract-fuzzer v0.0.0 (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz)
+    Finished release [optimized + debuginfo] target(s) in 23.74s
+    Finished release [optimized + debuginfo] target(s) in 0.07s
+     Running `fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1 ...`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 886588732
+INFO: Loaded 1 modules   (1093478 inline 8-bit counters): 1093478 [0x55eb8e2c7620, 0x55eb8e3d2586),
+INFO: Loaded 1 PC tables (1093478 PCs): 1093478 [0x55eb8e3d2588,0x55eb8f481be8),
+INFO:      105 files found in /home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/corpus/fuzz_target_1
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: seed corpus: files: 105 min: 32b max: 61b total: 3558b rss: 86Mb
+#2      pulse  ft: 8355 exec/s: 1 rss: 307Mb
+#4      pulse  cov: 8354 ft: 11014 corp: 1/32b exec/s: 2 rss: 313Mb
+#8      pulse  cov: 8495 ft: 12420 corp: 4/128b exec/s: 4 rss: 315Mb
+```
+
+El resto de este tutorial explicará cómo configurar esta prueba de fuzz, interpretar esta salida y resolver fallos de fuzzing.
+
+## Contexto: Pruebas de Fuzz y Rust
+
+El fuzzing es un tipo de prueba donde se alimentan repetidamente nuevos inputs en un programa con la esperanza de encontrar errores inesperados. Este estilo de prueba se emplea comúnmente para aumentar la confianza en la corrección del software sensible a la seguridad.
+
+En Rust, el fuzzing se realiza más a menudo con la herramienta [`cargo-fuzz`], que utiliza [`libfuzzer`] de LLVM, aunque hay otras herramientas de fuzzing disponibles.
+
+[`libfuzzer`]: https://llvm.org/docs/LibFuzzer.html
+
+Soroban tiene soporte integrado para pruebas de fuzz en contratos Soroban con `cargo-fuzz`.
+
+`cargo-fuzz` es un fuzzer basado en mutaciones: ejecuta un programa de prueba, pasándole input generado; mientras el programa se ejecuta, el fuzzer monitorea qué ramas toma el programa y qué funciones ejecuta; tras la ejecución, el fuzzer utiliza esta información para tomar decisiones sobre cómo _mutar_ el input previamente usado para crear nuevo input que podría descubrir más ramas y funciones; luego ejecuta la prueba nuevamente con el nuevo input, repitiendo este proceso durante potencialmente millones de iteraciones. De esta manera, `cargo-fuzz` puede explorar automáticamente los caminos de ejecución a través del programa que pueden nunca ser vistos por otros tipos de pruebas.
+
+Si una prueba de fuzz genera un panic o se cierra de forma abrupta, `cargo-fuzz` lo considera una falla y proporciona instrucciones para repetir la prueba con los inputs fallidos.
+
+Las pruebas de fuzz generalmente son un proceso exploratorio e interactivo, donde el programador desarrolla esquemas para producir inputs que estresen el programa de maneras interesantes, observan el comportamiento de la prueba de fuzz y hacen iteraciones sobre la propia prueba.
+
+Resolver una falla en las pruebas de fuzz generalmente implica capturar el input problemático en una prueba unitaria. La prueba de fuzz puede o no ser mantenida, dependiendo de las determinaciones sobre el costo de mantener el fuzzer frente a la probabilidad de que continúe encontrando errores en el futuro.
+
+Mientras que el fuzzing de software no seguro en memoria tiende a ser más lucrativo que el fuzzing de software en Rust, sigue siendo relativamente común encontrar panics y otros errores lógicos en Rust a través del fuzzing.
+
+En Rust, múltiples fuzzers son mantenidos por la organización de GitHub [`rust-fuzz`], que también mantiene una "vitrina de trofeos" de errores de Rust encontrados a través del fuzzing.
+
+[`rust-fuzz`]: https://github.com/rust-fuzz
+
+## Acerca del Ejemplo
+
+El ejemplo utilizado para este tutorial está basado en el programa de ejemplo [`timelock`], con algunos cambios para demostrar el fuzzing.
+
+[`timelock`]: https://github.com/stellar/soroban-examples/tree/v22.0.1/timelock
+
+El contrato, `ClaimableBalanceContract`, permite que una parte deposite una cantidad arbitraria de un token en el contrato, especificando además: los `claimants`, direcciones que pueden retirar del contrato; y el `time_bound`, una especificación de cuándo esos reclamantes pueden retirar de la cuenta.
+
+El tipo `TimeBound` luce así
+
+```rust
+#[derive(Clone)]
+#[contracttype]
+pub struct TimeBound {
+    pub kind: TimeBoundKind,
+    pub timestamp: u64,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub enum TimeBoundKind {
+    Before,
+    After,
+}
+```
+
+`ClaimableBalanceContract` tiene dos métodos, `deposit` y `claim`:
+
+```rust
+    pub fn deposit(
+        env: Env,
+        from: Address,
+        token: Address,
+        amount: i128,
+        claimants: Vec<Address>,
+        time_bound: TimeBound,
+    );
+
+    pub fn claim(
+        env: Env,
+        claimant: Address,
+        amount: i128,
+    );
+```
+
+`deposit` se puede llamar exitosamente solo una vez, después de lo cual se puede llamar a `claim` múltiples veces hasta que el balance esté completamente agotado, momento en el cual el contrato se vuelve inactivo y ya no puede ser utilizado.
+
+## Configuración de Pruebas de Fuzz
+
+Para estos ejemplos, las pruebas de fuzz han sido creadas para ti, pero normalmente usarías el comando `cargo fuzz init` para crear un proyecto de fuzzing como un subdirectorio del contrato bajo prueba.
+
+Para hacer eso, navegarías al directorio del contrato, en este caso, `soroban-examples/fuzzing`, y ejecutarías
+
+```shell
+cargo fuzz init
+```
+
+Un proyecto `cargo-fuzz` es su propio crate, que vive en el subdirectorio `fuzz` del crate que se está probando. Este crate tiene su propio `Cargo.toml` y `Cargo.lock`, y otro subdirectorio, `fuzz_targets`, que contiene programas Rust, cada uno su propia prueba de fuzz.
+
+Nuestro directorio `soroban-examples/fuzzing` se ve como
+
+- `Cargo.toml` - este es el manifiesto del contrato
+- `Cargo.lock`
+- `src`
+  - `lib.rs` - este es el código del contrato
+- `fuzz` - este es el crate de fuzzing
+  - `Cargo.toml` - este es el manifiesto del crate de fuzzing
+  - `Cargo.lock`
+  - `fuzz_targets`
+    - `fuzz_target_1.rs` - esta es una sola prueba de fuzz
+    - `fuzz_target_2.rs`
+
+Hay consideraciones especiales a tener en cuenta en la configuración tanto del [manifiesto del contrato] como del [manifiesto del crate de fuzzing].
+
+[manifiesto del contrato]: https://github.com/stellar/soroban-examples/tree/v22.0.1/fuzzing/Cargo.toml
+[manifiesto del crate de fuzzing]: https://github.com/stellar/soroban-examples/tree/v22.0.1/fuzzing/fuzz/Cargo.toml
+
+Dentro del manifiesto del contrato, se debe especificar el tipo de crate como "cdylib" y "rlib":
+
+```toml
+[package]
+name = "soroban-fuzzing-contract"
+version = "0.0.0"
+authors = ["Stellar Development Foundation <info@stellar.org>"]
+license = "Apache-2.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[features]
+testutils = []
+```
+
+En la mayoría de los ejemplos, un contrato Soroban será solo un "cdylib", un crate de Rust que se compila a un módulo wasm cargable dinámicamente. Sin embargo, para fuzzing, el crate de fuzzing necesita poder enlazarse al crate del contrato como una biblioteca Rust, una "rlib". Para el fuzzing, el crate de fuzzing necesita poder vincularse al crate de contrato como una biblioteca Rust, un "rlib".
+
+:::note
+
+Nota que cargo tiene un [problema/error que inhibe LTO][lto] de cdylibs cuando un crate es tanto "cdylib" como "rlib". Esto se puede sortear construyendo el contrato con `soroban contract build` o `cargo rustc --crate-type cdylib` en lugar del típico `cargo build`.
+
+:::
+
+[lto]: https://github.com/stellar/soroban-docs/pull/476
+
+El crate del contrato también debe proporcionar la característica "testutils". Cuando se activa "testutils", la macro [`contracttype`] del SDK de Soroban emite código adicional necesario para ejecutar pruebas de fuzz.
+
+[`contracttype`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/attr.contracttype.html
+
+Dentro del manifiesto del crate de fuzzing, se deben activar las características "testutils" en el crate del contrato y en el crate `soroban-sdk`:
+
+```toml
+[package]
+name = "soroban-fuzzing-contract-fuzzer"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+soroban-sdk = { version = "20.0.0", features = ["testutils"] }
+
+[dependencies.soroban-fuzzing-contract]
+path = ".."
+features = ["testutils"]
+```
+
+## Una Prueba de Fuzz Simple
+
+Primero, veamos [`fuzz_target_1.rs`]. Esta prueba de fuzz hace dos cosas: primero deposita una cantidad arbitraria, luego reclama una cantidad arbitraria.
+
+[`fuzz_target_1.rs`]: https://github.com/stellar/soroban-examples/tree/v22.0.1/fuzzing/fuzz/fuzz_targets/fuzz_target_1.rs
+
+Nuevamente, puedes ejecutar este fuzzer desde el directorio `soroban-examples/fuzzing` con el siguiente comando:
+
+```shell
+cargo +nightly fuzz run fuzz_target_1
+```
+
+El punto de entrada y el código de configuración para pruebas de fuzz de contratos Soroban típicamente lucirán así:
+
+```rust
+#[derive(Arbitrary, Debug)]
+struct Input {
+    deposit_amount: i128,
+    claim_amount: i128,
+}
+
+fuzz_target!(|input: Input| {
+    let env = Env::default();
+
+    env.mock_all_auths();
+
+    env.ledger().set(LedgerInfo {
+        timestamp: 12345,
+        protocol_version: 1,
+        sequence_number: 10,
+        network_id: Default::default(),
+        base_reserve: 10,
+    });
+
+    // Turn off the CPU/memory budget for testing.
+    env.budget().reset_unlimited();
+
+    // ... do fuzzing here ...
+}
+```
+
+En lugar de una función `main`, `cargo-fuzz` usa un punto de entrada especial definido por la macro [`fuzz_target!`]. Esta macro acepta un closure de Rust que acepta `input`, cualquier tipo de Rust que implemente el trait [`Arbitrary`]. Aquí hemos definido una estructura, `Input`, que deriva `Arbitrary`.
+
+[`fuzz_target!`]: https://docs.rs/libfuzzer-sys/latest/libfuzzer_sys/macro.fuzz_target.html
+[`arbitrary`]: https://docs.rs/arbitrary/latest/arbitrary/trait.Arbitrary.html
+
+`cargo-fuzz` será responsable de generar `input` y llamar repetidamente a este closure.
+
+Para probar un contrato Soroban, debemos configurar un [`Env`]. Nota que hemos deshabilitado el presupuesto de CPU y memoria: esto nos permitirá explorar caminos de código arbitrariamente complejos sin preocuparnos por quedarnos sin presupuesto; podemos asumir que quedarnos sin presupuesto durante una transacción siempre falla correctamente, cancelando la transacción; no es algo que necesitemos probar con fuzz.
+
+[`env`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Env.html
+
+Consulta el código fuente de [`fuzz_target_1.rs`] para configuración adicional de este contrato.
+
+Este fuzzer realiza dos pasos: depositar, luego reclamar:
+
+```rust
+    // Deposit, then assert invariants.
+    {
+        let _ = timelock_client.try_deposit(
+                &depositor_address,
+                &token_contract_id,
+                &input.deposit_amount,
+                &vec![
+                    &env,
+                    claimant_address.clone(),
+                ],
+                &TimeBound {
+                    kind: TimeBoundKind::Before,
+                    timestamp: 123456,
+                },
+            );
+
+        assert_invariants(
+            &env,
+            &timelock_contract_id,
+            &token_client,
+            &input
+        );
+    }
+
+    // Claim, then assert invariants.
+    {
+        let _ = timelock_client.try_claim(
+                &claimant_address,
+                &input.claim_amount,
+            );
+
+        assert_invariants(
+            &env,
+            &timelock_contract_id,
+            &token_client,
+            &input
+        );
+    }
+```
+
+Hay una serie de estrategias potenciales para escribir pruebas de fuzz. La estrategia en esta prueba es hacer llamadas arbitrarias, posiblemente extrañas e irrealistas, al contrato, despreciando si esas llamadas tienen éxito o fracasan, y luego hacer afirmaciones sobre el estado del contrato.
+
+Debido a que hay muchos casos de falla potencial para cualquier llamada de contrato dada, no queremos escribir una prueba de fuzz intentando interpretar el éxito o fracaso de cualquier llamada determinada: ese camino lleva a duplicar la lógica del contrato dentro de la prueba de fuzz. En su lugar, solo queremos asegurarnos de que, independientemente de lo que sucedió durante la ejecución, el contrato nunca se quede en un estado inválido.
+
+Observa el uso de la función cliente `try_` para invocar el contrato. Cada función del contrato se puede invocar con una variante `try_`, que captura cualquier error, incluidos los pánicos y bloqueos, y devuelve el valor en caso de éxito o un error de lo contrario. Sin usar la variante `try_`, un pánico dentro de un contrato hará que la prueba de fuzz falle inmediatamente, pero en la mayoría de los casos, un pánico dentro de un contrato no indica un error: simplemente es cómo un contrato de Soroban cancela una transacción. `try_` devuelve un `Result`, pero aquí lo descartamos.
+
+Finalmente, la función `assert_invariants` es donde hacemos cualquier afirmación que podamos sobre el estado del contrato:
+
+```rust
+/// Directly inspect the contract state and make assertions about it.
+fn assert_invariants(
+    env: &Env,
+    timelock_contract_id: &Address,
+    token_client: &TokenClient,
+    input: &Input,
+) {
+    // Configure the environment to access the timelock contract's storage.
+    env.as_contract(timelock_contract_id, || {
+        let storage = env.storage();
+
+        // Get the two datums owned by the timelock contract.
+        let is_initialized = storage.has(&DataKey::Init);
+        let claimable_balance = storage.get::<_, ClaimableBalance>(&DataKey::Balance);
+
+        // Call the token client to get the balance held in the timelock contract.
+        // This consumes contract execution budget.
+        let actual_token_balance = token_client.balance(timelock_contract_id);
+
+        // There can only be a claimaible balance after the contract is initialized,
+        // but once the balance is claimed there is no balance,
+        // but the contract remains initialized.
+        // This is a truth table of valid states.
+        assert!(match (is_initialized, claimable_balance.is_some()) {
+            (false, false) => true,
+            (false, true) => false,
+            (true, true) => true,
+            (true, false) => true,
+        });
+
+        assert!(actual_token_balance >= 0);
+
+        if let Some(claimable_balance) = claimable_balance {
+            let claimable_balance = claimable_balance.expect("balance");
+
+            assert!(claimable_balance.amount > 0);
+            assert!(claimable_balance.amount <= input.deposit_amount);
+            assert_eq!(claimable_balance.amount, actual_token_balance);
+
+            assert!(claimable_balance.claimants.len() > 0);
+        }
+    });
+}
+```
+
+## Interpretando la Salida de `cargo-fuzz`
+
+Si ejecutas `cargo-fuzz` con `fuzz_target_1`, desde dentro del directorio `soroban-examples/fuzzing`, verás salida similar a:
+
+```shell
+$ cargo +nightly fuzz run fuzz_target_1
+   Compiling soroban-fuzzing-contract v0.0.0 (/home/azureuser/data/stellar/soroban-examples/fuzzing)
+   Compiling soroban-fuzzing-contract-fuzzer v0.0.0 (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz)
+    Finished release [optimized + debuginfo] target(s) in 25.18s
+    Finished release [optimized + debuginfo] target(s) in 0.08s
+     Running `fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1 -artifact_prefix=/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/artifacts/fuzz_target_1/ /home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/corpus/fuzz_target_1`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1384064486
+INFO: Loaded 1 modules   (1122058 inline 8-bit counters): 1122058 [0x561f6ecd4fc0, 0x561f6ede6eca),
+INFO: Loaded 1 PC tables (1122058 PCs): 1122058 [0x561f6ede6ed0,0x561f6ff05f70),
+INFO:      173 files found in /home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/corpus/fuzz_target_1
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: seed corpus: files: 173 min: 32b max: 61b total: 6039b rss: 83Mb
+#4      pulse  cov: 4848 ft: 10214 corp: 1/32b exec/s: 2 rss: 313Mb
+#8      pulse  cov: 8507 ft: 11743 corp: 4/128b exec/s: 4 rss: 315Mb
+#16     pulse  cov: 8512 ft: 12393 corp: 10/320b exec/s: 8 rss: 319Mb
+thread '<unnamed>' panicked at 'assertion failed: claimable_balance.amount > 0', fuzz_targets/fuzz_target_1.rs:130:13
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+==6102== ERROR: libFuzzer: deadly signal
+    #0 0x561f6ae3a431  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x1c80431) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+    #1 0x561f6e3855b0  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x51cb5b0) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+    #2 0x561f6e35c08a  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x51a208a) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+    #3 0x7fce05f5e08f  (/lib/x86_64-linux-gnu/libc.so.6+0x4308f) (BuildId: 1878e6b475720c7c51969e69ab2d276fae6d1dee)
+    #4 0x7fce05f5e00a  (/lib/x86_64-linux-gnu/libc.so.6+0x4300a) (BuildId: 1878e6b475720c7c51969e69ab2d276fae6d1dee)
+    #5 0x7fce05f3d858  (/lib/x86_64-linux-gnu/libc.so.6+0x22858) (BuildId: 1878e6b475720c7c51969e69ab2d276fae6d1dee)
+    ...
+    #27 0x561f6e3847b9  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x51ca7b9) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+    #28 0x561f6ad98346  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x1bde346) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+    #29 0x7fce05f3f082  (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 1878e6b475720c7c51969e69ab2d276fae6d1dee)
+    #30 0x561f6ad9837d  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x1bde37d) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+
+NOTE: libFuzzer has rudimentary signal handlers.
+      Combine libFuzzer with AddressSanitizer or similar for better crash reports.
+SUMMARY: libFuzzer: deadly signal
+MS: 0 ; base unit: 0000000000000000000000000000000000000000
+0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x5d,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0xff,0x5f,0x5f,0x52,0xff,
+\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000]\000\000\000\000\000\000\000\000\377__R\377
+artifact_prefix='/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/artifacts/fuzz_target_1/'; Test unit written to /home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/artifacts/fuzz_target_1/crash-04704b1542f61a21a4649e39023ec57ff502f627
+Base64: AAAAAAAAAAAAAAAAAAAAAAAAXQAAAAAAAAAA/19fUv8=
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failing input:
+
+        fuzz/artifacts/fuzz_target_1/crash-04704b1542f61a21a4649e39023ec57ff502f627
+
+Output of `std::fmt::Debug`:
+
+        Input {
+            deposit_amount: 0,
+            claim_amount: -901525218878596739118967460911579136,
+        }
+
+Reproduce with:
+
+        cargo fuzz run fuzz_target_1 fuzz/artifacts/fuzz_target_1/crash-04704b1542f61a21a4649e39023ec57ff502f627
+
+Minimize test case with:
+
+        cargo fuzz tmin fuzz_target_1 fuzz/artifacts/fuzz_target_1/crash-04704b1542f61a21a4649e39023ec57ff502f627
+
+────────────────────────────────────────────────────────────────────────────────
+
+Error: Fuzz target exited with exit status: 77
+```
+
+Esto es una falla de fuzzing, que indica un error en el fuzzer o en el programa. Los detalles serán diferentes.
+
+Aquí está la misma salida, con líneas menos importantes recortadas:
+
+```shell
+thread '<unnamed>' panicked at 'assertion failed: claimable_balance.amount > 0', fuzz_targets/fuzz_target_1.rs:130:13
+...
+Failing input:
+
+        fuzz/artifacts/fuzz_target_1/crash-04704b1542f61a21a4649e39023ec57ff502f627
+
+Output of `std::fmt::Debug`:
+
+        Input {
+            deposit_amount: 0,
+            claim_amount: -901525218878596739118967460911579136,
+        }
+
+Reproduce with:
+
+        cargo fuzz run fuzz_target_1 fuzz/artifacts/fuzz_target_1/crash-04704b1542f61a21a4649e39023ec57ff502f627
+
+Minimize test case with:
+
+        cargo fuzz tmin fuzz_target_1 fuzz/artifacts/fuzz_target_1/crash-04704b1542f61a21a4649e39023ec57ff502f627
+```
+
+La primera línea aquí es impresa por nuestro programa Rust, e indica exactamente dónde el fuzzer panicó. Las líneas posteriores indican cómo reproducir este caso fallido.
+
+Lo primero que debes hacer cuando obtienes una falla de fuzzing es copiar el comando para reproducir la falla, para que puedas utilizarlo para depurar:
+
+```shell
+cargo +nightly fuzz run fuzz_target_1 fuzz/artifacts/fuzz_target_1/crash-04704b1542f61a21a4649e39023ec57ff502f627
+```
+
+Nota que necesitamos decirle a `cargo` que use el toolchain nightly con el flag `+nightly`, algo que `cargo-fuzz` no imprime en su versión del comando.
+
+Otra cosa a notar es que por defecto, `cargo-fuzz` / `libfuzzer` no imprime los nombres de las funciones en su salida, como en el traceback:
+
+```shell
+==6102== ERROR: libFuzzer: deadly signal
+    #0 0x561f6ae3a431  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x1c80431) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+    ...
+    #28 0x561f6ad98346  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x1bde346) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+    #29 0x7fce05f3f082  (/lib/x86_64-linux-gnu/libc.so.6+0x24082) (BuildId: 1878e6b475720c7c51969e69ab2d276fae6d1dee)
+    #30 0x561f6ad9837d  (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x1bde37d) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+```
+
+Dependiendo de cómo esté configurado tu sistema, es posible que tengas este problema o no. Para imprimir trazas de stack, `libfuzzer` necesita el programa `llvm-symbolizer`. En sistemas basados en Ubuntu, esto se puede instalar con el paquete `llvm-dev`:
+
+```shell
+sudo apt install llvm-dev
+```
+
+Después de lo cual, `libfuzzer` imprimirá nombres de funciones demanglados en lugar de direcciones:
+
+```shell
+==6323== ERROR: libFuzzer: deadly signal
+    #0 0x557c9da6a431 in __sanitizer_print_stack_trace /rustc/llvm/src/llvm-project/compiler-rt/lib/asan/asan_stack.cpp:87:3
+    #1 0x557ca0fb55b0 in fuzzer::PrintStackTrace() /home/azureuser/.cargo/registry/src/index.crates.io-6f17d22bba15001f/libfuzzer-sys-0.4.5/libfuzzer/FuzzerUtil.cpp:210:38
+    #2 0x557ca0f8c08a in fuzzer::Fuzzer::CrashCallback() /home/azureuser/.cargo/registry/src/index.crates.io-6f17d22bba15001f/libfuzzer-sys-0.4.5/libfuzzer/FuzzerLoop.cpp:233:18
+    #3 0x557ca0f8c08a in fuzzer::Fuzzer::CrashCallback() /home/azureuser/.cargo/registry/src/index.crates.io-6f17d22bba15001f/libfuzzer-sys-0.4.5/libfuzzer/FuzzerLoop.cpp:228:6
+    #4 0x7ff19e84d08f  (/lib/x86_64-linux-gnu/libc.so.6+0x4308f) (BuildId: 1878e6b475720c7c51969e69ab2d276fae6d1dee)
+    #5 0x7ff19e84d00a in __libc_signal_restore_set /build/glibc-SzIz7B/glibc-2.31/signal/../sysdeps/unix/sysv/linux/internal-signals.h:86:3
+    #6 0x7ff19e84d00a in raise /build/glibc-SzIz7B/glibc-2.31/signal/../sysdeps/unix/sysv/linux/raise.c:48:3
+    #7 0x7ff19e82c858 in abort /build/glibc-SzIz7B/glibc-2.31/stdlib/abort.c:79:7
+    ...
+    #23 0x557c9daee89a in fuzz_target_1::assert_invariants::hd6d4f9549b01c31c /home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/fuzz_targets/fuzz_target_1.rs:103:5
+    #24 0x557c9daee89a in fuzz_target_1::_::run::hac1117cb3dfecb2b /home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/fuzz_targets/fuzz_target_1.rs:69:9
+    #25 0x557c9daecea6 in rust_fuzzer_test_input /home/azureuser/.cargo/registry/src/index.crates.io-6f17d22bba15001f/libfuzzer-sys-0.4.5/src/lib.rs:297:60
+    ...
+    #37 0x557c9d9c8346 in main /home/azureuser/.cargo/registry/src/index.crates.io-6f17d22bba15001f/libfuzzer-sys-0.4.5/libfuzzer/FuzzerMain.cpp:20:30
+    #38 0x7ff19e82e082 in __libc_start_main /build/glibc-SzIz7B/glibc-2.31/csu/../csu/libc-start.c:308:16
+    #39 0x557c9d9c837d in _start (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1+0x1bde37d) (BuildId: 6a95a932984a405ebab8171dddc9f812fdf16846)
+```
+
+Para continuar, nuestro programa tiene un error que debería ser fácil de corregir inspeccionando el error y haciendo una ligera modificación al código fuente.
+
+Una vez que el error está corregido, el fuzzer se ejecutará continuamente, produciendo salida que lucirá como
+
+```shell
+$ cargo +nightly fuzz run fuzz_target_1
+   Compiling soroban-fuzzing-contract v0.0.0 (/home/azureuser/data/stellar/soroban-examples/fuzzing)
+   Compiling soroban-fuzzing-contract-fuzzer v0.0.0 (/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz)
+    Finished release [optimized + debuginfo] target(s) in 24.91s
+    Finished release [optimized + debuginfo] target(s) in 0.08s
+     Running `fuzz/target/x86_64-unknown-linux-gnu/release/fuzz_target_1 -artifact_prefix=/home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/artifacts/fuzz_target_1/ /home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/corpus/fuzz_target_1`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1619748028
+INFO: Loaded 1 modules   (1122061 inline 8-bit counters): 1122061 [0x5647a55b9080, 0x5647a56caf8d),
+INFO: Loaded 1 PC tables (1122061 PCs): 1122061 [0x5647a56caf90,0x5647a67ea060),
+INFO:      173 files found in /home/azureuser/data/stellar/soroban-examples/fuzzing/fuzz/corpus/fuzz_target_1
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: seed corpus: files: 173 min: 32b max: 61b total: 6039b rss: 85Mb
+#2      pulse  ft: 8067 exec/s: 1 rss: 312Mb
+#4      pulse  cov: 8068 ft: 10709 corp: 1/32b exec/s: 2 rss: 315Mb
+#8      pulse  cov: 8476 ft: 11498 corp: 5/160b exec/s: 4 rss: 317Mb
+#16     pulse  cov: 8512 ft: 12362 corp: 9/288b exec/s: 8 rss: 320Mb
+#32     pulse  cov: 8516 ft: 13290 corp: 19/608b exec/s: 10 rss: 326Mb
+#64     pulse  cov: 8516 ft: 13311 corp: 27/864b exec/s: 21 rss: 340Mb
+#128    pulse  cov: 8540 ft: 13536 corp: 37/1196b exec/s: 25 rss: 365Mb
+#175    INITED cov: 8540 ft: 13580 corp: 42/1387b exec/s: 29 rss: 382Mb
+#177    NEW    cov: 8545 ft: 13821 corp: 43/1419b lim: 48 exec/s: 29 rss: 384Mb L: 32/48 MS: 1 ChangeASCIIInt-
+#178    NEW    cov: 8545 ft: 13824 corp: 44/1451b lim: 48 exec/s: 29 rss: 384Mb L: 32/48 MS: 1 ChangeBinInt-
+#229    NEW    cov: 8545 ft: 13826 corp: 45/1483b lim: 48 exec/s: 38 rss: 401Mb L: 32/48 MS: 1 ChangeByte-
+#256    pulse  cov: 8545 ft: 13826 corp: 45/1483b lim: 48 exec/s: 36 rss: 410Mb
+#361    NEW    cov: 8545 ft: 13830 corp: 46/1521b lim: 48 exec/s: 40 rss: 451Mb L: 38/48 MS: 5 ShuffleBytes-CMP-EraseBytes-CopyPart-ChangeBinInt- DE: "\005\000\000\000"-
+        NEW_FUNC[1/1]: 0x5647a2964640 in rand::rngs::adapter::reseeding::ReseedingCore$LT$R$C$Rsdr$GT$::reseed_and_generate::ha760ded93293681c /home/azureuser/.cargo/registry/src/index.crates.io-6f17d22bba15001f/rand-0.7.3/src/rngs/adapter/reseeding.rs:235
+#368    NEW    cov: 8557 ft: 13842 corp: 47/1566b lim: 48 exec/s: 40 rss: 454Mb L: 45/48 MS: 2 CrossOver-InsertRepeatedBytes-
+#512    pulse  cov: 8557 ft: 13842 corp: 47/1566b lim: 48 exec/s: 46 rss: 502Mb
+#850    NEW    cov: 8557 ft: 13843 corp: 48/1610b lim: 48 exec/s: 53 rss: 591Mb L: 44/48 MS: 2 CopyPart-ChangeBit-
+#1024   pulse  cov: 8557 ft: 13843 corp: 48/1610b lim: 48 exec/s: 56 rss: 645Mb
+#1796   NEW    cov: 8557 ft: 13863 corp: 49/1642b lim: 53 exec/s: 71 rss: 669Mb L: 32/48 MS: 1 ChangeBinInt-
+#1913   NEW    cov: 8557 ft: 13864 corp: 50/1675b lim: 53 exec/s: 73 rss: 669Mb L: 33/48 MS: 2 ShuffleBytes-InsertByte-
+#3749   REDUCE cov: 8557 ft: 13864 corp: 50/1670b lim: 68 exec/s: 98 rss: 669Mb L: 39/48 MS: 1 EraseBytes-
+...
+```
+
+Y esta salida continuará hasta que el fuzzer sea detenido con `Ctrl-C`.
+
+A continuación, echemos un vistazo a una sola línea de salida del fuzzer:
+
+```shell
+#177    NEW    cov: 8545 ft: 13821 corp: 43/1419b lim: 48 exec/s: 29 rss: 384Mb L: 32/48 MS: 1 ChangeASCIIInt-
+```
+
+La columna más importante aquí es `cov`. Esta es una medida acumulativa de las ramas cubiertas por el fuzzer. Cuando este número deja de aumentar, el fuzzer probablemente ha explorado tanto del programa como puede. Las otras columnas están descritas en la [documentación de `libfuzzer`][lfout].
+
+[lfout]: https://llvm.org/docs/LibFuzzer.html#output
+
+Finalmente, veamos esta advertencia:
+
+```shell
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes.
+```
+
+Por defecto, `libfuzzer` solo genera input de hasta 4096 bytes. En muchos casos, esto probablemente es razonable, pero `cargo-fuzz` puede aumentar el `max_len` añadiendo el argumento después de `--`:
+
+```shell
+cargo +nightly fuzz run fuzz_target_1 -- -max_len=20000
+```
+
+Todas las opciones de libfuzzer pueden ser listadas con
+
+```shell
+cargo +nightly fuzz run fuzz_target_1 -- -help=1
+```
+
+Consulta la [documentación de `libfuzzer`] para más información.
+
+[documentación de `libfuzzer`]: https://llvm.org/docs/LibFuzzer.html#output
+
+## Aceptar Tipos Soroban como Entrada con el Trait `SorobanArbitrary`
+
+Los inputs de la macro `fuzz_target!` deben implementar el trait [`Arbitrary`], que acepta bytes del controlador de fuzzing y los convierte en valores Rust. Los tipos Soroban, sin embargo, son gestionados por el entorno host, por lo que deben ser creados a partir de un valor [`Env`], que no está disponible para el controlador de fuzzing. El trait [`SorobanArbitrary`], implementado para todos los tipos de contrato Soroban, existe para cerrar esta brecha: define un patrón de _prototipo_ mediante el cual la macro `fuzz_target` crea valores prototipo que el programa de fuzz puede convertir en valores de contrato con las traits de conversión estándar de soroban, [`FromVal`] o [`IntoVal`].
+
+[`sorobanarbitrary`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/testutils/arbitrary/trait.SorobanArbitrary.html
+[`fromval`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/trait.FromVal.html
+[`intoval`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/trait.IntoVal.html
+
+Los tipos de prototipos se identifican por el tipo asociado, `SorobanArbitrary::Prototype`:
+
+```rust
+pub trait SorobanArbitrary:
+    TryFromVal<Env, Self::Prototype> + IntoVal<Env, Val> + TryFromVal<Env, Val>
+{
+    type Prototype: for <'a> Arbitrary<'a>;
+}
+```
+
+Los tipos que implementan `SorobanArbitrary` incluyen:
+
+- `i32`, `u32`, `i64`, `u64`, `i128`, `u128`, [`I256`], [`U256`], `()`, y `bool`,
+- [`Error`],
+- [`Bytes`], [`BytesN`], [`Vec`], [`Map`],
+- [`Address`], [`Symbol`],
+- [`Val`],
+
+[`i256`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.I256.html
+[`u256`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.U256.html
+[`error`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/xdr/enum.Error.html
+[`bytes`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Bytes.html
+[`bytesn`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.BytesN.html
+[`vec`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Vec.html
+[`map`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Map.html
+[`address`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Address.html
+[`symbol`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Symbol.html
+[`val`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Val.html
+
+Todos los tipos de contrato definidos por el usuario, aquellos con el atributo [`contracttype`], derivan automáticamente `SorobanArbitrary`. Nota que `SorobanArbitrary` solo se deriva cuando la característica de Cargo "testutils" está activa. Esto implica que, en general, para hacer un contrato Soroban fuzzable, el crate del contrato debe definir una característica de Cargo "testutils", esa característica debería activar la característica "soroban-sdk/testutils", y la prueba de fuzzing, que es su propio crate, debe activar esa característica.
+
+## Una prueba de fuzzing más compleja
+
+El ejemplo [`fuzz_target_2.rs`] demuestra el uso de `SorobanArbitrary`, el avance del tiempo y técnicas de fuzzing más avanzadas.
+
+[`fuzz_target_2.rs`]: https://github.com/stellar/soroban-examples/tree/v22.0.1/fuzzing/fuzz/fuzz_targets/fuzz_target_2.rs
+
+Esta prueba de fuzzing toma una entrada mucho más compleja, donde algunos de los valores son tipos definidos por el usuario exportados desde el contrato bajo prueba. Esta prueba está estructurada como un intérprete simple, donde el entorno de fuzzing proporciona "pasos" generados arbitrariamente, donde cada paso es un comando `deposit` o un comando `claim`. La prueba luego trata cada uno de estos pasos como una transacción separada: mantiene una imagen del estado de la blockchain, y para cada paso crea un entorno fresco en el que ejecutar la llamada al contrato, simulando el avance del tiempo entre cada paso. Como en el ejemplo anterior, se hacen afirmaciones después de cada paso.
+
+La entrada al fuzzer se ve, en parte, como:
+
+```rust
+#[derive(Arbitrary, Debug)]
+struct Input {
+    addresses: [<Address as SorobanArbitrary>::Prototype; NUM_ADDRESSES],
+    #[arbitrary(with = |u: &mut Unstructured| u.int_in_range(0..=i128::MAX))]
+    token_mint: i128,
+    steps: RustVec<Step>,
+}
+
+#[derive(Arbitrary, Debug)]
+struct Step {
+    #[arbitrary(with = |u: &mut Unstructured| u.int_in_range(1..=u64::MAX))]
+    advance_time: u64,
+    command: Command, // `Command` not shown here - see the full source.
+}
+```
+
+Esto muestra cómo usar el tipo asociado `SorobanArbitrary::Prototype` para definir entradas al fuzzer. Una [`Address`] de Soroban solo se puede crear con un [`Env`], por lo que no se puede generar directamente por el rasgo `Arbitrary`. En su lugar, usamos el nombre totalmente calificado del prototipo `Address`, `<Address as SorobanArbitrary>::Prototype`, para pedir el prototipo de `Address` en su lugar. Luego, cuando nuestro fuzzer necesita la `Address`, la instanciamos con el rasgo [`FromVal`]:
+
+```rust
+let depositor_address = Address::from_val(&env, &input.addresses[cmd.depositor_index]);
+```
+
+---
+
+El contrato que estamos fuzzing es un contrato de _timelock_, donde el cálculo del tiempo es crucial para la corrección. Por lo tanto, nuestras pruebas deben tener en cuenta el avance del tiempo.
+
+El contrato define un tipo `TimeBound` y lo acepta en el método `deposit`:
+
+```rust
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct TimeBound {
+    pub kind: TimeBoundKind,
+    pub timestamp: u64,
+}
+
+#[contractimpl]
+impl ClaimableBalanceContract {
+    pub fn deposit(
+        env: Env,
+        from: Address,
+        token: Address,
+        amount: i128,
+        claimants: Vec<Address>,
+        time_bound: TimeBound,
+    ) {
+        ...
+    }
+}
+```
+
+En nuestro fuzzer, uno de los posibles comandos emitidos en cada paso es un `DepositCommand`:
+
+```rust
+#[derive(Arbitrary, Debug)]
+struct DepositCommand {
+    #[arbitrary(with = |u: &mut Unstructured| u.int_in_range(0..=NUM_ADDRESSES - 1))]
+    depositor_index: usize,
+    amount: i128,
+    // This is an ugly way to get a vector of integers in range
+    #[arbitrary(with = |u: &mut Unstructured| {
+        u.arbitrary_len::<usize>().map(|len| {
+            (0..len).map(|_| {
+                u.int_in_range(0..=NUM_ADDRESSES - 1)
+            }).collect::<Result<RustVec<usize>, _>>()
+        }).and_then(|inner_result| inner_result)
+    })]
+    claimant_indexes: RustVec<usize>,
+    time_bound: <TimeBound as SorobanArbitrary>::Prototype,
+}
+```
+
+Ten en cuenta que este comando nuevamente usa el tipo asociado `SorobanArbitrary::Prototype` para aceptar un `TimeBound` como entrada.
+
+Para avanzar en el tiempo mantenemos un [`LedgerSnapshot`], definido en el crate [`soroban-ledger-snapshot`]. Para cada paso, llamamos a [`Env::from_snapshot`] para crear un entorno fresco para ejecutar el paso, luego [`Env::to_snapshot`] para crear una nueva imagen que usar en el siguiente paso.
+
+[`ledgersnapshot`]: https://docs.rs/soroban-ledger-snapshot/latest/soroban_ledger_snapshot/struct.LedgerSnapshot.html
+[`soroban-ledger-snapshot`]: https://docs.rs/soroban-ledger-snapshot
+[`env::from_snapshot`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Env.html#method.from_snapshot
+[`env::to_snapshot`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/struct.Env.html#method.to_snapshot
+
+Aquí hay un esquema simplificado de cómo funciona esto. Consulta el código fuente completo para más detalles.
+
+```rust
+let init_snapshot = {
+    let init_ledger = LedgerInfo {
+        timestamp: 12345,
+        protocol_version: 1,
+        sequence_number: 10,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_temp_entry_ttl: u32::MAX,
+        min_persistent_entry_ttl: u32::MAX,
+    };
+
+    LedgerSnapshot::from(init_ledger, None)
+};
+
+let mut prev_env = Env::from_snapshot(init_snapshot);
+
+for step in &config.input.steps {
+    // Advance time and create a new env from snapshot.
+    let curr_env = {
+        let mut snapshot = prev_env.to_snapshot();
+        snapshot.sequence_number += 1;
+        snapshot.timestamp = snapshot.timestamp.saturating_add(step.advance_time);
+        let env = Env::from_snapshot(snapshot);
+        env.budget().reset_unlimited();
+        env
+    };
+
+    step.command.exec(&config, &curr_env);
+    prev_env = curr_env;
+}
+```
+
+## Convertir una prueba de fuzz a una prueba de propiedad
+
+Además de las pruebas de fuzzing, Soroban admite pruebas de propiedad al estilo de quickcheck, utilizando los crates [`proptest`] y [`proptest-arbitrary-interop`] junto con el rasgo `SorobanArbitrary`.
+
+Las pruebas de propiedad son similares a las pruebas de fuzzing en que generan entradas aleatorizadas. Sin embargo, las pruebas de propiedad no instrumentan sus casos de prueba ni mutan su entrada en función de los comentarios de pruebas anteriores. Por lo tanto, son una forma más débil de prueba.
+
+El gran beneficio de las pruebas de propiedad es que pueden incluirse en las suites de pruebas estándar de Rust y no requieren herramientas adicionales para ejecutarse. Uno podría aprovechar esto fuzzing de manera interactiva para descubrir errores profundos, luego convertir pruebas de fuzz a pruebas de propiedad para ayudar a prevenir regresiones.
+
+El archivo [`proptest.rs`] es una traducción de `fuzz_target_1.rs` a una prueba de propiedad.
+
+[`proptest.rs`]: https://github.com/stellar/soroban-examples/tree/v22.0.1/fuzzing/src/proptest.rs

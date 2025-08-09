@@ -1,0 +1,396 @@
+---
+title: Recuperaciones
+sidebar_position: 30
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Las recuperaciones se introdujeron en CAP-0035 y permiten que un emisor de activos queme una cantidad específica de un activo habilitado para recuperaciones de una línea de confianza o saldo recuperable, destruyéndolo efectivamente y removiéndolo del saldo de un destinatario.
+
+Están diseñadas para permitir que los emisores de activos cumplan con las regulaciones de valores, que en muchas jurisdicciones requieren que los emisores de activos (o agentes de transferencia designados) tengan la capacidad de revocar activos en caso de una transacción errónea o fraudulenta u otra acción regulatoria relacionada con una persona o activo específico.
+
+Las recuperaciones son útiles para:
+
+- Recuperar activos que han sido obtenidos fraudulentamente
+- Responder a acciones regulatorias
+- Permitir a las personas con identidad verificada recuperar un activo habilitado en caso de pérdida de custodia de claves o robo
+
+## Operaciones
+
+### Establecer opciones
+
+El emisor configura su cuenta para habilitar las recuperaciones utilizando la bandera `AUTH_CLAWBACK_ENABLED`. Esto hace que cada trustline subsiguiente establecido a cualquier activo emitido por esa cuenta tenga la `TRUSTLINE_CLAWBACK_ENABLED_FLAG` configurada automáticamente.
+
+Si una cuenta emisora quiere establecer la `AUTH_CLAWBACK_ENABLED_FLAG`, debe tener configurada la `AUTH_REVOCABLE_FLAG`. Esto permite a un emisor de activos recuperar saldos bloqueados en ofertas revocando primero la autorización de una línea de confianza, lo que retira todas las ofertas que involucran esa línea de confianza. Luego el emisor puede realizar la recuperación.
+
+### Recuperación
+
+La cuenta emisora utiliza esta operación para recuperar parte o la totalidad de un activo. Una vez que una cuenta posee un activo particular para el cual se han habilitado las recuperaciones, la cuenta emisora puede recuperarlo, quemándolo. Necesitas proporcionar el activo, una cantidad y la cuenta desde la cual estás recuperando el activo. Para más detalles, consulta la [operación de Clawback](../../fundamentals/transactions/list-of-operations.mdx#clawback).
+
+### Recuperación de saldo recuperable
+
+Esta operación recupera un saldo recuperable, devolviendo el activo a la cuenta emisora, quemándolo. Debes recuperar el saldo recuperable completo, no solo una parte de él. Una vez que un saldo recuperable ha sido reclamado, utiliza la operación de recuperación regular para recuperarlo. Las recuperaciones de saldos recuperables requieren el ID de saldo recuperable. Para más detalles, consulta la [operación de Clawback Claimable Balance](../../fundamentals/transactions/list-of-operations.mdx#clawback-claimable-balance).
+
+### Establecer bandera de línea de confianza
+
+La cuenta emisora utiliza esta operación para eliminar las capacidades de clawback en un trustline específico al eliminar la `TRUSTLINE_CLAWBACK_ENABLED_FLAG` a través de la operación [**SetTrustLineFlags**](../../fundamentals/transactions/list-of-operations.mdx#set-trustline-flags).
+
+Solo puedes limpiar una bandera, no configurarla. Por lo tanto, limpiar una bandera de recuperación en una línea de confianza es irreversible. Esto se hace para que no cambies retroactivamente las reglas para tus titulares de activos. Si deseas habilitar recuperaciones nuevamente, los titulares deben volver a emitir sus líneas de confianza.
+
+## Ejemplos
+
+Aquí cubriremos los siguientes enfoques para recuperar un activo.
+
+**Ejemplo 1:** La cuenta emisora (Cuenta A) crea un activo habilitado para recuperación y lo envía a la Cuenta B. La Cuenta B envía ese activo a la Cuenta C. La Cuenta A luego recuperará el activo de C. **Ejemplo 2:** La Cuenta B crea un saldo recuperable para la Cuenta C, y la Cuenta A recupera el saldo recuperable. **Ejemplo 3:** La Cuenta A emite un activo habilitado para recuperación a la Cuenta B. A recupera parte del activo de B, luego elimina la bandera habilitada para recuperación de la línea de confianza y ya no puede recuperar el activo.
+
+### Preámbulo: Emisión de un activo recuperable
+
+Primero, configuraremos una cuenta para habilitar recuperaciones y emitir un activo en consecuencia.
+
+Emitir adecuadamente un activo (con cuentas de emisión y distribución separadas) es un poco más complicado, pero utilizaremos un método más simple aquí.
+
+También, ten en cuenta que primero necesitamos habilitar recuperaciones y luego establecer líneas de confianza, ya que no puedes habilitar recuperaciones retroactivamente en líneas de confianza existentes.
+
+<CodeExample>
+
+```js
+const sdk = require("stellar-sdk");
+
+let server = new sdk.Server("https://horizon-testnet.stellar.org");
+
+const A = sdk.Keypair.fromSecret(
+  "SAQLZCQA6AYUXK6JSKVPJ2MZ5K5IIABJOEQIG4RVBHX4PG2KMRKWXCHJ",
+);
+const B = sdk.Keypair.fromSecret(
+  "SAAY2H7SANIS3JLFBFPLJRTYNLUYH4UTROIKRVFI4FEYV4LDW5Y7HDZ4",
+);
+const C = sdk.Keypair.fromSecret(
+  "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4",
+);
+
+const ASSET = new sdk.Asset("CLAW", A.publicKey());
+
+/// Enables AuthClawbackEnabledFlag on an account.
+function enableClawback(account, keys) {
+  return server.submitTransaction(
+    buildTx(account, keys, [
+      sdk.Operation.setOptions({
+        setFlags: sdk.AuthClawbackEnabledFlag | sdk.AuthRevocableFlag,
+      }),
+    ]),
+  );
+}
+
+/// Establishes a trustline for `recipient` for ASSET (from above).
+const establishTrustline = function (recipient, key) {
+  return server.submitTransaction(
+    buildTx(recipient, key, [
+      sdk.Operation.changeTrust({
+        asset: ASSET,
+        limit: "5000", // arbitrary
+      }),
+    ]),
+  );
+};
+
+/// Retrieves latest account info for all accounts.
+function getAccounts() {
+  return Promise.all([
+    server.loadAccount(A.publicKey()),
+    server.loadAccount(B.publicKey()),
+    server.loadAccount(C.publicKey()),
+  ]);
+}
+
+/// Enables clawback on A, and establishes trustlines from C, B -> A.
+function preamble() {
+  return getAccounts().then(function (accounts) {
+    let [accountA, accountB, accountC] = accounts;
+    return enableClawback(accountA, A).then(
+      Promise.all([
+        establishTrustline(accountB, B),
+        establishTrustline(accountC, C),
+      ]),
+    );
+  });
+}
+
+/// Helps simplify creating & signing a transaction.
+function buildTx(source, signer, ops) {
+  var tx = new StellarSdk.TransactionBuilder(source, {
+    fee: 100,
+    networkPassphrase: StellarSdk.Networks.TESTNET,
+  });
+  ops.forEach((op) => tx.addOperation(op));
+  tx = tx.setTimeout(30).build();
+  tx.sign(signer);
+  return tx;
+}
+
+/// Prints the balances of a list of accounts.
+function showBalances(accounts) {
+  accounts.forEach((acc) => {
+    console.log(`${acc.accountId().substring(0, 5)}: ${getBalance(acc)}`);
+  });
+}
+```
+
+</CodeExample>
+
+### Ejemplo 1: Pagos
+
+Con el código de configuración compartido fuera del camino, ahora podemos demostrar cómo funciona la recuperación para pagos. Este ejemplo destacará cómo el emisor de activos mantiene el control sobre su activo independientemente de cómo se distribuya al mundo.
+
+En nuestro escenario, la Cuenta A pagará a la Cuenta B con 1000 tokens de su activo personalizado; luego, B pagará a la Cuenta C 500 tokens a su vez. Finalmente, A recuperará la mitad del saldo de C, quemando 250 tokens para siempre. Vamos a sumergirnos en las funciones auxiliares:
+
+<CodeExample>
+
+```js
+/// Make a payment to `toAccount` from `fromAccount` for `amount`.
+function makePayment(toAccount, fromAccount, fromKey, amount) {
+  return server.submitTransaction(
+    buildTx(fromAccount, fromKey, [
+      sdk.Operation.payment({
+        destination: toAccount.accountId(),
+        asset: ASSET, // defined in preamble
+        amount: amount,
+      }),
+    ]),
+  );
+}
+
+/// Perform a clawback by `byAccount` of `amount` from `fromAccount`.
+function doClawback(byAccount, byKey, fromAccount, amount) {
+  return server.submitTransaction(
+    buildTx(byAccount, byKey, [
+      sdk.Operation.clawback({
+        from: fromAccount.accountId(),
+        asset: ASSET, // defined in preamble
+        amount: amount,
+      }),
+    ]),
+  );
+}
+
+/// Retrieves the balance of ASSET in `account`.
+function getBalance(account) {
+  const balances = account.balances.filter((balance) => {
+    return (
+      balance.asset_code == ASSET.code && balance.asset_issuer == ASSET.issuer
+    );
+  });
+  return balances.length > 0 ? balances[0].balance : "0";
+}
+```
+
+</CodeExample>
+
+Estos fragmentos nos ayudarán con la composición final: haciendo algunos pagos para distribuir el activo al mundo y recuperando parte de él.
+
+<CodeExample>
+
+```js
+function examplePaymentClawback() {
+  return getAccounts()
+    .then(function (accounts) {
+      let [accountA, accountB, accountC] = accounts;
+      return makePayment(accountB, accountA, A, "1000")
+        .then(makePayment(accountC, accountB, B, "500"))
+        .then(doClawback(accountA, A, accountC, "250"));
+    })
+    .then(getAccounts)
+    .then(showBalances);
+}
+
+preamble().then(examplePaymentClawback);
+```
+
+</CodeExample>
+
+Después de ejecutar nuestro ejemplo, deberíamos ver que los saldos reflejan el flujo del ejemplo:
+
+```
+GCIHA: 0
+GDS5N: 500
+GC2BK: 250
+```
+
+Nota que `GCIHA` (Cuenta A, el emisor) no posee ninguno de los activos a pesar de haber recuperado 250 de la Cuenta C. Esto debería resaltar el hecho de que los activos recuperados son quemados, no transferidos.
+
+(Puede parecer extraño que A nunca posea tokens de su activo personalizado, pero así es como funciona la emisión: creas valor donde antes no existía. Enviar un activo a su cuenta emisora es equivalente a quemarlo, y auditar la cantidad total de un activo existente es uno de los beneficios de distribuir un activo correctamente a través de una cuenta de distribución, lo cual evitamos hacer aquí por brevedad del ejemplo.)
+
+### Ejemplo 2: Saldos Recuperables
+
+Los pagos directos no son la única forma de transferir activos entre cuentas: los saldos recuperables también lo hacen. Dado que son un mecanismo de pago separado, necesitan un mecanismo de recuperación separado.
+
+Necesitamos algunos métodos adicionales de ayuda para comenzar a trabajar de manera eficiente con saldos recuperables:
+
+<CodeExample>
+
+```js
+function createClaimable(fromAccount, fromKey, toAccount, amount) {
+  return server.submitTransaction(
+    buildTx(fromAccount, fromKey, [
+      sdk.Operation.createClaimableBalance({
+        asset: ASSET,
+        amount: amount,
+        claimants: [new sdk.Claimant(toAccount.accountId())],
+      }),
+    ]),
+  );
+}
+
+// https://developers.stellar.org/docs/encyclopedia/claimable-balance/#example
+function getBalanceId(txResponse) {
+  const txResult = sdk.xdr.TransactionResult.fromXDR(
+    txResponse.result_xdr,
+    "base64",
+  );
+  const operationResult = txResult.result().results()[0];
+
+  let creationResult = operationResult.value().createClaimableBalanceResult();
+  return creationResult.balanceId().toXDR("hex");
+}
+
+function clawbackClaimable(issuerAccount, issuerKey, balanceId) {
+  return server.submitTransaction(
+    buildTx(issuerAccount, issuerKey, [
+      sdk.Operation.clawbackClaimableBalance({ balanceId }),
+    ]),
+  );
+}
+```
+
+</CodeExample>
+
+Ahora, podemos cumplir con el flujo: A paga a B, quien envía un saldo recuperable a C, quien es recuperado por A. (Ten en cuenta que dependemos del ayudante `makePayment` del ejemplo anterior.)
+
+<CodeExample>
+
+```js
+function exampleClaimableBalanceClawback() {
+  return getAccounts()
+    .then(function (accounts) {
+      let [accountA, accountB, accountC] = accounts;
+
+      return makePayment(accountB, accountA, A, "1000")
+        .then(() => createClaimable(accountB, B, accountC, "500"))
+        .then((txResp) => clawbackClaimable(accountA, A, getBalanceId(txResp)));
+    })
+    .then(getAccounts)
+    .then(showBalances);
+}
+```
+
+</CodeExample>
+
+Después de ejecutar `preamble().then(examplePaymentClawback)`, deberíamos ver que los saldos reflejan nuestro flujo:
+
+```
+GCIHA: 0
+GDS5N: 500
+GC2BK: 0
+```
+
+### Ejemplo 3: Habilitación Selectiva de Recuperación
+
+Cuando habilitas la `AUTH_CLAWBACK_ENABLED_FLAG` en tu cuenta, hará que todas las futuras líneas de confianza tengan habilitada la recuperación para cualquiera de tus activos emitidos. Esto puede no ser siempre deseable ya que puede que quieras que ciertos activos se comporten como lo hacían antes. Aunque podrías encontrar una solución emitiendo activos desde una cuenta de "recuperación dedicada", también puedes simplemente deshabilitar las recuperaciones para ciertas líneas de confianza limpiando la `TRUST_LINE_CLAWBACK_ENABLED_FLAG` en una línea de confianza.
+
+En el siguiente ejemplo, tendremos una cuenta (Cuenta A, como antes) que emitirá un nuevo activo y lo distribuirá a una segunda cuenta (Cuenta B). Luego, demostraremos cómo A recupera algunos de los activos de B, luego limpia la línea de confianza y ya no puede recuperar el activo.
+
+Primero, prepararemos las cuentas (ten en cuenta que estamos dependiendo aquí de funciones auxiliares definidas en los ejemplos anteriores):
+
+<CodeExample>
+
+```js
+function getAccounts() {
+  return Promise.all([
+    server.loadAccount(A.publicKey()),
+    server.loadAccount(B.publicKey()),
+  ]);
+}
+
+function preambleRedux() {
+  return getAccounts().then((accounts) => {
+    return enableClawback(accounts[0], A).then(() =>
+      establishTrustline(accounts[1], B),
+    );
+  });
+}
+```
+
+</CodeExample>
+
+Ahora, distribuyamos algunos de nuestros activos a la Cuenta B, solo para recuperarlos. Luego, limpiaremos la bandera de la línea de confianza y mostraremos que otra recuperación no es posible:
+
+<CodeExample>
+
+```js
+function disableClawback(issuerAccount, issuerKeys, forTrustor) {
+  return server.submitTransaction(
+    buildTx(issuerAccount, issuerKeys, [
+      sdk.Operation.setTrustLineFlags({
+        trustor: forTrustor.accountId(),
+        asset: ASSET, // defined in the (original) preamble
+        flags: {
+          clawbackEnabled: false,
+        },
+      }),
+    ]),
+  );
+}
+
+function exampleSelectiveClawback() {
+  return getAccounts()
+    .then((accounts) => {
+      let [accountA, accountB] = accounts;
+      return makePayment(accountB, accountA, A, "1000")
+        .then(getAccounts)
+        .then(showBalances)
+        .then(() => doClawback(accountA, A, accountB, "500"))
+        .then(getAccounts)
+        .then(showBalances)
+        .then(() => disableClawback(accountA, A, accountB))
+        .then(() => doClawback(accountA, A, accountB, "500"))
+        .catch((err) => {
+          if (err.response && err.response.data) {
+            // Note that this is a *very* specific way to check for an error, and
+            // you should probably never do it this way.
+            // We do this here to demonstrate that the clawback error *does*
+            // occur as expected.
+            const opErrors = err.response.data.extras.result_codes.operations;
+            if (
+              opErrors &&
+              opErrors.length > 0 &&
+              opErrors[0] === "op_not_clawback_enabled"
+            ) {
+              console.info("Clawback failed, as expected!");
+            } else {
+              console.error(
+                "Uh-oh, some other failure occurred:",
+                err.response.data.extras,
+              );
+            }
+          } else {
+            console.error("Uh-oh, unknown failure:", err);
+          }
+        });
+    })
+    .then(getAccounts)
+    .then(showBalances);
+}
+```
+
+</CodeExample>
+
+Ejecuta el ejemplo (por ejemplo, `via preambleRedux().then(exampleSelectiveClawback)`) y observa su resultado:
+
+```
+GCIHA: 0
+GDS5N: 1000
+GCIHA: 0
+GDS5N: 500
+Clawback failed, as expected!
+GCIHA: 0
+GDS5N: 500
+```

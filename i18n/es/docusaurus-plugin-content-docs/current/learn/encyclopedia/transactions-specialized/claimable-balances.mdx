@@ -1,0 +1,436 @@
+---
+title: Saldos Reclamables
+sidebar_position: 20
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Los saldos reclamables se introdujeron en [CAP-0023](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0023.md) y se utilizan para dividir un pago en dos partes.
+
+- Parte 1: la cuenta emisora crea un pago, o ClaimableBalanceEntry, utilizando la operación Crear Saldo Reclamable
+- Parte 2: la(s) cuenta(s) de destino, o reclamante(s), acepta(n) el ClaimableBalanceEntry utilizando la operación Reclamar Saldo Reclamable
+
+Los saldos reclamables permiten a una cuenta enviar un pago a otra cuenta que no necesariamente está preparada para recibir el pago. Se pueden utilizar cuando envías un activo no nativo a una cuenta que aún no ha establecido una línea de confianza, lo que puede ser útil para los anclajes que incorporan nuevos usuarios. Se debe establecer una línea de confianza por parte del reclamante al activo antes de que pueda reclamar el saldo reclamable, de lo contrario, la reclamación resultará en un error `op_no_trust`.
+
+Es importante notar que si un saldo reclamable no se reclama, permanece en el ledger para siempre, ocupando espacio y, en última instancia, haciendo que la red sea menos eficiente. **Por esta razón, es una buena idea poner una de tus propias cuentas como reclamante para un saldo reclamable.** Entonces puedes aceptar tu propio saldo reclamable si es necesario, liberando espacio en la red.
+
+Cada ClaimableBalanceEntry es una entrada en el ledger, y cada reclamante en esa entrada aumenta el saldo mínimo de la cuenta fuente por una reserva base.
+
+Una vez que se ha reclamado un ClaimableBalanceEntry, se elimina.
+
+## Operaciones
+
+### Crear Saldo Reclamable
+
+Para parámetros básicos, consulta la entrada Crear Saldo Reclamable en nuestra [Lista de la sección de Operaciones](../../fundamentals/transactions/list-of-operations.mdx#create-claimable-balance).
+
+#### Parámetros adicionales
+
+`Claim_Predicate_` Reclamante — un objeto que contiene tanto la cuenta de destino que puede reclamar el ClaimableBalanceEntry como un ClaimPredicate que debe evaluarse como verdadero para que la reclamación tenga éxito.
+
+Un ClaimPredicate es una estructura de datos recursiva que se puede utilizar para construir condicionales complejos utilizando diferentes ClaimPredicateTypes. A continuación se presentan algunos ejemplos con el prefijo `Claim_Predicate_` eliminado para facilitar la lectura. Ten en cuenta que los SDK esperan que las marcas de tiempo de Unix se expresen en segundos.
+
+- Puede reclamar en cualquier momento - `UNCONDITIONAL`
+- Puede reclamar si el tiempo de cierre del ledger, incluyendo la reclamación, es antes de X segundos + el tiempo de cierre del ledger en el que se creó el ClaimableBalanceEntry - `BEFORE_RELATIVE_TIME(X)`
+- Puede reclamar si el tiempo de cierre del ledger, incluyendo la reclamación, es antes de X (marca de tiempo de Unix) - `BEFORE_ABSOLUTE_TIME(X)`
+- Puede reclamar si el tiempo de cierre del ledger, incluyendo la reclamación, es a o después de X segundos + el tiempo de cierre del ledger en el que se creó el ClaimableBalanceEntry - `NOT(BEFORE_RELATIVE_TIME(X))`
+- Puede reclamar si el tiempo de cierre del ledger, incluyendo la reclamación, es a o después de X (marca de tiempo de Unix) - `NOT(BEFORE_ABSOLUTE_TIME(X))`
+- Puede reclamar entre X y Y marcas de tiempo de Unix (dado que X < Y) - `AND(NOT(BEFORE_ABSOLUTE_TIME(X))`, `BEFORE_ABSOLUTE_TIME(Y))`
+- Puede reclamar fuera de las marcas de tiempo de Unix X e Y (dado que X < Y) - `OR(BEFORE_ABSOLUTE_TIME(X)`, `NOT(BEFORE_ABSOLUTE_TIME(Y))`
+
+`ClaimableBalanceID` ClaimableBalanceID es una unión con un posible tipo (`CLAIMABLE_BALANCE_ID_TYPE_V0`). Contiene un hash SHA-256 del OperationID para Saldo Reclamables.
+
+Una operación de Crear Saldo Reclamable exitosa devolverá un ID de saldo, que es necesario al reclamar el ClaimableBalanceEntry con la operación Reclamar Saldo Reclamable.
+
+### Reclamar Saldo Reclamable
+
+Para parámetros básicos, consulta la entrada Reclamar Saldo Reclamable en nuestra [Lista de la sección de Operaciones](../../fundamentals/transactions/list-of-operations#claim-claimable-balance).
+
+Esta operación cargará el ClaimableBalanceEntry que corresponde al ID de saldo y luego buscará la cuenta fuente de esta operación en la lista de reclamantes en la entrada. Si se encuentra una coincidencia en el reclamante, y el ClaimPredicate se evalúa como verdadero, entonces se puede reclamar el ClaimableBalanceEntry. El saldo en la entrada se moverá a la cuenta fuente si no hay problemas de límite o línea de confianza (para activos no nativos), lo que significa que el reclamante debe establecer una línea de confianza al activo antes de reclamarlo.
+
+### Recuperar Saldo Reclamable
+
+Esta operación recupera un saldo reclamable, devolviendo el activo a la cuenta emisora, quemándolo. Debes recuperar el saldo reclamable completo, no solo una parte de él. Una vez que se ha reclamado un saldo reclamable, utiliza la operación de recuperación regular para recuperarlo.
+
+Las recuperaciones de saldos reclamables requieren el ID de saldo reclamable.
+
+Aprende más sobre las recuperaciones en nuestra [Entrada de la Enciclopedia de Recuperaciones](./clawbacks.mdx).
+
+## Ejemplo
+
+El siguiente código demuestra a través de los SDK de JavaScript y Go cómo una cuenta (Cuenta A) crea un ClaimableBalanceEntry con dos reclamantes: Cuenta A (ella misma) y Cuenta B (otro destinatario).
+
+Cada una de estas cuentas solo puede reclamar el saldo bajo condiciones únicas. La Cuenta B tiene un minuto completo para reclamar el saldo antes de que la Cuenta A pueda recuperar el saldo de vuelta para sí misma.
+
+**Nota:** no hay un mecanismo de recuperación para un saldo reclamable en general: si ninguno de los predicados puede cumplirse, el saldo no puede recuperarse. El ejemplo de recuperación a continuación actúa como una red de seguridad para esta situación.
+
+<CodeExample>
+
+```js
+const sdk = require("stellar-sdk");
+
+async function main() {
+  let server = new sdk.Server("https://horizon-testnet.stellar.org");
+
+  let A = sdk.Keypair.fromSecret(
+    "SAQLZCQA6AYUXK6JSKVPJ2MZ5K5IIABJOEQIG4RVBHX4PG2KMRKWXCHJ",
+  );
+  let B = sdk.Keypair.fromPublicKey(
+    "GAS4V4O2B7DW5T7IQRPEEVCRXMDZESKISR7DVIGKZQYYV3OSQ5SH5LVP",
+  );
+
+  // NOTE: Proper error checks are omitted for brevity; always validate things!
+
+  let aAccount = await server.loadAccount(A.publicKey()).catch(function (err) {
+    console.error(`Failed to load ${A.publicKey()}: ${err}`);
+  });
+  if (!aAccount) {
+    return;
+  }
+
+  // Create a claimable balance with our two above-described conditions.
+  let soon = Math.ceil(Date.now() / 1000 + 60); // .now() is in ms
+  let bCanClaim = sdk.Claimant.predicateBeforeRelativeTime("60");
+  let aCanReclaim = sdk.Claimant.predicateNot(
+    sdk.Claimant.predicateBeforeAbsoluteTime(soon.toString()),
+  );
+
+  // Create the operation and submit it in a transaction.
+  let claimableBalanceEntry = sdk.Operation.createClaimableBalance({
+    claimants: [
+      new sdk.Claimant(B.publicKey(), bCanClaim),
+      new sdk.Claimant(A.publicKey(), aCanReclaim),
+    ],
+    asset: sdk.Asset.native(),
+    amount: "420",
+  });
+
+  let tx = new sdk.TransactionBuilder(aAccount, { fee: sdk.BASE_FEE })
+    .addOperation(claimableBalanceEntry)
+    .setNetworkPassphrase(sdk.Networks.TESTNET)
+    .setTimeout(180)
+    .build();
+
+  tx.sign(A);
+  let txResponse = await server
+    .submitTransaction(tx)
+    .then(function () {
+      console.log("Claimable balance created!");
+    })
+    .catch(function (err) {
+      console.error(`Tx submission failed: ${err}`);
+    });
+}
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+
+    sdk "github.com/stellar/go/clients/horizonclient"
+    "github.com/stellar/go/keypair"
+    "github.com/stellar/go/network"
+    "github.com/stellar/go/txnbuild"
+)
+
+
+func main() {
+    client := sdk.DefaultTestNetClient
+
+    // Suppose that these accounts exist and are funded accordingly:
+    A := "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4"
+    B := "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5"
+
+    // Load the corresponding account for A.
+    aKeys := keypair.MustParseFull(A)
+    aAccount, err := client.AccountDetail(sdk.AccountRequest{
+        AccountID: aKeys.Address(),
+    })
+    check(err)
+
+    // Create a claimable balance with our two above-described conditions.
+    soon := time.Now().Add(time.Second * 60)
+    bCanClaim := txnbuild.BeforeRelativeTimePredicate(60)
+    aCanReclaim := txnbuild.NotPredicate(
+        txnbuild.BeforeAbsoluteTimePredicate(soon.Unix()),
+    )
+
+    claimants := []txnbuild.Claimant{
+        txnbuild.NewClaimant(B, &bCanClaim),
+        txnbuild.NewClaimant(aKeys.Address(), &aCanReclaim),
+    }
+
+    // Create the operation and submit it in a transaction.
+    claimableBalanceEntry := txnbuild.CreateClaimableBalance{
+        Destinations: claimants,
+        Asset:        txnbuild.NativeAsset{},
+        Amount:       "420",
+    }
+
+    // Build, sign, and submit the transaction
+    tx, err := txnbuild.NewTransaction(
+        txnbuild.TransactionParams{
+            SourceAccount:        aAccount.AccountID,
+            IncrementSequenceNum: true,
+            BaseFee:              txnbuild.MinBaseFee,
+            // Use a real timeout in production!
+            Timebounds: txnbuild.NewInfiniteTimeout(),
+            Operations: []txnbuild.Operation{&claimableBalanceEntry},
+        },
+    )
+    check(err)
+    tx, err = tx.Sign(network.TestNetworkPassphrase, aKeys)
+    check(err)
+    txResp, err := client.SubmitTransaction(tx)
+    check(err)
+
+    fmt.Println(txResp)
+    fmt.Println("Claimable balance created!")
+}
+```
+
+```python
+import time
+from stellar_sdk.xdr import TransactionResult, OperationType
+from stellar_sdk.exceptions import NotFoundError, BadResponseError, BadRequestError
+from stellar_sdk import (
+    Keypair,
+    Network,
+    Server,
+    TransactionBuilder,
+    Transaction,
+    Asset,
+    Operation,
+    Claimant,
+    ClaimPredicate,
+    CreateClaimableBalance,
+    ClaimClaimableBalance
+)
+
+server = Server("https://horizon-testnet.stellar.org")
+
+A = Keypair.from_secret("SANRGB5VXZ52E7XDGH2BHVBFZR4S25AUQ4BR7SFXIQYT5J6W2OES2OP7")
+B = Keypair.from_public_key("GAAPSRMYNFAO3TDQTLNLKN76IQ3E6IQAKU23PSQX3BIV7RTEBXHQIWU6")
+
+# NOTE: Proper error checks are omitted for brevity; always validate things!
+
+try:
+    aAccount = server.load_account(A.public_key)
+except NotFoundError:
+    raise Exception(f"Failed to load {A.public_key}")
+
+# Create a claimable balance with our two above-described conditions.
+soon = int(time.time() + 60)
+bCanClaim = ClaimPredicate.predicate_before_relative_time(60)
+aCanClaim = ClaimPredicate.predicate_not(
+    ClaimPredicate.predicate_before_absolute_time(soon)
+)
+
+# Create the operation and submit it in a transaction.
+claimableBalanceEntry = CreateClaimableBalance(
+    asset = Asset.native(),
+    amount = "420",
+    claimants = [
+        Claimant(destination = B.public_key, predicate = bCanClaim),
+        Claimant(destination = A.public_key, predicate = aCanClaim)
+    ]
+)
+
+tx = (
+    TransactionBuilder (
+        source_account = aAccount,
+        network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee = server.fetch_base_fee()
+    )
+    .append_operation(claimableBalanceEntry)
+    .set_timeout(180)
+    .build()
+)
+
+tx.sign(A)
+try:
+    txResponse = server.submit_transaction(tx)
+    print("Claimable balance created!")
+except (BadRequestError, BadResponseError) as err:
+    print(f"Tx submission failed: {err}")
+```
+
+</CodeExample>
+
+En este punto, el `ClaimableBalanceEntry` existe en el ledger, pero necesitaremos su ID de saldo para reclamarlo, lo cual se puede hacer de varias maneras:
+
+1. El presentador de la entrada (Cuenta A en este caso) puede recuperar el ID de saldo antes de enviar la transacción;
+2. El presentador analiza el XDR de las operaciones del resultado de la transacción; o
+3. Alguien consulta la lista de saldos reclamables.
+
+Cualquiera de las partes también podría verificar los [`/effects`](../../../data/apis/horizon/api-reference/resources/effects/README.mdx) de la transacción o consultar los [`/claimable_balances`](../../../data/apis/horizon/api-reference/resources/claimablebalances/README.mdx) con diferentes filtros en Horizon. Ten en cuenta que mientras (1) puede no estar disponible en algunos SDKs ya que es solo una ayuda, los otros métodos son universales.
+
+<CodeExample>
+
+```js
+// Method 1: Suppose `txResponse` comes from the transaction submission
+// above on testnet.
+const builder = sdk.TransactionBuilder(
+  txResponse.envelope_xdr,
+  Networks.TESTNET,
+);
+console.log("Balance ID (1):", builder.build().getClaimableBalanceId(0));
+
+// Method 2:
+let txResult = sdk.xdr.TransactionResult.fromXDR(
+  txResponse.result_xdr,
+  "base64",
+);
+let results = txResult.result().results();
+
+// We look at the first result since our first (and only) operation
+// in the transaction was the CreateClaimableBalanceOp.
+let operationResult = results[0].value().createClaimableBalanceResult();
+let balanceId = operationResult.balanceId().toXDR("hex");
+console.log("Balance ID (2):", balanceId);
+
+// Method 3: Account B could alternatively do something like:
+let balances = await server
+  .claimableBalances()
+  .claimant(B.publicKey())
+  .limit(1) // there may be many in general
+  .order("desc") // so always get the latest one
+  .call()
+  .catch(function (err) {
+    console.error(`Claimable balance retrieval failed: ${err}`);
+  });
+if (!balances) {
+  return;
+}
+
+balanceId = balances.records[0].id;
+console.log("Balance ID (3):", balanceId);
+```
+
+```go
+// Method 1: Suppose `tx` comes from the transaction built above.
+//           Notice that this can be done *before* submission.
+balanceId, err := tx.ClaimableBalanceID(0)
+check(err)
+
+// Method 2: Suppose `txResp` comes from the transaction submission above.
+var txResult xdr.TransactionResult
+err = xdr.SafeUnmarshalBase64(txResp.ResultXdr, &txResult)
+check(err)
+
+if results, ok := txResult.OperationResults(); ok {
+    // We look at the first result since our first (and only) operation in the
+    // transaction was the CreateClaimableBalanceOp.
+    operationResult := results[0].MustTr().CreateClaimableBalanceResult
+    balanceId, err := xdr.MarshalHex(operationResult.BalanceId)
+    check(err)
+    fmt.Println("Balance ID:", balanceId)
+}
+
+// Method 3: Account B could alternatively do something like:
+balances, err := client.ClaimableBalances(sdk.ClaimableBalanceRequest{Claimant: B})
+check(err)
+balanceId := balances.Embedded.Records[0].BalanceID
+```
+
+```python
+# Method 1: Not available in the Python SDK yet.
+
+# Method 2: Suppose `txResponse` comes from the transaction submission
+# above.
+txResult = TransactionResult.from_xdr(txResponse["result_xdr"])
+results = txResult.result.results
+
+# We look at the first result since our first (and only) operation
+# in the transaction was the CreateClaimableBalanceOp.
+operationResult = results[0].tr.create_claimable_balance_result
+balanceId = operationResult.balance_id.to_xdr_bytes().hex()
+print(f"Balance ID (2): {balanceId}")
+
+# Method 3: Account B could alternatively do something like:
+try:
+    balances = (
+        server
+        .claimable_balances()
+        .for_claimant(B.public_key)
+        .limit(1)
+        .order(desc = True)
+        .call()
+    )
+except (BadRequestError, BadResponseError) as err:
+    print(f"Claimable balance retrieval failed: {err}")
+
+balanceId = balances["_embedded"]["records"][0]["id"]
+print(f"Balance ID (3): {balanceId}")
+```
+
+</CodeExample>
+
+Con el ID de Saldo Reclamable adquirido, ya sea la Cuenta B o A pueden realmente enviar una reclamación, dependiendo de qué predicado se cumpla. Supongamos aquí que ha pasado un minuto, por lo que la Cuenta A simplemente reclama la entrada del saldo.
+
+<CodeExample>
+
+```js
+let claimBalance = sdk.Operation.claimClaimableBalance({
+  balanceId: balanceId,
+});
+console.log(A.publicKey(), "claiming", balanceId);
+
+let tx = new sdk.TransactionBuilder(aAccount, { fee: sdk.BASE_FEE })
+  .addOperation(claimBalance)
+  .setNetworkPassphrase(sdk.Networks.TESTNET)
+  .setTimeout(180)
+  .build();
+
+tx.sign(A);
+await server.submitTransaction(tx).catch(function (err) {
+  console.error(`Tx submission failed: ${err}`);
+});
+```
+
+```go
+claimBalance := txnbuild.ClaimClaimableBalance{BalanceID: balanceId}
+tx, err = txnbuild.NewTransaction(
+    txnbuild.TransactionParams{
+        SourceAccount:        aAccount.AccountID, // or Account B, depending on the condition!
+        IncrementSequenceNum: true,
+        BaseFee:              txnbuild.MinBaseFee,
+        Timebounds:           txnbuild.NewInfiniteTimeout(),
+        Operations:           []txnbuild.Operation{&claimBalance},
+    },
+)
+check(err)
+tx, err = tx.Sign(network.TestNetworkPassphrase, aKeys)
+check(err)
+txResp, err = client.SubmitTransaction(tx)
+check(err)
+```
+
+```python
+claimBalance = ClaimClaimableBalance(balance_id = balanceId)
+print(f"{A.public_key} claiming {balanceId}")
+
+tx = (
+    TransactionBuilder (
+        source_account = aAccount,
+        network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee = server.fetch_base_fee()
+    )
+    .append_operation(claimBalance)
+    .set_timeout(180)
+    .build()
+)
+
+tx.sign(A)
+try:
+    txResponse = server.submit_transaction(tx)
+except (BadRequestError, BadResponseError) as err:
+    print(f"Tx submission failed: {err}")
+```
+
+</CodeExample>
+
+¡Y eso es todo! Dado que optamos por el camino de recuperación, la Cuenta A debería tener el mismo saldo que tenía al principio (menos tarifas), y la Cuenta B debería permanecer sin cambios.

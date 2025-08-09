@@ -1,0 +1,250 @@
+---
+title: Modal de Confirmación
+sidebar_position: 22
+---
+
+Dado que el keypair del usuario está encriptado con un pincode y almacenado en su navegador, a veces necesitaremos pedirle ese pincode para firmar una transacción o de otro modo probar que debe permitírsele realizar alguna acción o ver algunos datos.
+
+## Experiencia del Usuario
+
+El usuario debe ser informado sobre cualquier acción que pueda llevarse a cabo, especialmente cuando hay fondos en juego. Para asegurarnos de esto, solicitaremos abiertamente su confirmación a través del pincode antes de realizar cualquier acción. La aplicación no tiene forma de conocer el pincode de un usuario, por lo que no puede desencriptar su keypair sin su confirmación.
+
+La ventana modal que hemos implementado facilita este flujo de confirmación siempre que lo necesitemos.
+
+![modal de confirmación](/assets/basic-pay/confirm-pincode.png)
+
+## Implementación del Código
+
+Nuestra función modal utiliza el paquete `svelte-simple-modal` para darnos un punto de partida versátil. Si lo necesitas, instálalo ahora.
+
+```bash npm2yarn
+npm install --save-dev svelte-simple-modal
+```
+
+### Envolver el resto de nuestra aplicación en la modal
+
+En el lado de Svelte, este componente modal será un "envoltorio" alrededor del resto de nuestra aplicación, lo que nos permite activar la modal desde cualquier lugar que necesitemos, y debería comportarse de manera similar sin importar qué.
+
+```html title="/src/routes/+layout.svelte"
+<script>
+  import "../app.postcss";
+
+  // We will use a `writable` Svelte store to trigger our modal
+  // highlight-next-line
+  import { writable } from "svelte/store";
+
+  // We have a custom close button for consistent styling, but this is NOT a requirement.
+  // highlight-start
+  import ModalCloseButton from "$lib/components/ModalCloseButton.svelte";
+  import Modal from "svelte-simple-modal";
+  const modal = writable(null);
+  // highlight-end
+</script>
+
+// highlight-next-line
+<Modal
+  show="{$modal}"
+  closeButton="{ModalCloseButton}"
+  classContent="rounded bg-base-100"
+>
+  <slot />
+  // highlight-next-line
+</Modal>
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/+layout.svelte
+
+### Crear un componente modal reutilizable en Svelte
+
+Para evitar reinventar la rueda cada vez que necesitamos una modal, crearemos un componente reutilizable que puede acomodar la mayoría de nuestras necesidades. Luego, cuando necesitemos la modal de confirmación, podemos pasar un objeto de props para personalizar el comportamiento de la modal.
+
+:::note
+
+En nuestros archivos de componentes `*.svelte`, **no** profundizaremos en el marcado HTML fuera de las etiquetas `<script>`. La sintaxis de Svelte utilizada en HTML se usa principalmente para iterar y es bastante comprensible de leer.
+
+:::
+
+Las partes básicas de este componente se ven así:
+
+```html title="/src/lib/components/ConfirmationModal.svelte"
+<script>
+  import { copy } from "svelte-copy";
+  import { CopyIcon } from "svelte-feather-icons";
+  import { errorMessage } from "$lib/stores/alertsStore";
+  import { walletStore } from "$lib/stores/walletStore";
+  import { Networks, TransactionBuilder } from "stellar-sdk";
+
+  // A Svelte "context" is used to control when to `open` and `close` a given
+  // modal from within other components
+  import { getContext } from "svelte";
+  const { close } = getContext("simple-modal");
+
+  export let title = "Transaction Preview";
+  export let body =
+    "Please confirm the transaction below in order to sign and submit it to the network.";
+  export let confirmButton = "Confirm";
+  export let rejectButton = "Reject";
+  export let hasPincodeForm = true;
+  export let transactionXDR = "";
+  export let transactionNetwork = "";
+  export let firstPincode = "";
+
+  let isWaiting = false;
+  let pincode = "";
+  $: transaction = transactionXDR
+    ? TransactionBuilder.fromXDR(
+        transactionXDR,
+        transactionNetwork || Networks.TESTNET,
+      )
+    : null;
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/components/ConfirmationModal.svelte
+
+### Activar el componente modal al registrarse
+
+Ahora podemos usar este componente modal cada vez que necesitemos confirmar algo del usuario. Por ejemplo, aquí está cómo se activa la modal cuando alguien se registra.
+
+```html title="/src/routes/signup/+page.svelte"
+<script>
+  import { Keypair } from "stellar-sdk";
+  import TruncatedKey from "$lib/components/TruncatedKey.svelte";
+  import ConfirmationModal from "$lib/components/ConfirmationModal.svelte";
+  import { goto } from "$app/navigation";
+  import { walletStore } from "$lib/stores/walletStore";
+  import { fundWithFriendbot } from "$lib/stellar/horizonQueries";
+
+  // The `open` Svelte context is used to open the confirmation modal
+  import { getContext } from "svelte";
+  const { open } = getContext("simple-modal");
+
+  // Define some component variables that will be used throughout the page
+  let keypair = Keypair.random();
+  $: publicKey = keypair.publicKey();
+  $: secretKey = keypair.secret();
+  let showSecret = false;
+  let pincode = "";
+
+  // This function is run when the user submits the form containing the public
+  // key and their pincode. We pass an object of props that corresponds to the
+  // series of `export let` declarations made in our modal component.
+  const signup = () => {
+    open(ConfirmationModal, {
+      firstPincode: pincode,
+      title: "Confirm Pincode",
+      body: "Please re-type your 6-digit pincode to encrypt the secret key.",
+      rejectButton: "Cancel",
+    });
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/signup/+page.svelte
+
+### Personalizar el comportamiento de confirmación y rechazo
+
+Ahora, a medida que estos componentes han sido escritos hasta ahora, en realidad no _hacen_ nada cuando el usuario introduce su pincode o hace clic en un botón. ¡Cambiemos eso!
+
+Dado que el comportamiento de confirmación debe variar según las circunstancias (por ejemplo, diferentes acciones para el registro, la presentación de transacciones, etc.), necesitamos una forma de pasar eso como una prop cuando abrimos la ventana modal.
+
+Primero, en nuestro componente modal, declaramos una función dummy para actuar como una prop, así como una función "interna" que llamará a la función prop durante el curso de la ejecución.
+
+```html title="/src/lib/components/ConfirmationModal.svelte"
+<script>
+  /* ... */
+
+  // `onConfirm` is a prop function that will be overridden from the component
+  // that launches the modal
+  export let onConfirm = async () => {};
+  // `_onConfirm` is actually run when the user clicks the modal's "confirm"
+  // button, and calls (in-turn) the supplied `onConfirm` function
+  const _onConfirm = async () => {
+    isWaiting = true;
+    try {
+      // We make sure the user has supplied the correct pincode
+      await walletStore.confirmPincode({
+        pincode: pincode,
+        firstPincode: firstPincode,
+        signup: firstPincode ? true : false,
+      });
+
+      // We call the `onConfirm` function that was given to the modal by
+      // the outside component.
+      await onConfirm(pincode);
+
+      // Now we can close this modal window
+      close();
+    } catch (err) {
+      // If there was an error, we set our `errorMessage` alert
+      errorMessage.set(err.body.message);
+    }
+    isWaiting = false;
+  };
+
+  // Just like above, `onReject` is a prop function that will be overridden
+  // from the component that launches the modal
+  export let onReject = () => {};
+  // Just like above, `_onReject` is actually run when the user clicks the
+  // modal's "reject" button, and calls (if provided) the supplied `onReject`
+  // function
+  const _onReject = () => {
+    // We call the `onReject` function that was given to the modal by the
+    // outside component.
+    onReject();
+    close();
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/components/ConfirmationModal.svelte
+
+Ahora que nuestro componente modal está configurado para utilizar una función prop para la confirmación y el rechazo, podemos declarar lo que esas funciones deberían hacer dentro de la página que genera la modal.
+
+```html title="/src/routes/signup/+page.svelte"
+<script>
+  /* ... */
+
+  // highlight-start
+  const onConfirm = async (pincode) => {
+    // Register the encrypted keypair in the user's browser
+    await walletStore.register({
+      publicKey: publicKey,
+      secretKey: secretKey,
+      pincode: pincode,
+    });
+
+    // Fund the account with a request to Friendbot
+    await fundWithFriendbot(publicKey);
+
+    // If the registration was successful, redirect to the dashboard
+    if ($walletStore.publicKey) {
+      goto("/dashboard");
+    }
+  };
+  // highlight-end
+
+  const signup = () => {
+    open(ConfirmationModal, {
+      firstPincode: pincode,
+      title: "Confirm Pincode",
+      body: "Please re-type your 6-digit pincode to encrypt the secret key.",
+      rejectButton: "Cancel",
+      // highlight-next-line
+      onConfirm: onConfirm,
+    });
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/signup/+page.svelte
+
+Como puedes ver, en realidad no necesitábamos una función `onReject` personalizada, así que no pasamos ninguna. ¡Sin daño, sin falta!
