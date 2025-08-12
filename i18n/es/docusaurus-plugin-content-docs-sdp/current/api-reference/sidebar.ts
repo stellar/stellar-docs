@@ -76,6 +76,39 @@ const sidebar: SidebarsConfig = {
     }]
   }, {
     type: "category",
+    label: "Claves API",
+    link: {
+      type: "doc",
+      id: "api-reference/api-keys"
+    },
+    items: [{
+      type: "doc",
+      id: "api-reference/list-api-keys",
+      label: "Listar claves API",
+      className: "api-method get"
+    }, {
+      type: "doc",
+      id: "api-reference/create-api-key",
+      label: "Crear clave API",
+      className: "api-method post"
+    }, {
+      type: "doc",
+      id: "api-reference/get-api-key",
+      label: "Obtener detalles de la clave API",
+      className: "api-method get"
+    }, {
+      type: "doc",
+      id: "api-reference/update-api-key",
+      label: "Actualizar clave API",
+      className: "api-method patch"
+    }, {
+      type: "doc",
+      id: "api-reference/delete-api-key",
+      label: "Eliminar clave API",
+      className: "api-method delete"
+    }]
+  }, {
+    type: "category",
     label: "Saldos",
     link: {
       type: "doc",
@@ -84,7 +117,7 @@ const sidebar: SidebarsConfig = {
     items: [{
       type: "doc",
       id: "api-reference/get-organization-circle-balances",
-      label: "Obtener saldos de organización (Circle)",
+      label: "Obtener saldos de la organización (Circle)",
       className: "api-method get"
     }]
   }, {
@@ -130,12 +163,12 @@ const sidebar: SidebarsConfig = {
     }, {
       type: "doc",
       id: "api-reference/delete-a-disbursement",
-      label: "Elimina un desembolso en borrador",
+      label: "Eliminar un desembolso borrador",
       className: "api-method delete"
     }, {
       type: "doc",
       id: "api-reference/list-all-disbursement-receivers",
-      label: "Listar todos los receptores de desembolso",
+      label: "Listar todos los receptores de desembolsos",
       className: "api-method get"
     }, {
       type: "doc",
@@ -163,17 +196,17 @@ const sidebar: SidebarsConfig = {
     items: [{
       type: "doc",
       id: "api-reference/get-organization-info",
-      label: "Obtener información de la organización",
+      label: "Obtener información de organización",
       className: "api-method get"
     }, {
       type: "doc",
       id: "api-reference/update-organization-profile",
-      label: "Actualizar perfil de la organización",
+      label: "Actualizar perfil de organización",
       className: "api-method patch"
     }, {
       type: "doc",
       id: "api-reference/get-organization-logo",
-      label: "Recuperar logo de la organización",
+      label: "Recuperar logo de organización",
       className: "api-method get"
     }, {
       type: "doc",
@@ -202,6 +235,11 @@ const sidebar: SidebarsConfig = {
       className: "api-method get"
     }, {
       type: "doc",
+      id: "api-reference/create-wallet",
+      label: "Crear billetera",
+      className: "api-method post"
+    }, {
+      type: "doc",
       id: "api-reference/update-wallet",
       label: "Actualizar billetera",
       className: "api-method patch"
@@ -218,6 +256,11 @@ const sidebar: SidebarsConfig = {
       id: "api-reference/list-all-payments",
       label: "Listar todos los pagos",
       className: "api-method get"
+    }, {
+      type: "doc",
+      id: "api-reference/create-direct-payment",
+      label: "Crear pago directo",
+      className: "api-method post"
     }, {
       type: "doc",
       id: "api-reference/retrieve-a-payment",
@@ -256,6 +299,11 @@ const sidebar: SidebarsConfig = {
       className: "api-method get"
     }, {
       type: "doc",
+      id: "api-reference/create-receiver",
+      label: "Crear receptor",
+      className: "api-method post"
+    }, {
+      type: "doc",
       id: "api-reference/retrieve-a-receiver",
       label: "Recuperar un receptor",
       className: "api-method get"
@@ -280,12 +328,12 @@ const sidebar: SidebarsConfig = {
     }, {
       type: "doc",
       id: "api-reference/send-one-time-passcode",
-      label: "Enviar código de un solo uso",
+      label: "Enviar código de acceso único",
       className: "api-method post"
     }, {
       type: "doc",
       id: "api-reference/verify-receiver-registration",
-      label: "Verificar registro del receptor",
+      label: "Verificar registro de receptor",
       className: "api-method post"
     }, {
       type: "doc",
@@ -295,12 +343,12 @@ const sidebar: SidebarsConfig = {
     }, {
       type: "doc",
       id: "api-reference/request-challenge-transaction",
-      label: "Solicitar transacción desafío",
+      label: "Solicitar transacción de desafío",
       className: "api-method get"
     }, {
       type: "doc",
       id: "api-reference/provide-signed-challenge-transaction",
-      label: "Proporcionar transacción desafío firmada",
+      label: "Proporcionar transacción de desafío firmada",
       className: "api-method post"
     }, {
       type: "doc",
@@ -309,7 +357,7 @@ const sidebar: SidebarsConfig = {
       className: "api-method post"
     }]
   }, {
-    type: "category",
+    type: "categoría",
     label: "Estadísticas",
     link: {
       type: "doc",
@@ -319,11 +367,11 @@ const sidebar: SidebarsConfig = {
       type: "doc",
       id: "api-reference/retrieve-all-statistics",
       label: "Recuperar todas las estadísticas",
-      className: "api-method get"
+      className: "api-método get"
     }, {
       type: "doc",
       id: "api-reference/retrieve-disbursement-statistics",
-      label: "Recuperar estadísticas de desembolsos",
+      label: "Recuperar estadísticas de desembolso",
       className: "api-method get"
     }]
   }, {
@@ -337,7 +385,7 @@ const sidebar: SidebarsConfig = {
       type: "doc",
       id: "api-reference/get-all-users",
       label: "Obtener todos los usuarios",
-      className: "api-método get"
+      className: "método api obtener"
     }, {
       type: "doc",
       id: "api-reference/create-user",
@@ -346,7 +394,7 @@ const sidebar: SidebarsConfig = {
     }, {
       type: "doc",
       id: "api-reference/update-user-activation-status",
-      label: "Actualizar estado de activación del usuario",
+      label: "Actualizar estado de activación de usuario",
       className: "api-method patch"
     }, {
       type: "doc",
@@ -360,13 +408,13 @@ const sidebar: SidebarsConfig = {
       className: "api-method patch"
     }]
   }, {
-    type: "categoría",
+    type: "category",
     label: "Exportaciones",
     items: [{
       type: "doc",
       id: "api-reference/export-disbursements",
       label: "Exportar desembolsos",
-      className: "método api obtener"
+      className: "api-method get"
     }, {
       type: "doc",
       id: "api-reference/export-payments-csv",
@@ -386,6 +434,11 @@ const sidebar: SidebarsConfig = {
       id: "api-reference/get-all-wallets",
       label: "Obtener todas las billeteras",
       className: "api-method get"
+    }, {
+      type: "doc",
+      id: "api-reference/create-wallet",
+      label: "Crear billetera",
+      className: "api-method post"
     }, {
       type: "doc",
       id: "api-reference/update-wallet",
