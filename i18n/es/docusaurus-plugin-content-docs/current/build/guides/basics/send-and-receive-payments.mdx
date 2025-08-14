@@ -1,0 +1,1409 @@
+---
+title: Enviar y recibir pagos
+sidebar_position: 20
+description: Aprender a enviar pagos y vigilar los pagos recibidos en la red Stellar
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import { Alert } from "@site/src/components/Alert";
+
+La mayor parte del tiempo, estarás enviando dinero a alguien más que tiene su propia cuenta. Sin embargo, para este tutorial, necesitarás una segunda cuenta para realizar transacciones. Así que antes de continuar, sigue los pasos descritos en [Crear una Cuenta](./create-account.mdx) para hacer _dos_ cuentas: una para enviar y una para recibir. También usaremos tanto las operaciones de pago como las invocaciones de contratos inteligentes para realizar pagos. Para más detalles sobre los diferentes tipos de transacciones, consulta la documentación de [Operaciones y Transacciones](../../../learn/fundamentals/transactions/README.mdx).
+
+## Acerca de Operaciones y Transacciones
+
+Hay dos formas de realizar pagos en Stellar. Una opción es usar las operaciones relacionadas con pagos de Stellar, y la otra es invocar una función en el contrato del token; la opción que deberías tomar depende del caso de uso.
+
+Si quieres hacer un pago de un activo Stellar entre dos cuentas Stellar, utiliza las operaciones de pago. Las tarifas de transacción son más económicas cuando usas estas operaciones en comparación con las que invocan el contrato de activo Stellar (o SAC).
+
+Si quieres hacer un pago de un activo Stellar entre una cuenta Stellar y una dirección de contrato, o entre dos direcciones de contrato, debes usar el SAC. Las operaciones relacionadas con pagos de Stellar no pueden tener direcciones de contrato como origen o destino.
+
+Finalmente, si quieres hacer un pago de un token de contrato (no un activo Stellar), debes usar el contrato del token. Las operaciones de pago de Stellar solo pueden usarse para transferir activos Stellar.
+
+Para aprender más sobre las diferencias entre activos Stellar y tokens de contrato, consulta la visión general de [Tokens](../../../../docs/tokens).
+
+Además, hay dos opciones principales para interactuar con la red Stellar: la [API Horizon](../../../data/apis/horizon/README.mdx) y [Stellar RPC](../../../data/apis/rpc/README.mdx). En general, deberías usar RPC salvo que necesites características que solo Horizon provea. Si tu caso de uso se limita a hacer pagos, RPC debería ser suficiente. De todas formas, cada ejemplo de pago se desglosará para mostrar cómo realizar dichos pagos con cualquiera de las dos opciones.
+
+<Alert>
+
+En los siguientes ejemplos de código, se omite la verificación de errores adecuada por brevedad. Sin embargo, debes _siempre_ validar tus resultados, ya que hay muchas formas en que las solicitudes pueden fallar. Debes consultar la guía sobre [Manejo de Errores](../../../data/apis/horizon/api-reference/errors/error-handling.mdx) para obtener consejos sobre estrategias de gestión de errores.
+
+</Alert>
+
+## Usando la Operación de Pago
+
+### Enviar un Pago
+
+Al enviar pagos en Stellar, construyes una transacción con una operación de pago, la firmas y la envías a la red. Stellar almacena y comunica los datos de transacciones en un formato binario llamado [XDR](../../../learn/fundamentals/data-format/xdr.mdx), que está optimizado para el rendimiento de la red pero no es legible para el ojo humano. Por suerte, la [API Horizon](../../../data/apis/horizon/README.mdx), Stellar RPC y los [SDKs de Stellar](../../../tools/sdks/README.mdx) convierten los XDRs en formatos más amigables. Así es como podrías enviar 10 lumens a una cuenta:
+
+#### Usando Stellar RPC
+
+<CodeExample>
+
+```js
+import * as StellarSdk from "stellar-sdk";
+
+// Initialize Soroban RPC server for testnet
+const rpc = new StellarSdk.rpc.Server("https://soroban-testnet.stellar.org");
+
+// Initalize the source account's secret key and destination account ID.
+// The source account is the one that will send the payment, and the destination account
+// is the one that will receive the payment.
+const sourceKeys = StellarSdk.Keypair.fromSecret(
+  "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4"
+);
+const destinationId =
+  "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5";
+
+// First, check to make sure that the destination account exists.
+try {
+  await rpc.getAccount(destinationId);
+} catch (error) {
+  console.error("Error checking destination account:", error);
+  throw error;
+}
+
+// Now we also load the source account to build the transaction.
+let sourceAccount: StellarSdk.Account;
+try {
+  sourceAccount = await rpc.getAccount(sourceKeys.publicKey());
+} catch (error) {
+  console.error("Error checking source account:", error);
+  throw error;
+}
+
+// The next step is to parametrize and build the transaction object:
+// Using the source account we just loaded we begin to assemble the transaction.
+// We set the fee to the base fee, which is 100 stroops (0.00001 XLM).
+// We also set the network passphrase to TESTNET.
+const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+  fee: StellarSdk.BASE_FEE,
+  networkPassphrase: StellarSdk.Networks.TESTNET,
+})
+  // We then add a payment operation to the transaction oject.
+  // This operation will send 10 XLM to the destination account.
+  // Obs.: Not specifying a explicit source account here means that the
+  // operation will use the source account of the whole transaction, which we specified above.
+  .addOperation(
+    StellarSdk.Operation.payment({
+      destination: destinationId,
+      asset: StellarSdk.Asset.native(),
+      amount: "10",
+    })
+  )
+  // We include an optional memo which oftentimes is used to identify the transaction
+  // when working with pooled accounts or to facilitate reconciliation.
+  .addMemo(StellarSdk.Memo.id("1234567890"))
+  // Finally, we set a timeout for the transaction.
+  // This means that the transaction will not be valid anymore after 180 seconds.
+  .setTimeout(180)
+  .build();
+
+
+// We sign the transaction with the source account's secret key.
+transaction.sign(sourceKeys);
+
+// Now we can send the transaction to the network.
+// The sendTransaction method immediately returns a reply with the transaction hash
+// and the status "PENDING". This means the transaction was received and is being processed.
+const sendTransactionResponse = await rpc.sendTransaction(transaction);
+
+// Here we check the status of the transaction as there are
+// a possible outcomes after sending a transaction that would have
+// to be handled accordingly, such as "DUPLICATE" or "TRY_AGAIN_LATER".
+if (sendTransactionResponse.status !== "PENDING") {
+  throw new Error(
+    `Failed to send transaction, status: ${sendTransactionResponse.status}`
+  );
+}
+
+// Here we poll the transaction status to await for its final result.
+// We can use the transaction hash to poll the transaction status later.
+const finalStatus = await rpc.pollTransaction(sendTransactionResponse.hash, {
+  sleepStrategy: (_iter: number) => 500,
+  attempts: 5,
+});
+
+// The pollTransaction method will return the final status of the transaction
+// after the specified number of attempts or when the transaction is finalized.
+// We then check the final status of the transaction and handle it accordingly.
+switch (finalStatus.status) {
+  case StellarSdk.rpc.Api.GetTransactionStatus.FAILED:
+  case StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND:
+    throw new Error(`Transaction failed with status: ${finalStatus.status}`);
+  case StellarSdk.rpc.Api.GetTransactionStatus.SUCCESS:
+    console.log("Success! Results:", finalStatus);
+    break;
+}
+
+```
+
+</CodeExample>
+
+Las diferencias clave al usar RPC en lugar de Horizon:
+
+1. **Envío instantáneo**: `rpc.sendTransaction()` devuelve inmediatamente con un estado "PENDING"
+2. **Requiere sondeo activo**: Debes sondear con `rpc.pollTransaction()` para obtener el resultado final
+3. **Configuración del sondeo**: Puedes personalizar los intervalos del sondeo y los intentos de reintento
+4. **Manejo de estado**: Verifica los estados SUCCESS, FAILED o NOT_FOUND en el resultado final
+
+#### Usando la API Horizon
+
+<CodeExample>
+
+```js
+import * as StellarSdk from "stellar-sdk";
+
+// Initialize Horizon server for testnet
+const server = new StellarSdk.Horizon.Server(
+  "https://horizon-testnet.stellar.org"
+);
+
+// Initalize the source account's secret key and destination account ID.
+// The source account is the one that will send the payment, and the destination account
+// is the one that will receive the payment.
+
+const sourceKeys = StellarSdk.Keypair.fromSecret(
+  "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4"
+);
+const destinationId =
+  "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5";
+
+// First, check to make sure that the destination account exists.
+try {
+  await server.loadAccount(destinationId);
+} catch (error) {
+  console.error("Error checking destination account:", error);
+  throw error;
+}
+
+// Now we also load the source account to build the transaction.
+let sourceAccount: StellarSdk.Account;
+try {
+  sourceAccount = await server.loadAccount(sourceKeys.publicKey());
+} catch (error) {
+  console.error("Error checking source account:", error);
+  throw error;
+}
+
+// The next step is to parametrize and build the transaction object:
+// Using the source account we just loaded we begin to assemble the transaction.
+// We set the fee to the base fee, which is 100 stroops (0.00001 XLM).
+// We also set the network passphrase to TESTNET.
+const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase: StellarSdk.Networks.TESTNET,
+  })
+  // We then add a payment operation to the transaction oject.
+  // This operation will send 10 XLM to the destination account.
+  // Obs.: Not specifying a explicit source account here means that the
+  // operation will use the source account of the whole transaction, which we specified above.
+  .addOperation(
+    StellarSdk.Operation.payment({
+      destination: destinationId,
+      asset: StellarSdk.Asset.native(),
+      amount: "10",
+    })
+  )
+  // We include an optional memo which oftentimes is used to identify the transaction
+  // when working with pooled accounts or to facilitate reconciliation.
+  .addMemo(StellarSdk.Memo.id("1234567890"))
+  // Finally, we set a timeout for the transaction.
+  // This means that the transaction will not be valid anymore after 180 seconds.
+  .setTimeout(180)
+  .build();
+
+
+// We sign the transaction with the source account's secret key.
+transaction.sign(sourceKeys);
+
+// Now we can send the transaction to the network.
+// The sendTransaction method returns a promise that resolves with the transaction result.
+// The result will contain the transaction hash and other details.
+try {
+  const result = await server.submitTransaction(transaction);
+  console.log("Success! Results:", result);
+} catch (error) {
+  console.error("Something went wrong!", error);
+}
+
+```
+
+```java
+Server server = new Server("https://horizon-testnet.stellar.org");
+
+KeyPair source = KeyPair.fromSecretSeed("SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4");
+KeyPair destination = KeyPair.fromAccountId("GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5");
+
+// First, check to make sure that the destination account exists.
+// You could skip this, but if the account does not exist, you will be charged
+// the transaction fee when the transaction fails.
+// It will throw HttpResponseException if account does not exist or there was another error.
+server.accounts().account(destination.getAccountId());
+
+// If there was no error, load up-to-date information on your account.
+AccountResponse sourceAccount = server.accounts().account(source.getAccountId());
+
+// Start building the transaction.
+Transaction transaction = new Transaction.Builder(sourceAccount, Network.TESTNET)
+        .addOperation(new PaymentOperation.Builder(destination.getAccountId(), new AssetTypeNative(), "10").build())
+        // A memo allows you to add your own metadata to a transaction. It's
+        // optional and does not affect how Stellar treats the transaction.
+        .addMemo(Memo.text("Test Transaction"))
+        // Wait a maximum of three minutes for the transaction
+        .setTimeout(180)
+        // Set the amount of lumens you're willing to pay per operation to submit your transaction
+        .setBaseFee(Transaction.MIN_BASE_FEE)
+        .build();
+// Sign the transaction to prove you are actually the person sending it.
+transaction.sign(source);
+
+// And finally, send it off to Stellar!
+try {
+  SubmitTransactionResponse response = server.submitTransaction(transaction);
+  System.out.println("Success!");
+  System.out.println(response);
+} catch (Exception e) {
+  System.out.println("Something went wrong!");
+  System.out.println(e.getMessage());
+  // If the result is unknown (no response body, timeout etc.) we simply resubmit
+  // already built transaction:
+  // SubmitTransactionResponse response = server.submitTransaction(transaction);
+}
+```
+
+```go
+package main
+
+import (
+    "github.com/stellar/go/keypair"
+    "github.com/stellar/go/network"
+    "github.com/stellar/go/txnbuild"
+    "github.com/stellar/go/clients/horizonclient"
+    "fmt"
+)
+
+func main () {
+    source := "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4"
+    destination := "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5"
+    client := horizonclient.DefaultTestNetClient
+
+    // Make sure destination account exists
+    destAccountRequest := horizonclient.AccountRequest{AccountID: destination}
+    destinationAccount, err := client.AccountDetail(destAccountRequest)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Destination Account", destinationAccount)
+
+    // Load the source account
+    sourceKP := keypair.MustParseFull(source)
+    sourceAccountRequest := horizonclient.AccountRequest{AccountID: sourceKP.Address()}
+    sourceAccount, err := client.AccountDetail(sourceAccountRequest)
+    if err != nil {
+        panic(err)
+    }
+
+    // Build transaction
+    tx, err := txnbuild.NewTransaction(
+      txnbuild.TransactionParams{
+        SourceAccount:        &sourceAccount,
+        IncrementSequenceNum: true,
+        BaseFee:              txnbuild.MinBaseFee,
+        Preconditions: txnbuild.Preconditions{
+          TimeBounds: txnbuild.NewInfiniteTimeout(), // Use a real timeout in production!
+        },
+        Operations: []txnbuild.Operation{
+          &txnbuild.Payment{
+            Destination: destination,
+            Amount:      "10",
+            Asset:       txnbuild.NativeAsset{},
+          },
+        },
+      },
+    )
+
+    if err != nil {
+        panic(err)
+    }
+
+    // Sign the transaction to prove you are actually the person sending it.
+    tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKP)
+    if err != nil {
+        panic(err)
+    }
+
+    // And finally, send it off to Stellar!
+    resp, err := horizonclient.DefaultTestNetClient.SubmitTransaction(tx)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("Successful Transaction:")
+    fmt.Println("Ledger:", resp.Ledger)
+    fmt.Println("Hash:", resp.Hash)
+}
+```
+
+```python
+from stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder
+from stellar_sdk.exceptions import NotFoundError, BadResponseError, BadRequestError
+
+server = Server("https://horizon-testnet.stellar.org")
+source_key = Keypair.from_secret("SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4")
+destination_id = "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5"
+
+# First, check to make sure that the destination account exists.
+# You could skip this, but if the account does not exist, you will be charged
+# the transaction fee when the transaction fails.
+try:
+    server.load_account(destination_id)
+except NotFoundError:
+    # If the account is not found, surface an error message for logging.
+    raise Exception("The destination account does not exist!")
+
+# If there was no error, load up-to-date information on your account.
+source_account = server.load_account(source_key.public_key)
+
+# Let's fetch base_fee from network
+base_fee = server.fetch_base_fee()
+
+# Start building the transaction.
+transaction = (
+    TransactionBuilder(
+        source_account=source_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=base_fee,
+    )
+        # Because Stellar allows transaction in many currencies, you must specify the asset type.
+        # Here we are sending Lumens.
+        .append_payment_op(destination=destination_id, asset=Asset.native(), amount="10")
+        # A memo allows you to add your own metadata to a transaction. It's
+        # optional and does not affect how Stellar treats the transaction.
+        .add_text_memo("Test Transaction")
+        # Wait a maximum of three minutes for the transaction
+        .set_timeout(10)
+        .build()
+)
+
+# Sign the transaction to prove you are actually the person sending it.
+transaction.sign(source_key)
+
+try:
+    # And finally, send it off to Stellar!
+    response = server.submit_transaction(transaction)
+    print(f"Response: {response}")
+except (BadRequestError, BadResponseError) as err:
+    print(f"Something went wrong!\n{err}")
+```
+
+</CodeExample>
+
+#### Desglose paso a paso
+
+¿Qué exactamente sucedió allí? Desglosemoslo.
+
+1. Confirma que la ID de cuenta (también conocida como la _clave pública_) a la que envías realmente existe cargando los datos de la cuenta asociada desde la red Stellar. Está bien omitir este paso, pero te da la oportunidad de evitar hacer una transacción que inevitablemente fallará.
+
+<CodeExample>
+
+```js
+// Using RPC
+try {
+  const destinationAccount = await rpc.getAccount(destinationId);
+  /* validate the account */
+} catch (error) {
+  console.error("Error checking the destination account:", error);
+  throw error;
+}
+
+// Using Horizon
+try {
+  const destinationAccount = await server.loadAccount(destinationId);
+  /* validate the account */
+} catch (error) {
+  console.error("Error checking the destination account:", error);
+  throw error;
+}
+```
+
+```java
+server.accounts().account(destination.getAccountId());
+```
+
+```go
+destAccountRequest := horizonclient.AccountRequest{AccountID: destination}
+destinationAccount, err := client.AccountDetail(destAccountRequest)
+if err != nil {
+    panic(err)
+}
+fmt.Println("Destination Account", destinationAccount)
+```
+
+```python
+server.load_account(destination_id)
+```
+
+</CodeExample>
+
+2. Carga los datos de la cuenta desde la que estás enviando. Una cuenta solo puede realizar una transacción a la vez y tiene algo llamado un [número de secuencia](../../../learn/glossary.mdx#sequence-number), que ayuda a Stellar a verificar el orden de las transacciones. El número de secuencia de una transacción debe coincidir con el número de secuencia de la cuenta, así que necesitas obtener el número de secuencia actual de la cuenta de la red.
+
+<CodeExample>
+
+```js
+// Using RPC
+let sourceAccount: StellarSdk.Account;
+try {
+  sourceAccount = await rpc.getAccount(sourceKeys.publicKey());
+  /* validate the account */
+} catch (error) {
+  console.error("Error checking source account:", error);
+  throw error;
+}
+/* use sourceAccount to build transaction */
+
+
+
+// Using Horizon
+let sourceAccount: StellarSdk.Account;
+try {
+  sourceAccount = await server.loadAccount(sourceKeys.publicKey());
+  /* validate the account */
+} catch (error) {
+  console.error("Error checking source account:", error);
+  throw error;
+}
+/* use sourceAccount to build transaction */
+```
+
+```java
+AccountResponse sourceAccount = server.accounts().account(source.getAccountId());
+```
+
+```go
+sourceKP := keypair.MustParseFull(source)
+sourceAccountRequest := horizonclient.AccountRequest{AccountID: sourceKP.Address()}
+sourceAccount, err := client.AccountDetail(sourceAccountRequest)
+if err != nil {
+  panic(err)
+}
+```
+
+```python
+source_account = server.load_account(source_key.public_key)
+```
+
+</CodeExample>
+
+El SDK incrementará automáticamente el número de secuencia de la cuenta cuando construyas una transacción, así que no necesitarás recuperar esta información nuevamente si deseas realizar una segunda transacción.
+
+3. Empieza a construir una transacción. Esto requiere un objeto de cuenta, no solo una ID de cuenta, porque incrementará el número de secuencia de la cuenta.
+
+<CodeExample>
+
+```js
+const transaction = new StellarSdk.TransactionBuilder(sourceAccount);
+```
+
+```java
+Transaction transaction = new Transaction.Builder(sourceAccount, Network.TESTNET)
+```
+
+```go
+tx, err := txnbuild.NewTransaction(
+  txnbuild.TransactionParams{
+    SourceAccount:        &sourceAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              MinBaseFee,
+    Preconditions: txnbuild.Preconditions{
+      TimeBounds: txnbuild.NewInfiniteTimeout(), // Use a real timeout in production!
+    },
+    ...
+  },
+)
+
+if err != nil {
+    panic(err)
+}
+```
+
+```python
+transaction = TransactionBuilder(
+    source_account=source_account,
+    network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+    base_fee=base_fee
+)
+```
+
+</CodeExample>
+
+4. Agrega la operación de pago a la cuenta. Ten en cuenta que necesitas especificar el tipo de activo que estás enviando: la moneda de la red Stellar es el [lumen](https://www.stellar.org/lumens), pero puedes enviar cualquier activo emitido en la red. Cubriré el envío de activos no lumen [abajo](#transacting-in-other-currencies). Por ahora, sin embargo, nos mantendremos en lumens, que se llaman activos “nativos” en el SDK:
+
+<CodeExample>
+
+```js
+.addOperation(StellarSdk.Operation.payment({
+  destination: destinationId,
+  asset: StellarSdk.Asset.native(),
+  amount: "10"
+}))
+```
+
+```java
+.addOperation(new PaymentOperation.Builder(destination.getAccountId(), new AssetTypeNative(), "10").build())
+```
+
+```go
+Operations: []txnbuild.Operation{
+    &txnbuild.Payment{
+      Destination: destination,
+      Amount:      "10",
+      Asset:       txnbuild.NativeAsset{},
+    },
+  },
+```
+
+```python
+.append_payment_op(destination=destination_id, asset=Asset.native(), amount="10")
+```
+
+</CodeExample>
+
+También debes notar que la cantidad es una cadena en lugar de un número. Al trabajar con fracciones extremadamente pequeñas o grandes valores, [la matemática de punto flotante puede introducir pequeñas inexactitudes](https://en.wikipedia.org/wiki/Floating_point#Accuracy_problems). Dado que no todos los sistemas tienen una forma nativa de representar con precisión decimales extremadamente pequeños o grandes, Stellar utiliza cadenas como una forma confiable de representar la cantidad exacta en cualquier sistema.
+
+5. Opcionalmente, puedes agregar tus propios metadatos, llamados [memo](../../../learn/encyclopedia/transactions-specialized/memos.mdx), a una transacción. Stellar no hace nada con estos datos, pero puedes usarlos para cualquier propósito que desees. Muchos exchanges requieren memos para transacciones entrantes porque utilizan una sola cuenta Stellar para todos sus usuarios y dependen del memo para diferenciar entre cuentas internas de usuarios.
+
+<CodeExample title="Agregar un Memo">
+
+```js
+.addMemo(StellarSdk.Memo.text('Test Transaction'))
+```
+
+```java
+.addMemo(Memo.text("Test Transaction"));
+```
+
+```go
+Memo: txnbuild.MemoText("Test Transaction")
+```
+
+```python
+.add_text_memo("Test Transaction")
+```
+
+</CodeExample>
+
+6. Ahora que la transacción tiene todos los datos que necesita, debes firmarla criptográficamente utilizando tu clave secreta. Esto demuestra que los datos realmente provinieron de ti y no de alguien que te imita.
+
+<CodeExample>
+
+```js
+transaction.sign(sourceKeys);
+```
+
+```java
+transaction.sign(source);
+```
+
+```go
+tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKP)
+if err != nil {
+    panic(err)
+}
+```
+
+```python
+transaction.sign(source_key)
+```
+
+</CodeExample>
+
+7. Y finalmente, ¡envíala a la red Stellar!
+
+<CodeExample>
+
+```js
+// Using RPC - requires polling for final status
+let sendTransactionResponse: StellarSdk.rpc.Api.SendTransactionResponse;
+try {
+  sendTransactionResponse = await rpc.sendTransaction(transaction);
+  if (sendTransactionResponse.status !== "PENDING") {
+    throw sendTransactionResponse;
+  }
+} catch (error) {
+  console.error("Error sending transaction:", error);
+  throw error;
+}
+
+try {
+  const finalStatus = await rpc.pollTransaction(sendTransactionResponse.hash, {
+    sleepStrategy: (_iter: number) => 500,
+    attempts: 5,
+  });
+  switch (finalStatus.status) {
+    case StellarSdk.rpc.Api.GetTransactionStatus.FAILED:
+    case StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND:
+      throw new Error(`Transaction failed with status: ${finalStatus.status}`);
+    case StellarSdk.rpc.Api.GetTransactionStatus.SUCCESS:
+      console.log("Success! Results:", finalStatus);
+      break;
+  }
+} catch (error) {
+  console.error("Error polling transaction status:", error);
+  throw error;
+}
+
+
+// Using Horizon - returns final status immediately
+try {
+  const result = await server.submitTransaction(transaction);
+  console.log("Success! Results:", result);
+} catch (error) {
+  console.error("Something went wrong!", error);
+}
+```
+
+```java
+server.submitTransaction(transaction);
+```
+
+```go
+resp, err := horizonclient.DefaultTestNetClient.SubmitTransaction(tx)
+if err != nil {
+    panic(err)
+}
+```
+
+```python
+server.submit_transaction(transaction)
+```
+
+</CodeExample>
+
+En este ejemplo, estamos enviando la transacción a la instancia pública de Horizon mantenida por SDF (la API Stellar) o a un servidor Stellar RPC. Al enviar transacciones a un servidor Horizon o RPC — que es lo que la mayoría hace — es posible que no recibas respuesta del servidor debido a bugs, condiciones de red, etc. En tal situación, es imposible determinar el estado de tu transacción.
+
+Por eso deberías siempre guardar una transacción construida (o una transacción codificada en formato XDR) en una variable o base de datos y reenviarla si no conoces su estado. Si la transacción ya se aplicó exitosamente al ledger, tanto Horizon como RPC devolverán simplemente el resultado guardado y no intentarán enviar la transacción otra vez. Solo en casos donde el estado de la transacción es desconocido (y por ende tiene posibilidad de ser incluida en un ledger) se realizará un reenvío a la red.
+
+### Recibir un Pago
+
+En realidad, no necesitas hacer nada para recibir pagos en una cuenta Stellar: si un pagador realiza una transacción exitosa para enviarte activos, esos activos se agregarán automáticamente a tu cuenta.
+
+Sin embargo, es posible que desees estar atento a los pagos entrantes. Un programa simple que vigila la red en busca de pagos e imprime cada uno podría verse así:
+
+#### Usando Stellar RPC
+
+<Alert>
+Con el próximo lanzamiento del Protocolo 23, los pagos nativos para activos también emitirán eventos de contratos inteligentes, lo que permitirá usar Stellar RPC para transmitir pagos de activos nativos. El proceso será similar al ejemplo bajo la sección [Contrato de Activo Stellar (SAC) -> Recibir un Pago](#receive-a-payment-1). Por ahora, puedes usar la API Horizon para transmitir pagos de activos nativos.
+
+</Alert>
+
+#### Usando Horizon
+
+<CodeExample title="Recibir Pagos">
+
+```js
+var StellarSdk = require("stellar-sdk");
+
+var server = new StellarSdk.Horizon.Server(
+  "https://horizon-testnet.stellar.org",
+);
+var accountId = "GC2BKLYOOYPDEFJKLKY6FNNRQMGFLVHJKQRGNSSRRGSMPGF32LHCQVGF";
+
+// Create an API call to query payments involving the account.
+var payments = server.payments().forAccount(accountId);
+
+// If some payments have already been handled, start the results from the
+// last seen payment. (See below in `handlePayment` where it gets saved.)
+var lastToken = loadLastPagingToken();
+if (lastToken) {
+  payments.cursor(lastToken);
+}
+
+// `stream` will send each recorded payment, one by one, then keep the
+// connection open and continue to send you new payments as they occur.
+payments.stream({
+  onmessage: function (payment) {
+    // Record the paging token so we can start from here next time.
+    savePagingToken(payment.paging_token);
+
+    // The payments stream includes both sent and received payments. We only
+    // want to process received payments here.
+    if (payment.to !== accountId) {
+      return;
+    }
+
+    // In Stellar’s API, Lumens are referred to as the “native” type. Other
+    // asset types have more detailed information.
+    var asset;
+    if (payment.asset_type === "native") {
+      asset = "lumens";
+    } else {
+      asset = payment.asset_code + ":" + payment.asset_issuer;
+    }
+
+    console.log(payment.amount + " " + asset + " from " + payment.from);
+  },
+
+  onerror: function (error) {
+    console.error("Error in payment stream");
+  },
+});
+
+function savePagingToken(token) {
+  // In most cases, you should save this to a local database or file so that
+  // you can load it next time you stream new payments.
+}
+
+function loadLastPagingToken() {
+  // Get the last paging token from a local database or file
+}
+```
+
+```java
+Server server = new Server("https://horizon-testnet.stellar.org");
+KeyPair account = KeyPair.fromAccountId("GC2BKLYOOYPDEFJKLKY6FNNRQMGFLVHJKQRGNSSRRGSMPGF32LHCQVGF");
+
+// Create an API call to query payments involving the account.
+PaymentsRequestBuilder paymentsRequest = server.payments().forAccount(account.getAccountId());
+
+// If some payments have already been handled, start the results from the
+// last seen payment. (See below in `handlePayment` where it gets saved.)
+String lastToken = loadLastPagingToken();
+if (lastToken != null) {
+  paymentsRequest.cursor(lastToken);
+}
+
+// `stream` will send each recorded payment, one by one, then keep the
+// connection open and continue to send you new payments as they occur.
+paymentsRequest.stream(new EventListener<OperationResponse>() {
+  @Override
+  public void onEvent(OperationResponse payment) {
+    // Record the paging token so we can start from here next time.
+    savePagingToken(payment.getPagingToken());
+
+    // The payments stream includes both sent and received payments. We only
+    // want to process received payments here.
+    if (payment instanceof PaymentOperationResponse) {
+      if (!((PaymentOperationResponse) payment).getTo().equals(account.getAccountId()) {
+        return;
+      }
+
+      String amount = ((PaymentOperationResponse) payment).getAmount();
+
+      Asset asset = ((PaymentOperationResponse) payment).getAsset();
+      String assetName;
+      if (asset.equals(new AssetTypeNative())) {
+        assetName = "lumens";
+      } else {
+        StringBuilder assetNameBuilder = new StringBuilder();
+        assetNameBuilder.append(((AssetTypeCreditAlphaNum) asset).getCode());
+        assetNameBuilder.append(":");
+        assetNameBuilder.append(((AssetTypeCreditAlphaNum) asset).getIssuer());
+        assetName = assetNameBuilder.toString();
+      }
+
+      StringBuilder output = new StringBuilder();
+      output.append(amount);
+      output.append(" ");
+      output.append(assetName);
+      output.append(" from ");
+      output.append(((PaymentOperationResponse) payment).getFrom());
+      System.out.println(output.toString());
+    }
+  }
+
+  @Override
+  public void onFailure(Optional<Throwable> optional, Optional<Integer> optional1) {
+
+  }
+});
+```
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+
+    "github.com/stellar/go/clients/horizonclient"
+    "github.com/stellar/go/protocols/horizon/operations"
+)
+
+func main() {
+    client := horizonclient.DefaultTestNetClient
+    opRequest := horizonclient.OperationRequest{ForAccount: "GC2BKLYOOYPDEFJKLKY6FNNRQMGFLVHJKQRGNSSRRGSMPGF32LHCQVGF", Cursor: "now"}
+
+    ctx, cancel := context.WithCancel(context.Background())
+    go func() {
+        // Stop streaming after 60 seconds.
+        time.Sleep(60 * time.Second)
+        cancel()
+    }()
+
+    printHandler := func(op operations.Operation) {
+        fmt.Println(op)
+    }
+    err := client.StreamPayments(ctx, opRequest, printHandler)
+    if err != nil {
+        fmt.Println(err)
+    }
+
+}
+```
+
+```python
+from stellar_sdk import Server
+
+def load_last_paging_token():
+    # Get the last paging token from a local database or file
+    return "now"
+
+def save_paging_token(paging_token):
+    # In most cases, you should save this to a local database or file so that
+    # you can load it next time you stream new payments.
+    pass
+
+server = Server("https://horizon-testnet.stellar.org")
+account_id = "GC2BKLYOOYPDEFJKLKY6FNNRQMGFLVHJKQRGNSSRRGSMPGF32LHCQVGF"
+
+# Create an API call to query payments involving the account.
+payments = server.payments().for_account(account_id)
+
+# If some payments have already been handled, start the results from the
+# last seen payment. (See below in `handle_payment` where it gets saved.)
+last_token = load_last_paging_token()
+if last_token:
+    payments.cursor(last_token)
+
+# `stream` will send each recorded payment, one by one, then keep the
+# connection open and continue to send you new payments as they occur.
+for payment in payments.stream():
+    # Record the paging token so we can start from here next time.
+    save_paging_token(payment["paging_token"])
+
+    # We only process `payment`, ignore `create_account` and `account_merge`.
+    if payment["type"] != "payment":
+        continue
+
+    # The payments stream includes both sent and received payments. We
+    # only want to process received payments here.
+    if payment['to'] != account_id:
+        continue
+
+    # In Stellar’s API, Lumens are referred to as the “native” type. Other
+    # asset types have more detailed information.
+    if payment["asset_type"] == "native":
+        asset = "Lumens"
+    else:
+        asset = f"{payment['asset_code']}:{payment['asset_issuer']}"
+    print(f"{payment['amount']} {asset} from {payment['from']}")
+```
+
+</CodeExample>
+
+Hay dos partes principales en este programa. Primero, creas una consulta para pagos que involucran una cuenta dada. Como la mayoría de las consultas en Stellar, esto podría devolver un gran número de elementos, así que la API devuelve tokens de paginación, que puedes usar más tarde para comenzar tu consulta desde el mismo punto donde la dejaste anteriormente. En el ejemplo anterior, las funciones para guardar y cargar tokens de paginación se dejaron en blanco, pero en una aplicación real, querrías guardar los tokens de paginación en un archivo o base de datos para poder continuar donde te quedaste en caso de que el programa se bloquee o el usuario lo cierre.
+
+<CodeExample>
+
+```js
+var payments = server.payments().forAccount(accountId);
+var lastToken = loadLastPagingToken();
+if (lastToken) {
+  payments.cursor(lastToken);
+}
+```
+
+```java
+PaymentsRequestBuilder paymentsRequest = server.payments().forAccount(account.getAccountId());
+String lastToken = loadLastPagingToken();
+if (lastToken != null) {
+  paymentsRequest.cursor(lastToken);
+}
+```
+
+```go
+client := horizonclient.DefaultTestNetClient
+opRequest := horizonclient.OperationRequest{ForAccount: "GC2BKLYOOYPDEFJKLKY6FNNRQMGFLVHJKQRGNSSRRGSMPGF32LHCQVGF", Cursor: "now"}
+```
+
+```python
+payments = server.payments().for_account(account_id)
+last_token = load_last_paging_token()
+if last_token:
+    payments.cursor(last_token)
+```
+
+</CodeExample>
+
+En segundo lugar, los resultados de la consulta se transmiten. Esta es la forma más fácil de vigilar los pagos u otras transacciones. Cada pago existente se envía a través de la transmisión, uno por uno. Una vez que se han enviado todos los pagos existentes, la transmisión se mantiene abierta y se envían nuevos pagos a medida que se realizan.
+
+Pruébalo: Ejecuta este programa y luego, en otra ventana, crea y envía un pago. Deberías ver que este programa registra el pago.
+
+<CodeExample>
+
+```js
+payments.stream({
+  onmessage: function (payment) {
+    // handle a payment
+  },
+});
+```
+
+```java
+paymentsRequest.stream(new EventListener<OperationResponse>() {
+  @Override
+  public void onEvent(OperationResponse payment) {
+    // Handle a payment
+  }
+});
+```
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+go func() {
+    // Stop streaming after 60 seconds.
+    time.Sleep(60 * time.Second)
+    cancel()
+}()
+
+printHandler := func(op operations.Operation) {
+    fmt.Println(op)
+}
+err := client.StreamPayments(ctx, opRequest, printHandler)
+if err != nil {
+    fmt.Println(err)
+}
+```
+
+```python
+for payment in payments.stream():
+    # handle a payment
+```
+
+</CodeExample>
+
+También puedes solicitar pagos en grupos o páginas. Una vez que hayas procesado cada página de pagos, necesitarás solicitar la siguiente hasta que no quede ninguna.
+
+<CodeExample>
+
+```js
+payments.call().then(function handlePage(paymentsPage) {
+  paymentsPage.records.forEach(function (payment) {
+    // handle a payment
+  });
+  return paymentsPage.next().then(handlePage);
+});
+```
+
+```java
+Page<OperationResponse> page = payments.execute();
+
+for (OperationResponse operation : page.getRecords()) {
+    // handle a payment
+}
+
+page = page.getNextPage();
+```
+
+```python
+payments_current = payments.call()
+payments_next = payments.next()
+```
+
+</CodeExample>
+
+## Pagos con Stellar Asset Contract (SAC)
+
+Al enviar pagos usando Stellar Asset Contracts, invocas funciones de contratos inteligentes en lugar de usar operaciones de pago. Los pagos SAC utilizan la operación `invokeHostFunction` para llamar métodos del contrato como `transfer`, que proporciona la misma funcionalidad de pago pero mediante lógica de contrato. Este enfoque ofrece flexibilidad y programabilidad adicionales mientras mantiene compatibilidad con el sistema de activos de Stellar.
+
+En el ejemplo siguiente, usamos SAC como interfaz de contrato inteligente para el activo nativo, por lo que el resultado final es el mismo que si se hubiera ejecutado una operación de pago nativa. Sin embargo, el mismo proceso puede aplicarse para cualquier transferencia de contrato inteligente que involucre tokens de contrato estandarizados que sigan la [interfaz del token de contrato](../../../tokens/token-interface.mdx). Esto convierte a los pagos SAC en un enfoque unificado para manejar tanto activos nativos como tokens de contrato mediante una interfaz consistente basada en contratos.
+
+Así es como podrías enviar 10 lumens usando un SAC:
+
+<Alert>
+  Para usar el ejemplo de RPC a continuación, primero debes generar las bindings del contrato para que el
+  cliente pueda usarse apropiadamente. Esto puede lograrse mediante la [CLI Stellar](../../../tools/cli/README.mdx).
+
+Ejemplo: Generar las bindings de typescript para el contrato `sac` de un activo dado:
+
+```bash
+ stellar contract bindings typescript --network=testnet --contract-id=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --output-dir=./bindings
+```
+
+</Alert>
+
+### Enviar un Pago
+
+<CodeExample>
+
+```js
+import {
+  Account,
+  Asset,
+  Keypair,
+  Networks,
+  TransactionBuilder,
+} from "stellar-sdk";
+import { Client } from "sac";
+import { Server } from "stellar-sdk/rpc";
+
+// Initialize Soroban RPC server for testnet
+const rpc = new Server("https://soroban-testnet.stellar.org");
+
+// Initalize the source account's secret key and destination account ID.
+// The source account is the one that will send the payment, and the destination account
+// is the one that will receive the payment.
+const sourceKeys = Keypair.fromSecret(
+  "SAMAJBEGN2743SLFDSBSVRCTQ7AC33XFZHWJVCJ2UMOIVH4MUJ7WWHEJ",
+);
+const destinationId =
+  "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5";
+
+// First, check to make sure that the destination account exists.
+try {
+  await rpc.getAccount(destinationId);
+} catch (error) {
+  console.error("Error checking destination account:", error);
+  throw error;
+}
+
+// Now we also load the source account to build the transaction.
+try {
+  await rpc.getAccount(sourceKeys.publicKey());
+} catch (error) {
+  console.error("Error checking source account:", error);
+  throw error;
+}
+
+// Now we initialize the Stellar Asset Contract (SAC) client.
+// The client needs the RPC endpoint, network passphrase, contract ID for the asset,
+// and your account's public key. A signing function can also be provided to automatically
+// handle transaction signing when invoking contract methods with this client.
+//
+// In this case, we are using the native asset contract ID for the testnet.
+// The contract ID is derived from the native asset, which is represented by `Asset.native()`.
+// The `contractId` method will return the contract ID for the native asset on the specified network.
+const xlmClient = new Client({
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: Networks.TESTNET,
+  contractId: Asset.native().contractId(Networks.TESTNET),
+  publicKey: sourceKeys.publicKey(),
+  signTransaction: async (txXdr) => {
+    const tx = await TransactionBuilder.fromXDR(txXdr, Networks.TESTNET);
+    tx.sign(sourceKeys);
+    return { signedTxXdr: tx.toXDR(), signerAddress: sourceKeys.publicKey() };
+  },
+});
+
+// Now, using the client, we assemble a soroban transaction to invoke the transfer
+// function of the native asset contract. The client will automatically
+// bundle the operation and simulate the transaction before providing us
+// with an assembled transaction object that we can sign and send.
+let assembledTx;
+try {
+  assembledTx = await xlmClient.transfer({
+    to: destinationId,
+    amount: BigInt(10_0000000), // Amount in stroops (1 XLM = 10,000,000 stroops)
+    from: sourceKeys.publicKey(),
+  });
+} catch (error) {
+  console.error("Error assembling the transaction:", error);
+  throw error;
+}
+
+// The assembled transaction is ready to be signed and sent. It already includes
+// a function that allows us to perform the signing and sending in one step. It will
+// use the signTransaction function we provided to the client to sign the transaction or
+// alternatively, receive a custom one just for this transaction.
+try {
+  const result = await assembledTx.signAndSend();
+  console.log("Transaction successful:", result.getTransactionResponse?.txHash);
+} catch (error) {
+  console.error("Error during transaction processing:", error);
+  throw error;
+}
+```
+
+</CodeExample>
+
+#### Desglose paso a paso
+
+¿Qué ocurrió exactamente en el ejemplo de pago SAC? Vamos a desglosarlo:
+
+1. Importa el cliente generado del contrato desde las bindings producidas por la CLI. Este cliente provee métodos tipados para interactuar con Stellar Asset Contract.
+
+<CodeExample>
+
+```js
+import { Client } from "sac";
+```
+
+</CodeExample>
+
+2. Inicializa el cliente SAC con detalles de conexión y una función personalizada de firma. El cliente necesita el endpoint RPC, la frase de red, el ID del contrato para el activo y la clave pública de tu cuenta. Se puede proporcionar una función de firma para manejar automáticamente la firma de transacciones al invocar métodos del contrato con este cliente.
+
+<CodeExample>
+
+```js
+const xlmClient = new Client({
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: Networks.TESTNET,
+  contractId: Asset.native().contractId(Networks.TESTNET),
+  publicKey: sourceKeys.publicKey(),
+  signTransaction: async (txXdr) => {
+    const tx = await TransactionBuilder.fromXDR(txXdr, Networks.TESTNET);
+    tx.sign(sourceKeys);
+    return {
+      signedTxXdr: tx.toXDR(),
+      signerAddress: sourceKeys.publicKey(),
+    };
+  },
+});
+```
+
+</CodeExample>
+
+3. Inicia la transferencia llamando al método `transfer` del contrato. Esto devuelve una transacción ensamblada lista para firmar y enviar.
+
+<CodeExample>
+
+```js
+xlmClient.transfer({
+  to: destinationId,
+  amount: BigInt(10_0000000), // Amount in stroops (1 XLM = 10,000,000 stroops)
+  from: sourceKeys.publicKey(),
+});
+```
+
+</CodeExample>
+
+4. Firma y envía la transacción usando `signAndSend()`. El cliente gestiona la simulación, la firma (usando la función provista), el envío a la red y el sondeo del resultado final.
+
+<CodeExample>
+
+```js
+try {
+  const result = await assembledTx.signAndSend();
+  console.log("Transaction successful:", result.getTransactionResponse?.txHash);
+} catch (error) {
+  console.error("Error during transaction processing:", error);
+  throw error;
+}
+```
+
+</CodeExample>
+
+### Recibir un Pago
+
+No necesitas hacer nada especial para recibir pagos SAC en una cuenta Stellar: si un pagador realiza una transferencia exitosa mediante contrato, esos activos se añadirán automáticamente a tu cuenta.
+
+Sin embargo, puede que quieras monitorear los pagos SAC entrantes. Como los pagos SAC generan eventos de contrato en lugar de operaciones de pago tradicionales, necesitarás observar eventos del contrato en vez de usar flujos de pagos de Horizon. Aquí se muestra cómo puedes monitorear transferencias de contratos inteligentes entrantes:
+
+<CodeExample>
+
+```js
+import { Server } from "stellar-sdk/rpc";
+import { xdr, Asset, Networks, Address } from "stellar-sdk";
+
+// Initialize Soroban RPC server for testnet
+const rpc = new Server("https://soroban-testnet.stellar.org");
+
+// Get the native XLM contract ID for testnet
+const contractId = Asset.native().contractId(Networks.TESTNET);
+
+// The address we want to monitor for incoming payments
+const monitoredAddress = new Address(
+  "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5"
+);
+
+// Paging state for event polling (similar to useSubscription hook)
+let lastLedgerStart: number | undefined;
+let pagingToken: string | undefined;
+
+async function pollForTransfers() {
+  // Set starting ledger if not set (get the latest ledger as starting point)
+  if (!lastLedgerStart) {
+    const latestLedger = await rpc.getLatestLedger();
+    lastLedgerStart = latestLedger.sequence;
+  }
+  console.log(`> Monitoring transfers for ledger: ${lastLedgerStart}`);
+
+  // Get events for "transfer" topic from the native asset contract
+  const response = await rpc.getEvents({
+    startLedger: !pagingToken ? lastLedgerStart : undefined,
+    cursor: pagingToken,
+    filters: [
+      {
+        contractIds: [contractId],
+        // Filter for transfer events to the monitored address
+        // Using wildcards (*) to match any sender and asset
+        // Event structure: ["transfer", fromAddress, toAddress, assetName]
+        topics: [
+          [
+            xdr.ScVal.scvSymbol("transfer").toXDR("base64"),
+            "*",
+            monitoredAddress.toScVal().toXDR("base64"),
+            "*",
+          ],
+        ],
+        type: "contract",
+      },
+    ],
+    limit: 10,
+  });
+
+  // Update paging tokens for next poll
+  pagingToken = undefined;
+  if (response.latestLedger) {
+    lastLedgerStart = response.latestLedger;
+  }
+
+  // Process events and check for payments to our monitored address
+  if (response.events) {
+    response.events.forEach((event) => {
+      try {
+        const topics = event.topic;
+        console.log(
+          `Processing event: ${event.txHash} at ledger ${event.ledger}`
+        );
+        if (topics && topics.length >= 3) {
+          // Extract recipient address from event topics
+          const toAddress = Address.fromScAddress(
+            topics[2].address()
+          ).toString();
+
+          // Check if the payment is to our monitored address
+          if (toAddress === monitoredAddress.toString()) {
+            console.log("PAYMENT RECEIVED!");
+            console.log(`  Transaction: ${event.txHash}`);
+            console.log(`  Ledger: ${event.ledger}`);
+            console.log(
+              `  Sender: ${Address.fromScAddress(
+                topics[1].address()
+              ).toString()}`
+            );
+            console.log(`  Amount: ${event.value.i128().lo().toBigInt()}`);
+          }
+        }
+      } catch (error) {
+        console.error("Error processing event:", error);
+      } finally {
+        // Update paging token for next poll
+        pagingToken = event.pagingToken;
+      }
+    });
+  }
+
+  // Continue polling after 4 seconds
+  setTimeout(pollForTransfers, 4000);
+}
+
+// Start monitoring for payment events
+console.log(`Starting payment monitor for: ${monitoredAddress}`);
+pollForTransfers();
+
+```
+
+</CodeExample>
+
+#### Desglose paso a paso
+
+¿Qué ocurrió exactamente en el ejemplo de recepción de pago SAC? Vamos a desglosarlo:
+
+1. Configura la conexión RPC y obtén el ID del contrato para el activo que quieres monitorear. Para XLM nativo, usamos el ID de contrato incorporado.
+
+<CodeExample>
+
+```js
+const rpc = new Server("https://soroban-testnet.stellar.org");
+const contractId = Asset.native().contractId(Networks.TESTNET);
+const monitoredAddress = new Address(
+  "GA2C5RFPE6GCKMY3US5PAB6UZLKIGSPIUKSLRB6Q723BM2OARMDUYEJ5",
+);
+```
+
+</CodeExample>
+
+2. Inicializa el sistema de sondeo obteniendo la última secuencia del ledger como punto de partida para monitorear eventos.
+
+<CodeExample>
+
+```js
+if (!lastLedgerStart) {
+  const latestLedger = await rpc.getLatestLedger();
+  lastLedgerStart = latestLedger.sequence;
+}
+```
+
+</CodeExample>
+
+3. Consulta eventos de contratos usando filtros específicos para eventos de transferencia. El filtro apunta al ID del contrato y escucha eventos de "transfer" donde tu dirección es la destinataria. El arreglo topics define la estructura del evento: el primer elemento es el nombre del evento ("transfer"), el segundo es el emisor (comodín "_" para cualquier), el tercero es el receptor (tu dirección monitoreada), y el cuarto es el activo (comodín "_" para cualquier activo).
+
+<CodeExample>
+
+```js
+const response = await rpc.getEvents({
+  startLedger: !pagingToken ? lastLedgerStart : undefined,
+  cursor: pagingToken,
+  filters: [
+    {
+      contractIds: [contractId],
+      // Topics filter structure: ["event_name", "from_address", "to_address", "asset"]
+      // Using wildcards (*) allows matching any value in that position
+      topics: [
+        [
+          xdr.ScVal.scvSymbol("transfer").toXDR("base64"), // Event name: "transfer"
+          "*", // From: any address
+          monitoredAddress.toScVal().toXDR("base64"), // To: our monitored address
+          "*", // Asset: any asset
+        ],
+      ],
+      type: "contract",
+    },
+  ],
+  limit: 10,
+});
+```
+
+</CodeExample>
+
+4. Procesa los eventos extrayendo detalles de transferencia de los topics y valores del evento, luego continúa sondeando nuevos eventos después de una breve espera.
+
+<CodeExample>
+
+```js
+response.events.forEach((event) => {
+  const topics = event.topic;
+  if (topics && topics.length >= 3) {
+    const toAddress = Address.fromScAddress(topics[2].address()).toString();
+
+    if (toAddress === monitoredAddress.toString()) {
+      console.log("PAYMENT RECEIVED!");
+      console.log(`Amount: ${event.value.i128().lo().toBigInt()}`);
+    }
+  }
+});
+
+// Continue polling
+setTimeout(pollForTransfers, 4000);
+```
+
+</CodeExample>
+
+**Diferencias clave con el monitoreo clásico de pagos:**
+
+- **Basado en eventos**: Monitorea eventos de contratos en lugar de operaciones de pago
+- **Solo RPC**: Usa exclusivamente endpoints RPC, sin soporte Horizon
+- **Filtrado por topics**: Usa topics de eventos para filtrar patrones específicos de transferencia
+- **Sondeo activo**: Requiere sondeo continuo en vez de transmisión
+- **Estructura de eventos**: Extrae datos de pagos desde topics y valores de eventos de contrato en lugar de campos de operación
+
+## Transaccionar en Otras Monedas
+
+Una de las cosas sorprendentes de la red Stellar es que puedes crear, mantener, enviar, recibir e intercambiar cualquier tipo de activo. Muchas organizaciones emiten activos en Stellar que representan monedas del mundo real, como dólares estadounidenses o nairas nigerianas, o criptomonedas como bitcoin o ether.
+
+Cada uno de estos activos redimibles — _anclado_ en la jerga Stellar — es esencialmente un crédito emitido por una cuenta particular que representa las reservas que esas cuentas tienen fuera de la red. Por eso los activos en el ejemplo anterior tenían tanto un `código` como un `emisor`: el `emisor` es la clave pública de la cuenta que creó el activo, una cuenta propiedad de la organización que finalmente honra el crédito que representa ese activo. Además, con la introducción de contratos inteligentes, los activos clásicos pueden también ser representados por un `contract id` [(Interfaz SAC)](../../../tokens/stellar-asset-contract.mdx)) que permite interacciones más complejas e interoperabilidad con aplicaciones de contratos inteligentes.
+
+Otros tokens personalizados, desarrollados completamente con contratos inteligentes, también son representados por su propio `contract id` y deberían ofrecer una interfaz similar para la interacción al seguir la [interfaz de token](https://soroban.stellar.org/docs/reference/interfaces/token-interface).

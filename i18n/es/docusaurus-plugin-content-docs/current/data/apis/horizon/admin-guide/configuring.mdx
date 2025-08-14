@@ -1,0 +1,170 @@
+---
+title: Configurar
+sidebar_position: 30
+---
+
+import { Alert } from "@site/src/components/Alert";
+
+## Requisitos previos
+
+- Has identificado el método de [instalación](./installing.mdx) para el sistema host:
+
+  - Para bare-metal, tienes dos ejecutables instalados en la ruta del sistema operativo del host: `stellar-horizon` y `stellar-core`.
+  - Para ejecutar la imagen de Horizon con el demonio de Docker, usarás el [stellar/stellar-horizon](https://hub.docker.com/r/stellar/stellar-horizon) alojado en Docker Hub. Ya has descargado la imagen stellar/stellar-horizon a través de `docker pull stellar/stellar-horizon:<tag_version>` en el host. Esta imagen contiene `stellar-horizon` y `stellar-core` en su interior.
+  - Para Kubernetes con el [Horizon Helm Chart](https://github.com/stellar/helm-charts/tree/main/charts/horizon), has seguido la [Instalación de Horizon con Helm Chart](./installing.mdx#helm-chart-installation).
+
+- [Inicializar base de datos](#initialize-horizon-database)
+
+Ahora estás listo para identificar los parámetros de configuración necesarios para desempeñar tres roles importantes:
+
+- **Atender solicitudes API de solo lectura** a través de una API HTTP basada en la web;
+- **Ingerir ledgers** de nodos Core de la red Stellar para mantener su visión del mundo actualizada;
+- **Enviar transacciones** a través de una API HTTP basada en la web, reenviando la solicitud de envío de transacción a la red Stellar.
+
+Para realizar estos roles, puedes elegir entre uno de los dos modos de despliegue a continuación (despliegue de instancia única o despliegue de múltiples instancias). Cada uno tiene sus propios parámetros de configuración.
+
+## Despliegue de Instancia Única
+
+Ejecuta `stellar-horizon` en un solo proceso de o/s y realizará los tres roles simultáneamente.
+
+| variable de entorno       | ejemplo                             |
+| ------------------------- | ----------------------------------- |
+| `DATABASE_URL`            | postgres://localhost/horizon_pubnet |
+| `NETWORK`                 | pubnet                              |
+| `HISTORY_RETENTION_COUNT` | 518400                              |
+
+## Despliegue de Múltiples Instancias
+
+En esta variante de despliegue escalable, ejecutas múltiples instancias de `stellar-horizon`, cada una realizando un subconjunto de los roles. Esto te permite escalar horizontalmente cada una de las funciones de rol de forma independiente.
+
+### Instancia de Rol de Ingestión
+
+Debes asignar **al menos** una instancia para realizar la ingesta continua y capturar la actividad de la red. Esto por defecto limitará el almacenamiento de la actividad de red ingerida en la base de datos a nuestra recomendación de una ventana deslizante de los últimos 30 días.
+
+| variable de entorno       | ejemplo                             |
+| ------------------------- | ----------------------------------- |
+| `DATABASE_URL`            | postgres://localhost/horizon_pubnet |
+| `NETWORK`                 | pubnet                              |
+| `HISTORY_RETENTION_COUNT` | 518400                              |
+| `DISABLE_TX_SUB`          | true                                |
+
+### Instancia de Rol de API
+
+Puedes ejecutar ninguna o múltiples instancias para atender solicitudes API de solo lectura. Ten en cuenta que no hay necesidad de definir configuraciones de red aquí, ya que Horizon solo lee de la base de datos.
+
+| variable de entorno  | ejemplo                             |
+| -------------------- | ----------------------------------- |
+| `DATABASE_URL`       | postgres://localhost/horizon_pubnet |
+| `INGEST`             | false                               |
+| `DISABLE_TX_SUB`     | true                                |
+
+### Instancia de Rol de Envío de Transacciones
+
+Puedes ejecutar ninguna o múltiples instancias para atender solicitudes de envío de transacciones. Si ejecutas una instancia con envío de transacciones habilitado, el despliegue de Horizon requiere tener al menos una instancia que realice el rol de ingestión en la misma base de datos. La presentación de transacciones de Horizon depende de que este **en vivo** proceso de ingestión se lleve a cabo contra la base de datos para confirmar el estado de envío de tx.
+
+Si la ingestión está planificada para hacerse en una instancia separada, agrega `INGEST=false` en esta instancia, de lo contrario no incluyas el parámetro, Horizon predeterminará a `INGEST=true`. Cuando una instancia de envío de transacciones habilitada tiene `INGEST=true` efectivo, configurará automáticamente el parámetro relacionado `STELLAR_CORE_URL` para utilizar la instancia cautiva de core lanzada internamente y el despliegue no necesita establecer el valor de configuración explícitamente.
+
+Si estableces `INGEST=false`, entonces **debes** definir la variable `STELLAR_CORE_URL` en esta instancia habilitada para envío de transacciones, ya que no habrá ninguna instancia de core cautiva alojada internamente como parte de la ingestión disponible para referencia, en cambio, el `STELLAR_CORE_URL` proporciona la capacidad de definir la URL de un puerto HTTP de instancia de core a la que Horizon enviará los envíos de transacciones.
+
+| variable de entorno  | ejemplo                             |
+| -------------------- | ----------------------------------- |
+| `DATABASE_URL`       | postgres://localhost/horizon_pubnet |
+| `STELLAR_CORE_URL`   | http://example.watcher.core:11626   |
+| `INGEST`             | false                               |
+
+## Notas
+
+### Ingestión
+
+Si has configurado tu despliegue para realizar el rol de ingestión, entonces se recomienda **encarecidamente** revisar primero [Ingestión](./ingestion.mdx) y segundo [Filtrado](./ingestion-filtering.mdx) y tener eso en cuenta en los parámetros de configuración para lograr el mejor rendimiento relacionado con los requisitos de tu aplicación antes de proceder más adelante.
+
+- Horizon creará un subdirectorio bajo el directorio de trabajo actual del proceso de o/s para almacenar los archivos de datos de tiempo de ejecución de core cautivo. Consulta [Requisitos previos](./prerequisites.mdx) para el tipo y cantidad de almacenamiento recomendado. Puedes sobrescribir esta ubicación con la variable de entorno opcional `CAPTIVE_CORE_STORAGE_PATH`, establecida en un directorio en el sistema de archivos donde core cautivo almacenará los archivos de tiempo de ejecución.
+
+### `DISABLE_TX_SUB`
+
+Este parámetro de configuración es opcional, establecido como FALSO por defecto. Controla si Horizon aceptará solicitudes HTTP al endpoint de API `/tx` y las reenviará a la red. Consulta [Cuentas de Canal](../../../../build/guides/transactions/channel-accounts.mdx) para algunas recomendaciones sobre optimizaciones opcionales para la presentación de transacciones del cliente.
+
+- Cuando se establece en FALSO, requiere que el proceso de ingestión **en vivo** esté funcionando en la misma base de datos porque Horizon depende de nuevos ledgers de la red para confirmar un estado de envío de transacción, Horizon informará un error de inicio si detecta que no hay ingestión **en vivo**. Requiere que `INGEST=true` o que `STELLAR_CORE_URL` se definan para acceder a una instancia de Core.
+- Cuando el envío de transacciones está deshabilitado al establecerlo en VERDADERO, Horizon devolverá 405 en POSTs a /tx.
+
+### `NETWORK`
+
+Este parámetro de configuración es opcional, puede ser una de las redes públicas de Stellar, 'pubnet', o 'testnet'. Activa a Horizon para configurar automáticamente las configuraciones para los restantes ajustes de Horizon y generar los correctos ajustes de core toml/cfg. Si solo necesitas que Horizon se conecte a una de esas redes públicas de Stellar, esto se encargará de todas las configuraciones relacionadas.
+
+- Si deseas conectar Horizon a una red Stellar diferente a pubnet o testnet o sobrescribir cualquiera de los predeterminados que el uso de `NETWORK` iniciará, las variables de entorno clave que se pueden establecer son: `HISTORY_ARCHIVE_URLS`, `CAPTIVE_CORE_CONFIG_PATH`, `NETWORK_PASSPHRASE`, `CAPTIVE_CORE_STORAGE_PATH`, `STELLAR_CORE_URL`.
+
+### `DB_URL`
+
+Este parámetro de configuración es requerido, especifica la base de datos de Horizon. Su valor sigue este formato: `dbname=<pg_dbname> user=<pg_user_name> password=<pg_user_pwd> host=<host_address>`
+
+### `LOG_LEVEL`
+
+Este parámetro de configuración es opcional, puede ser uno de 'info', 'error', 'debug'.
+
+### `HISTORY_RETENTION_COUNT`
+
+Este parámetro de configuración es opcional, determina la ventana deslizante máxima de datos históricos de red a retener en la base de datos desde la ingestión. El valor se expresa como un conteo absoluto de ledgers, que es una manera indirecta de definir una duración de tiempo, cada ledger siendo aproximadamente 5 segundos. Se predetermina a 0, lo que significa que no se purgará ninguna historia de la base de datos. Para aplicar la ventana deslizante recomendada de un mes, establece esto en 518400, que es el número aproximado de ledgers en 30 días. Consulta [Recursos Computacionales](./prerequisites.mdx) sobre cómo el espacio de almacenamiento de la base de datos está estrechamente relacionado con este ajuste.
+
+## Pasando Configuraciones a Horizon
+
+El binario `stellar-horizon` busca variables de entorno del proceso para la configuración. Dependiendo de cómo se instaló Horizon, el método que realices para configurar el entorno de proceso variará:
+
+- Bare-metal
+  - Sin gestor de paquetes: usa variables de entorno de o/s para pasar configuraciones. Hay muchas herramientas que puedes usar para gestionarlas, como [direnv](http://direnv.net/) o [dotenv](https://github.com/bkeepers/dotenv).
+  - [Gestor de paquetes](./installing.mdx#package-manager): el wrapper proporcionado `stellar-horizon-cmd` iniciará un nuevo proceso y creará variables de entorno en el proceso desde `/etc/default/stellar-horizon` y luego lanzará el 'stellar-horizon'. Para establecer configuraciones, edita el archivo en `/etc/default/stellar-horizon`.
+    <Alert>
+      Este script invoca Horizon con el usuario `stellar`, así que asegúrate de que
+      los permisos para el usuario estén configurados adecuadamente. El directorio de trabajo actual
+      debe ser escribible para este usuario y el usuario debe poder
+      ejecutar los binarios `stellar-horizon` y `stellar-core`; etc.
+    </Alert>
+- Contenerizado
+  - Sin Helm: pasa todos los parámetros de configuración a la imagen de docker de Horizon como [variables de entorno de docker](https://docs.docker.com/engine/reference/commandline/run/#env).
+  - Helm: pasa todos los parámetros de configuración en el [comando de instalación de Helm](https://helm.sh/docs/helm/helm_install/) como un archivo de valores.
+
+## Inicializar Base de Datos de Horizon
+
+Antes de ejecutar el servidor de Horizon por primera vez, debes inicializar la base de datos de Horizon. Esta base de datos se utilizará para toda la información producida por Horizon, más notablemente información histórica sobre transacciones que han ocurrido en la red Stellar.
+
+Para preparar una base de datos para el uso de Horizon, primero asegúrate de que esté en blanco. Es más fácil crear una nueva base de datos en tu servidor PostgreSQL específicamente para el uso de Horizon. Recomendamos crear un nuevo usuario (rol) en postgres dedicado a la base de datos de Horizon y asignar ese usuario (rol) como el propietario de esta base de datos.
+
+Para ilustrar un ejemplo usando `psql`, primero inicia sesión en el servidor de base de datos usando la herramienta de línea de comandos `psql` como superusuario, y luego crea el nuevo usuario (rol) y base de datos para Horizon:
+
+```
+postgres=#
+postgres=# CREATE ROLE horizon WITH LOGIN;
+CREATE ROLE
+postgres=#
+postgres=# CREATE DATABASE horizon OWNER horizon;
+CREATE DATABASE
+postgres=#
+```
+
+Además, puedes establecer una contraseña en tu nuevo usuario de postgres `horizon` con `ALTER USER`.
+
+Una vez completado, puedes componer el valor completo del parámetro de configuración para el acceso a la base de datos `DATABASE_URL="dbname=horizon user=horizon password=<value_here> host=<address_of_pg_server>"`.
+
+A continuación, ejecuta el binario de Horizon para instalar el esquema en la base de datos vacía desde la línea de comandos. En este ejemplo, supongamos que el shell actual no tiene `DATABASE_URL` en el entorno aún, así que expórtalo primero en el shell:
+
+```
+$ export DATABASE_URL="dbname=horizon user=horizon password=<value_here> host=<address_of_pg_server>"
+$ stellar-horizon db init
+```
+
+### Configuraciones Opcionales de Postgres
+
+Basado en observaciones de rendimiento a lo largo del tiempo, recomendamos configuraciones adicionales de Postgres (postgresql.conf), pero estas no son requeridas:
+
+- Establece `random_page_cost=1` si estás usando almacenamiento SSD. Con esta configuración, el Planificador de Consultas hará un mejor uso de los índices, especialmente para consultas `JOIN`. Hemos notado una enorme mejora en la velocidad de algunas consultas con esta configuración.
+
+\_ Para mejorar la disponibilidad de los servidores de ingestión, api y envío de transacciones, se recomienda establecer los siguientes valores:
+
+- `tcp_keepalives_idle`: 10 segundos
+- `tcp_keepalives_interval`: 1 segundo
+- `tcp_keepalives_count`: 5
+
+Con la configuración anterior, si no hay consultas de un cliente dado durante 10 segundos, PostgreSQL comenzará a enviar paquetes TCP keepalive. Se reintentará 5 veces cada segundo. Si no hay respuesta del cliente después de ese tiempo, se cerrará la conexión.
+
+## Próximo Paso
+
+¡Después de completar la configuración, ahora estás listo para proceder a [Ejecutar Horizon](./running.mdx)!

@@ -1,0 +1,596 @@
+---
+title: Analizar el costo y la eficiencia del contrato inteligente
+hide_table_of_contents: false
+description: Crear contratos eficientes y rentables
+---
+
+Varios factores influyen en cuán rápida y eficientemente se ejecutan tus contratos inteligentes en la red Stellar. Esta guía te ayudará a entender estos factores y te proporcionará consejos sobre cómo redactar contratos rentables.
+
+## Cómo optimizar el costo del contrato inteligente:
+
+Los contratos complejos con numerosas condiciones, bucles y cálculos requieren más potencia de procesamiento en Stellar. Esto puede llevar a costos de gas más altos (comisiones por transacción) y tiempos de ejecución más lentos.
+
+### 1 Uso eficiente de llamadas a bucles y almacenamiento
+
+Un contrato que requiere múltiples bucles y condiciones para ejecutarse costará más que un contrato simple que ejecuta una sola operación.
+
+#### Contrato No Óptimo ❎
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, log, vec, Map, Env};
+
+#[contract]
+pub struct ExampleContract;
+
+#[contractimpl]
+impl ExampleContract {
+    // Function to update values in storage inefficiently
+    pub fn update_values(env: Env, values: Vec<u32>) {
+        for &value in values.iter() {
+            let current_count = env.storage().persistent().get("total_count");
+            env.storage().persistent().set("total_count", &(current_count + value));
+        }
+    }
+}
+
+```
+
+:::danger
+
+**Problema**: Cada iteración del bucle realiza una operación de lectura y escritura separada para actualizar total_count en el almacenamiento.
+
+**Ineficiente**: Esto resulta en múltiples operaciones de almacenamiento costosas (lectura y escritura) dentro del bucle, aumentando significativamente los costos de gas a medida que crece el tamaño de la matriz (values.len()).
+
+:::
+
+#### Contrato Óptimo ✅
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, log, vec, Env, Map};
+
+#[contract]
+pub struct ExampleContract;
+
+#[contractimpl]
+impl ExampleContract {
+    // Function to update values in storage efficiently
+    pub fn update_values(env: Env, values: Vec<u32>) {
+        let mut total_count = env.storage().persistent().get("total_count");
+
+        for &value in values.iter() {
+            total_count += value;
+        }
+
+        env.storage().persistent().set("total_count", &total_count);
+    }
+}
+
+```
+
+:::tip
+
+En este enfoque optimizado, acumularemos los cambios fuera del bucle y realizaremos una única actualización de almacenamiento y también una única operación de lectura. Esto reduce el número de operaciones de almacenamiento y el costo total de gas del contrato.
+
+:::
+
+### 2 Uso adecuado de operaciones en lote
+
+Del primer ejemplo, podemos ver que las operaciones en lote son más eficientes que las operaciones individuales. Esto se debe a que las operaciones en lote reducen el número de llamadas externas a la blockchain, que pueden ser costosas. Sin embargo, hay algunos escenarios en los que el uso de operaciones en lote puede ser optimizado aún más. A continuación se muestran ejemplos.
+
+#### Contrato No Óptimo ❎
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+use soroban_sdk::token::Client as TokenClient;
+
+#[contract]
+pub struct TokenTransferContract;
+
+#[contractimpl]
+impl TokenTransferContract {
+    // Inefficient way: Multiple individual transfers
+    pub fn transfer_tokens_inefficient(
+        env: Env,
+        token: Address,
+        from: Address,
+        to: Vec<Address>,
+        amount_each: i128,
+    ) {
+        let token_client = TokenClient::new(&env, &token);
+
+        for recipient in to.iter() {
+            token_client.transfer(&from, recipient, &amount_each);
+        }
+    }
+}
+```
+
+:::danger
+
+Esta función realiza transferencias individuales para cada destinatario. Si bien es directa, es ineficiente porque cada transferencia es una llamada de subcontrato separada, lo que puede llevar a costos de gas más altos y a una ejecución más lenta.
+
+:::
+
+#### Contrato Óptimo ✅
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+use soroban_sdk::token::Client as TokenClient;
+
+#[contract]
+pub struct TokenTransferContract;
+
+#[contractimpl]
+impl TokenTransferContract {
+    // Efficient way: Batch transfer
+    pub fn transfer_tokens_efficient(
+        env: Env,
+        token: Address,
+        from: Address,
+        to: Vec<Address>,
+        amount_each: i128,
+    ) {
+        let token_client = TokenClient::new(&env, &token);
+        let total_amount = amount_each * (to.len() as i128);
+
+        // Perform a single transfer for the total amount
+        token_client.transfer(&from, &env.current_contract_address(), &total_amount);
+
+        // Then distribute from the contract
+        for recipient in to.iter() {
+            token_client.transfer(&env.current_contract_address(), recipient, &amount_each);
+        }
+    }
+}
+```
+
+:::tip
+
+Esta función optimiza el proceso al:
+
+- Primero transfiriendo el monto total al contrato en una sola operación.
+- Luego distribuyendo los tokens desde el contrato a cada destinatario.
+
+Las distribuciones internas son más baratas debido a la reducción en el número de costosas transacciones externas de blockchain. Al transferir el monto total al contrato y luego distribuirlo internamente, el contrato minimiza el número de llamadas externas, reduciendo los costos de gas y mejorando la eficiencia.
+
+:::
+
+### 3 Uso de eventos en lugar de almacenamiento
+
+Los eventos son una forma rentable de almacenar datos que no necesitan ser accedidos con frecuencia. Los eventos son más baratos que las operaciones de almacenamiento y pueden ser utilizados para almacenar datos que no necesitan ser accedidos con frecuencia.
+
+#### Contrato Predeterminado
+
+```rust
+#![no_std]
+use soroban_sdk::{
+    contract, contractimpl, log, symbol_short, vec, Address, Env, Symbol,Map, Vec
+};
+
+#[contract]
+pub struct GameContract;
+
+#[contractimpl]
+impl GameContract {
+    // Function to record a game move and update storage
+    pub fn record_move(env: Env, player: Address, move_type: Symbol) {
+        let mut player_moves: Map<Address, Vec<Symbol>> = env.storage().persistent().get("player_moves");
+        let moves = player_moves.get(&player);
+        moves.push(move_type.clone());
+        player_moves.set(player, moves);
+        env.storage().persistent().set("player_moves", &player_moves);
+    }
+
+    // Function to unlock an achievement and update storage
+    pub fn unlock_achievement(env: Env, player: Address, achievement: Symbol) {
+        let mut player_achievements: Map<Address, Vec<Symbol>> = env.storage().persistent().get("player_achievements");
+        let achievements = player_achievements.get(&player);
+        achievements.push(achievement.clone());
+        player_achievements.set(player, achievements);
+        env.storage().persistent().set("player_achievements", &player_achievements);
+    }
+
+}
+```
+
+:::danger
+
+No podemos almacenar todo en el almacenamiento como lo haríamos en una base de datos tradicional. Este enfoque no es rentable ya que implica múltiples operaciones de almacenamiento para cada movimiento de jugador y guarda cada logro en el almacenamiento
+
+:::
+
+#### Optimizando con Eventos
+
+```rust
+#![no_std]
+use soroban_sdk::{
+    contract, contractimpl, log, symbol_short, vec, Address, Env, Symbol,Map, Vec,
+};
+
+#[contract]
+pub struct GameContract;
+
+#[contractimpl]
+impl GameContract {
+    // Function to record a game move and emit an event
+    pub fn record_move(env: Env, player: Address, move_type: Symbol) {
+        // Emit event for the game move
+        env.events().publish(("game_move",), (&player, move_type.clone()));
+    }
+
+    // Function to unlock an achievement and emit an event
+    pub fn unlock_achievement(env: Env, player: Address, achievement: Symbol) {
+        // Emit event for the unlocked achievement
+        env.events().publish(("achievement_unlocked",), (&player, achievement.clone()));
+    }
+}
+```
+
+:::tip
+
+En este enfoque optimizado, utilizamos eventos para almacenar datos que no necesitan ser accedidos con frecuencia. Esto reduce el número de operaciones de almacenamiento y el costo total de gas del contrato.
+
+:::
+
+#### Compensaciones:
+
+El enfoque actual utilizando eventos está efectivamente optimizado para la eficiencia del gas, pero viene con su propio conjunto de compromisos. Veamos diferentes enfoques y sus implicaciones:
+
+**Enfoque Actual (Usando Eventos)**:
+
+- Ventajas:
+
+  - Extremadamente eficiente en gas ya que minimiza las operaciones de almacenamiento
+  - Útil para aplicaciones fuera de la cadena que pueden escuchar y procesar eventos
+  - Ideal para datos que no necesitan ser accedidos frecuentemente en la cadena
+
+- Contras:
+
+  - Los datos no son directamente accesibles dentro del contrato
+  - Depende de sistemas externos para captar y procesar los datos de eventos
+  - No apto si necesitas consultar o validar movimientos pasados dentro del contrato
+
+**Almacenar Movimiento Más Reciente en Almacenamiento Persistente y Historial en Almacenamiento Temporal**:
+
+Este enfoque ofrece un equilibrio entre accesibilidad y eficiencia.
+
+- Ventajas:
+
+  - El movimiento más reciente siempre es accesible en la cadena
+  - Los datos históricos están disponibles dentro de la misma transacción
+  - Más flexible para la lógica del contrato que podría necesitar historia reciente
+
+- Contras:
+
+  - Costo de gas ligeramente más alto que usar solo eventos
+  - El almacenamiento temporal se borra después de cada transacción, por lo que los datos históricos no son accesibles de manera permanente en la cadena
+
+### 4 Uso de estructuras de datos eficientes
+
+Las matrices asignadas en el heap son lentas y costosas. Prefiere matrices de tamaño fijo o `soroban_sdk::vec!`. Esto es crucial para matrices grandes, ya que superar el tamaño actual de memoria lineal (un múltiplo de 64KB) desencadena `wasm32::memory_grow`, lo cual es altamente intensivo computacionalmente.
+
+##### Ejemplo (Matriz Asignada en Heap) ❎
+
+```rust
+let mut v1 = alloc::vec![];
+```
+
+##### Ejemplo (Matriz de Tamaño Fijo) ✅
+
+```rust
+let mut v2 = [0; 100];
+```
+
+Almacenar muchos elementos en un `Vec` puede ser ineficiente debido a la complejidad de tiempo lineal de las comprobaciones de membresía. Sin embargo, hay algunas alternativas para tener un `Vec` engorroso:
+
+##### Ejemplo (Almacenamiento de Datos Ineficiente) ❎
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
+
+#[derive(Clone)]
+pub struct PlayerMove {
+    player: Address,
+    move_type: Symbol,
+}
+
+#[derive(Clone)]
+pub struct PlayerAchievement {
+    player: Address,
+    achievement: Symbol,
+}
+
+#[contract]
+pub struct NonOptimalGameContract;
+
+#[contractimpl]
+impl NonOptimalGameContract {
+    // Function to record a move for a specific player
+    pub fn record_move(env: Env, player: Address, move_type: Symbol) {
+        let mut all_moves: Vec<PlayerMove> = env.storage().persistent().get("all_moves").unwrap_or_default();
+        all_moves.push(PlayerMove { player: player.clone(), move_type });
+        env.storage().persistent().set("all_moves", &all_moves);
+    }
+
+    // Function to get moves for a specific player
+    pub fn get_moves(env: Env, player: Address) -> Vec<Symbol> {
+        let all_moves: Vec<PlayerMove> = env.storage().persistent().get("all_moves").unwrap_or_default();
+        all_moves
+            .iter()
+            .filter(|m| m.player == player)
+            .map(|m| m.move_type.clone())
+            .collect()
+    }
+
+    // Function to unlock an achievement for a specific player
+    pub fn unlock_achievement(env: Env, player: Address, achievement: Symbol) {
+        let mut all_achievements: Vec<PlayerAchievement> = env.storage().persistent().get("all_achievements").unwrap_or_default();
+        if !all_achievements.iter().any(|a| a.player == player && a.achievement == achievement) {
+            all_achievements.push(PlayerAchievement { player: player.clone(), achievement });
+            env.storage().persistent().set("all_achievements", &all_achievements);
+        }
+    }
+
+    // Function to get achievements for a specific player
+    pub fn get_achievements(env: Env, player: Address) -> Vec<Symbol> {
+        let all_achievements: Vec<PlayerAchievement> = env.storage().persistent().get("all_achievements").unwrap_or_default();
+        all_achievements
+            .iter()
+            .filter(|a| a.player == player)
+            .map(|a| a.achievement.clone())
+            .collect()
+    }
+}
+```
+
+:::danger Esta versión no óptima tiene varias ineficiencias:
+
+- Un solo Vec para todos los Datos:
+
+  Todos los movimientos y logros se almacenan en Vecs únicos (all_moves y all_achievements), independientemente del jugador. Esto significa que cada operación requiere cargar y guardar el conjunto de datos completo, lo que se vuelve cada vez más costoso a medida que aumenta el número de entradas.
+
+- Operaciones de Búsqueda Lineal:
+
+  Recuperar movimientos o logros para un jugador específico requiere iterar a través del Vec completo, lo cual tiene una complejidad de tiempo O(n). Esto se vuelve muy lento y consume mucho gas a medida que aumenta el número de entradas.
+
+- Almacenamiento de Datos Redundante:
+
+  La dirección del jugador se almacena repetidamente para cada movimiento y logro, lo que lleva a una duplicación innecesaria de datos.
+
+- Comprobación Ineficiente de Logros:
+
+  Antes de agregar un nuevo logro, el código itera a través de todos los logros para verificar duplicados, lo que es una operación O(n).
+
+- Ineficiencia de Gas:
+
+  Cada operación (agregar un movimiento, desbloquear un logro, recuperar datos) requiere cargar y guardar todo el conjunto de datos, lo cual es extremadamente ineficiente en gas.
+
+- Problemas de Escalabilidad:
+
+  A medida que aumenta el número de jugadores y sus acciones, el rendimiento de este contrato se degradará significativamente.
+
+- Falta de Separación de Datos:
+
+  Los movimientos y logros no están claramente separados en la estructura de almacenamiento, lo que dificulta la gestión y potencialmente lleva a confusiones en escenarios más complejos.
+
+:::
+
+##### Alternativa: usar vecs con clave ✅
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
+
+#[derive(Clone)]
+pub enum DataKey {
+    Moves(Address),
+    Achievements(Address),
+}
+
+#[contract]
+pub struct GameContract;
+
+#[contractimpl]
+impl GameContract {
+    // Function to record a move for a specific player
+    pub fn record_move(env: Env, player: Address, move_type: Symbol) {
+        let key = DataKey::Moves(player.clone());
+        let mut moves: Vec<Symbol> = env.storage().persistent().get(&key).unwrap_or_default();
+        moves.push(move_type.clone());
+        env.storage().persistent().set(&key, &moves);
+    }
+
+    // Function to get moves for a specific player
+    pub fn get_moves(env: Env, player: Address) -> Vec<Symbol> {
+        let key = DataKey::Moves(player);
+        env.storage().persistent().get(&key).unwrap_or_default()
+    }
+
+    // Function to unlock an achievement for a specific player
+    pub fn unlock_achievement(env: Env, player: Address, achievement: Symbol) {
+        let key = DataKey::Achievements(player.clone());
+        let mut achievements: Vec<Symbol> = env.storage().persistent().get(&key).unwrap_or_default();
+        if !achievements.contains(&achievement) {
+            achievements.push(achievement);
+            env.storage().persistent().set(&key, &achievements);
+        }
+    }
+
+    // Function to get achievements for a specific player
+    pub fn get_achievements(env: Env, player: Address) -> Vec<Symbol> {
+        let key = DataKey::Achievements(player);
+        env.storage().persistent().get(&key).unwrap_or_default()
+    }
+}
+```
+
+:::tip
+
+Aquí tienes un desglose de las optimizaciones y beneficios:
+
+- Almacenamiento Específico de Dirección:
+
+  Los movimientos y logros de cada jugador se almacenan por separado, lo que permite una recuperación eficiente de datos específicos del jugador. La enumeración DataKey proporciona una estructura clara para organizar diferentes tipos de datos asociados con las direcciones.
+
+- Acceso Eficiente a los Datos:
+
+  Al usar la enumeración como clave, podemos acceder directamente a los datos de un jugador específico sin necesidad de buscar a través de una estructura de datos más grande. Este enfoque es particularmente eficiente cuando necesitas acceder o actualizar datos con frecuencia para jugadores individuales.
+
+- Estructura de Datos Flexible:
+
+  El uso de `Vec<Symbol>` para movimientos y logros permite un número ilimitado de entradas para cada jugador. Esta estructura es adecuada para almacenar listas ordenadas de movimientos o logros únicos.
+
+- Eficiencia de Gas:
+
+  Al almacenar datos por separado para cada jugador, evitamos tener que cargar y modificar una gran estructura de datos integral para cada operación. Esto puede llevar a ahorros significativos en gas, especialmente a medida que aumenta el número de jugadores y la cantidad de datos.
+
+- Separación Clara de Preocupaciones:
+
+  La enumeración separa claramente diferentes tipos de datos (movimientos vs. logros), haciendo que el código sea más legible y mantenible.
+
+- Fácil Ampliación:
+
+  Si necesitas agregar nuevos tipos de datos asociados con jugadores, puedes ampliar fácilmente la enumeración DataKey sin cambiar la estructura existente.
+
+:::
+
+### 5 Uso de mecanismos `env.storage` apropiados
+
+Hay tres tipos de mecanismos de almacenamiento en Stellar:
+
+#### [`env.storage().persistent()`](https://docs.rs/soroban-sdk/latest/soroban_sdk/storage/struct.Storage.html#method.persistent)
+
+El almacenamiento persistente se utiliza para almacenar datos que deben conservarse a través de las invocaciones de contratos. Los datos almacenados en el almacenamiento persistente se mantienen entre las invocaciones del contrato y son accesibles para todas las funciones del contrato. El almacenamiento para datos aquí está destinado a permanecer en el ledger indefinidamente hasta que se elimine explícitamente. Las entradas caducadas pueden restaurarse pero no pueden recrearse.
+
+#### Casos de uso
+
+- Datos que requieren persistencia a largo plazo, como saldos de tokens y propiedades de usuarios.
+- Cuando los datos necesitan almacenarse indefinidamente y deben sobrevivir incluso si caducan y necesitan restauración.
+- Ejemplos: Saldos de tokens, propiedades de usuarios.
+
+#### Costo
+
+- Costo más alto en comparación con otros debido a la persistencia a largo plazo.
+
+#### Duración de vida
+
+- Los datos se comportan como si estuvieran almacenados para siempre, pero pueden caducar y ser restaurados.
+
+### [`env.storage().temporary()`](https://docs.rs/soroban-sdk/latest/soroban_sdk/storage/struct.Storage.html#method.temporary)
+
+El almacenamiento temporal se utiliza para almacenar datos que solo se necesitan durante la invocación actual del contrato. Los datos almacenados en almacenamiento temporal se borran al final de la invocación del contrato y no son accesibles para otras funciones del contrato. El almacenamiento para datos aquí se hace con una vida útil limitada en el ledger. Las entradas se eliminarán después de que termine su vida útil y pueden recrearse con diferentes valores.
+
+#### Casos de uso
+
+- Datos que solo necesitan existir temporalmente, como datos de oráculo, saldos reclamables y ofertas.
+- Cuando los datos solo necesitan existir por un tiempo limitado y pueden recrearse si es necesario.
+- Ejemplos: Datos de oráculo, saldos reclamables, ofertas.
+
+#### Costo
+
+- Más barato que el almacenamiento persistente debido a la vida útil limitada de los datos. (Costo más barato).
+
+#### Duración de vida
+
+- Los datos existen por un período predefinido y luego se eliminan.
+
+### [`env.storage().instance()`](https://docs.rs/soroban-sdk/latest/soroban_sdk/storage/struct.Storage.html#method.instance)
+
+El almacenamiento aquí se realiza para una pequeña cantidad de datos persistentes estrechamente relacionados con la instancia del contrato. Los datos se cargan desde el ledger cada vez que se carga la instancia del contrato y está limitado por el tamaño de entrada del ledger, que típicamente es del orden de 100 KB serializados.
+
+#### Casos de uso
+
+- Pequeños datos directamente asociados al contrato, como detalles de administrador, configuraciones y tokens. Para datos pequeños, que se utilizan con frecuencia y son parte integral de la instancia del contrato y se benefician de ser cargados cada vez que se utiliza el contrato.
+- Ejemplos: Detalles del administrador del contrato, configuraciones, tokens operados por el contrato.
+
+#### Costo
+
+- Probablemente más barato que almacenar datos por separado en almacenamiento persistente.
+
+#### Duración de vida
+
+- Propiedades de duración de vida similares a las del almacenamiento persistente, pero no aparecen en la huella del ledger.
+
+### 5 Tamaño del contrato
+
+El tamaño del binario `wasm` de tu contrato inteligente influye en el costo de ejecutar tu contrato inteligente en la red Stellar. Los binarios `wasm` más grandes requieren más potencia de procesamiento y memoria para ejecutarse, lo que lleva a costos de gas más altos. Los binarios más grandes también cuestan más gas para desplegar e invocar.
+
+Para optimizar el tamaño de tu binario `wasm`, puedes:
+
+- Eliminar código innecesario
+- Minimizar el uso de dependencias externas
+- Usar herramientas integradas para optimizar el tamaño de tu binario `wasm`
+
+## Otros consejos para optimizar el costo del contrato inteligente:
+
+### 1 Uso de herramientas integradas
+
+Una forma de optimizar el tamaño de tu binario `wasm` es usar el comando `soroban optimize`. Este comando del [Stellar CLI](../../../tools/cli/stellar-cli.mdx) optimizará el tamaño de tu binario `wasm` eliminando código innecesario y reduciendo el tamaño del binario.
+
+```bash
+stellar contract optimize \
+  --wasm target/wasm32v1-none/release/project.wasm
+```
+
+Otra forma de optimizar tu contrato inteligente es usar el comando `stellar contract invoke` con los flags `--cost` y `--sim-only`. Este comando te proporcionará un desglose detallado del costo de ejecutar tu contrato inteligente en la red Stellar.
+
+```bash
+stellar contract invoke \
+  --id CC6MWZMG2JPQEENRL7XVICAY5RNMHJ2OORMUHXKRDID6MNGXSSOJZLLF \
+  --source-account alice \
+  --network testnet \
+  --cost \
+  --sim-only \
+  -- \
+  increment
+```
+
+Referencia: [Guías de Stellar CLI](../cli/README.mdx).
+
+### 2 Revisión manual del código
+
+Realiza una revisión manual de tu contrato inteligente para identificar áreas donde puedes optimizar el código. Busca bucles redundantes, condiciones y operaciones de almacenamiento que pueden minimizarse o eliminarse.
+
+### 3 Pruebas unitarias con mediciones de gas
+
+Usa pruebas unitarias para medir el costo de gas de las funciones de tu contrato inteligente. Esto te ayudará a identificar funciones que consumen mucho gas y optimizarlas en consecuencia.
+
+Además, usar el método de ayuda rpc [simulateTransaction](/docs/data/apis/rpc/api-reference/methods/simulateTransaction) puede darte una idea del costo de gas de las funciones de tu contrato.
+
+### 4 Herramientas de análisis estático
+
+Herramientas como [Clippy](https://doc.rust-lang.org/clippy/) (parte del compilador de Rust) pueden identificar posibles incidencias de rendimiento durante la etapa de compilación. Estas herramientas pueden advertir sobre:
+
+- Asignaciones innecesarias
+- Código redundante
+
+### 5. Reconsiderando ubicaciones de almacenamiento
+
+- #### Variables de estado:
+
+  - Costo: Las variables de estado se almacenan directamente en el almacenamiento de la blockchain. El costo está influenciado principalmente por la cantidad de datos almacenados (medida en bytes) y la frecuencia de las operaciones de lectura y escritura.
+  - Consideraciones: Escribir datos en variables de estado generalmente incurre en mayores costos de gas en comparación con la lectura de datos. Estructuras de datos complejas (por ejemplo, matrices, asignaciones) o grandes cantidades de datos incrementan los costos de almacenamiento y el consumo de gas. Stellar cobra tarifas de gas por cada byte de datos almacenados y actualizados, lo que hace que la gestión eficiente de datos sea crucial para la optimización de costos.
+
+- #### Registros de eventos:
+
+  - Costo: Emitir eventos en contratos de Rust no incurre en costos de almacenamiento directos ya que los eventos no se almacenan permanentemente en la blockchain. En cambio, se incluyen en los registros de transacciones.
+  - Consideraciones: Emitir eventos consume gas, principalmente debido a los recursos computacionales necesarios para ejecutar la emisión de eventos y la generación de registros. Los eventos son útiles para aplicaciones fuera de la blockchain y arquitecturas impulsadas por eventos, pero no contribuyen directamente a los costos de almacenamiento en la blockchain.
+
+- #### Fuentes de datos externas:
+
+  - Costo: Interactuar con fuentes de datos externas como oráculos implica tarifas de transacción para la recuperación y procesamiento de datos.
+  - Consideraciones: Las llamadas a oráculos incurren en costos de gas para la ejecución del contrato, que pueden variar dependiendo de la complejidad y frecuencia de la recuperación de datos. Los desarrolladores de contratos deben considerar los límites de gas y optimizar las interacciones con oráculos para minimizar costos mientras aseguran una integración de datos confiable.
+
+- #### Datos inmutables y constantes:
+
+  - Costo: Las constantes y variables inmutables incurren en costos de almacenamiento despreciables ya que normalmente se almacenan como parte del bytecode o metadatos del contrato.
+  - Consideraciones: Las constantes y los datos inmutables son cruciales para la configuración y parametrización del contrato, pero no afectan significativamente los costos de transacción o almacenamiento. Se definen durante la implementación del contrato y no cambian durante la ejecución del contrato, evitando costos adicionales de gas por actualizaciones de almacenamiento.
+
+- #### Almacenamiento fuera de la cadena e IPFS:
+  - Costo: Almacenar datos fuera de la cadena utilizando soluciones como IPFS evita costos de almacenamiento directos en la blockchain, pero incurre en costos por recuperación de datos y uso de la red IPFS.
+  - Consideraciones: Los contratos almacenan solo el hash o referencia a los datos fuera de la cadena en la cadena, minimizando los costos de almacenamiento en la cadena. Pueden aplicarse costos de gas al recuperar y procesar datos fuera de la cadena, dependiendo de la complejidad y frecuencia de acceso. Las soluciones de almacenamiento fuera de la cadena ofrecen escalabilidad y flexibilidad, pero requieren una cuidadosa consideración de las tarifas de red y la disponibilidad de datos.

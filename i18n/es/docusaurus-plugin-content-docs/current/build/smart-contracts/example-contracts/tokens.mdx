@@ -1,0 +1,906 @@
+---
+title: Tokens
+description: Escribir un contrato de token compatible con CAP-46-6.
+sidebar_position: 140
+---
+
+<head>
+  <title>Escribir un contrato de token compatible con CAP-46-6</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Escribir un contrato de token compatible con CAP-46-6"
+  />
+  <meta
+    property="og:description"
+    content="Utiliza la Interfaz de Token para construir un token de contrato inteligente que tenga una interfaz uniforme y predecible para pagos, transferencias de saldo, consultas de saldo, y más."
+  />
+</head>
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import { getPlatform } from "@site/src/helpers/getPlatform";
+
+El [ejemplo de token] demuestra cómo escribir un contrato de token que implementa la [Interfaz de Token].
+
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
+[ejemplo de token]: https://github.com/stellar/soroban-examples/tree/v22.0.1/token
+[interfaz de token]: ../../../tokens/token-interface.mdx
+
+## Ejecutar el Ejemplo
+
+Primero pasa por el proceso de [Configuración] para tener tu entorno de desarrollo configurado, luego clona la etiqueta `v22.0.1` del repositorio `soroban-examples`:
+
+```sh
+git clone -b v22.0.1 https://github.com/stellar/soroban-examples
+```
+
+O, omite la configuración del entorno de desarrollo y abre este ejemplo en [GitHub Codespaces][open-in-github-codespaces] o [Code Anywhere][open-in-code-anywhere].
+
+Para ejecutar las pruebas del ejemplo, navega al directorio `hello_world`, y usa `cargo test`.
+
+```sh
+cd token
+cargo test
+```
+
+Deberías ver la salida:
+
+```sh
+running 6 tests
+test test::decimal_is_over_eighteen - should panic ... ok
+test test::transfer_insufficient_balance - should panic ... ok
+test test::test_zero_allowance ... ok
+test test::transfer_from_insufficient_allowance - should panic ... ok
+test test::test_burn ... ok
+test test::test ... ok
+```
+
+[configuración]: ../getting-started/setup.mdx
+
+## Código
+
+:::note
+
+El código fuente para este [ejemplo de token] está dividido en varios módulos más pequeños. Este es un patrón de diseño común para contratos inteligentes más complejos.
+
+:::
+
+<Tabs>
+<TabItem value="lib" default>
+
+```rust title="token/src/lib.rs"
+#![no_std]
+
+mod admin;
+mod allowance;
+mod balance;
+mod contract;
+mod metadata;
+mod storage_types;
+mod test;
+
+pub use crate::contract::TokenClient;
+```
+
+</TabItem>
+<TabItem value="admin">
+
+```rust title="token/src/admin.rs"
+use soroban_sdk::{Address, Env};
+
+use crate::storage_types::DataKey;
+
+pub fn read_administrator(e: &Env) -> Address {
+    let key = DataKey::Admin;
+    e.storage().instance().get(&key).unwrap()
+}
+
+pub fn write_administrator(e: &Env, id: &Address) {
+    let key = DataKey::Admin;
+    e.storage().instance().set(&key, id);
+}
+```
+
+</TabItem>
+<TabItem value="allowance">
+
+```rust title="token/src/allowance.rs"
+use crate::storage_types::{AllowanceDataKey, AllowanceValue, DataKey};
+use soroban_sdk::{Address, Env};
+
+pub fn read_allowance(e: &Env, from: Address, spender: Address) -> AllowanceValue {
+    let key = DataKey::Allowance(AllowanceDataKey { from, spender });
+    if let Some(allowance) = e.storage().temporary().get::<_, AllowanceValue>(&key) {
+        if allowance.expiration_ledger < e.ledger().sequence() {
+            AllowanceValue {
+                amount: 0,
+                expiration_ledger: allowance.expiration_ledger,
+            }
+        } else {
+            allowance
+        }
+    } else {
+        AllowanceValue {
+            amount: 0,
+            expiration_ledger: 0,
+        }
+    }
+}
+
+pub fn write_allowance(
+    e: &Env,
+    from: Address,
+    spender: Address,
+    amount: i128,
+    expiration_ledger: u32,
+) {
+    let allowance = AllowanceValue {
+        amount,
+        expiration_ledger,
+    };
+
+    if amount > 0 && expiration_ledger < e.ledger().sequence() {
+        panic!("expiration_ledger is less than ledger seq when amount > 0")
+    }
+
+    let key = DataKey::Allowance(AllowanceDataKey { from, spender });
+    e.storage().temporary().set(&key.clone(), &allowance);
+
+    if amount > 0 {
+        e.storage().temporary().bump(
+            &key,
+            expiration_ledger
+                .checked_sub(e.ledger().sequence())
+                .unwrap(),
+        )
+    }
+}
+
+pub fn spend_allowance(e: &Env, from: Address, spender: Address, amount: i128) {
+    let allowance = read_allowance(e, from.clone(), spender.clone());
+    if allowance.amount < amount {
+        panic!("insufficient allowance");
+    }
+    write_allowance(
+        e,
+        from,
+        spender,
+        allowance.amount - amount,
+        allowance.expiration_ledger,
+    );
+}
+```
+
+</TabItem>
+<TabItem value="balance">
+
+```rust title="token/src/balance.rs"
+use crate::storage_types::{DataKey, BALANCE_BUMP_AMOUNT, BALANCE_LIFETIME_THRESHOLD};
+use soroban_sdk::{Address, Env};
+
+pub fn read_balance(e: &Env, addr: Address) -> i128 {
+    let key = DataKey::Balance(addr);
+    if let Some(balance) = e.storage().persistent().get::<DataKey, i128>(&key) {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, BALANCE_LIFETIME_THRESHOLD, BALANCE_BUMP_AMOUNT);
+        balance
+    } else {
+        0
+    }
+}
+
+fn write_balance(e: &Env, addr: Address, amount: i128) {
+    let key = DataKey::Balance(addr);
+    e.storage().persistent().set(&key, &amount);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, BALANCE_LIFETIME_THRESHOLD, BALANCE_BUMP_AMOUNT);
+}
+
+pub fn receive_balance(e: &Env, addr: Address, amount: i128) {
+    let balance = read_balance(e, addr.clone());
+    write_balance(e, addr, balance + amount);
+}
+
+pub fn spend_balance(e: &Env, addr: Address, amount: i128) {
+    let balance = read_balance(e, addr.clone());
+    if balance < amount {
+        panic!("insufficient balance");
+    }
+    write_balance(e, addr, balance - amount);
+}
+```
+
+</TabItem>
+<TabItem value="contract">
+
+```rust title="token/src/contract.rs"
+//! This contract demonstrates a sample implementation of the Soroban token
+//! interface.
+use crate::admin::{read_administrator, write_administrator};
+use crate::allowance::{read_allowance, spend_allowance, write_allowance};
+use crate::balance::{read_balance, receive_balance, spend_balance};
+use crate::metadata::{read_decimal, read_name, read_symbol, write_metadata};
+#[cfg(test)]
+use crate::storage_types::{AllowanceDataKey, AllowanceValue, DataKey};
+use crate::storage_types::{INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD};
+use soroban_sdk::token::{self, Interface as _};
+use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use soroban_token_sdk::metadata::TokenMetadata;
+use soroban_token_sdk::TokenUtils;
+
+fn check_nonnegative_amount(amount: i128) {
+    if amount < 0 {
+        panic!("negative amount is not allowed: {}", amount)
+    }
+}
+
+#[contract]
+pub struct Token;
+
+#[contractimpl]
+impl Token {
+    pub fn __constructor(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
+        if decimal > 18 {
+            panic!("Decimal must not be greater than 18");
+        }
+        write_administrator(&e, &admin);
+        write_metadata(
+            &e,
+            TokenMetadata {
+                decimal,
+                name,
+                symbol,
+            },
+        )
+    }
+
+    pub fn mint(e: Env, to: Address, amount: i128) {
+        check_nonnegative_amount(amount);
+        let admin = read_administrator(&e);
+        admin.require_auth();
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        receive_balance(&e, to.clone(), amount);
+        TokenUtils::new(&e).events().mint(admin, to, amount);
+    }
+
+    pub fn set_admin(e: Env, new_admin: Address) {
+        let admin = read_administrator(&e);
+        admin.require_auth();
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        write_administrator(&e, &new_admin);
+        TokenUtils::new(&e).events().set_admin(admin, new_admin);
+    }
+
+    #[cfg(test)]
+    pub fn get_allowance(e: Env, from: Address, spender: Address) -> Option<AllowanceValue> {
+        let key = DataKey::Allowance(AllowanceDataKey { from, spender });
+        let allowance = e.storage().temporary().get::<_, AllowanceValue>(&key);
+        allowance
+    }
+}
+
+#[contractimpl]
+impl token::Interface for Token {
+    fn allowance(e: Env, from: Address, spender: Address) -> i128 {
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        read_allowance(&e, from, spender).amount
+    }
+
+    fn approve(e: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32) {
+        from.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        write_allowance(&e, from.clone(), spender.clone(), amount, expiration_ledger);
+        TokenUtils::new(&e)
+            .events()
+            .approve(from, spender, amount, expiration_ledger);
+    }
+
+    fn balance(e: Env, id: Address) -> i128 {
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        read_balance(&e, id)
+    }
+
+    fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
+        TokenUtils::new(&e).events().transfer(from, to, amount);
+    }
+
+    fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        spender.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        spend_allowance(&e, from.clone(), spender, amount);
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
+        TokenUtils::new(&e).events().transfer(from, to, amount)
+    }
+
+    fn burn(e: Env, from: Address, amount: i128) {
+        from.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        spend_balance(&e, from.clone(), amount);
+        TokenUtils::new(&e).events().burn(from, amount);
+    }
+
+    fn burn_from(e: Env, spender: Address, from: Address, amount: i128) {
+        spender.require_auth();
+
+        check_nonnegative_amount(amount);
+
+        e.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
+        spend_allowance(&e, from.clone(), spender, amount);
+        spend_balance(&e, from.clone(), amount);
+        TokenUtils::new(&e).events().burn(from, amount)
+    }
+
+    fn decimals(e: Env) -> u32 {
+        read_decimal(&e)
+    }
+
+    fn name(e: Env) -> String {
+        read_name(&e)
+    }
+
+    fn symbol(e: Env) -> String {
+        read_symbol(&e)
+    }
+}
+```
+
+</TabItem>
+<TabItem value="metadata">
+
+```rust title="token/src/metadata.rs"
+use soroban_sdk::{Bytes, Env};
+use soroban_token_sdk::{TokenMetadata, TokenUtils};
+
+pub fn read_decimal(e: &Env) -> u32 {
+    let util = TokenUtils::new(e);
+    util.get_metadata_unchecked().unwrap().decimal
+}
+
+pub fn read_name(e: &Env) -> Bytes {
+    let util = TokenUtils::new(e);
+    util.get_metadata_unchecked().unwrap().name
+}
+
+pub fn read_symbol(e: &Env) -> Bytes {
+    let util = TokenUtils::new(e);
+    util.get_metadata_unchecked().unwrap().symbol
+}
+
+pub fn write_metadata(e: &Env, metadata: TokenMetadata) {
+    let util = TokenUtils::new(e);
+    util.set_metadata(&metadata);
+}
+```
+
+</TabItem>
+<TabItem value="storage_types">
+
+```rust title="token/src/storage_types.rs"
+use soroban_sdk::{contracttype, Address};
+
+#[derive(Clone)]
+#[contracttype]
+pub struct AllowanceDataKey {
+    pub from: Address,
+    pub spender: Address,
+}
+
+#[contracttype]
+pub struct AllowanceValue {
+    pub amount: i128,
+    pub expiration_ledger: u32,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Allowance(AllowanceDataKey),
+    Balance(Address),
+    Nonce(Address),
+    State(Address),
+    Admin,
+}
+```
+
+</TabItem>
+</Tabs>
+
+Ref: https://github.com/stellar/soroban-examples/tree/v22.0.1/token
+
+## Cómo Funciona
+
+Los tokens creados en una plataforma de contrato inteligente pueden tomar muchas formas diferentes, incluir una variedad de funcionalidades diferentes, y satisfacer necesidades o casos de uso muy diferentes. Si bien cada token puede cumplir con un nicho único, hay algunas características "normales" que casi todos los tokens necesitarán utilizar (por ejemplo, pagos, transferencias, consultas de saldo, etc.). Con el fin de minimizar la repetición y agilizar las implementaciones de tokens, Soroban implementa la [Interfaz de Token], que proporciona una interfaz uniforme y predecible para desarrolladores y usuarios.
+
+Crear un contrato compatible con Soroban a partir de un activo Stellar existente es muy fácil, requiere desplegar el [Contrato de Activo Stellar] incorporado.
+
+Este contrato de ejemplo, sin embargo, demuestra cómo podría construirse un token de contrato inteligente que no aprovecha el Contrato de Activo Stellar, pero que aún satisface la Interfaz de Token de uso común para maximizar la interoperabilidad.
+
+[contrato de activo stellar]: ../../../tokens/stellar-asset-contract.mdx
+
+### Separación de Funcionalidad
+
+Probablemente hayas notado que este contrato de ejemplo está dividido en módulos discretos, cada uno responsable de un conjunto silo de funcionalidades. Esta práctica común ayuda a organizar el código y hacerlo más mantenible.
+
+Por ejemplo, la mayor parte de la lógica del token existe en el módulo `contract.rs`. Funciones como `mint`, `burn`, `transfer`, etc. están escritas y programadas en ese archivo. La Interfaz de Token describe cómo algunas de estas funciones deberían emitir eventos cuando ocurren. Sin embargo, mantener toda esa lógica de emisión de eventos agrupada con el resto del código del contrato podría dificultar el seguimiento de lo que está sucediendo en el código, y esa confusión podría finalmente llevar a errores.
+
+En cambio, tenemos un módulo separado `soroban_token_sdk::TokenUtils` que se encarga de todo el dolor de cabeza de emitir eventos cuando se ejecutan otras funciones. Aquí está el evento emitido cuando se acuña un token:
+
+```rust
+TokenUtils::new(&e).events().mint(admin, to, amount);
+```
+
+Aunque este es un ejemplo simple, construir el contrato de esta manera deja muy claro al desarrollador lo que está sucediendo y dónde. Esta función se utiliza luego por el módulo `contract.rs` cada vez que se invoca la función `mint`:
+
+```rust
+// earlier in `contract.rs`
+use crate::event;
+
+fn mint(e: Env, to: Address, amount: i128) {
+    check_nonnegative_amount(amount);
+    let admin = read_administrator(&e);
+    admin.require_auth();
+    receive_balance(&e, to.clone(), amount);
+    // highlight-next-line
+    TokenUtils::new(&e).events().mint(admin, to, amount);
+}
+```
+
+Esta misma convención se utiliza para separar del código del "contrato principal" la metadata para el token, las definiciones de tipos de almacenamiento, etc.
+
+### Interfaz Estandarizada, Comportamiento Personalizado
+
+Este contrato de ejemplo sigue la [Interfaz de Token] estandarizada, implementando todas las mismas funciones que el [Contrato de Activo Stellar]. Esto le da a las billeteras, usuarios, desarrolladores, etc. una interfaz predecible para interactuar con el token. Aún cuando estamos implementando la misma _interfaz_ de funciones, eso no significa que tengamos que implementar el mismo _comportamiento_ dentro de esas funciones. Si bien este contrato de ejemplo no modifica realmente ninguna de las funciones que estarían presentes en una instancia desplegada del Contrato de Activo Stellar, esa posibilidad sigue abierta para el desarrollador del contrato.
+
+Por ejemplo, quizás tengas un proyecto NFT, y el artista quiere que se pague una pequeña regalía cada vez que su token cambia de manos:
+
+```rust
+// This is mainly the `transfer` function from `src/contract.rs`
+fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+    from.require_auth();
+
+    check_nonnegative_amount(amount);
+    spend_balance(&e, from.clone(), amount);
+    // highlight-start
+    // We calculate some new amounts for payment and royalty
+    let payment = (amount * 997) / 1000;
+    let royalty = amount - payment
+    receive_balance(&e, artist.clone(), royalty);
+    // highlight-end
+    receive_balance(&e, to.clone(), payment);
+    event::transfer(&e, from, to, amount);
+}
+```
+
+La interfaz `transfer` sigue en uso, y sigue siendo la misma que otros tokens, pero hemos personalizado el comportamiento para abordar una necesidad específica. Otro caso de uso podría ser un token controlado estrictamente que requiere autenticación de un administrador antes de que cualquier función de `transfer`, `allowance`, etc. pueda ser invocada.
+
+:::tip
+
+Por supuesto, querrás que tu token se comporte de manera _intuitiva_ y _transparente_. Si un usuario está invocando un `transfer`, esperará que los tokens se transfieran. Si un emisor de activos necesita invocar un `clawback`, probablemente _requerirá_ que se produzca el comportamiento adecuado.
+
+:::
+
+## Pruebas
+
+Abre el archivo `token/src/test.rs` para seguir.
+
+```rust title="token/src/test.rs"
+#![cfg(test)]
+extern crate std;
+
+use crate::{contract::Token, TokenClient};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
+    Address, Env, FromVal, IntoVal, String, Symbol,
+};
+
+fn create_token<'a>(e: &Env, admin: &Address) -> TokenClient<'a> {
+    let token_contract = e.register(
+        Token,
+        (
+            admin,
+            7_u32,
+            String::from_val(e, &"name"),
+            String::from_val(e, &"symbol"),
+        ),
+    );
+    TokenClient::new(e, &token_contract)
+}
+
+#[test]
+fn test() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin1 = Address::generate(&e);
+    let admin2 = Address::generate(&e);
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let user3 = Address::generate(&e);
+    let token = create_token(&e, &admin1);
+
+    token.mint(&user1, &1000);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            admin1.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("mint"),
+                    (&user1, 1000_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.approve(&user2, &user3, &500, &200);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user2.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("approve"),
+                    (&user2, &user3, 500_i128, 200_u32).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.allowance(&user2, &user3), 500);
+
+    token.transfer(&user1, &user2, &600);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user1.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("transfer"),
+                    (&user1, &user2, 600_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.balance(&user1), 400);
+    assert_eq!(token.balance(&user2), 600);
+
+    token.transfer_from(&user3, &user2, &user1, &400);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user3.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    Symbol::new(&e, "transfer_from"),
+                    (&user3, &user2, &user1, 400_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.balance(&user1), 800);
+    assert_eq!(token.balance(&user2), 200);
+
+    token.transfer(&user1, &user3, &300);
+    assert_eq!(token.balance(&user1), 500);
+    assert_eq!(token.balance(&user3), 300);
+
+    token.set_admin(&admin2);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            admin1.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("set_admin"),
+                    (&admin2,).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+
+    // Increase to 500
+    token.approve(&user2, &user3, &500, &200);
+    assert_eq!(token.allowance(&user2, &user3), 500);
+    token.approve(&user2, &user3, &0, &200);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user2.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("approve"),
+                    (&user2, &user3, 0_i128, 200_u32).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+    assert_eq!(token.allowance(&user2, &user3), 0);
+}
+
+#[test]
+fn test_burn() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::generate(&e);
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let token = create_token(&e, &admin);
+
+    token.mint(&user1, &1000);
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.approve(&user1, &user2, &500, &200);
+    assert_eq!(token.allowance(&user1, &user2), 500);
+
+    token.burn_from(&user2, &user1, &500);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user2.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("burn_from"),
+                    (&user2, &user1, 500_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+
+    assert_eq!(token.allowance(&user1, &user2), 0);
+    assert_eq!(token.balance(&user1), 500);
+    assert_eq!(token.balance(&user2), 0);
+
+    token.burn(&user1, &500);
+    assert_eq!(
+        e.auths(),
+        std::vec![(
+            user1.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    token.address.clone(),
+                    symbol_short!("burn"),
+                    (&user1, 500_i128).into_val(&e),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    );
+
+    assert_eq!(token.balance(&user1), 0);
+    assert_eq!(token.balance(&user2), 0);
+}
+
+#[test]
+#[should_panic(expected = "insufficient balance")]
+fn transfer_insufficient_balance() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::generate(&e);
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let token = create_token(&e, &admin);
+
+    token.mint(&user1, &1000);
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.transfer(&user1, &user2, &1001);
+}
+
+#[test]
+#[should_panic(expected = "insufficient allowance")]
+fn transfer_from_insufficient_allowance() {
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::generate(&e);
+    let user1 = Address::generate(&e);
+    let user2 = Address::generate(&e);
+    let user3 = Address::generate(&e);
+    let token = create_token(&e, &admin);
+
+    token.mint(&user1, &1000);
+    assert_eq!(token.balance(&user1), 1000);
+
+    token.approve(&user1, &user3, &100, &200);
+    assert_eq!(token.allowance(&user1, &user3), 100);
+
+    token.transfer_from(&user3, &user1, &user2, &101);
+}
+
+#[test]
+#[should_panic(expected = "Decimal must not be greater than 18")]
+fn decimal_is_over_eighteen() {
+    let e = Env::default();
+    let admin = Address::generate(&e);
+    let _ = TokenClient::new(
+        &e,
+        &e.register(
+            Token,
+            (
+                admin,
+                19_u32,
+                String::from_val(&e, &"name"),
+                String::from_val(&e, &"symbol"),
+            ),
+        ),
+    );
+}
+
+#[test]
+fn test_zero_allowance() {
+    // Here we test that transfer_from with a 0 amount does not create an empty allowance
+    let e = Env::default();
+    e.mock_all_auths();
+
+    let admin = Address::generate(&e);
+    let spender = Address::generate(&e);
+    let from = Address::generate(&e);
+    let token = create_token(&e, &admin);
+
+    token.transfer_from(&spender, &from, &spender, &0);
+    assert!(token.get_allowance(&from, &spender).is_none());
+}
+```
+
+El ejemplo de token implementa ocho pruebas diferentes para cubrir una amplia gama de posibles comportamientos y problemas. Sin embargo, todas las pruebas comienzan con algunas piezas comunes. En cualquier prueba, lo primero que siempre se requiere es un `Env`, que es el entorno Soroban en el que se ejecutará el contrato.
+
+```rust
+let e = Env::default();
+```
+
+Simulamos verificaciones de autenticación en las pruebas, lo que permite que las pruebas continúen como si todos los usuarios/direcciones/contratos/etc. se hubieran autenticado con éxito.
+
+```rust
+e.mock_all_auths();
+```
+
+También estamos usando una función `create_token` para facilitar la repetición de tener que registrar nuestro contrato de token. El cliente `token` resultante se utiliza para invocar el contrato durante cada prueba.
+
+```rust
+// It is defined at the top of the file...
+fn create_token<'a>(e: &Env, admin: &Address) -> TokenClient<'a> {
+    let token_contract = e.register(
+        Token,
+        (
+            admin,
+            7_u32,
+            String::from_val(e, &"name"),
+            String::from_val(e, &"symbol"),
+        ),
+    );
+    TokenClient::new(e, &token_contract)
+}
+
+// ... and it is used inside each test
+let token = create_token(&e, &admin);
+```
+
+Todas las funciones públicas dentro de un bloque `impl` que ha sido anotado con el atributo `#[contractimpl]` tendrán una función correspondiente en el tipo de cliente generado de la prueba. El tipo de cliente se llamará igual que el tipo de contrato con `Client` añadido. Por ejemplo, en nuestro contrato, el tipo de contrato se llama `Token`, y el tipo de cliente se llama `TokenClient`.
+
+Las seis pruebas creadas para este contrato de ejemplo prueban una variedad de condiciones posibles y aseguran que el contrato responda adecuadamente a cada una:
+
+- **`test()`** - Esta función hace uso de una variedad de las funciones de token incorporadas para probar la forma "predecible" en que un activo podría ser interactuado por un usuario, así como un administrador.
+- **`test_burn()`** - Esta función asegura que una invocación de `burn()` disminuye el saldo de un usuario, y que una invocación de `burn_from()` disminuye el saldo de un usuario así como consume la asignación de otro usuario de ese saldo.
+- **`test_zero_allowance()`** - Esta función se asegura de que un `transfer_from()` con un saldo cero no cree una asignación vacía.
+- **`transfer_insufficient_balance()`** - Esta función garantiza que una invocación de `transfer()` cause pánico cuando el usuario `from` no tiene el saldo suficiente para cubrirlo.
+- **`transfer_from_insufficient_allowance()`** - Esta función asegura que un usuario con una asignación existente para el saldo de otro no pueda hacer una `transfer()` mayor que esa asignación.
+- **`decimal_is_over_eighteen()`** - Esta función prueba que construir un token con una precisión decimal demasiado alta no tendrá éxito.
+
+## Construir el Contrato
+
+Para crear el contrato, utiliza el comando `stellar contract build`.
+
+```sh
+stellar contract build
+```
+
+Un archivo `.wasm` debería ser generado en el directorio `target`:
+
+```sh
+target/wasm32v1-none/release/soroban_token_contract.wasm
+```
+
+## Ejecutar el Contrato
+
+Si tienes [`stellar-cli`] instalado, puedes invocar funciones del contrato usando eso.
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+
+<TabItem value="unix" label="macOS/Linux">
+
+```sh
+stellar contract invoke \
+    --wasm target/wasm32v1-none/release/soroban_token_contract.wasm \
+    --id 1 \
+    -- \
+    balance \
+    --id GBZV3NONYSUDVTEHATQO4BCJVFXJO3XQU5K32X3XREVZKSMMOZFO4ZXR
+```
+
+</TabItem>
+
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+stellar contract invoke `
+    --wasm target/wasm32v1-none/release/soroban_token_contract.wasm `
+    --id 1 `
+    -- `
+    balance `
+    --id GBZV3NONYSUDVTEHATQO4BCJVFXJO3XQU5K32X3XREVZKSMMOZFO4ZXR
+```
+
+</TabItem>
+
+</Tabs>
+
+[`stellar-cli`]: ../../../tools/cli/stellar-cli.mdx

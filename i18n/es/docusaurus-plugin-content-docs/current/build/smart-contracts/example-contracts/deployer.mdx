@@ -1,0 +1,418 @@
+---
+title: Desplegador
+description: Desplegar e inicializar un contrato inteligente utilizando otro contrato inteligente.
+sidebar_position: 70
+---
+
+<head>
+  <title>
+    {`Desplegar e inicializar un contrato inteligente utilizando otro contrato inteligente.`}
+  </title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Desplegar e inicializar un contrato inteligente utilizando otro contrato inteligente."
+  />
+  <meta
+    property="og:description"
+    content="Desplegar un contrato inteligente en nombre de cualquier otra dirección utilizando el SDK `deployer()` e inicializarlo atómicamente."
+  />
+</head>
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import { getPlatform } from "@site/src/helpers/getPlatform";
+
+El [ejemplo del desplegador] demuestra cómo desplegar contratos utilizando un contrato.
+
+Aquí desplegamos un contrato en nombre de cualquier dirección e inicializarlo atómicamente.
+
+:::info
+
+En este ejemplo hay dos contratos que se compilan por separado, y las pruebas despliegan uno con el otro.
+
+:::
+
+[![Abrir en Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Abrir en Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
+[ejemplo del desplegador]: https://github.com/stellar/soroban-examples/tree/v22.0.1/deployer
+
+## Ejecutar el Ejemplo
+
+Primero pasa por el proceso de [Configuración] para configurar tu entorno de desarrollo, luego clona la etiqueta `v22.0.1` del repositorio `soroban-examples`:
+
+[configuración]: ../getting-started/setup.mdx
+
+```
+git clone -b v22.0.1 https://github.com/stellar/soroban-examples
+```
+
+O, omite la configuración del entorno de desarrollo y abre este ejemplo en [GitHub Codespaces][open-in-github-codespaces] o en [Code Anywhere][open-in-code-anywhere].
+
+Para ejecutar las pruebas del ejemplo, navega hasta el directorio `deployer/deployer`, y utiliza `cargo test`.
+
+```
+cd deployer/deployer
+cargo test
+```
+
+Deberías ver la salida:
+
+```
+running 1 test
+test test::test ... ok
+```
+
+## Código
+
+```rust title="deployer/deployer/src/lib.rs"
+#[contract]
+pub struct Deployer;
+
+const ADMIN: Symbol = symbol_short!("admin");
+
+#[contractimpl]
+impl Deployer {
+    /// Construct the deployer with a provided administrator.
+    pub fn __constructor(env: Env, admin: Address) {
+        env.storage().instance().set(&ADMIN, &admin);
+    }
+
+    /// Deploys the contract on behalf of the `Deployer` contract.
+    ///
+    /// This has to be authorized by the `Deployer`s administrator.
+    pub fn deploy(
+        env: Env,
+        wasm_hash: BytesN<32>,
+        salt: BytesN<32>,
+        constructor_args: Vec<Val>,
+    ) -> Address {
+        let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        admin.require_auth();
+
+        // Deploy the contract using the uploaded Wasm with given hash on behalf
+        // of the current contract.
+        // Note, that not deploying on behalf of the admin provides more
+        // consistent address space for the deployer contracts - the admin could
+        // change or it could be a completely separate contract with complex
+        // authorization rules, but all the contracts will still be deployed
+        // by the same `Deployer` contract address.
+        let deployed_address = env
+            .deployer()
+            .with_address(env.current_contract_address(), salt)
+            .deploy_v2(wasm_hash, constructor_args);
+
+        deployed_address
+    }
+}
+```
+
+Ref: https://github.com/stellar/soroban-examples/tree/v22.0.1/deployer
+
+## Cómo Funciona
+
+Los contratos pueden desplegar otros contratos utilizando el método `deployer()` del SDK.
+
+La dirección del contrato del contrato desplegado es determinista y se deriva de la dirección del desplegador. El despliegue también debe ser autorizado por el desplegador.
+
+Abre el archivo `deployer/deployer/src/lib.rs` para seguir adelante.
+
+### Carga de Wasm del Contrato
+
+Antes de desplegar las nuevas instancias de contrato, el código Wasm necesita ser cargado en la cadena. Luego se puede usar para desplegar un número arbitrario de instancias de contrato. La carga debería ocurrir típicamente fuera del contrato desplegador, ya que necesita suceder solo una vez. Sin embargo, es posible utilizar la función `env.deployer().upload_contract_wasm()` para cargar Wasm desde un contrato también.
+
+Consulta las [pruebas](#pruebas) para un ejemplo de carga del código del contrato de forma programática. Para la instalación en cadena real, consulta el [tutorial](../../smart-contracts/getting-started/deploy-to-testnet.mdx) de despliegue general.
+
+### Autorización
+
+:::info
+
+Para una introducción a la autorización de Soroban, consulta el [tutorial de autenticación](./auth.mdx).
+
+:::
+
+Comenzamos verificando la autorización del administrador del contrato de despliegue. Sin eso, cualquiera podría llamar a la función `deploy` con cualquier argumento, lo cual no siempre puede ser deseable (sin embargo, hay contratos donde está perfectamente bien tener despliegues sin permisos).
+
+```rust
+let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+admin.require_auth();
+```
+
+`deployer().with_address()` también realiza la autorización. Sin embargo, como desplegamos en nombre del contrato actual, se considera que la llamada ha sido autorizada implícitamente.
+
+Consulta más detalles sobre las cargas útiles de autorización reales en [tests](#tests).
+
+### `deployer()`
+
+La función SDK `deployer()` viene con varias utilidades relacionadas con el despliegue. Aquí usamos el tipo de 'deployer' más genérico, `with_address(env.current_contract_address(), salt)`.
+
+```rust
+let deployed_address = env
+    .deployer()
+    .with_address(env.current_contract_address(), salt)
+    .deploy_v2(wasm_hash, constructor_args);
+```
+
+`with_address()` acepta la dirección del `deployer` y el 'salt'. Ambos se utilizan para derivar la dirección del contrato desplegado de manera determinista. No es posible volver a desplegar un contrato que ya existe.
+
+:::tip
+
+La llamada `deployer().with_address(env.current_contract_address(), salt)` puede ser reemplazada por la función `deployer().with_current_contract(salt)` por brevedad.
+
+:::
+
+La función `deploy_v2()` realiza el despliegue real utilizando el `wasm_hash` proporcionado. La implementación del nuevo contrato se define por el archivo Wasm cargado bajo `wasm_hash`. `constructor_args` son los argumentos que se pasarán al constructor del contrato que se está desplegando. Si el contrato desplegado no tiene constructor, se debe pasar un vector de argumentos vacío.
+
+:::tip
+
+Solo el `wasm_hash` en sí se almacena por ID de contrato, lo que ahorra espacio en el ledger y tarifas.
+
+:::
+
+### Pruebas
+
+Abre el archivo `deployer/deployer/src/test.rs` para seguir adelante.
+
+#### Contrato a desplegar
+
+Importa el Wasm del contrato de prueba a desplegar.
+
+```rust
+// The contract that will be deployed by the deployer contract.
+mod contract {
+    soroban_sdk::contractimport!(
+        file =
+            "../contract/target/wasm32v1-none/release/soroban_deployer_test_contract.wasm"
+    );
+}
+```
+
+Ese contrato contiene el siguiente código que exporta dos funciones: una función constructor que toma un valor y una función getter para el valor almacenado.
+
+```rust title="deployer/contract/src/lib.rs"
+#[contract]
+pub struct Contract;
+
+const KEY: Symbol = symbol_short!("value");
+
+#[contractimpl]
+impl Contract {
+    pub fn __constructor(env: Env, value: u32) {
+        env.storage().instance().set(&KEY, &value);
+    }
+
+    pub fn value(env: Env) -> u32 {
+        env.storage().instance().get(&KEY).unwrap()
+    }
+}
+```
+
+Este contrato de prueba será utilizado al probar el desplegador. El contrato de despliegue desplegará el contrato de prueba e invocará su constructor.
+
+#### Código de prueba
+
+```rust
+#[test]
+fn test() {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let deployer_client = DeployerClient::new(&env, &env.register(Deployer, (&admin,)));
+
+    // Upload the Wasm to be deployed from the deployer contract.
+    // This can also be called from within a contract if needed.
+    let wasm_hash = env.deployer().upload_contract_wasm(contract::WASM);
+
+    // Deploy contract using deployer, and include an init function to call.
+    let salt = BytesN::from_array(&env, &[0; 32]);
+    let constructor_args: Vec<Val> = (5u32,).into_val(&env);
+    env.mock_all_auths();
+    let contract_id = deployer_client.deploy(&wasm_hash, &salt, &constructor_args);
+
+    // An authorization from the admin is required.
+    let expected_auth = AuthorizedInvocation {
+        // Top-level authorized function is `deploy` with all the arguments.
+        function: AuthorizedFunction::Contract((
+            deployer_client.address,
+            symbol_short!("deploy"),
+            (wasm_hash.clone(), salt, constructor_args).into_val(&env),
+        )),
+        sub_invocations: vec![],
+    };
+    assert_eq!(env.auths(), vec![(admin, expected_auth)]);
+
+    // Invoke contract to check that it is initialized.
+    let client = contract::Client::new(&env, &contract_id);
+    let sum = client.value();
+    assert_eq!(sum, 5);
+}
+```
+
+En cualquier prueba, lo primero que siempre se requiere es un `Env`, que es el entorno Soroban en el que se ejecutará el contrato.
+
+```rust
+let env = Env::default();
+```
+
+Registra el contrato desplegador con el entorno y crea un cliente para él. El contrato se inicializa con la dirección del administrador durante el registro.
+
+```rust
+let admin = Address::generate(&env);
+let deployer_client = DeployerClient::new(&env, &env.register(Deployer, (&admin,)));
+```
+
+Carga el código del contrato de prueba que hemos importado anteriormente a través de `contractimport!` y obtiene el hash del código Wasm subido.
+
+```rust
+let wasm_hash = env.deployer().upload_contract_wasm(contract::WASM);
+```
+
+El cliente se usa para invocar la función `deploy`. El contrato desplegará el contrato de prueba utilizando el hash de su código Wasm y pasará un único argumento `5u32` a su constructor. También necesitamos el `salt` para pasarlo en la llamada para generar un identificador único del contrato de salida.
+
+```rust
+let salt = BytesN::from_array(&env, &[0; 32]);
+let constructor_args: Vec<Val> = (5u32,).into_val(&env);
+```
+
+Antes de invocar el contrato, necesitamos habilitar la autorización simulada para obtener la carga de autorización registrada que podemos verificar.
+
+```rust
+env.mock_all_auths();
+```
+
+Después de las preparaciones anteriores, realmente podemos llamar a la función `deploy`.
+
+```rust
+let contract_id = deployer_client.deploy(&wasm_hash, &salt, &constructor_args);
+```
+
+El despliegue requiere autorización del administrador. Como se mencionó anteriormente, la autorización necesaria para la función `deploy_v2` se realiza en nombre del contrato de despliegue y es implícita. Esto se puede verificar en la prueba examinando `env.auths()`.
+
+```rust
+// An authorization from the admin is required.
+let expected_auth = AuthorizedInvocation {
+    // Top-level authorized function is `deploy` with all the arguments.
+    function: AuthorizedFunction::Contract((
+        deployer_client.address,
+        symbol_short!("deploy"),
+        (wasm_hash.clone(), salt, constructor_args).into_val(&env),
+    )),
+    sub_invocations: vec![],
+};
+assert_eq!(env.auths(), vec![(admin, expected_auth)]);
+```
+
+La prueba verifica que el contrato de prueba fue desplegado utilizando su cliente para invocarlo y obtener de regreso el valor establecido durante la inicialización.
+
+```rust
+let client = contract::Client::new(&env, &contract_id);
+let sum = client.value();
+assert_eq!(sum, 5);
+```
+
+## Construir los Contratos
+
+Para construir el contrato en un archivo `.wasm`, utiliza el comando `stellar contract build`. Construye tanto el contrato desplegador como el contrato de prueba.
+
+```sh
+stellar contract build
+```
+
+Ambos archivos `.wasm` deberían encontrarse en los directorios `target` de ambos contratos después de construir ambos contratos:
+
+```
+target/wasm32v1-none/release/soroban_deployer_contract.wasm
+```
+
+```
+target/wasm32v1-none/release/soroban_deployer_test_contract.wasm
+```
+
+## Ejecutar el Contrato
+
+Si tienes [`stellar-cli`] instalado, puedes invocar la función del contrato para desplegar el contrato de prueba.
+
+Antes de desplegar el contrato de prueba con el desplegador, instala el Wasm del contrato de prueba usando el comando `install`. El comando `install` imprimirá el hash derivado del archivo Wasm (no es solo el hash del archivo Wasm en sí) que debería ser utilizado por el desplegador.
+
+```sh
+stellar contract upload --wasm contract/target/wasm32v1-none/release/soroban_deployer_test_contract.wasm
+```
+
+El comando imprime el hash en formato hexadecimal. Debería verse algo así como `7792a624b562b3d9414792f5fb5d72f53b9838fef2ed9a901471253970bc3b15`.
+
+También necesitamos desplegar el contrato `Desplegador`:
+
+```sh
+stellar contract deploy --wasm deployer/target/wasm32v1-none/release/soroban_deployer_contract.wasm --id 1
+```
+
+Esto devolverá la dirección del desplegador: `CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM`.
+
+Luego el contrato desplegador puede ser invocado con el valor hash de Wasm anterior.
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+
+<TabItem value="unix" label="macOS/Linux">
+
+```sh
+stellar contract invoke --id 1 -- deploy \
+    --deployer CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+    --salt 123 \
+    --wasm_hash 7792a624b562b3d9414792f5fb5d72f53b9838fef2ed9a901471253970bc3b15 \
+    --constructor_args '[{"u32":5}]'
+```
+
+</TabItem>
+
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+stellar contract invoke --id 1 -- deploy `
+    --deployer CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+    --salt 123 `
+    --wasm_hash 7792a624b562b3d9414792f5fb5d72f53b9838fef2ed9a901471253970bc3b15 `
+    --constructor_args '[{"u32":5}]'
+```
+
+</TabItem>
+
+</Tabs>
+
+Y luego invoca el contrato de prueba desplegado utilizando el identificador devuelto del comando anterior.
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+
+<TabItem value="unix" label="macOS/Linux">
+
+```sh
+stellar contract invoke \
+    --id ead19f55aec09bfcb555e09f230149ba7f72744a5fd639804ce1e934e8fe9c5d \
+    -- \
+    value
+```
+
+</TabItem>
+
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+stellar contract invoke `
+    --id ead19f55aec09bfcb555e09f230149ba7f72744a5fd639804ce1e934e8fe9c5d `
+    -- `
+    value
+```
+
+</TabItem>
+
+</Tabs>
+
+La siguiente salida debería ocurrir utilizando el código anterior.
+
+```json
+5
+```
+
+[`stellar-cli`]: ../getting-started/setup.mdx#install-the-stellar-cli

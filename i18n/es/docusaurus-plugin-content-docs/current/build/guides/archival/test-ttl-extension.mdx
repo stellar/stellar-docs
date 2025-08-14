@@ -1,0 +1,172 @@
+---
+title: Probar la lógica de extensión de TTL en contratos inteligentes
+hide_table_of_contents: true
+description: Probar contratos que extienden el tiempo de vida (TTL) de los datos del contrato
+---
+
+Para probar contratos que extienden el [TTL](../../../learn/fundamentals/contract-development/storage/state-archival.mdx#ttl) de datos del contrato mediante operaciones de almacenamiento `extend_ttl`, puedes usar la operación getter de TTL (`get_ttl`) en combinación con la manipulación del número de secuencia del libro mayor. Nota que la función `get_ttl` solo está disponible para pruebas y solo en Soroban SDK v21+.
+
+## Ejemplo
+
+Sigue el [ejemplo](https://github.com/stellar/soroban-examples/blob/main/ttl/src/lib.rs) que prueba las extensiones de TTL. El ejemplo tiene comentarios extensos, este documento solo destaca las partes más importantes.
+
+Usamos un contrato muy simple que solo extiende una entrada para cada tipo de almacenamiento de Soroban:
+
+```rust
+#[contractimpl]
+impl TtlContract {
+    /// Creates a contract entry in every kind of storage.
+    pub fn setup(env: Env) {
+        env.storage().persistent().set(&DataKey::MyKey, &0);
+        env.storage().instance().set(&DataKey::MyKey, &1);
+        env.storage().temporary().set(&DataKey::MyKey, &2);
+    }
+
+    /// Extend the persistent entry TTL to 5000 ledgers, when its
+    /// TTL is smaller than 1000 ledgers.
+    pub fn extend_persistent(env: Env) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::MyKey, 1000, 5000);
+    }
+
+    /// Extend the instance entry TTL to become at least 10000 ledgers,
+    /// when its TTL is smaller than 2000 ledgers.
+    pub fn extend_instance(env: Env) {
+        env.storage().instance().extend_ttl(2000, 10000);
+    }
+
+    /// Extend the temporary entry TTL to become at least 7000 ledgers,
+    /// when its TTL is smaller than 3000 ledgers.
+    pub fn extend_temporary(env: Env) {
+        env.storage()
+            .temporary()
+            .extend_ttl(&DataKey::MyKey, 3000, 7000);
+    }
+}
+```
+
+El enfoque del ejemplo son las pruebas, así que los siguientes fragmentos de código provienen de `test.rs`.
+
+Es una buena idea definir los valores personalizados de la configuración de red relacionados con el TTL, ya que los valores predeterminados son definidos por el SDK y no son inmediatamente obvios para el lector de las pruebas:
+
+```rust
+env.ledger().with_mut(|li| {
+    // Current ledger sequence - the TTL is the number of
+    // ledgers from the `sequence_number` (exclusive) until
+    // the last ledger sequence where entry is still considered
+    // alive.
+    li.sequence_number = 100_000;
+    // Minimum TTL for persistent entries - new persistent (and instance)
+    // entries will have this TTL when created.
+    li.min_persistent_entry_ttl = 500;
+    // Minimum TTL for temporary entries - new temporary
+    // entries will have this TTL when created.
+    li.min_temp_entry_ttl = 100;
+    // Maximum TTL of any entry. Note, that entries can have their TTL
+    // extended indefinitely, but each extension can be at most
+    // `max_entry_ttl` ledger from the current `sequence_number`.
+    li.max_entry_ttl = 15000;
+});
+```
+
+También podrías usar la [configuración de red actual](../../../networks/resource-limits-fees.mdx#resource-fees) al configurar las pruebas, pero ten en cuenta que estos están sujetos a cambios, y el contrato debería poder trabajar con cualquier valor de estas configuraciones.
+
+Ahora ejecutamos un escenario de prueba que verifica la lógica de extensión de TTL (consulta la prueba [`test_extend_ttl_behavior`](https://github.com/stellar/soroban-examples/blob/f595fb5df06058ec0b9b829e9e4d0fe0513e0aa8/ttl/src/test.rs#L38) para el escenario completo). Primero, configuramos los datos y aseguramos que los valores iniciales de TTL correspondan a las configuraciones de red que hemos definido anteriormente:
+
+```rust
+client.setup();
+env.as_contract(&contract_id, || {
+    // Note, that TTL doesn't include the current ledger, but when entry
+    // is created the current ledger is counted towards the number of
+    // ledgers specified by `min_persistent/temp_entry_ttl`, thus
+    // the TTL is 1 ledger less than the respective setting.
+    assert_eq!(env.storage().persistent().get_ttl(&DataKey::MyKey), 499);
+    assert_eq!(env.storage().instance().get_ttl(), 499);
+    assert_eq!(env.storage().temporary().get_ttl(&DataKey::MyKey), 99);
+});
+```
+
+Nota que usamos `env.as_contract` para acceder al almacenamiento del contrato.
+
+Luego llamamos a las operaciones de extensión de TTL y verificamos que se comporten como se esperaba, por ejemplo:
+
+```rust
+// Extend persistent entry TTL to 5000 ledgers - now it is 5000.
+client.extend_persistent();
+env.as_contract(&contract_id, || {
+    assert_eq!(env.storage().persistent().get_ttl(&DataKey::MyKey), 5000);
+});
+```
+
+Para probar los umbrales de extensión (es decir, el máximo TTL actual que requiere extensión), necesitamos aumentar el número de secuencia del ledger:
+
+```rust
+// Now bump the ledger sequence by 5000 in order to sanity-check
+// the threshold settings of `extend_ttl` operations.
+env.ledger().with_mut(|li| {
+    li.sequence_number = 100_000 + 5_000;
+});
+// Now the TTL of every entry has been reduced by 5000 ledgers.
+env.as_contract(&contract_id, || {
+    assert_eq!(env.storage().persistent().get_ttl(&DataKey::MyKey), 0);
+    assert_eq!(env.storage().instance().get_ttl(), 5000);
+    assert_eq!(env.storage().temporary().get_ttl(&DataKey::MyKey), 2000);
+});
+```
+
+Luego podemos extender las entradas nuevamente y asegurarnos de que solo las entradas que están por debajo del umbral hayan sido extendidas (específicamente, las entradas persistentes y temporales en este ejemplo):
+
+```rust
+client.extend_persistent();
+client.extend_instance();
+client.extend_temporary();
+env.as_contract(&contract_id, || {
+    assert_eq!(env.storage().persistent().get_ttl(&DataKey::MyKey), 5000);
+    // Instance TTL hasn't been increased because the remaining TTL
+    // (5000 ledgers) is larger than the threshold used by
+    // `extend_instance` (2000 ledgers)
+    assert_eq!(env.storage().instance().get_ttl(), 5000);
+    assert_eq!(env.storage().temporary().get_ttl(&DataKey::MyKey), 7000);
+});
+```
+
+Soroban SDK también emula el comportamiento para las entradas que tienen su TTL caducado. Las entradas temporales se comportan 'como si' hubieran sido eliminadas (consulta la prueba [`test_temp_entry_removal`](https://github.com/stellar/soroban-examples/blob/f595fb5df06058ec0b9b829e9e4d0fe0513e0aa8/ttl/src/test.rs#L112) para el escenario completo):
+
+```rust
+client.extend_temporary();
+// Bump the ledger sequence by 7001 ledgers (one ledger past TTL).
+env.ledger().with_mut(|li| {
+    li.sequence_number = 100_000 + 7001;
+});
+// Now the entry is no longer present in the environment.
+env.as_contract(&contract_id, || {
+    assert_eq!(env.storage().temporary().has(&DataKey::MyKey), false);
+});
+```
+
+Las entradas persistentes son más sutiles: cuando una transacción que se ejecuta en on-chain contiene una entrada persistente que ha sido archivada (es decir, su TTL ha caducado) en la carga de trabajo, entonces el entorno de Soroban ni siquiera se instanciará. Dado que este comportamiento no se puede reproducir directamente en el entorno de prueba, en su lugar se producirá un error 'interno' irreparable tan pronto como se acceda a una entrada archivada, y la prueba hará `panic`:
+
+```rust
+#[test]
+#[should_panic(expected = "[testing-only] Accessed contract instance key that has been archived.")]
+fn test_persistent_entry_archival() {
+    let env = create_env();
+    let contract_id = env.register(TtlContract, ());
+    let client = TtlContractClient::new(&env, &contract_id);
+    client.setup();
+    // Extend the instance TTL to 10000 ledgers.
+    client.extend_instance();
+    // Bump the ledger sequence by 10001 ledgers (one ledger past TTL).
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100_000 + 10_001;
+    });
+    // Now any call involving the expired contract (such as `extend_instance`
+    // call here) will panic as soon as that contract is accessed.
+    client.extend_instance();
+}
+```
+
+## Probar la extensión de TTL para otras instancias de contrato
+
+A veces, un contrato puede querer extender el TTL de otros contratos y/o sus entradas de Wasm (normalmente eso sucedería en contratos de fábrica). Esta lógica puede ser cubierta de manera similar al ejemplo anterior usando `env.deployer().get_contract_instance_ttl(&contract)` para obtener el TTL de cualquier instancia de contrato, y `env.deployer().get_contract_code_ttl(&contract)` para obtener el TTL de cualquier entrada de Wasm de contrato. Puedes encontrar un ejemplo de uso de estas funciones en la [suite de pruebas](https://github.com/stellar/rs-soroban-sdk/blob/ff05c3d4cbed97db50142372e9d7a4fa4a8d1d5d/soroban-sdk/src/tests/storage_testutils.rs#L76) del SDK.

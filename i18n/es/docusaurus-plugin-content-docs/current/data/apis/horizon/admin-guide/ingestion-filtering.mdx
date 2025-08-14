@@ -1,0 +1,97 @@
+---
+title: Filtrado de Ingesta
+order: 46
+---
+
+## Resumen
+
+El Filtrado de Ingesta permite a los operadores de Horizon reducir drásticamente la huella de almacenamiento de los datos históricos en la base de datos de Horizon mediante la inclusión en una lista blanca de Activos y/o Cuentas que son relevantes para sus operaciones.
+
+### ¿Por qué es útil:
+
+Anteriormente, la única forma de limitar el almacenamiento de datos era restringiendo el rango temporal de la historia mediante retención temporal (por ejemplo, los últimos 30 días). La función de filtrado permite a los usuarios almacenar un período histórico más largo en la base de datos de Horizon solo para activos, cuentas y sus entidades históricas relacionadas (transacciones, operaciones, intercambios, etc.) que estén en la lista blanca.
+
+Para más contexto, ejecutar una instancia de Horizon con historial `completo` no filtrado actualmente requiere más de 30TB de espacio en disco (hasta junio de 2023) con un crecimiento de almacenamiento de aproximadamente 1TB/mes. Como referencia, filtrar incluso por 100 de las cuentas y activos más activos reduce el almacenamiento en más del 90%. Para la mayoría de las aplicaciones que están interesadas en un conjunto aún más limitado de activos y cuentas, los ahorros de almacenamiento deberían ser superiores al 99%. Otros beneficios incluyen la reducción de los costos operativos asociados al mantenimiento del almacenamiento, mejores métricas de salud de la base de datos y un rendimiento de consultas mejorado.
+
+### ¿Cómo funciona:
+
+La función de filtrado opera durante la ingestión en procesos **en vivo** y de **rango histórico**. Indica al proceso de ingesta que solo acepte transacciones de ledger entrantes que coincidan con una regla de filtrado; cualquier transacción que no cumpla con las reglas de filtrado es omitida por la ingesta y, por lo tanto, no se almacena en la base de datos.
+
+Algunos aspectos clave a tener en cuenta sobre el comportamiento de filtrado:
+
+- Si tanto los filtros de activos como de cuentas están habilitados y cada filtro está provisto de al menos una regla, las transacciones se almacenan en la base de datos cuando alguna regla de cualquiera de los filtros coincide con la transacción dada.
+- El filtrado se aplica únicamente a la ingesta de datos históricos en la base de datos; no afecta cómo el proceso de ingesta mantiene los datos del estado actual almacenados en la base de datos, que es la última entrada de ledger conocida para cada entidad única dentro de cuentas, líneas de confianza, fondos de liquidez y ofertas. Sin embargo, los datos del estado actual consumen una cantidad relativamente pequeña de la capacidad total de almacenamiento.
+- Cuando se cambian las reglas de filtrado, solo se aplican a los procesos de ingesta existentes y en ejecución (**en vivo** y de **rango histórico**). No desencadenan ningún filtrado retroactivo ni llenado retrospectivo de datos históricos existentes en la base de datos.
+  - Cuando se actualizan las reglas de filtrado para incluir cuentas o activos adicionales en la lista blanca, las transacciones relacionadas de la ingesta **en vivo** solo aparecerán en los datos históricos de la base de datos una vez que las reglas de filtrado se hayan actualizado utilizando la API administrativa. Lo mismo se aplica a la ingesta de **rango histórico**, donde las nuevas reglas de filtrado solo afectarán los datos del ledger actual dentro de su rango configurado en el momento de la actualización.
+  - Actualizar las reglas de filtrado para incluir cuentas o activos adicionales no activa ningún llenado automático relacionado con nuevas entidades en la base de datos histórica. Para incluir la historia previa de entidades recién enlistadas en la base de datos, puedes ejecutar manualmente un nuevo [Rango de Ingesta Histórica](./ingestion.mdx#ingesting-historical-data) después de actualizar las reglas de filtrado.
+  - Cuando se actualizan las reglas de filtrado para eliminar cuentas o activos previamente definidos en la lista blanca, los datos históricos en la base de datos no se purgan ni filtran de manera retroactiva en base a las reglas actualizadas. Los datos se almacenan en las tablas de historial durante la duración de la base de datos o hasta que se exceda el `HISTORY_RETENTION_COUNT`. Una vez que se alcanza el límite de retención, Horizon eliminará todos los datos históricos relacionados con los ledgers más antiguos, independientemente de las reglas de filtrado.
+- El filtrado no afectará el rendimiento o la tasa de rendimiento de un proceso de ingesta, seguirá siendo consistente ya sea que las reglas de filtrado estén presentes o no.
+
+Las reglas de filtrado definen listas blancas de las siguientes entidades admitidas:
+
+- ID de cuenta
+- ID de activo (canónico)
+
+Dado que se incluyen todas las transacciones relacionadas con las entidades en la lista blanca, todos los datos históricos de series temporales relacionados con esas transacciones se guardan en la base de datos histórica de Horizon, incluyendo la transacción misma, todas las operaciones en la transacción y las referencias a cualquier entidad auxiliar de las operaciones.
+
+## Configuración:
+
+El filtrado está habilitado por defecto sin ninguna regla de filtrado definida. Cuando no se definen reglas de filtrado, eso significa que no ocurre ningún filtrado de los datos ingeridos. Para comenzar a filtrar la ingesta, necesitas definir al menos una regla de filtrado:
+
+- habilitar el puerto de administración de Horizon con el parámetro de configuración ambiental `ADMIN_PORT=XXXXX`, esto te permitirá acceder al puerto.
+- definir listas blancas de filtrado. enviar solicitudes a la API HTTP de Admin para ver y actualizar las reglas de filtrado:
+
+  Consulta la [Documentación de la API Administrativa de Horizon](https://github.com/stellar/go/blob/master/services/horizon/internal/httpx/static/admin_oapi.yml) que también se publica en instancias en ejecución de Horizon como un documento Open API <b>3.0</b> en el puerto administrativo cuando está habilitado en `http://localhost:<admin_port>/`. Puedes pegar el contenido de esa URL en cualquier herramienta OAPI como [Swagger](https://editor.swagger.io/) que generará un explorador visual de los puntos finales de la API. En el editor de Swagger también puedes cargar directamente la publicación de Horizon admin.oapi.yml como una URL, elige `Archivo->Importar URL`:
+
+  ```
+   https://raw.githubusercontent.com/stellar/go/master/services/horizon/internal/httpx/static/admin_oapi.yml
+  ```
+
+  Sigue los detalles y ejemplos de las cargas útiles de solicitud/respuesta para leer y actualizar las reglas de filtrado para estos puntos finales:
+
+  ```
+  /ingestion/filters/account
+  /ingestion/filters/asset
+  ```
+
+  Elegir el botón `Probar` de cualquiera de los puntos finales mostrará ejemplos completos de solicitudes HTTP en formato `curl`.
+
+## Caso de Uso de Ejemplo:
+
+Como emisor de activos, he emitido 4 activos y estoy interesado en todos los datos de transacciones relacionadas con esos activos, incluyendo cuentas de clientes que interactúan con esos activos a través de las siguientes operaciones:
+
+- Operaciones
+- Efectos
+- Pagos
+- Saldos reclamables
+- Intercambios
+
+Me gustaría almacenar el historial completo de todas las transacciones relacionadas desde el génesis de esos activos.
+
+### Requisitos previos:
+
+Has instalado Horizon con una base de datos vacía y tiene la ingestión **en vivo** habilitada.
+
+### Pasos:
+
+1. Configura una regla de filtrado con 4 activos en la lista blanca haciendo una solicitud POST a la API ADMIN de Horizon `<horizon_host>:<ADMIN_PORT>/ingestion/filters/asset`.
+
+```
+curl -X 'PUT' \
+  'http://localhost:4200/ingestion/filters/asset' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "whitelist": [
+    "USDC:GAFRNZHK4DGH6CSF4HB5EBKK6KARUOVWEI2Y2OIC5NSQ4UBSN4DR456U",
+    "DOTT:GAFRNZHK4DGH6CSF4HB5EBKK6KARUOVWEI2Y2OIC5NSQ4UBSN4DR456U",
+    "ABCD:GAFRNZHK4DGH6CSF4HB5EBKK6KARUOVWEI2Y2OIC5NSQ4UBSN4DR456U",
+    "EFGH:GAFRNZHK4DGH6CSF4HB5EBKK6KARUOVWEI2Y2OIC5NSQ4UBSN4DR456U"
+  ],
+  "enabled": true
+}'
+```
+
+2. Dado que esta es una nueva base de datos de Horizon, y las primeras reglas de filtrado, no hay nada más que hacer y efectivamente construyes aquí.
+
+3. Sin embargo, para fines de ejercicio, supongamos que ya tuviste a Horizon funcionando durante un tiempo y la base de datos se pobló con base en algunas reglas de filtrado, y estas nuevas reglas eran listados adicionales que acabas de añadir. En este caso, decides si deseas rellenar retroactivamente los datos históricos en la base de datos de Horizon para estas nuevas entidades en la lista blanca desde un tiempo anterior hasta el presente, ya que originalmente se omitieron en la ingestión anterior y no se incluyeron en la base de datos. Si decides que deseas rellenar, entonces ejecutas un proceso separado de ingestión de **rango histórico**, consulta [Rango de Ingesta Histórica](./ingestion.mdx#ingesting-historical-data) para los pasos:

@@ -1,0 +1,373 @@
+---
+title: Automatizar los datos de restablecimiento de Testnet y Futurenet
+description: Aprende a automatizar los datos de restablecimiento de Testnet y Futurenet en Stellar
+---
+
+<head>
+  <title>{`Automatizar los datos de restablecimiento de Testnet y Futurenet en Stellar`}</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Automatizar los datos de restablecimiento de Testnet y Futurenet en Stellar"
+  />
+  <meta
+    property="og:description"
+    content="Automatizar los datos de restablecimiento de Testnet y Futurenet en Stellar"
+  />
+</head>
+
+## Resumen
+
+Stellar opera dos entornos de prueba principales: el [Testnet y el Futurenet](../../../learn/fundamentals/networks.mdx). Estas redes permiten a los desarrolladores experimentar con las características de Stellar sin arriesgar activos reales. Periódicamente, estas redes se restablecen para asegurarse de que permanezcan limpias y manejables.
+
+## ¿Qué es el restablecimiento de Testnet y Futurenet?
+
+Testnet y Futurenet se restablecen periódicamente al ledger génesis para deshacerse del desorden en la red, eliminar el spam, reducir el tiempo necesario para actualizarse al último ledger y ayudar a mantener el sistema. Estos restablecimientos ocurren aproximadamente cada tres meses. Los restablecimientos eliminan todas las entradas del ledger (cuentas, líneas de confianza, ofertas, datos de contratos inteligentes, etc.), transacciones y datos históricos de Stellar Core, Horizon y el Stellar RPC, por lo que los desarrolladores no deben confiar en la persistencia de las cuentas o el estado de los saldos al usar Testnet o Futurenet.
+
+Puedes consultar las fechas actuales de restablecimiento [aquí](../../../learn/fundamentals/networks.mdx#testnet-and-futurenet-data-reset).
+
+## Por qué los restablecimientos son importantes
+
+1. **Limpieza:** Los restablecimientos regulares garantizan que tanto Testnet como Futurenet proporcionen un entorno limpio para las pruebas. Esto ayuda a evitar complicaciones derivadas de datos o configuraciones antiguas.
+2. **Rendimiento:** Con el tiempo, los entornos de prueba pueden acumular muchos datos, lo que puede ralentizar el rendimiento. Los restablecimientos ayudan a mantener un rendimiento óptimo.
+3. **Actualizaciones de protocolo:** Introducir nuevas características o cambios en el protocolo a menudo requiere un restablecimiento para garantizar la compatibilidad y la estabilidad.
+4. **Ciclos de desarrollo:** Alinear con los ciclos de desarrollo permite a los desarrolladores planear sus fases de prueba y garantiza que tengan un entorno confiable para su trabajo.
+
+## Automatización de datos en Testnet y Futurenet
+
+Automatizar el estado de la blockchain en Testnet y Futurenet de Stellar puede optimizar los flujos de trabajo de desarrollo, asegurando que puedas probar y validar tus aplicaciones de manera consistente en estos entornos.
+
+### Análisis de código
+
+### Requisitos previos:
+
+- [Node.js](https://nodejs.org/en) y `npm` instalados.
+- Stellar SDK para [JavaScript](https://www.npmjs.com/package/@stellar/stellar-sdk) y `fs` instalados
+- Una comprensión de la función de sondeo de transacciones rudimentarias con soporte para reintentos `submitTx` que describimos en [otra guía](../transactions/submit-transaction-wait-js.mdx)
+
+### Código
+
+```javascript
+import {
+  Networks,
+  Keypair,
+  TransactionBuilder,
+  Operation,
+  Address,
+  StrKey,
+  Contract,
+  LiquidityPoolAsset,
+  LiquidityPoolFeeV18,
+  BASE_FEE,
+} from "@stellar/stellar-sdk";
+import { Server, Api } from "@stellar/stellar-sdk/rpc";
+import fs from "fs";
+
+// const networkRPC = "USE EITHER FUTERNET OR TESTNET RPC"
+const networkRPC = "https://soroban-testnet.stellar.org";
+// Example
+// FOR FUTERENET - https://rpc-futurenet.stellar.org
+// FOR TESTNET - https://soroban-testnet.stellar.org
+const server = new Server(networkRPC);
+
+// const networkURL = "USE EITHER FUTERNET OR TESTNET URL"
+const networkURL = "https://friendbot.stellar.org";
+// Example
+// FOR FUTURENET - https://friendbot-futurenet.stellar.org
+// FOR TESTNET - https://friendbot.stellar.org
+
+const networkPassphrase = Networks.TESTNET; // or Networks.FUTURENET, PUBLIC
+
+// Create an Account
+async function createAccount(networkURL, SecretKey) {
+  if (!SecretKey) {
+    try {
+      // Generate a keypair
+      const pair = Keypair.random();
+      // Fund the new account using Friendbot
+      const response = await fetch(
+        `${networkURL}?addr=${encodeURIComponent(pair.publicKey())}`,
+      );
+      const responseJSON = await response.json();
+      console.log("Account created:", responseJSON);
+
+      return pair;
+    } catch (error) {
+      console.error("Error creating account:", error);
+    }
+  } else {
+    try {
+      const pair = Keypair.fromSecret(SecretKey);
+      console.log("Account Restored:", pair);
+      return pair;
+    } catch (error) {
+      console.error("Error restoring account:", error);
+    }
+  }
+}
+
+// Issues an Asset
+async function issueAsset(issuerKeys, receivingKeys, customAsset) {
+  try {
+    // First, the receiving account must trust the asset
+    const receiver = await server.getAccount(receivingKeys.publicKey());
+    let transaction = new TransactionBuilder(receiver, {
+      fee: BASE_FEE,
+      networkPassphrase,
+    })
+      .addOperation(
+        Operation.changeTrust({
+          asset: customAsset,
+          limit: "100000",
+        }),
+      )
+      // setTimeout is required for a transaction
+      .setTimeout(100)
+      .build();
+    transaction.sign(receivingKeys);
+    const status = await submitTx(transaction);
+    if (status !== Api.GetTransactionStatus.SUCCESS) {
+      throw status;
+    }
+    console.log(`Receiver Trusting ${customAsset.code} Asset......`);
+
+    // Second, the issuing account actually sends a payment using the asset
+    const issuer = await server.getAccount(issuerKeys.publicKey());
+    transaction = new TransactionBuilder(issuer, {
+      fee: BASE_FEE,
+      networkPassphrase,
+    })
+      .addOperation(
+        Operation.payment({
+          destination: receivingKeys.publicKey(),
+          asset: customAsset,
+          amount: "1000", // change to desired amount you want to pay
+        }),
+      )
+      // setTimeout is required for a transaction
+      .setTimeout(100)
+      .build();
+    transaction.sign(issuerKeys);
+    const status = await submitTx(transaction);
+    if (status !== Api.GetTransactionStatus.SUCCESS) {
+      throw status;
+    }
+    console.log(
+      `Issuer Payment using ${
+        customAsset.code
+      } to  ${receivingKeys.publicKey()}`,
+    );
+  } catch (e) {
+    console.error("An error occurred while issuing assets:", e);
+  }
+}
+
+//Create Liquidity Pool
+async function createLiquidityPool(accountKeypair, nativeAsset, customAsset) {
+  try {
+    const account = await server.getAccount(accountKeypair.publicKey());
+
+    // Create the liquidity pool
+    const poolIdAsset = new LiquidityPoolAsset(
+      nativeAsset,
+      customAsset,
+      LiquidityPoolFeeV18,
+    );
+    const poolId = poolIdAsset.toString().split(":")[1]; // To Get the Pool ID
+
+    const transaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: networkPassPhrase,
+    })
+      .addOperation(
+        Operation.changeTrust({
+          asset: poolIdAsset,
+          limit: "100000", // Set an appropriate limit
+        }),
+      )
+      .addOperation(
+        Operation.liquidityPoolDeposit({
+          liquidityPoolId: poolId,
+          maxAmountA: "1000", // Amount of asset A to deposit
+          maxAmountB: "500", // Amount of asset B to deposit
+          minPrice: "0.5", // Minimum price ratio
+          maxPrice: "2.0", // Maximum price ratio
+        }),
+      )
+      .setTimeout(30)
+      .build();
+    transaction.sign(accountKeypair);
+    const status = await submitTx(transaction);
+    if (status !== Api.GetTransactionStatus.SUCCESS) {
+      throw status;
+    }
+    console.log(
+      `Creating Liquidity Pool for ${nativeAsset.code} and ${customAsset.code}`,
+    );
+  } catch (error) {
+    console.error("Error creating liquidity pool:", error);
+    throw error;
+  }
+}
+//Deploy and Invoke Contract
+async function deployAndInvokeContract(deployer, contractWasmFilePath) {
+  try {
+    // Step 1: Upload WASM
+    const bytecode = fs.readFileSync(contractWasmFilePath);
+    const account = await server.getAccount(deployer.publicKey());
+
+    const uploadTransaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase,
+    })
+      .addOperation(Operation.uploadContractWasm({ wasm: bytecode }))
+      .setTimeout(30)
+      .build();
+
+    const uploadTx = await server.prepareTransaction(uploadTransaction);
+    uploadTx.sign(deployer);
+
+    console.log("Submitting WASM upload transaction...");
+    let status = await submitTx(uploadTx);
+    if (status !== Api.GetTransactionStatus.SUCCESS) {
+      throw status;
+    }
+    const wasmHash = status.returnValue.bytes();
+
+    const deployerAddress = new Address(deployer.publicKey());
+
+    // Deploy the Contract
+    const createContractTransaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase,
+    })
+      .addOperation(
+        Operation.createCustomContract({
+          address: deployerAddress,
+          wasmHash,
+        }),
+      )
+      .setTimeout(30)
+      .build();
+
+    const createContractTx = await server.prepareTransaction(
+      createContractTransaction,
+    );
+    createContractTx.sign(deployer);
+    status = await submitTx(createContractTx);
+    if (status !== Api.GetTransactionStatus.SUCCESS) {
+      throw status;
+    }
+    console.log(`Contract Deployed...`);
+
+    const contractAddr = Address.fromScAddress(
+      returnContractResponse.returnValue.address(),
+    );
+    const contractId = contractAddr.toString();
+    const contract = new Contract(contractId);
+
+    // Invoke Contract
+    const invokeContractTransaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase,
+    })
+      .addOperation(
+        contract.call("hello", nativeToScVal("World", { type: "symbol" })),
+      )
+      .setTimeout(30)
+      .build();
+
+    const invokeContractTx = await server.prepareTransaction(
+      invokeContractTransaction,
+    );
+    invokeContractTx.sign(deployer);
+    const returnInvokeContractResponse = await submitTx(invokeContractTx);
+    console.log(`Invoke Contract.`);
+
+    const returnValues = scValToNative(
+      returnInvokeContractResponse.returnValue,
+    ).filter(Boolean);
+
+    return { contractId, returnValues };
+  } catch (error) {
+    console.error("Error in contract deployment and invocation:", error);
+    throw error;
+  }
+}
+
+async function automateSetup() {
+  try {
+    //Check Network Status
+    console.log("Checking network health...");
+    const health = await server.getHealth();
+    console.log("Network health:", health);
+
+    // Flexible Account Configuration
+    const secretkey =
+      "SBGGNMUPVF2SDN4KZOJQFVFX7VDR4Q4NK3FMEFRQC64D3UBMFELKF5GC"; // This is an example of a user's secret key
+
+    const accountOne = await createAccount(networkURL, secretkey);
+    const accountTwo = await createAccount(networkURL);
+
+    console.log("Issuing an Asset...");
+    // Issue assets to these accounts
+    const customAsset = new Asset("Boya", accountOne.publicKey());
+    await issueAsset(accountOne, accountTwo, customAsset);
+
+    // Create liquidity pool
+    console.log("Creating liquidity pool...");
+    const nativeAsset = Asset.native();
+    await createLiquidityPool(accountTwo, nativeAsset, customAsset);
+
+    // Deploy a contract
+    console.log("Deploying contract...");
+    // Ensure you have the contract Wasm file compiled and saved in the specified path.
+    // Adjust this path as necessary
+    const contractWasmFilePath =
+      "./target/wasm32v1-none/release/hello_world.wasm";
+    const ContractData = await deployAndInvokeContract(
+      accountOne,
+      contractWasmFilePath,
+    );
+
+    console.log("Contract ID:", ContractData.contractId);
+    console.log("Return Values:", ContractData.returnValues.join(", "));
+  } catch (error) {
+    console.error("An error occurred:", error);
+  }
+}
+
+automateSetup();
+```
+
+El código define varias funciones asíncronas:
+
+1. `crearCuenta(networkURL)`:
+
+Genera un nuevo keypair de Stellar (claves pública y secreta). Usa FriendBot para financiar la nueva cuenta en la red de pruebas. Retorna el keypair creado.
+
+2. `emitirActivos(clavesEmisor, clavesRecepcion, activoPersonalizado)`:
+
+Configura una línea de confianza para que la cuenta receptora acepte el activo personalizado, emite el activo personalizado desde la cuenta emisora a la cuenta receptora.
+
+3. `crearGrupoDeLiquidez(claveParDeCuentas, activoNativo, activoPersonalizado)`:
+
+Crea un activo de fondo de liquidez, establece una línea de confianza para el fondo y deposita liquidez inicial en el fondo.
+
+4. `desplegarEInvocarContrato(desplegador, rutaArchivoWasmDelContrato)`:
+
+Sube el código WebAssembly (wasm) del contrato, crea y despliega el contrato en la red, invoca la función del contrato y retorna el ID del contrato y los valores de retorno de la función
+
+5. `automatizarConfiguracion()`:
+
+Inicializa la conexión del servidor Stellar, crea dos cuentas, emite un activo personalizado, crea un fondo de liquidez, despliega un contrato inteligente y retorna el ID del contrato y los valores de la función.
+
+**Funciones auxiliares**
+
+`sleep(ms)`: Una función utilitaria para introducir retrasos en operaciones asíncronas.
+
+`submitTx(tx)`: una función de envío de transacciones con soporte para reintentos `submitTx` descrita en [otra guía](../transactions/submit-transaction-wait-js.mdx)
+
+### Conclusión
+
+Automatizar la configuración de datos en Testnet y Futurenet de Stellar puede mejorar significativamente tu flujo de trabajo de desarrollo, asegurando que puedas volver a las pruebas rápidamente después de un restablecimiento de la red. Siguiendo los pasos anteriores y utilizando los ejemplos de código proporcionados, puedes optimizar tus procesos y mantener la consistencia a través de los restablecimientos.

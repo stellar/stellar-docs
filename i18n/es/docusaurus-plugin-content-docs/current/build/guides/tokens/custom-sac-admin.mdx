@@ -1,0 +1,157 @@
+---
+title: Establecer una cuenta de administrador personalizada para un Contrato de Activo Stellar (SAC)
+hide_table_of_contents: true
+description: Establecer una cuenta de administrador personalizada en un SAC desplegado
+---
+
+El [Contrato de Activos Stellar (SAC)](../../../tokens/stellar-asset-contract.mdx) incluye funcionalidad para establecer una cuenta de administración personalizada en el contrato mismo. Esto puede permitir arreglos flexibles de administración de activos, que pueden configurarse para ajustarse a muchos casos de uso distintos.
+
+Por ejemplo, puedes establecer un administrador SAC personalizado y luego bloquear la cuenta del emisor, permitiendo que la administración de tokens se realice _exclusivamente_ a través del contrato SAC. O, podrías establecer un administrador SAC personalizado y aún mantener la cuenta del emisor desbloqueada, permitiendo un enfoque híbrido para la administración de tokens.
+
+:::info
+
+Se debe entender que la cuenta del emisor de un activo puede tener un conjunto distinto de firmas y pesos, y estos son independientes de la dirección del administrador SAC.
+
+:::
+
+## Consideraciones
+
+Para utilizar eficazmente la funcionalidad de administrador del SAC, debes ser consciente de varias cosas primero:
+
+- Cuando un SAC se habilita inicialmente para un activo emitido, la dirección `Admin` en el contrato por defecto es la cuenta del emisor.
+- Una dirección `Admin` de un SAC puede ser una cuenta Stellar normal (`G...`), o puede ser una dirección de smart contract (`C...`). Los casos de uso que requieren un contrato inteligente para actuar como un `Admin` SAC tienden a ser más comunes. Esto abre la posibilidad de acuñar programáticamente y tomar otras acciones administrativas para un activo a través de una invocación de smart contract.
+- Cambiar una dirección de `Admin` SAC requiere autorización de la dirección de `Admin` _actual_ del activo, que será la cuenta del emisor la primera vez que se realice la acción.
+
+Dependiendo del caso de uso, puede ser beneficioso para los emisores de activos acuñar una oferta total de tokens por adelantado y luego bloquear la cuenta del emisor. Esto mantendría la oferta total de tokens limitada para siempre. Puedes aprender más sobre esta práctica en la página de [consideraciones de diseño de activos](../../../tokens/control-asset-access.mdx#limiting-the-supply-of-an-asset). Sin embargo, dado que la cuenta del emisor y una dirección de `Admin` SAC actúan de manera independiente, hay algunos puntos interesantes que hacer que pueden parecer contradictorios a primera vista.
+
+- Si la cuenta del emisor de un activo está bloqueada mientras la dirección `Admin` del SAC no ha sido cambiada, _nunca_ será posible cambiar la dirección `Admin` del SAC. Esto es porque la cuenta del emisor ya no puede autorizar la primera invocación de `set_admin`.
+- Si la cuenta del emisor de un activo está bloqueada después de que se ha cambiado la dirección de `Admin` SAC, los tokens aún serán acuñables y/o recuperables (si se habilita) desde el SAC siempre que esté autorizado por la dirección de `Admin` _actual_.
+
+:::danger
+
+Al cambiar una dirección de `Admin` SAC, la nueva dirección de administrador proporcionada no se valida en ese momento. Esto significa que puedes bloquear la administración desde el SAC **para siempre**. Considera tu elección de dirección de `Admin` SAC con cuidado y a fondo.
+
+:::
+
+## Ejemplo
+
+El siguiente ejemplo generará un nuevo activo Stellar, `STAR:GCS5NEHKJALCSVJAKIORXXVS554QQV5FNDLBK33CCAH6UIRYPXYZFC34`. Luego, crearemos un contrato simple para regular un airdrop hipotético para el token. Este contrato se configurará como la dirección de `Admin` SAC para el activo `STAR`, y podrá realizar cualquier función administrativa que deseemos.
+
+:::note
+
+No demostraremos cómo establecer una nueva cuenta `G...` como un administrador SAC en esta guía. Cualquier caso de uso que requiera delegar la administración de activos a otra cuenta `G...` probablemente se beneficiará más al aprovechar las capacidades [multisig existentes](../../../learn/fundamentals/transactions/signatures-multisig.mdx) de las cuentas Stellar.
+
+:::
+
+### Habilitar el contrato SAC integrado
+
+Primero, habilitaremos el contrato SAC usando el CLI de Stellar:
+
+```shell
+stellar contract asset deploy \
+    --source-account starIssuer --network testnet \
+    --asset STAR:GCS5NEHKJALCSVJAKIORXXVS554QQV5FNDLBK33CCAH6UIRYPXYZFC34
+# CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF
+```
+
+Esto nos da la dirección SAC de `CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF`.
+
+:::note
+
+Estamos utilizando la cuenta emisora del activo aquí para habilitar el SAC en la red Testnet, pero esta acción se puede realizar usando _cualquier_ cuenta.
+
+:::
+
+### Verifica la dirección de `Admin` inicial
+
+Ahora que tenemos el SAC desplegado en la red, podemos invocar la función `admin` para averiguar cuál es su dirección `Admin` actual:
+
+```shell
+stellar contract invoke \
+    --source-account starIssuer --network testnet \
+    --id CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF \
+    -- \
+    admin
+# GCS5NEHKJALCSVJAKIORXXVS554QQV5FNDLBK33CCAH6UIRYPXYZFC34
+```
+
+No es sorprendente que esté configurada en la cuenta `GCS5...` del emisor. Cambiemos eso.
+
+### Establecer la dirección `Admin` en alguna dirección de contrato `C...`
+
+Para esta parte del ejemplo, utilizaremos un contrato simple de "airdrop" como la dirección `Admin`. Tiene una implementación muy simple, y solo una función principal, `claim_airdrop`. Cada vez que alguien invoca esa función, 12.3456789 `STAR` se acuñará en su cuenta.
+
+```rust
+#[contractimpl]
+impl Contract {
+    pub fn __constructor(env: Env, sac_address: Address) {
+        env.storage().instance().set(&symbol_short!("SAC_ADDR"), &sac_address);
+    }
+
+    pub fn claim_airdrop(env: Env, receiver: Address) {
+        if env.storage().persistent().has(&receiver) {
+            panic!("receiver has already claimed")
+        }
+
+        receiver.require_auth();
+        let amount: i128 = 123456789;
+        env.storage().persistent().set(&receiver, &amount);
+
+        let sac_address: Address = env.storage().instance().get(&symbol_short!("SAC_ADDR")).unwrap();
+        let token_client = token::StellarAssetClient::new(&env, &sac_address);
+        token_client.mint(&receiver, &amount);
+    }
+}
+```
+
+Este contrato se despliega, y la dirección podría ser (por ejemplo) `CCOQXM7XPEUZKAFEHBXBFS3VJVWJBOU6JK5B7B3Z6VUDX3OCESD3P6TI`. Ahora podemos establecer la dirección `Admin` del SAC en este contrato:
+
+```sh
+stellar contract invoke \
+    --source-account starIssuer --network testnet \
+    --id CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF \
+    -- \
+    set_admin --new_admin CCOQXM7XPEUZKAFEHBXBFS3VJVWJBOU6JK5B7B3Z6VUDX3OCESD3P6TI
+```
+
+Al verificar nuestro trabajo con la función `admin` del SAC, veremos que nuestro contrato de airdrop es ahora la dirección `Admin`:
+
+```shell
+stellar contract invoke \
+    --source-account starIssuer --network testnet \
+    --id CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF \
+    -- \
+    admin
+# CCOQXM7XPEUZKAFEHBXBFS3VJVWJBOU6JK5B7B3Z6VUDX3OCESD3P6TI
+```
+
+Ahora, dado que el contrato de airdrop es el administrador del SAC, podemos invocar su función `claim_airdrop` desde cualquier cuenta que deseemos. (Recordatorio: si estás usando una dirección `G...` como destino para la función `mint` de un SAC, necesitará tener creada una trustline para el activo de antemano.)
+
+```sh
+stellar contract invoke \
+    --source-account randomStarHolder --network testnet \
+    --id CCOQXM7XPEUZKAFEHBXBFS3VJVWJBOU6JK5B7B3Z6VUDX3OCESD3P6TI \
+    -- \
+    claim_airdrop --receiver randomStarHolder
+```
+
+Ahora, esta cuenta `randomStarHolder` tendrá un saldo de 12.3456789 `STAR`, y la acuñación del token fue ejecutada por el contrato de airdrop en sí.
+
+### Realizando una operación de `payment` desde la cuenta del emisor
+
+Dado que no hemos bloqueado al/los firmante(s) de nuestra cuenta del emisor, todavía es completamente posible que la cuenta del emisor `GCS5...` cree y envíe a la red cualquier operación de `payment` que desee. Esto significa que los tokens aún podrían ser acuñados con una operación de `payment`, o quemados con una operación de `clawback`, o modificados los flags de trustline, etc., todo utilizando la cuenta del emisor original del activo. La dirección `Admin` del SAC y los permisos de firma de la cuenta emisora operan y funcionan de manera independiente entre sí.
+
+## En la práctica
+
+Un ejemplo divertido de un proyecto que utiliza una dirección de administrador personalizada en un SAC se puede encontrar con el [Proyecto `KALE`](https://github.com/kalepail/KALE-sc). El emisor de KALE es `GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE`, pero puedes ver que la dirección `Admin` para el SAC está establecida en otro contrato:
+
+```sh
+stellar contract invoke \
+    --source-account S...ECRETKEY --network mainnet \
+    --id CB23WRDQWGSP6YPMY4UV5C4OW5CBTXKYN3XEATG7KJEZCXMJBYEHOUOV \
+    -- \
+    admin
+# CDL74RF5BLYR2YBLCCI7F5FB6TPSCLKEJUBSD2RSVWZ4YHF3VMFAIGWA
+```
+
+Este [contrato `CDL7...`](https://stellar.expert/explorer/public/contract/CDL74RF5BLYR2YBLCCI7F5FB6TPSCLKEJUBSD2RSVWZ4YHF3VMFAIGWA) es el contrato "homestead" creado para facilitar la acuñación/quema/minado del activo `KALE`.

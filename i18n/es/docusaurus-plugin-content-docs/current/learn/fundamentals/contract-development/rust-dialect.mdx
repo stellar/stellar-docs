@@ -1,0 +1,91 @@
+---
+sidebar_position: 6
+title: Dialecto Rust para Contratos
+description: Diferencias entre Soroban Rust y la programación típica en Rust.
+---
+
+El desarrollo de contratos se realiza en el lenguaje de programación Rust, pero varias características del lenguaje Rust no están disponibles en el entorno huésped de despliegue, o no se recomiendan porque su uso implicaría costos inaceptables en tiempo de ejecución.
+
+Por esta razón, tiene sentido considerar el código escrito para contratos como un _dialecto_ o variante especial del lenguaje de programación Rust, con ciertas restricciones y prioridades inusuales, como el determinismo y el tamaño del código.
+
+Estas restricciones y prioridades son _similares_ a las que se encuentran al escribir código Rust para "sistemas embebidos", y las herramientas, bibliotecas y técnicas usadas en el "dialecto de contratos" a menudo se toman prestadas de la [comunidad Rust de sistemas embebidos](https://docs.rust-embedded.org/book/index.html), y por defecto se recomienda construir contratos con el modo [`#[no_std]`](https://docs.rust-embedded.org/book/intro/no-std.html) que excluye completamente la biblioteca estándar de Rust, confiando en la biblioteca subyacente más pequeña `core`.
+
+Nota: estas restricciones y prioridades **no se aplican cuando se compila en modo de pruebas locales**, y de hecho las pruebas locales de contratos _frecuentemente_ usan facilidades —para generar entradas de prueba, inspeccionar salidas de prueba y guiar la prueba— que no son compatibles en el entorno huésped de despliegue. Los desarrolladores **deben entender** la diferencia entre código que se compila en módulos Wasm para despliegue y código que se compila condicionalmente para pruebas. Consulta [depuración de contratos](./errors-and-debugging/debugging.mdx) para más detalles.
+
+El "dialecto de contratos" tiene las siguientes características:
+
+## No hay punto flotante
+
+La aritmética de punto flotante en el huésped está completamente prohibida. Las operaciones de punto flotante en Wasm tienen algunos aspectos no deterministas o específicos de plataforma: principalmente patrones de bits NaN, así como configuraciones del entorno de punto flotante como el modo de redondeo.
+
+Aunque teóricamente es posible forzar que todo el código de punto flotante tenga un comportamiento determinista en todas las implementaciones de Wasm, hacerlo en algunas implementaciones de Wasm puede ser difícil, costoso o propenso a errores. Para evitar esta complejidad, todo código de punto flotante es rechazado en tiempo de instancia.
+
+Esta restricción podría revisarse en una versión futura.
+
+## Asignación dinámica de memoria limitada (idealmente cero)
+
+La asignación dinámica de memoria dentro del huésped está **fuertemente** desaconsejada, pero no completamente prohibida.
+
+El objeto huésped y el repertorio de funciones huésped están diseñados para liberar al huésped de tener que realizar asignación dinámica dentro de su propia memoria lineal; en cambio, se espera e intenta que el huésped asigne estructuras dinámicas _dentro de objetos huésped_ e interactúe con ellos usando manejadores ligeros.
+
+Usar objetos huésped en lugar de estructuras de datos en la memoria huésped trae numerosos beneficios: mucho mayor rendimiento, tamaño de código mucho más pequeño, interoperabilidad entre contratos, soporte compartido del huésped para serialización, depuración e introspección de estructuras de datos.
+
+Sin embargo, el huésped dispone de una pequeña memoria lineal en casos donde la asignación dinámica de memoria sea necesaria. Usar esta memoria conlleva costes: el huésped debe incluir en su código una copia completa de un asignador de memoria y debe pagar el costo de tiempo de ejecución de ejecutar el código del asignador dentro de la máquina virtual.
+
+Esta restricción se debe a la limitada capacidad de Wasm para soportar compartir código: no existe una forma estándar para que la caja de arena Wasm proporcione código compartido de "biblioteca estándar" dentro de un huésped, como un asignador de memoria, ni el huésped tiene suficiente información sobre el contenido de la memoria del huésped para proporcionar un asignador él mismo. Por lo tanto, cada contrato que desee usar asignación dinámica debe llevar su propia copia de un asignador.
+
+Muchos casos donde parecería requerirse asignación dinámica de memoria también pueden atenderse igual de bien con una biblioteca como [heapless](https://docs.rs/heapless/latest/heapless/). Esta biblioteca (y otras semejantes) ofrecen estructuras de datos con APIs familiares que _parecen_ dinámicas, pero en realidad se implementan en términos de una única asignación en pila o estática, con un tamaño máximo fijo establecido en la construcción: intentos de crecer más allá del tamaño máximo simplemente fallan. En el contexto de un contrato, este comportamiento a veces puede ser preferible y evita por completo la cuestión de la asignación dinámica.
+
+## Entrada/salida no estándar
+
+Se prohíben todas las facilidades estándar de entrada/salida y el acceso al sistema operativo que un programa típico de Rust esperaría realizar usando la biblioteca estándar de Rust; los programas que intenten importar tales funciones del huésped a través de (por ejemplo) la interfaz WASI fallarán en la instancia, ya que se refieren a funciones no proporcionadas por el huésped.
+
+No hay sistema operativo, ni ninguna simulación del mismo, presente en la caja de arena del contrato. De nuevo, el repertorio de objetos huésped y funciones huésped está destinado a reemplazar y en gran parte obviar la necesidad de tales facilidades de la biblioteca estándar.
+
+Esta restricción surge del hecho de que los contratos necesitan ejecutarse con garantías más sólidas que las que proporcionan las APIs típicas de sistemas operativos. Específicamente, los contratos deben realizar entrada/salida con semánticas transaccionales de todo o nada (relativas a la ejecución exitosa o fallo) así como consistencia serializable. Esto elimina la mayoría de las APIs relacionadas con la entrada/salida típica de archivos. Además, los contratos deben estar aislados de todas las fuentes de no determinismo, como redes o control de procesos, lo que elimina la mayoría de APIs restantes. Una vez que se eliminan los archivos, la red y el control de procesos, simplemente no queda suficiente en las facilidades de E/S del sistema operativo estándar para intentar proveerlas.
+
+## Sin multihilo
+
+No está disponible el multihilo. Al igual que con las funciones de entrada/salida, intentar importar cualquier API relacionada con multihilo del huésped fallará en el tiempo de instancia.
+
+Esta restricción se basa igualmente en la necesidad de ejecutar contratos en un entorno con fuertes garantías de determinismo y consistencia serializable.
+
+## Pánico inmediato
+
+La función `panic!()` de Rust para errores irrecuperables hará que la máquina virtual Wasm se detenga inmediatamente, parando la ejecución en la instrucción que provoca el trap en lugar de hacer un desenvuelto de pila. Esto significa que el código `Drop` en tipos Rust no se ejecutará durante un pánico. Este comportamiento es similar al perfil `panic = "abort"` con el que el código Rust puede (y a menudo es) compilado.
+
+Esta no es una restricción estricta impuesta por el huésped, sino una configuración suave establecida mediante una mezcla de funciones del SDK y flags usados al compilar, en interés de minimizar el tamaño del código y limitar los costes de ejecución. Se puede eludir con cierto esfuerzo si se desea código de desenvuelto y `Drop`, a costa de un tamaño de código muy aumentado.
+
+## Colecciones puramente funcionales
+
+Los objetos huésped tienen una semántica significativamente diferente a las estructuras de datos típicas de Rust, especialmente aquellas que implementan _colecciones_ como mapas y vectores.
+
+En particular: los objetos huésped son **inmutables**, y cualquier "modificación" a un objeto huésped devuelve una **copia nueva completa** del objeto, dejando el inicial sin cambios. En gran medida, esta distinción está oculta mediante envoltorios en el SDK, de modo que objetos como `Map` o `Vec` parecen para el programador de contratos valores mutables de propiedad única similares a los tipos de la biblioteca estándar de Rust, pero los objetos huésped subyacentes son inmutables, por lo que tienen características de rendimiento diferentes. Específicamente: clonar un objeto así es O(1), mientras cualquier modificación es O(N). Dado que la mayoría de los objetos huésped suelen ser muy pequeños, el coste O(N) de la modificación típicamente es más barato que cualquier implementación alternativa que implique subestructuras compartidas.
+
+:::note
+
+Estos tipos de contenedores `Vec` y `Map` no deberían usarse para gestionar colecciones grandes o ilimitadas de datos. Para esos casos, los contratos deben almacenar datos en múltiples entradas separadas del libro mayor, cada una con su propia clave única definida por el contrato. Hacerlo también limita el costo de E/S de un contrato solo a las entradas que accede, y además permite la modificación concurrente de entradas con claves separadas desde transacciones separadas.
+
+:::
+
+## Características limitadas de Webassembly
+
+La especificación de Webassembly ha crecido significativamente desde su introducción inicial y ahora soporta muchas _características_ que pueden estar o no disponibles en una implementación dada de Webassembly.
+
+Soroban limita intencionadamente las características de Webassembly que soporta, para minimizar la superficie crítica de seguridad y conservar flexibilidad en la elección de implementaciones de Webassembly.
+
+El objetivo `wasm32-unknown-unknown` del compilador Rust solía utilizar solo un pequeño subconjunto de características de Webassembly, hasta Rust 1.81. Desde Rust 1.82 el objetivo `wasm32-unknown-unknown` añadió más características, lo que significa que Rust 1.82 produce código que podría ser rechazado por Soroban debido al uso accidental de características nuevas de Webassembly.
+
+Desde Rust 1.84, se añadió un nuevo objetivo `wasm32v1-none` a Rust que se restringe intencionadamente al subconjunto "Webassembly 1.0" de características, todas las cuales Soroban soporta.
+
+Como consecuencia, los nuevos contratos Soroban deberían construirse con Rust 1.84 o posterior, y usar el objetivo `wasm32v1-none`, no `wasm32-unknown-unknown`. Si el contrato necesita versiones anteriores de Rust, o quiere seguir usando `wasm32-unknown-unknown`, debería restringirse a Rust 1.81 o anterior.
+
+La CLI stellar detecta automáticamente la versión de Rust y selecciona el objetivo apropiado al compilar contratos para Webassembly.
+
+:::note
+
+El objetivo `wasm32v1-none` no incluye, por defecto, ninguna versión de la librería `std`. Esto se debe a que la versión de `std` que contiene `wasm32-unknown-unknown` es _principalmente_ considerada un error por sus diseñadores: por ejemplo, la mayoría de las facilidades de E/S en esa versión de `std` son simulacros que no hacen nada o generan pánico al ser llamadas. Al añadir el objetivo `wasm32v1-none`, se decidió que ese tipo de simulacros no ofrecían beneficio alguno a los usuarios.
+
+El objetivo `wasm32v1-none` _sí_ incluye una copia del paquete `alloc`, que contiene la mayoría de los _contenedores_ (como vectores y mapas) que son reexportados por `std`. Por ejemplo, en lugar de usar `std::vec::Vec` se puede usar `alloc::vec::Vec`, que es el mismo código con un nombre diferente. Pero como se mencionó antes en la sección sobre asignación dinámica de memoria, generalmente los contratos Soroban deberían evitar también `alloc`: un paquete como `heapless` usualmente tendrá mejor desempeño.
+
+:::
