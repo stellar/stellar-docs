@@ -1,0 +1,127 @@
+---
+title: Obtener transacciones exitosas/fallidas de un rango de ledgers
+sidebar_position: 10
+---
+
+Este ejemplo ilustra cómo ejecutar y conectarte a un nodo observador de la red Stellar, conocido como 'captive core' utilizando `ledgerbackend.CaptiveStellarCore`. Luego solicita que se reproduzca un rango histórico limitado de ledgers. La instancia de captive core emitirá un flujo de metadatos de ledger (`xdr.LedgerCloseMeta`) que contiene las transacciones por ledger en el rango. Lee las transacciones de cada ledger utilizando `ingest.LedgerTransactionReader`, las categoriza como exitosas o fallidas, y rastrea las operaciones asociadas con cada transacción.
+
+<CodeExample>
+
+```go
+// Filename: transaction_statistics.go
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"github.com/stellar/go/network"
+	"io"
+
+	"github.com/sirupsen/logrus"
+	"github.com/stellar/go/ingest"
+	"github.com/stellar/go/ingest/ledgerbackend"
+	"github.com/stellar/go/support/log"
+)
+
+func panicIf(err error) {
+	if err != nil {
+		panic(fmt.Errorf("An error occurred, panicking: %s\n", err))
+	}
+}
+
+func main() {
+	archiveURLs := network.PublicNetworkhistoryArchiveURLs
+	networkPassphrase := network.PublicNetworkPassphrase
+	captiveCoreToml, err := ledgerbackend.NewCaptiveCoreToml(ledgerbackend.CaptiveCoreTomlParams{
+		NetworkPassphrase:  networkPassphrase,
+		HistoryArchiveURLs: archiveURLs,
+	})
+	panicIf(err)
+
+	config := ledgerbackend.CaptiveCoreConfig{
+		// Change these based on your environment:
+		BinaryPath:         "/usr/local/bin/stellar-core",
+		NetworkPassphrase:  networkPassphrase,
+		HistoryArchiveURLs: archiveURLs,
+		Toml:               captiveCoreToml,
+	}
+
+	ctx := context.Background()
+	// Only log errors from the backend to keep output cleaner.
+	lg := log.New()
+	lg.SetLevel(logrus.ErrorLevel)
+	config.Log = lg
+
+	backend, err := ledgerbackend.NewCaptive(config)
+	panicIf(err)
+	defer backend.Close()
+
+	// Prepare a range to be ingested:
+	var startingSeq uint32 = 7000000 // can't start with genesis ledger
+	var ledgersToRead uint32 = 10000
+
+	fmt.Printf("Preparing range (%d ledgers)...\n", ledgersToRead)
+	ledgerRange := ledgerbackend.BoundedRange(startingSeq, startingSeq+ledgersToRead)
+	err = backend.PrepareRange(ctx, ledgerRange)
+	panicIf(err)
+
+	// These are the statistics that we're tracking.
+	var successfulTransactions, failedTransactions int
+	var operationsInSuccessful, operationsInFailed int
+
+	for seq := startingSeq; seq <= startingSeq+ledgersToRead; seq++ {
+		fmt.Printf("Processed ledger %d...\r", seq)
+
+		var txReader *ingest.LedgerTransactionReader
+		var err error
+		txReader, err = ingest.NewLedgerTransactionReader(
+			ctx, backend, config.NetworkPassphrase, seq,
+		)
+		panicIf(err)
+
+		// Read each transaction within the ledger, extract its operations, and
+		// accumulate the statistics we're interested in.
+		for {
+			var tx ingest.LedgerTransaction
+			tx, err = txReader.Read()
+			if err == io.EOF {
+				break
+			}
+			panicIf(err)
+
+			envelope := tx.Envelope
+			operationCount := len(envelope.Operations())
+			if tx.Result.Successful() {
+				successfulTransactions++
+				operationsInSuccessful += operationCount
+			} else {
+				failedTransactions++
+				operationsInFailed += operationCount
+			}
+		}
+        	panicIf(txReader.Close())
+	}
+
+	fmt.Println("\nDone. Results:")
+	fmt.Printf("  - total transactions: %d\n", successfulTransactions+failedTransactions)
+	fmt.Printf("  - succeeded / failed: %d / %d\n", successfulTransactions, failedTransactions)
+	fmt.Printf("  - total operations:   %d\n", operationsInSuccessful+operationsInFailed)
+	fmt.Printf("  - succeeded / failed: %d / %d\n", operationsInSuccessful, operationsInFailed)
+}
+```
+
+</CodeExample>
+
+**Ejemplo de respuesta:**
+
+```bash
+>> go run ./transaction_statistics.go
+Preparing range (10000 ledgers)...
+Processed ledger 7010000...
+Done. Results:
+  - total transactions: 108
+  - succeeded / failed: 107 / 1
+  - total operations:   175
+  - succeeded / failed: 174 / 1
+```

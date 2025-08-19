@@ -1,0 +1,175 @@
+---
+title: Fuzzing
+hide_table_of_contents: true
+description: Fuzzing y pruebas de propiedades para encontrar comportamientos inesperados.
+sidebar_position: 7
+---
+
+Fuzzing es el proceso de proporcionar datos aleatorios a programas para identificar comportamientos inesperados, como caídas y pánicos.
+
+Las pruebas de fuzz también pueden escribirse como pruebas de propiedades que, en lugar de buscar identificar pánicos y caídas, afirman que alguna propiedad se mantenga verdadera. El fuzzing, demostrado aquí y en otros lugares de estos documentos, utiliza principios tanto de pruebas de propiedades como de fuzzing, pero solo usará el término fuzzing para referirse a ambos.
+
+Los siguientes pasos pueden usarse en cualquier espacio de trabajo de contrato Stellar. Si estás experimentando, pruébalos en el [ejemplo de incremento]. El contrato tiene una función `increment` que aumenta un valor contador en uno en cada invocación.
+
+## Cómo escribir pruebas de fuzzing
+
+1. Instala la toolchain nightly de Rust. Rust nightly es necesario para ejecutar cargo-fuzz.
+
+   ```
+   rustup install nightly
+   ```
+
+2. Instala `cargo-fuzz`.
+
+   ```text
+   cargo install --locked cargo-fuzz
+   ```
+
+3. Inicializa un proyecto de fuzz ejecutando el siguiente comando dentro del directorio de tu contrato.
+
+   ```text
+   cargo fuzz init
+   ```
+
+4. Abre el archivo `Cargo.toml` del contrato. Agrega `lib` como tipo de `crate`.
+
+   ```diff
+    [lib]
+   -crate-type = ["cdylib"]
+   +crate-type = ["lib", "cdylib"]
+   ```
+
+5. Abre el archivo generado `fuzz/Cargo.toml`. Agrega la dependencia `soroban-sdk`.
+
+   ```diff
+    [dependencies]
+    libfuzzer-sys = "0.4"
+   +soroban-sdk = { version = "*", features = ["testutils"] }
+   ```
+
+6. Abre el archivo generado `fuzz/src/fuzz_target_1.rs`. Se verá como el siguiente.
+
+   ```rust
+   #![no_main]
+   use libfuzzer_sys::fuzz_target;
+
+   fuzz_target!(|data: &[u8]| {
+       // fuzzed code goes here
+   });
+   ```
+
+7. Completa la llamada `fuzz_target!` con la configuración de la prueba y las aserciones. Por ejemplo, para el [ejemplo de incremento]:
+
+   ```rust
+   #![no_main]
+   use libfuzzer_sys::fuzz_target;
+   use soroban_increment_with_fuzz_contract::{IncrementContract, IncrementContractClient};
+   use soroban_sdk::{
+       testutils::arbitrary::{arbitrary, Arbitrary},
+       Env,
+   };
+
+   #[derive(Debug, Arbitrary)]
+   pub struct Input {
+       pub by: u64,
+   }
+
+   fuzz_target!(|input: Input| {
+       let env = Env::default();
+       let id = env.register(IncrementContract, ());
+       let client = IncrementContractClient::new(&env, &id);
+
+       let mut last: Option<u32> = None;
+       for _ in input.by.. {
+           match client.try_increment() {
+               Ok(Ok(current)) => assert!(Some(current) > last),
+               Err(Ok(_)) => {} // Expected error
+               Ok(Err(_)) => panic!("success with wrong type returned"),
+               Err(Err(_)) => panic!("unrecognised error"),
+           }
+       }
+   });
+   ```
+
+8. Ejecuta el objetivo de fuzz.
+
+   ```text
+   cargo +nightly fuzz run --sanitizer=thread fuzz_target_1
+   ```
+
+   :::info
+
+   Si estás desarrollando en MacOS, necesitas agregar la bandera `--sanitizer=thread` para solucionar un [problema conocido](https://github.com/stellar/rs-soroban-sdk/issues/1056).
+
+   :::
+
+Esta prueba usa los mismos patrones usados en [pruebas unitarias] e [integración]:
+
+1. Crea un ambiente, el `Env`.
+2. Registra el contrato que será probado.
+3. Invoca funciones usando un cliente.
+4. Afirma las expectativas.
+
+:::tip
+
+Para un ejemplo detallado completo, ve el [ejemplo de fuzzing].
+
+:::
+
+:::info
+
+Hay otra herramienta para fuzzing de código Rust, `cargo-afl`. Consulta el [Rust Fuzz book] para un tutorial sobre cómo usarla.
+
+:::
+
+## Cómo obtener cobertura de código de pruebas de fuzzing
+
+Obtener datos de cobertura de código para pruebas de fuzz requiere herramientas diferentes que al hacerlo para pruebas regulares de Rust.
+
+1. Ejecuta las pruebas de fuzz hasta que produzcan un corpus, igual que en el paso 7 arriba.
+
+   ```text
+   cargo +nightly fuzz run --sanitizer thread fuzz_target_1
+   ```
+
+2. Instala las herramientas llvm para el compilador nightly.
+
+   ```text
+   rustup component add --toolchain nightly llvm-tools-preview
+   ```
+
+3. Ejecuta el comando de cobertura fuzz que ejecutará el corpus y escribirá datos de cobertura en el directorio coverage en formato `profdata`.
+
+   ```text
+   cargo +nightly fuzz coverage --sanitizer thread fuzz_target_1
+   ```
+
+4. Ejecuta el comando llvm-cov para convertir el archivo profdata a un archivo lcov.
+
+   ```
+   $(find $(rustc --print sysroot) -name llvm-cov) export \
+       -instr-profile=fuzz/coverage/fuzz_target_1/coverage.profdata \
+       -object target/$(rustc -vV | sed -n 's|host: ||p')/coverage/$(rustc -vV | sed -n 's|host: ||p')/release/fuzz_target_1 \
+       --ignore-filename-regex "rustc" \
+       -format=lcov \
+       > lcov.info
+   ```
+
+   Carga el archivo `lcov.info` en tu IDE usando su función de cobertura. En VSCode esto puede hacerse instalando la extensión [Coverage Gutters] y ejecutando el comando `Coverage Gutters: Watch`.
+
+:::tip
+
+Para medir la cobertura de código de pruebas regulares de Rust, ve [Cobertura de código].
+
+:::
+
+[ejemplo de incremento]: https://github.com/stellar/soroban-examples/blob/main/increment/src/lib.rs
+[Pruebas diferenciales con snapshots de prueba]: ./differential-tests-with-test-snapshots.mdx
+[stellar contract fetch]: ../../../tools/cli/stellar-cli.mdx#stellar-contract-fetch
+[pruebas de integración]: ./integration-tests.mdx
+[pruebas unitarias]: ./unit-tests.mdx
+[stellar/rs-soroban-sdk#1360]: https://github.com/stellar/rs-soroban-sdk/issues/1360
+[ejemplo de fuzzing]: ../../smart-contracts/example-contracts/fuzzing.mdx
+[Rust Fuzz Book]: https://rust-fuzz.github.io/book
+[Cobertura de código]: code-coverage.mdx
+[Coverage Gutters]: https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters
