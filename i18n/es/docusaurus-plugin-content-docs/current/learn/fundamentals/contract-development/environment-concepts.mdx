@@ -1,0 +1,68 @@
+---
+sidebar_position: 7
+title: Conceptos del entorno
+description: La interfaz que define los objetos, funciones y datos disponibles para los contratos inteligentes.
+---
+
+<head>
+  <title>
+    {`La interfaz que define los objetos, funciones y datos disponibles para los contratos inteligentes.`}
+  </title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="La interfaz que define los objetos, funciones y datos disponibles para los contratos inteligentes."
+  />
+  <meta
+    property="og:description"
+    content="Aprende sobre la interfaz de entorno que define los objetos, funciones, fuentes de datos y más que están disponibles en los contratos inteligentes."
+  />
+</head>
+
+El entorno del contrato es una _interfaz_ que define las facilidades -- objetos, funciones, fuentes de datos, etc. -- disponibles para los contratos.
+
+## Host y Guest
+
+Como interfaz, el entorno tiene dos lados, a los que nos referimos como el **entorno host** y el **entorno guest**. El código en el entorno host _implementa_ la interfaz del entorno; el código en el entorno guest _utiliza_ la interfaz del entorno.
+
+El **entorno host** está provisto por un conjunto conocido de crates de Rust, compilados una vez en stellar-core (o el SDK). Múltiples contratos interactúan con el mismo entorno host, y el entorno host tiene acceso a cualquier facilidad de su sistema operativo alojante: archivos, red, memoria, etc.
+
+En contraste, se establece un nuevo **entorno guest** para cada invocación de cada contrato inteligente. Cada contrato ve una única interfaz de entorno, y solo puede llamar a funciones proporcionadas por la interfaz del entorno. En otras palabras, el entorno guest es un sandbox para ejecutar código arbitrario dentro de parámetros seguros.
+
+## WebAssembly (Wasm)
+
+El entorno guest on-chain está aislado dentro de una máquina virtual WebAssembly (Wasm) ("VM"). Esto significa que el código desplegado del contrato se compila a bytecode Wasm en lugar de código máquina nativo. El entorno host incluye un intérprete para la VM, y se instancia una VM de corta duración para cada llamada a un contrato, ejecutando el bytecode de dicho contrato y luego cerrándose.
+
+El uso de una VM ayuda a proporcionar seguridad contra cualquier comportamiento indebido del código guest, tanto para el host como para otros entornos guest, además de garantizar la portabilidad del código guest entre hosts que ejecutan diferentes tipos de hardware.
+
+Cuando desarrollas y pruebas código de contrato fuera de cadena, es posible compilar el código del contrato a código máquina nativo en lugar de bytecode Wasm, y [ejecutar pruebas y depurar contratos](./errors-and-debugging/debugging.mdx) contra una copia local del entorno host enlazando directamente a él, en lugar de ejecutar dentro de una VM. Esta configuración funciona mucho más rápido y proporciona mejor información para depuración, pero solo es posible localmente, fuera de cadena. Los contratos desplegados on-chain son siempre Wasm.
+
+WebAssembly es una VM relativamente de bajo nivel, lo que significa que no proporciona un conjunto muy rico de operaciones estándar o "incorporadas". A diferencia de VMs como la JVM, no tiene recolector de basura (ni siquiera asignador de memoria), ni facilidades de IO, ni estructuras de datos estándar como listas, arreglos, mapas o cadenas, ni conceptos de objetos o tipos salvo los tipos básicos de máquina como enteros de 32 y 64 bits.
+
+Como resultado, los programas compilados a bytecode Wasm a menudo enfrentan un dilema: si quieren funcionalidad estándar rica, a menudo deben incluir una copia de todo el "código soporte" para esa funcionalidad dentro de ellos mismos. Pero si lo hacen, aumentan dramáticamente el tamaño de su código, lo que genera costos y limita el desempeño. Además, incluir tal código soporte limita su capacidad para interoperar con otros programas que pueden incluir código soporte diferente e incompatible.
+
+La solución a este dilema es que el entorno mismo proporcione código soporte para funcionalidad estándar rica, en forma de objetos y funciones host que el código guest puede usar por referencia. Cada contrato se refiere a la misma funcionalidad implementada en el host, asegurando un tamaño de código mucho menor, mayor rendimiento y mejor interoperabilidad entre contratos. Esto es lo que Soroban hace.
+
+## Objetos y funciones host
+
+La funcionalidad estándar compartida, disponible para todo el código guest de contratos, se provee a través de la interfaz del entorno en términos de objetos host y funciones host.
+
+El entorno soporta un pequeño número de tipos de objetos host que cubren estructuras de datos como vectores, mapas, blobs binarios, direcciones, cadenas y enteros grandes. Los objetos host son todos inmutables, se asignan y residen dentro del entorno host, y solo están disponibles en el entorno guest por referencia. El código guest se refiere a objetos host mediante manejadores con valores enteros.
+
+También existe un conjunto un poco mayor de funciones host que actúan sobre objetos host: creándolos, modificándolos, inspeccionándolos y manipulándolos. Algunas funciones host permiten copiar bloques de datos binarios dentro y fuera de la memoria VM del guest, y algunas funciones host realizan operaciones criptográficas sobre objetos host.
+
+También hay funciones host para interactuar con componentes selectos del entorno host más allá del repertorio de objetos host, como leer y escribir entradas del ledger, emitir eventos, llamar a otros contratos y acceder a información sobre el contexto de la transacción en la que se ejecuta el código guest.
+
+### Serialización
+
+Los objetos host pueden ser pasados (por manejador) directamente a rutinas de almacenamiento o entre contratos que colaboran. **No se necesita que exista código de serialización o deserialización en el guest**: el host sabe cómo serializar y deserializar todos sus tipos de objeto y lo hace de forma transparente cuando es necesario.
+
+## Valores y tipos
+
+Todas las funciones host pueden aceptar como argumentos y devolver valores, a lo sumo, del repertorio limitado de tipos máquina del Wasm VM. Para simplificar, Soroban limita aún más todas las funciones host a pasar y devolver valores dentro de una forma especializada de enteros de 64 bits llamada "value" o "el tipo valor". Mediante un empaquetado cuidadoso de bits, el tipo valor puede codificar cualquiera de varios tipos separados que tienen más significado para los usuarios que solo "enteros".
+
+Específicamente, el tipo valor puede codificar directamente enteros pequeños (hasta 56 bits), además de booleanos true y false, enteros firmados o sin signo de 32 bits, manejadores de objetos host tipados, códigos de error tipados, símbolos pequeños (hasta 9 caracteres alfanuméricos latinos), o un valor void único. Los bits individuales en un valor se asignan para etiquetar y alternar entre estos casos dinámicamente, y las funciones u objetos host que requieran casos específicos pueden rechazar valores de otros casos.
+
+Dado que el tipo valor puede contener un manejador a un objeto host, cualquier objeto contenedor que pueda contener el tipo valor en realidad puede contener cualquier objeto. Por lo tanto, los tipos de mapas y vectores host -- estructuras de datos contenedoras -- se definen simplemente como contenedores para el tipo valor, donde el caso específico de cada valor puede variar de contenedor a contenedor o incluso entre los elementos de un contenedor. De esta manera, los tipos contenedores host son más parecidos a los contenedores de lenguajes de tipado dinámico como JavaScript o Python. El SDK también proporciona envoltorios estáticos y uniformemente tipados cuando se desea esto, prohibiendo que se agreguen valores fuera del caso designado al contenedor.
+
+![](/assets/diagrams/environment-concepts.png)

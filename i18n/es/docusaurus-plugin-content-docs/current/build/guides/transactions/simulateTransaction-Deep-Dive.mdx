@@ -1,0 +1,416 @@
+---
+title: guía del método RPC simulateTransaction
+description: Guía de ejemplos y tutoriales de simulateTransaction.
+---
+
+## Descripción general
+
+El `simulateTransaction` endpoint en Stellar RPC te permite enviar una invocación de contrato de prueba para simular cómo sería ejecutada por la red Stellar. Esta simulación calcula los datos de la transacción efectiva, las autorizaciones requeridas y el costo mínimo de recursos. Proporciona una forma de probar y analizar los resultados potenciales de una transacción sin realmente enviarla a la red. A veces puede ser una buena manera de obtener datos del contrato también. Esta simulación calcula los datos de la transacción efectiva, las autorizaciones requeridas y el costo mínimo de recursos. Proporciona una forma de probar y analizar los resultados potenciales de una transacción sin realmente enviarla a la red. A veces, puede ser una buena manera de obtener datos del contrato.
+
+Si bien llamar al método en el servidor rpc no es la ÚNICA forma de simular una transacción, probablemente será la más común y la más fácil.
+
+Aquí veremos los objetos involucrados y sus definiciones.
+
+## Servicios RPC
+
+La Stellar Development Foundation proporciona un servicio RPC de testnet en `http://soroban-testnet.stellar.org`. Para proveedores de redes públicas, consulta la lista de [Proveedores RPC del Ecosistema](../../../data/apis/api-providers.mdx).
+
+### Endpoint de Testnet:
+
+https://soroban-testnet.stellar.org:443
+
+**SimulateTransactionParams** es el argumento pasado al endpoint RPC `simulateTransaction`:
+
+```typescript
+interface SimulateTransactionParams {
+  transaction: string; // The Stellar transaction to be simulated, serialized as a base64 string.
+  resourceConfig?: {
+    instructionLeeway: number; // Allow this many extra instructions when budgeting resources.
+  };
+}
+```
+
+**SimulateTransactionResult** es el resultado devuelto de la llamada. ¡Incluye [muchas cosas útiles](https://developers.stellar.org/docs/data/rpc/api-reference/methods/simulateTransaction)!
+
+## Cosas para las que se usa `simulateTransaction`:
+
+1. **Preparando transacciones `invokeHostFunctionOp`**: Cada vez que necesites enviar una transacción `invokeHostFunctionOp` a la red.
+2. **Determinación de la huella**: Para determinar la huella del ledger, que incluye todas las entradas de datos que la transacción leerá o escribirá.
+3. **Identificación de autorizaciones**: Para identificar las autorizaciones requeridas para la transacción.
+4. **Detección de errores**: Para detectar posibles errores e incidencias antes de la presentación real, ahorrando tiempo y recursos de la red.
+5. **Restauración de entradas de ledger archivadas o código de contrato**: Para preparar y restaurar datos archivados antes de la presentación real de la transacción.
+6. **Simulando llamadas a funciones del contrato**: Para recuperar ciertos datos del contrato sin afectar el estado del ledger. (Vale la pena señalar que también podrías recuperar ciertos datos del contrato directamente de las keys del ledger sin simulación si no requiere ninguna manipulación dentro de la lógica del contrato.)
+7. **Cálculo de recursos**: Para calcular los recursos necesarios (instrucciones de CPU, memoria, etc.) que consumirá una transacción.
+
+## Cómo llamar a `simulateTransaction`
+
+### Usando Fetch
+
+Aquí hay un ejemplo de cómo llamar al endpoint `simulateTransaction` directamente usando `fetch` en JavaScript:
+
+```javascript
+async function simulateTransaction(transactionXDR) {
+  const requestBody = {
+    jsonrpc: "2.0",
+    id: 8675309,
+    method: "simulateTransaction",
+    params: {
+      transaction: transactionXDR,
+      resourceConfig: {
+        instructionLeeway: 50000,
+      },
+    },
+  };
+
+  const response = await fetch("https://soroban-testnet.stellar.org:443", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  const result = await response.json();
+  console.log(JSON.parse(result));
+}
+
+// Example XDR transaction envelope
+// Replace the following placeholder with your actual XDR transaction envelope
+const transactionXDR =
+  "AAAAAgAAAAAg4dbAxsGAGICfBG3iT2cKGYQ6hK4sJWzZ6or1C5v6GAAAAGQAJsOiAAAAEQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABzAP+dP0PsNzYvFF1pv7a8RQXwH5eg3uZBbbWjE9PwAsAAAAJaW5jcmVtZW50AAAAAAAAAgAAABIAAAAAAAAAACDh1sDGwYAYgJ8EbeJPZwoZhDqEriwlbNnqivULm/oYAAAAAwAAAAMAAAAAAAAAAAAAAAA=";
+// An example of where to get the XDR is from TransactionBuilder class from the sdk as shown in the next example.
+simulateTransaction(transactionXDR);
+```
+
+### Usando el SDK de JavaScript
+
+El Stellar SDK proporciona un método conveniente para simular una transacción:
+
+```javascript
+import {
+  Keypair,
+  rpc as StellarRpc,
+  scValToNative,
+  TransactionBuilder,
+  BASE_FEE,
+  Networks,
+  Operation,
+} from "@stellar/stellar-sdk";
+
+const FRIENDBOT_URL = "https://friendbot-testnet.stellar.org/";
+
+const rpc_url = "https://soroban-testnet.stellar.org:443";
+
+// Generate a new keypair for transaction authorization.
+const keypair = Keypair.random();
+const secret = keypair.secret();
+const publicKey = keypair.publicKey();
+console.log("publicKey:", publicKey);
+// you need to fund the account.
+await fetch(`https://friendbot-testnet.stellar.org/?addr=${publicKey}`).then(
+  (res) => {
+    console.log(`funded account: ${publicKey}`);
+  },
+);
+
+// Initialize the rpcServer
+const RpcServer = new StellarRpc.Server(rpc_url, { allowHttp: true });
+
+// Load the account (getting the sequence number for the account and making an account object.)
+const account = await RpcServer.getAccount(publicKey);
+
+// Define the transaction
+const transaction = new TransactionBuilder(account, {
+  fee: BASE_FEE,
+})
+  .setNetworkPassphrase(Networks.TESTNET)
+  .setTimeout(30)
+  .addOperation(
+    Operation.invokeContractFunction({
+      function: "symbol",
+      // the contract function and address need to be set by you.
+      contract: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      args: [],
+    }),
+  )
+  .build();
+// If you want to get this as an XDR string directly, you would use `transaction.toXDR('base64')`
+
+RpcServer.simulateTransaction(transaction).then((sim) => {
+  console.log("cost:", sim.cost);
+  console.log("result:", sim.result);
+  // the result is a ScVal and so we can parse that to human readable output using the sdk's `scValToNative` function:
+  console.log("humanReadable Result:", scValToNative(sim.result?.retval));
+  console.log("error:", sim.error);
+  console.log("latestLedger:", sim.latestLedger);
+});
+```
+
+#### Ejecutando el ejemplo
+
+Para ejecutar el código anterior, necesitarás instalar el Stellar SDK en tu proyecto. Puedes hacer esto ejecutando el siguiente comando en el directorio de tu proyecto:
+
+`npm install @stellar/stellar-sdk`
+
+Una vez que tu proyecto esté configurado, puedes crear un nuevo archivo mjs y pegar el código anterior. Luego puedes ejecutar el archivo usando Node.js ejecutando:
+
+`node <filename>.mjs`
+
+## Entendiendo la Huella
+
+Una huella es un conjunto de keys de ledger que la transacción leerá o escribirá. Estas keys están marcadas como de sólo lectura o lectura-escritura:
+
+- **Keys de solo lectura**: Disponibles solo para lectura.
+- **Keys de lectura-escritura**: Disponibles para lectura y escritura.
+
+La huella garantiza que una transacción sea consciente de todas las entradas de ledger con las que interactuará, previniendo errores inesperados durante la ejecución.
+
+## Montando una transacción
+
+Una vez que hayas simulado la transacción y obtenido los datos necesarios, puedes montar la transacción para la presentación real. La función `assembleTransaction` en el SDK ayuda con este proceso, pero también puedes llamar a `prepareTransaction` para simular y montar la transacción en un solo paso. Usando el SDK de JavaScript podemos llamar a [`assembleTransaction`](https://stellar.github.io/js-stellar-sdk/global.html#assembleTransaction) para montar una transacción fácilmente.
+
+## Manejando entradas de ledger archivadas
+
+Cuando una entrada de ledger está archivada, necesita ser restaurada antes de que la transacción pueda ser enviada. Esto se indica en el campo `restorePreamble` del resultado.
+
+```typescript
+interface RestorePreamble {
+  minResourceFee: string; // Absolute minimum resource fee to add when submitting the RestoreFootprint operation.
+  transactionData: string; // The recommended Soroban Transaction Data to use when submitting the RestoreFootprint operation.
+}
+```
+
+Aquí hay un ejemplo para manejar la restauración usando el `restorePreamble` para restaurar datos archivados:
+
+```typescript
+// Make sure to add the necessary imports:
+import { Contract } from "@stellar/stellar-sdk/contract";
+import {
+  Account,
+  Keypair,
+  Operation,
+  SorobanDataBuilder,
+  rpc as StellarRpc,
+  TimeoutInfinite,
+  Transaction,
+  TransactionBuilder,
+  scValToNative,
+  xdr,
+} from "@stellar/stellar-sdk";
+/**
+ * Simulates a restoration transaction to determine if restoration is needed.
+ * This function first checks the ledger entry for the given WASM hash. If the entry is found and has expired,
+ * it attempts a restoration. If the entry hasn't expired yet but the TTL needs extension, it proceeds with TTL extension.
+ * @param contract - The address of the contract to check
+ * @param txParams - The transaction parameters including account and signer.
+ * @returns A promise that resolves to a simulation response, indicating whether restoration or TTL extension is needed.
+ */
+export async function simulateRestorationIfNeeded(
+  contract: ContractAddress,
+  txParams: TxParams,
+): Promise<
+  StellarRpc.Api.SimulateTransactionRestoreResponse | string | undefined
+> {
+  try {
+    const RpcServer = new StellarRpc.Server(
+      "https://soroban-testnet.stellar.org",
+      { allowHttp: true },
+    );
+    const account = await RpcServer.getAccount(txParams.account.accountId());
+    const contract = new Contract(contract);
+    const ledgerKey = contract.getFootprint();
+    const response = await RpcServer.getLedgerEntries(ledgerKey);
+    // Here we parse the response to make sure we got a response and that the liveUntilLedgerSeq parameter is there to make sure it's the response we want before continuing.
+    if (
+      response.entries &&
+      response.entries.length > 0 &&
+      response.entries[0].liveUntilLedgerSeq
+    ) {
+      const expirationLedger = response.entries[0].liveUntilLedgerSeq;
+      const desiredLedgerSeq = response.latestLedger + 500000;
+      // Be very aware of how many ledgers you want to extend it by.  It could quickly become extremely pricey in fees.
+      let extendLedgers = desiredLedgerSeq - expirationLedger;
+      if (extendLedgers < 10000) {
+        extendLedgers = 10000;
+      }
+      console.log("Expiration:", expirationLedger);
+      console.log("Desired TTL:", desiredLedgerSeq);
+      const sorobanData = new SorobanDataBuilder()
+        .setReadWrite([ledgerKey])
+        .build();
+      const restoreTx = new TransactionBuilder(
+        account,
+        txParams.txBuilderOptions,
+      )
+        .setSorobanData(sorobanData)
+        .addOperation(Operation.restoreFootprint({})) // The actual restore operation
+        .build();
+      // Simulate a transaction with a restoration operation to check if it's necessary
+
+      const restorationSimulation: StellarRpc.Api.SimulateTransactionResponse =
+        await RpcServer.simulateTransaction(restoreTx);
+
+      //check if restore is necessary. this code also checks if the simulation was successful.
+      const restoreNeeded = StellarRpc.Api.isSimulationRestore(
+        restorationSimulation,
+      );
+      console.log(`restoration needed: ${restoreNeeded}`);
+      // Check if the simulation indicates a need for restoration
+      if (restoreNeeded) {
+        return restorationSimulation as StellarRpc.Api.SimulateTransactionRestoreResponse;
+      } else {
+        console.log("No restoration needed., bumping the ttl.");
+        const account1 = await RpcServer.getAccount(
+          txParams.account.accountId(),
+        );
+
+        const bumpTTLtx = new TransactionBuilder(
+          account1,
+          txParams.txBuilderOptions,
+        )
+          .setSorobanData(
+            new SorobanDataBuilder().setReadOnly([ledgerKey]).build(),
+          )
+          .addOperation(
+            Operation.extendFootprintTtl({
+              extendTo: desiredLedgerSeq,
+            }),
+          ) // The actual TTL extension operation
+          .build();
+        const ttlSimResponse: StellarRpc.Api.SimulateTransactionResponse =
+          await RpcServer.simulateTransaction(bumpTTLtx);
+        const assembledTx = StellarRpc.assembleTransaction(
+          bumpTTLtx,
+          ttlSimResponse,
+        ).build();
+        const signedTx = new Transaction(
+          await txParams.signerFunction(assembledTx.toXDR()),
+          Networks.TESTNET,
+        );
+        // submit the assembled and signed transaction to bump it.
+        try {
+          const response = await sendTransaction(signedTx, (result) => {
+            console.log(`bump ttl for contract result: ${result}`);
+            return result;
+          });
+          return response;
+        } catch (error) {
+          console.error("Transaction submission failed with error:", error);
+          throw error;
+        }
+      }
+    } else {
+      console.log("No ledger entry found for the given WASM hash.");
+    }
+  } catch (error) {
+    console.error("Failed to simulate restoration:", error);
+    throw error;
+  }
+}
+
+/**
+ * Handles the restoration of a Soroban contract.
+ * @param {StellarRpc.Api.SimulateTransactionRestoreResponse} simResponse - The simulation response containing restoration information.
+ * @param {TxParams} txParams - The transaction parameters.
+ * @returns {Promise<void>} A promise that resolves when the restoration transaction has been submitted.
+ */
+export async function handleRestoration(
+  simResponse: StellarRpc.Api.SimulateTransactionRestoreResponse,
+  txParams: TxParams,
+): Promise<void> {
+  const RpcServer = new StellarRpc.Server(
+    "https://soroban-testnet.stellar.org",
+    { allowHttp: true },
+  );
+  const restorePreamble = simResponse.restorePreamble;
+  console.log("Restoring for account:", txParams.account.accountId());
+  const account = await RpcServer.getAccount(txParams.account.accountId());
+  // Construct the transaction builder with the necessary parameters
+  const restoreTx = new TransactionBuilder(account, {
+    ...txParams.txBuilderOptions,
+    fee: restorePreamble.minResourceFee, // Update fee based on the restoration requirement
+  })
+    .setSorobanData(restorePreamble.transactionData.build()) // Set Soroban Data from the simulation
+    .addOperation(Operation.restoreFootprint({})) // Add the RestoreFootprint operation
+    .build(); // Build the transaction
+
+  const simulation: StellarRpc.Api.SimulateTransactionResponse =
+    await RpcServer.simulateTransaction(restoreTx);
+  const assembledTx = StellarRpc.assembleTransaction(
+    restoreTx,
+    simulation,
+  ).build();
+
+  const signedTx = new Transaction(
+    await txParams.signerFunction(assembledTx.toXDR()),
+    Networks.TESTNET,
+  );
+
+  console.log("Submitting restoration transaction");
+
+  try {
+    // Submit the transaction to the network
+    const response = await RpcServer.sendTransaction(signedTx);
+    console.log(
+      "Restoration transaction submitted successfully:",
+      response.hash,
+    );
+  } catch (error) {
+    console.error("Failed to submit restoration transaction:", error);
+    throw new Error("Restoration transaction failed");
+  }
+}
+```
+
+## Honorarios y uso de recursos
+
+Los contratos inteligentes de Soroban en Stellar utilizan un modelo de tarifas de recursos multidimensional, cobrando tarifas por varios tipos de recursos:
+
+1. **Instrucciones de CPU**: Número de instrucciones de CPU que usa la transacción.
+2. **Accesos a entradas de ledger**: Leer o escribir cualquier entrada de ledger.
+3. **I/O de ledger**: Número de bytes leídos o escritos en el ledger.
+4. **Tamaño de la transacción**: Tamaño de la transacción presentada a la red en bytes.
+5. **Tamaño de eventos y valor de retorno**: Tamaño de los eventos producidos por el contrato y el valor de retorno de la función de contrato de nivel superior.
+6. **Alquiler de espacio de ledger**: Pago por extensiones de TTL de entradas de ledger y pagos de alquiler por el aumento del tamaño de las entradas de ledger.
+
+Las tarifas se calculan en función del consumo de recursos declarado en la transacción. Las tarifas reembolsables se cobran antes de la ejecución y se reembolsan en función del uso real, mientras que las tarifas no reembolsables se calculan a partir de instrucciones de CPU, bytes leídos, bytes escritos y tamaño de la transacción. [Consulta este documento para una comprensión más profunda de tarifas y mediciones.](https://developers.stellar.org/docs/learn/fundamentals/fees-resource-limits-metering)
+
+## Manejo de Errores
+
+El mecanismo de simulación de transacciones proporciona una estimación del consumo de CPU y memoria de una invocación de contrato durante una transacción. También resalta [errores potenciales y limitaciones de recursos](https://developers.stellar.org/docs/learn/encyclopedia/errors-and-debugging/debugging-errors#1-simulate-transaction) de la invocación antes de la presentación real.
+
+## Código de backend y flujo de trabajo
+
+El `simulateTransaction` endpoint aprovecha varios componentes de backend para simular la ejecución de una transacción. Aquí hay una breve explicación de cómo funciona:
+
+1. **Invocación de la simulación**:
+
+   - La simulación se inicia llamando a `simulate_invoke_host_function_op`, que toma parámetros como la transacción a simular, la configuración de recursos y otros detalles necesarios.
+
+2. **Fuente de instantánea y configuración de red**:
+
+   - La simulación utiliza una fuente de instantánea (`MockSnapshotSource`) y configuración de red (`NetworkConfig`) para imitar el estado del ledger y las condiciones de la red.
+
+3. **Cálculo de recursos**:
+
+   - La función `simulate_invoke_host_function_op_resources` calcula los recursos (instrucciones de CPU, bytes de memoria) requeridos para la transacción analizando los cambios en el ledger.
+
+4. **Ejecución y gestión de resultados**:
+
+   - El núcleo de la ejecución está a cargo de `invoke_host_function_in_recording_mode`, que registra el impacto de la transacción en el ledger.
+   - Los resultados son luego procesados, incluyendo cualquier autorización requerida, eventos emitidos y datos de transacción.
+
+5. **Ajustes y tarifas**:
+   - Los ajustes al uso de recursos y tarifas se realizan en función de configuraciones predefinidas (`SimulationAdjustmentConfig`), asegurando una estimación precisa de tarifas.
+
+Estas funciones están definidas en [`rs-soroban-env`](https://github.com/stellar/rs-soroban-env) y también en un [`soroban-simulation`](https://github.com/stellar/rs-soroban-env/tree/main/soroban-simulation) [crate](https://crates.io/crates/soroban-simulation) y manejan la lógica central para simular transacciones.
+
+## Lectura adicional
+
+Para más información y ejemplos, consulta el código y otra documentación:
+
+- [Documentación de openRpc](https://developers.stellar.org/network/soroban-rpc/api-reference/methods/simulateTransaction)
+- [Especificación json de openRpc](https://github.com/stellar/stellar-docs/tree/main/openrpc)
+- [preflight.go](https://github.com/stellar/stellar-rpc/blob/release/v22.1.2/cmd/stellar-rpc/internal/preflight/preflight.go)
+- [Código de ejemplo de Soroban](https://github.com/stellar/soroban-examples)
+- [Documentación del SDK de Stellar](https://stellar.github.io/js-stellar-sdk/)
