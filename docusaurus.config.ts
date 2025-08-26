@@ -195,6 +195,11 @@ const config: Config = {
               activeBasePath: 'docs/build/apps/example-application-tutorial/overview',
             },
             {
+              to: '/docs/build/apps/swift-payment-app',
+              label: 'Tutorial: Payment Application, Swift',
+              activeBasePath: 'docs/build/apps/swift-payment-app',
+            },
+            {
               to: '/docs/build/apps/ingest-sdk/overview',
               label: 'Tutorial: Network Ingestion Pipeline',
               activeBasePath: 'docs/build/apps/ingest-sdk/overview',
