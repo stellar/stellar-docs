@@ -1,0 +1,90 @@
+---
+title: Backend de ledger RPC
+sidebar_position: 10
+---
+
+El [RPCLedgerBackend](https://github.com/stellar/go/blob/master/ingest/ledgerbackend/rpc_backend.go) es una implementación de [LedgerBackend](https://github.com/stellar/go/blob/master/ingest/ledgerbackend/ledger_backend.go) en el [SDK de Ingesta](https://github.com/stellar/go/tree/master/ingest) de Stellar que utiliza un Servidor RPC como fuente de metadatos del ledger.
+
+Las aplicaciones pueden usar este backend de ledger para obtener metadatos del ledger de la red Stellar a través de los métodos estándar de la interfaz [LedgerBackend](https://github.com/stellar/go/blob/master/ingest/ledgerbackend/ledger_backend.go). Este backend de ledger se considera el más ligero entre los disponibles ya que solo requiere un cliente HTTP para acceder a un servidor RPC remoto.
+
+El uso de RPCLedgerBackend implica conocer la ventana de retención y la configuración del data lake en el servidor RPC remoto, ya que estos aspectos determinan el rango de ledgers accesibles a través de RPCLedgerBackend.
+
+- `HISTORY_RETENTION_WINDOW` - Esta es una configuración en el servidor RPC que determina el rango de ledgers retenidos por el RPC en una ventana deslizante desde el más reciente en la red Stellar. Por defecto, se retienen los datos del ledger correspondientes a los últimos 7 días de la red Stellar.
+- [Integración de Data Lake](/docs/data/apis/rpc/admin-guide/data-lake-integration) - Si el RPC tiene habilitada la integración con Data Lake, el rango de ledgers disponibles será al menos el de la Ventana de Retención del RPC y se extenderá hacia atrás en el historial hasta el rango mayor proporcionado por el data lake.
+
+## Ejemplo de uso del SDK
+
+### Requisitos previos
+
+1. Una URL de un Servidor RPC.
+2. Entorno de ejecución Go 1.2x
+
+### Código
+
+Un ejemplo funcional que demuestra el uso programático de [RPCLedgerBackend](https://github.com/stellar/go/blob/master/ingest/ledgerbackend/rpc_backend.go) para imprimir un flujo de los últimos ledgers emitidos desde la red Stellar Testnet. Observa el uso adicional del [Cliente RPC Go](https://github.com/stellar/stellar-rpc/blob/main/client/main.go) que usa la misma URL RPC para obtener el último ledger del servidor RPC. Esto se usa para preparar nuestro ejemplo de streaming en vivo para usar el ledger conocido más reciente en RPC como el ledger inicial cuando se solicita el rango ilimitado.
+
+Requisitos previos:
+
+1. Crea un directorio vacío llamado `rpc-backend` y entra en el directorio con `cd`.
+2. Ejecuta `go mod init example/rpc-backend`
+3. Ejecuta `go get github.com/stellar/go github.com/stellar/stellar-rpc@rpcclient-v23.0.0`
+4. Copia este fragmento de código en `rpc_ledger_backend_demo.go`
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/stellar/go/ingest/ledgerbackend"
+    "github.com/stellar/stellar-rpc/client"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Use the public SDF Testnet RPC for demo purpose
+    endpoint := "https://soroban-testnet.stellar.org"
+
+    // Create a new RPC client
+    rpcClient := client.NewClient(endpoint, nil)
+
+    // Get the latest ledger sequence from the RPC server
+    health, err := rpcClient.GetHealth(ctx)
+    if err != nil {
+            log.Fatalf("Failed to get RPC health: %v", err)
+    }
+    startSeq := health.LatestLedger
+
+    // Configure the RPC Ledger Backend
+    backend := ledgerbackend.NewRPCLedgerBackend(ledgerbackend.RPCLedgerBackendOptions{
+            RPCServerURL: endpoint,
+    })
+    defer backend.Close()
+
+    fmt.Printf("Prepare unbounded range starting with Testnet ledger sequence %d: \n", startSeq)
+    // Prepare an unbounded range starting from the latest ledger
+    if err := backend.PrepareRange(ctx, ledgerbackend.UnboundedRange(startSeq)); err != nil {
+            log.Fatalf("Failed to prepare range: %v", err)
+    }
+
+    fmt.Println("Iterating over Testnet ledgers:")
+    seq := startSeq
+    for {
+            ledger, err := backend.GetLedger(ctx, seq)
+            if err != nil {
+                    fmt.Printf("No more ledgers or error at sequence %d: %v\n", seq, err)
+                    break
+            }
+            fmt.Printf("Ledger %d: Hash=%x, CloseTime=%d\n", ledger.LedgerSequence(), ledger.LedgerHash(), ledger.LedgerCloseTime())
+            seq++
+    }
+
+    fmt.Println("Done.")
+}
+```
+
+5. Ejecuta `go mod tidy`
+6. Ejecuta `go run rpc_ledger_backend_demo.go`
