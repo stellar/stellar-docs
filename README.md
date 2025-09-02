@@ -1,5 +1,8 @@
 # Stellar Documentation and API Reference 🌌 <!-- omit in toc -->
 
+[![Apache 2.0 licensed](https://img.shields.io/badge/license-apache%202.0-blue.svg)](LICENSE)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/stellar/stellar-docs)
+
 Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
 
 ## Table of Contents <!-- omit in toc -->
@@ -51,8 +54,10 @@ No matter what you contribute, whether a PR or an issue, you can expect to recei
 If you have questions, feel free to ask in the [Stellar Developer Discord](https://discord.gg/stellardev).
 
 ## Quick Start
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)][codespaces]
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)][gitpod]
+
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
 
 ### Prerequisites
 
@@ -85,6 +90,12 @@ MDX file formatting and style across the repository:
 ```bash
 npm run check:mdx # this will search for problems in the MDX files
 npm run format:mdx # this will fix any problems that were found
+```
+
+After that you need to build the `routes.txt` file, to do that run the next command
+
+```bash
+yarn build
 ```
 
 ## Repository Structure
@@ -248,5 +259,5 @@ const CODE_LANGS = {
 [guide]: https://www.markdownguide.org/
 [alert-example]: https://developers.stellar.org/docs/anchoring-assets/enabling-cross-border-payments/setting-up-test-server
 [prism]: https://github.com/FormidableLabs/prism-react-renderer
-[codespaces]: https://github.com/codespaces/new?hide_repo_select=true&ref=main&repo=521307729&machine=basicLinux32gb&devcontainer_path=.devcontainer%2Fdevcontainer.json&location=EastUs
-[gitpod]: https://gitpod.io/#https://github.com/stellar/stellar-docs
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs

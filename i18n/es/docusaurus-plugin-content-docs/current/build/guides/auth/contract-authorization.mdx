@@ -1,0 +1,481 @@
+---
+title: Guía introductoria de autorización de contratos inteligentes
+hide_table_of_contents: true
+description: Aprende sobre la autorización de contratos inteligentes en Stellar
+---
+
+## Introducción a la autorización de contratos inteligentes
+
+Por defecto, los contratos inteligentes pueden ser invocados sin autorización del llamador. La funcionalidad del contrato inteligente puede justificar, o incluso requerir, autorización. Supongamos que queremos leer o escribir información sensible: entonces el acceso al contrato debería estar restringido mediante autorización. Se requiere autorización si el contrato firma transacciones.
+
+Para comprender mejor cómo funciona la autorización, consulta la sección [Seguridad](https://developers.stellar.org/docs/learn/fundamentals/contract-development/authorization).
+
+### Autorización basada en direcciones
+
+Los contratos inteligentes de Stellar usan direcciones como identificadores para la autorización. Existen dos tipos de direcciones: direcciones de cuenta (direcciones G) y direcciones de contrato (direcciones C), pero proporcionan la misma interfaz. Esto significa que los desarrolladores no necesitan considerar el tipo de dirección usada para la autorización; los métodos de autorización tratan ambos tipos igual, desde el punto de vista del desarrollador.
+
+## 1. Autorización básica
+
+Los contratos inteligentes de Stellar tienen incorporados métodos de autorización, como `require_auth()` y `require_auth_for_args()`. Estos dos métodos ofrecen una forma sencilla de autenticar y autorizar usuarios en funciones del contrato.
+
+### `require_auth()`
+
+El método `require_auth()` autentica y autoriza a un usuario que invoca una función de contrato inteligente. Para determinar si un usuario ha autorizado la invocación de la función, simplemente llama a `require_auth()` en la dirección del usuario. La función del contrato no necesita considerar firmas u otros procesos de autorización.
+
+Para verificar si un usuario está autorizado a invocar una función, llama a `require_auth()` en la dirección del usuario:
+
+`<user_address>.require_auth()`
+
+Veamos cómo se puede añadir autorización a una función sencilla, en este caso, una función `increment()`. La función increment recibe dos argumentos, un usuario (dirección secreta) y un valor, que se usa para incrementar el valor actual del contador.
+
+La función llamará a `require_auth()` en el usuario cuando se invoque la función.
+
+```rust
+   pub fn increment(env: Env, user: Address, value: u32) -> u32 {
+      user.require_auth();
+
+      let mut count: u32 = env.storage().instance().get(&user).unwrap_or(0);
+      count += value;
+      env.storage().persistent().set(&user, &count);
+
+      count
+   }
+```
+
+La función primero comprobará si el usuario está autorizado, luego obtendrá el valor actual de `count` (o 0 si no hay valor almacenado). Luego, `count` se incrementa añadiendo el argumento `value` al `count` actual. El conteo incrementado se almacena y se devuelve. La dirección `user` se usa como clave de almacenamiento para obtener y establecer el valor `count` en el almacenamiento.
+
+Ejecuta el siguiente comando para invocar la función del contrato con la clave secreta del usuario para autorizarlo:
+
+```rust
+stellar contract invoke \
+  --id CACDYF3CYMJEJTIVFESQYZTN67GO2R5D5IUABTCUG3HXQSRXCSOROBAN \
+  --source-account alice \
+  --network testnet \
+  -- \
+  increment \
+  --user SDWDUC7IIZPRIDUZIK44UHUD2KOG6A5XWUGVZBQG2RM3J2L5DSOROBAN \
+  --value 10
+```
+
+La llamada a la función debería devolver la siguiente salida:
+
+```rust
+10
+```
+
+Si la autorización falla, la función causará un pánico en el contrato.
+
+Este ejemplo se basa en el contrato de autenticación del ejemplo en el [repositorio de ejemplos de Soroban](https://github.com/stellar/soroban-examples/tree/main/auth).
+
+#### Prueba
+
+Las funciones de contrato que usan `require_auth()` para autorización pueden probarse con `cargo test` simulando la autorización. Nuevamente, usamos el ejemplo de autenticación en el [repositorio de ejemplos de Soroban](https://github.com/stellar/soroban-examples/tree/main/auth) para ilustrar cómo probar la autorización.
+
+Primero, indicamos al entorno que simule todas las autorizaciones y permita que todas las llamadas a `require_auth()` tengan éxito usando `env.mock_all_auths()`. Después, generamos un usuario con `Address::generate(&env)` e insertamos ese usuario como parámetro en la función `increment()` del contrato, junto con el parámetro de valor. La prueba tiene dos afirmaciones: la primera invoca `increment()` con el usuario generado y el valor como parámetros, luego verifica si el valor devuelto se incrementó como se esperaba.
+
+La segunda prueba verifica si ocurrió la autorización esperada y que solo ocurrió la autorización esperada.
+
+```rust
+fn test() {
+   let env = Env::default();
+   let contract_id = env.register(IncrementContract, {});
+   let client = IncrementContractClient::new(&env, &contract_id);
+
+   env.mock_all_auths();
+   let user = Address::generate(&env);
+   let value = 10;
+
+   assert_eq!(client.increment(&user, &value), 10);
+
+   Let expected_auth = AuthorizedInvocation {
+      function: AuthorizedFunction::Contract((
+         contract_id.clone(),
+         symbol_short!("increment"),
+         (user.clone(), value.clone()).into_val(&env),
+      )),
+      sub_invocations: std::vec![]
+   };
+
+   assert_eq!(env.auths(), std::vec![(user.clone(), expected_auth)]);
+}
+```
+
+Antes de realizar la prueba de autorización, podemos ejecutar la prueba:
+
+```rust
+cargo test
+```
+
+Deberías ver la siguiente salida:
+
+```rust
+running 1 test
+test test::test ... ok
+```
+
+**Probar la autorización**
+
+Al probar invocaciones de contratos autorizadas, verificamos los detalles de la autorización examinando `env.auths()`. Contendrá los detalles de todas las autorizaciones que ocurrieron, así que al comparar el contenido de `env.auths()` con lo que esperamos, podemos verificar si la autorización fue exitosa. Y tan importante como eso, dado que `env.auths()` contiene detalles de todas las autorizaciones durante la invocación del contrato, probar contra lo esperado también asegura que no hubo autorizaciones inesperadas.
+
+El contenido esperado de `env.auths()` se ve así:
+
+```rust
+[(
+  Contract(CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4),
+  AuthorizedInvocation {
+    function: Contract((
+      Contract(CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM),
+      Symbol(increment),
+      Vec(Ok(Address(obj#75)))
+    )),
+    sub_invocations: []
+  }
+)]
+```
+
+El contenido de env.auths() es un arreglo con la dirección de un usuario autorizado y los detalles asociados de la invocación del contrato.
+
+### `require_auth_for_args()`
+
+El método `require_auth_for_args()` te permite especificar explícitamente los argumentos de llamada al contrato que quieres autorizar, mientras que `require_auth()` pasa automáticamente todos los argumentos de llamada al contrato en la carga útil de autorización.
+
+Usemos el mismo ejemplo que en la sección de `require_auth()`; la única diferencia es que explicitamos que queremos autorizar el argumento `value`.
+
+```rust
+   pub fn increment(env: Env, user: Address, value: u32) -> u32 {
+      user.require_auth_for_args((value.clone(),).into_val(&env));
+
+      let mut count: u32 = env.storage().instance().get(&user).unwrap_or(0);
+      count += value.clone();
+      env.storage().persistent().set(&user, &count);
+
+      count
+   }
+```
+
+`require_auth_for_args()` se llama sobre el `user`. En este caso, autorizamos el argumento `value`, y como en el ejemplo de `require_auth()`, la dirección del usuario se usa como clave en el almacenamiento clave-valor. El argumento `value` es el valor por el cual se incrementa el `count` actual cuando se llama la función. La función devuelve el valor actual del contador.
+
+Ejecuta el siguiente comando para invocar la función del contrato con la dirección del usuario para su autorización:
+
+```rust
+stellar contract invoke \
+  --id CACDYF3CYMJEJTIVFESQYZTN67GO2R5D5IUABTCUG3HXQSRXCSOROBAN \
+  --source-account alice \
+  --network testnet \
+  -- \
+  increment \
+  --user SDWDUC7IIZPRIDUZIK44UHUD2KOG6A5XWUGVZBQG2RM3J2L5DSOROBAN \
+  --value 10
+```
+
+Debería aparecer la siguiente salida:
+
+```rust
+10
+```
+
+Si la autorización falla, la función no llegará a la línea de retorno del código.
+
+#### Prueba
+
+Las funciones del contrato que usan `require_auth_for_args()` para autorización pueden probarse con `cargo test` simulando la autorización. La prueba es muy similar a la usada en la sección `require_auth()`, donde la prueba se realiza en dos partes.
+
+Primero se realiza una prueba de la función del contrato, donde se simula la autorización, seguida de una prueba de la autorización en sí.
+
+```rust
+fn test() {
+   let env = Env::default();
+   let contract_id = env.register(IncrementContract, {});
+   let client = IncrementContractClient::new(&env, &contract_id);
+
+   env.mock_all_auths();
+   let user = Address::generate(&env);
+   let value = 10;
+
+   assert_eq!(client.increment(&user, &value), 10);
+
+   Let expected_auth = AuthorizedInvocation {
+      function: AuthorizedFunction::Contract((
+         contract_id.clone(),
+         symbol_short!("increment"),
+         (user.clone(), value.clone()).into_val(&env),
+      )),
+      sub_invocations: std::vec![]
+   };
+
+   assert_eq!(env.auths(), std::vec![(user.clone(), expected_auth)]);
+}
+```
+
+De manera similar a cómo se prueba la autorización en la sección `require_auth()`, verificamos si la autorización funciona como se espera comparando el contenido de env.auths() con los detalles esperados de autorización.
+
+El contenido esperado de `env.auths()` se ve así:
+
+```rust
+[(
+  Contract(CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4),
+  AuthorizedInvocation {
+    function: Contract((
+      Contract(CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM),
+      Symbol(increment),
+      Vec(Ok(String(obj#43), Ok(I32(10)))
+    )),
+    sub_invocations: []
+  }
+)]
+```
+
+El contenido de `env.auths()` es un arreglo con la dirección de un usuario autorizado y los detalles asociados de la invocación del contrato.
+
+Ahora ejecuta la prueba:
+
+```rust
+cargo test
+```
+
+Deberías ver la siguiente salida:
+
+```rust
+running 1 test
+test test::test ... ok
+```
+
+## 2. Autorización entre contratos
+
+Los contratos inteligentes pueden invocar funciones en otros contratos (llamadas entre contratos). Estas llamadas directas están implícitamente autorizadas por el invocador y no necesitan ser autorizadas. Sin embargo, la función del contrato invocada puede requerir autorización de un usuario distinto del contrato mismo. Un ejemplo podría ser una función de transferencia, donde un usuario externo debe autorizar la transferencia al contrato actual.
+
+Para ilustrar cómo agregar autorización a una invocación sencilla entre contratos, usamos el [ejemplo de llamadas entre contratos](https://developers.stellar.org/docs/build/smart-contracts/example-contracts/cross-contract-call), que consta de dos contratos separados: uno con una función simple de suma y otro que invoca al primero.
+
+### Contrato invocador
+
+El contrato invocador en el ejemplo mencionado crea un cliente para invocar la función `add()` en el contrato de suma. Supongamos que queremos que el contrato `add()` sea autorizado por un usuario. Entonces, necesitamos pasar el usuario a la función `add()` desde la función invocadora.
+
+Aunque la función invocadora puede no requerir autorización del usuario, la función `add()` entrará en pánico si encuentra una autorización no vinculada a la invocación raíz o principal del contrato. Por lo tanto, necesitamos usar `require_auth()` en el usuario dentro de la función invocadora.
+
+Así es como se ve la función:
+
+```rust
+#[contractimpl]
+impl ContractB {
+   pub fn add_with(env: Env, x: u32, y: u32, contract: Address, user: Address) -> u32 {
+       user.require_auth();
+
+       let client = contract_a::Client::new(&env, &contract);
+       client.add(&user, &x, &y)
+   }
+}
+```
+
+La función `add_with()` recibe cuatro parámetros. Los parámetros x e y son los dos números a sumar, el contrato es el ID del contrato que tiene la función `add()`, y el usuario es quien autorizará la ejecución de `add()`.
+
+### Contrato de suma
+
+La función del contrato de suma es muy sencilla. En su forma original en el contrato ejemplo, simplemente recibe los números a sumar (x e y). Aquí solo necesitamos añadir la dirección `user` como parámetro y luego llamar a `require_auth()` sobre el usuario para autorizar la invocación.
+
+```rust
+   pub fn add(user: Address, x: u32, y: u32) -> u32 {
+       user.require_auth();
+       x.checked_add(y).expect("no overflow")
+   }
+```
+
+### Autorización del invocador
+
+En la función `add_with()` anterior, se pasa un usuario como argumento y el usuario es autorizado en la función invocada `add()`. Supongamos que no necesitamos autorización de un usuario externo para la invocación, sino que queremos permitir que el invocador autorice la llamada. Esto se puede hacer pasando la dirección del invocador como usuario, así:
+
+```rust
+#[contractimpl]
+impl ContractB {
+   pub fn add_with(env: Env, x: u32, y: u32, contract: Address, user: Address) -> u32 {
+      user.require_auth();
+
+      let current_contract_address = env.current_contract_address();
+      let client = contract_a::Client::new(&env, &contract);
+      client.add(&current_contract_address, &x, &y)
+   }
+}
+```
+
+Usando `env.current_contract_address()`, podemos obtener la dirección del invocador y pasarla a la función `add()`.
+
+## 3. Autorización de cuenta de contrato
+
+Los contratos de cuenta personalizados son contratos que implementan una función reservada especial para validar firmas externas dentro del contexto de autorización correspondiente. Los contratos de cuenta personalizados son esencialmente contratos normales, con una capacidad añadida para verificar autorizaciones externas.
+
+### `__check_auth()`
+
+Un contrato que implementa la interfaz `CustomAccountInterface` para autorizar llamadas se convierte en un contrato de cuenta personalizado. La interfaz contiene una única función llamada `__check_auth()`. La función es reservada y la invoca automáticamente el Host cuando un contrato autoriza una transacción. No puede ser llamada manualmente.
+
+La función `__check_auth()` puede ser invocada para un contrato dado si se cumplen dos condiciones. La primera condición es cuando se llaman a `require_auth()` o `require_auth_for_args()`. La segunda condición ocurre cuando un contrato de cuenta no provee autorización al invocador, por ejemplo, llamando a una función que requiere autorización directamente.
+
+#### Cómo funciona
+
+La función `__check_auth()` puede implementar las verificaciones adecuadas, tales como verificación de firmas, límites de gasto o comprobaciones de saldo. El [código ejemplo de Cuenta Simple](https://github.com/stellar/soroban-examples/tree/main/simple_account) muestra una implementación muy sencilla de `__check_auth()`.
+
+```rust
+   pub fn __check_auth(
+      env: Env,
+      signature_payload: BytesN<32>,
+      signature: BytesN<64>,
+      _auth_context: Vec<Context>,
+   ) {
+      let public_key: BytesN<32> = env
+         .storage()
+         .instance()
+         .get::<_, BytesN<32>>(&DataKey::Owner)
+         .unwrap();
+
+      env.crypto().ed25519_verify(&public_key, &signature_payload.into(), &signature);
+   }
+```
+
+El ejemplo de Cuenta Simple tiene una función `init()`, que se usa para almacenar la clave pública ed25519 del propietario. Cuando se llama a `require_auth()`, `__check_auth()` comprueba si la carga útil está firmada por el propietario.
+
+#### Lógica de autorización
+
+La lógica de autorización dentro de `__check_auth()` puede ser escrita para ajustarse al propósito de la verificación. Algunos ejemplos de verificaciones comunes son:
+
+- Todos los firmantes requeridos han firmado
+- Autorizar llamadas entre contratos
+- Condiciones como límites de gasto o restricciones de usuario, etc.
+
+Consulta los ejemplos de contratos inteligentes para ver cómo podría implementarse `__check_auth()`. El [ejemplo de cuenta personalizada](https://github.com/stellar/soroban-examples/tree/main/account) es un buen punto de partida.
+
+### Cómo probar
+
+Como se mostró en ejemplos anteriores, la autorización puede ser simulada en pruebas añadiendo env.mock_all_auths(). Sin embargo, la función `check_auth()` no será llamada por la prueba al simular la autorización. Esto no significa que no podamos probar la función `check_auth()`; existen dos métodos diferentes para probar la autorización, incluyendo la función `check_auth()`. `try_invoke_contract_check_auth()` La manera más fácil de probar `check_auth()` es usar la utilidad de prueba try_invoke_contract_check_auth, que simula una llamada host a la función `__check_auth()` y la prueba tratándola como una función habitual.
+
+El [ejemplo de cuenta simple](https://github.com/stellar/soroban-examples/tree/main/simple_account) muestra una implementación muy básica de `try_invoke_contract_check_auth`. Primero veamos la función `__check_auth()`:
+
+```rust
+   #[allow(non_snake_case)]
+   pub fn __check_auth(
+      env: Env,
+      signature_payload: BytesN<32>,
+      signature: BytesN<64>,
+      _auth_context: Vec<Context>,
+   ) {
+      let public_key: BytesN<32> = env
+         .storage()
+         .instance()
+         .get::<_, BytesN<32>>(&DataKey::Owner)
+         .unwrap();
+
+      env.crypto()
+         .ed25519_verify(&public_key, &signature_payload.into(),
+            &signature);
+    }
+```
+
+Si vemos la función `__check_auth()`, se requieren un payload, una firma y un contexto; así que necesitamos proporcionar los mismos parámetros en `try_invoke_contract_check_auth`, junto con la dirección del contrato.
+
+```rust
+   #[test]
+   fn test_account() {
+      let env = Env::default();
+      let signer = generate_keypair();
+      let payload = BytesN::random(&env);
+
+
+      ...
+
+      account_contract.init(&signer.public.to_bytes().into_val(&env));
+
+      env.try_invoke_contract_check_auth::<Error>(
+         &account_contract.address,
+         &payload,
+         sign(&env, &signer, &payload),
+         &vec![&env],
+      )
+      .unwrap();
+   }
+```
+
+El script de prueba crea un firmante y un payload aleatorio. La función del contrato `init()` es llamada con el firmante como argumento. El propósito de la función `init()` es almacenar la clave pública del firmante como propietario del contrato, para que la función `__check_auth()` pueda verificar si el firmante es el propietario definido en `init()`.
+
+Como muestra este caso de prueba, probar `__check_auth()` es muy sencillo usando `try_invoke_contract_check_auth`, y es el método recomendado para probar la autorización con `__check_auth()`. Consulta el ejemplo de cuenta simple para ver el código completo de la prueba.
+
+#### `set_auths()`
+
+:::note
+
+`set_auths()` puede no ser relevante para la mayoría de desarrolladores.
+
+:::
+
+Otro método es usar `set_auths()`, que llamará a `__check_auth()` cuando se ejecute la función del contrato, similar a cómo el host llama a `__check_auth()` en Testnet o Mainnet. Este método es más complejo y ofrece un control de nivel inferior sobre el proceso de autorización en pruebas.
+
+Para mostrar cómo usar `set_auths()` para probar la autorización, usaremos una función del contrato muy simple `fn1()` y una función `__check_auth()` muy sencilla. Esta simplemente llama a `require_auth()` y devuelve un entero. `__check_auth()` pasará sin hacer ninguna verificación. El ejemplo se basa en los casos de prueba de autenticación del [SDK de Soroban](https://github.com/stellar/rs-soroban-sdk/blob/35ff7aaecedd38056a131843a7a657b1ddc9e684/tests/auth/src/lib.rs).
+
+```rust
+   #[contract]
+   pub struct ContractA;
+
+   #[contractimpl]
+   impl ContractA {
+      pub fn fn1(a: Address) -> u64 {
+         a.require_auth();
+         2
+      }
+
+      #[allow(non_snake_case)]
+      pub fn __check_auth(
+         _signature_payload: Val,
+         _signatures: Val,
+         _auth_context: Vec<Context>,
+      ) {}
+   }
+```
+
+Primero, se crea una instancia del cliente y se obtienen el ID del contrato y la dirección registrando el contrato. Luego se llama a la función `fn1()` usando el cliente, se establecen los detalles de autorización y finalmente se compara el valor devuelto con el esperado usando `assert_eq!()`.
+
+```rust
+   #[test]
+   fn test_with_real_contract_auth_approve() {
+      let e = Env::default();
+      let contract_id = e.register(ContractA, ());
+      let client = ContractAClient::new(&e, &contract_id);
+
+      let a = e.register(ContractA, ());
+      let a_xdr: ScAddress = (&a).try_into().unwrap();
+
+      let r = client
+         .set_auths(&[SorobanAuthorizationEntry {
+            credentials: SorobanCredentials::Address(
+               SorobanAddressCredentials {
+                  address: a_xdr.clone(),
+                  nonce: 123,
+                  signature_expiration_ledger: 100,
+                  signature: ScVal::Void,
+               }
+            ),
+            root_invocation: SorobanAuthorizedInvocation {
+              function: SorobanAuthorizedFunction::ContractFn(
+                 InvokeContractArgs {
+                    contract_address: contract_id
+                       .clone()
+                       .try_into()
+                       .unwrap(),
+                    function_name: StringM::try_from("fn1")
+                       .unwrap().into(),
+                    args: std::vec![ScVal::Address(
+                       a_xdr.clone())]
+                          .try_into().unwrap(),
+                 }
+              ),
+              sub_invocations: VecM::default(),
+            },
+         }])
+        .fn1(&a);
+
+      assert_eq!(r, 2);
+   }
+```
+
+De forma similar a cómo el host ejecuta la autorización en Testnet y Mainnet, el método `set_auths()` también usa una lista de entradas `SorobanAuthorizationEntry` para verificar la autorización durante la ejecución de la función del contrato.
+
+Una `SorobanAuthorizationEntry` contiene credenciales de autorización y detalles de la invocación del contrato. La parte de credenciales especifica la dirección del contrato de la función `__check_auth()` y los datos relevantes de autorización. La parte de invocación raíz especifica el ID del contrato, el nombre de la función que se prueba, y sus argumentos.
+
+Para más información sobre los detalles de autorización proporcionados en `set_auths()`, consulta la documentación de [Transacciones Stellar](https://developers.stellar.org/docs/learn/fundamentals/contract-development/contract-interactions/stellar-transaction).
+
+Probar usando `set_auths()` es más complejo que usar `try_invoke_contract_check_auth`, pero permite escenarios de prueba más avanzados. Si se requiere probar casos avanzados, como pruebas de bordes específicas de autorización, `set_auths()` puede ser una buena opción. De lo contrario, generalmente se recomienda el método `try_invoke_contract_check_auth` para pruebas.

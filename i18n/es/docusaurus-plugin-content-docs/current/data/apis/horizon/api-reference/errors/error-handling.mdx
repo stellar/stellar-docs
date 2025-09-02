@@ -1,0 +1,232 @@
+---
+title: Manejo de Errores
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Es importante anticipar errores que tus usuarios pueden encontrar mientras desarrollas en Stellar. En muchos tutoriales a lo largo de nuestra documentación para desarrolladores, omitimos el código de manejo de errores para centrarnos en el ejemplo. En esta sección, haremos lo contrario y hablaremos específicamente sobre los errores. Al final de esta sección, deberías ser capaz de categorizar errores y entender la mejor manera de manejarlos en tu aplicación.
+
+Muchísimas acciones interactúan con la red Stellar a través de la API de Horizon, y estas acciones posibles se dividen en dos categorías principales:
+
+1. Consultas (cualquier solicitud `GET`, como a `/accounts`)
+2. Presentaciones de transacciones (una `POST /transactions`, `POST /transactions_async`).
+
+Existen muchos códigos de error posibles al ejecutar estas acciones, y generalmente puedes manejar estos códigos de error utilizando las siguientes estrategias:
+
+- Ajustes en la solicitud: ajustando la solicitud para resolver errores estructurales con consultas o presentaciones de transacciones. Supongamos que has incluido un parámetro incorrecto, malformado tu XDR, o de otra manera no seguiste la especificación del endpoint. En estos casos, resuelve el error consultando los detalles o códigos de resultado de la respuesta de error.
+- Polling y reintentos: esta es la manera recomendada para sortear problemas de latencia o congestión encontrados a lo largo del canal entre tu ordenador y la red Stellar, que a veces puede ocurrir debido a la naturaleza de los sistemas distribuidos.
+
+## Manejo de Errores para Consultas
+
+Muchas solicitudes `GET` tienen requisitos específicos de parámetros, y mientras que los SDK pueden ayudar a hacer cumplir estos requisitos, aún puedes pasar argumentos inválidos (por ejemplo, una cadena de activo que no es compatible con [SEP-11](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0011.md#asset-trustlineasset)) que generen errores cada vez. En este escenario, no hay nada que puedas hacer, salvo seguir la especificación de la API. El campo `extras` de la respuesta de error a menudo te indicará dónde mirar y qué buscar.
+
+<CodeExample>
+
+```bash
+curl -s https://horizon-testnet.stellar.org/claimable_balances/0000 | jq '.extras'
+{
+    "invalid_field": "id",
+    "reason": "Invalid claimable balance ID"
+}
+```
+
+</CodeExample>
+
+Nota que los SDK hacen hincapié en distinguir una solicitud inválida (como se ha mencionado anteriormente) de un recurso faltante (un `404 Not Found`) (por ejemplo, el genérico `NetworkError` frente a un `NotFoundError` en el SDK de JavaScript), donde este último podría no ser considerado un error dependiendo de tu situación.
+
+## Manejo de Errores para Presentaciones de Transacciones
+
+Horizon actualmente admite dos tipos de endpoints para la presentación de transacciones:
+
+1. `/transactions_async`: Horizon presenta una transacción a Stellar-Core de forma asíncrona y pasa la respuesta relevante de Stellar-Core de inmediato al cliente. Luego, es responsabilidad del cliente hacer polling para verificar el estado de esa transacción.
+2. `/transactions`: Horizon presenta una transacción a Stellar-Core y luego espera a que sea ingresada en su base de datos. Devolverá ya sea un éxito (200), fallo (400) o un timeout (504), después de lo cual es responsabilidad del cliente hacer polling para verificar el estado de la transacción.
+
+Nota que hacer polling del hash de la transacción devolverá un 404 hasta que sea incluido en el ledger, o hasta que falle en hacerlo. En ambos casos, recibirás una respuesta cuando Horizon la haya ingresado en la base de datos.
+
+Existen algunas estrategias de resolución que son comunes entre los 2 endpoints mientras que otras son más específicas de cada endpoint.
+
+### Ajustes en la Solicitud
+
+Ciertos errores en presentaciones de transacciones también requieren ajustes para tener éxito.
+
+- Si el XDR está malformado, o si la transacción es de otro modo inválida, encontrarás un `400 Bad Request` (por ejemplo, una cuenta fuente inválida). Tanto las transacciones como sus operaciones pueden estar fácilmente malformadas o ser inválidas: consulta el campo `extras.result_codes` para obtener detalles y contrástalos con la documentación de códigos de resultados correspondiente para determinar especificaciones.
+- Las tarifas de transacción también se pueden ajustar de manera segura modificando las tarifas a través de una [transacción fee-bump](../../../../../build/guides/transactions/fee-bump-transactions.mdx) si recibes un error `tx_insufficient_fee`. Consulta la sección [Costos Insuficientes y Precios Altos](#insufficient-fees-and-surge-pricing) más adelante en este documento para obtener más información sobre la gestión de costos y estrategias al respecto.
+
+### Polling y Reintento de Transacciones
+
+#### Presentación de Transacciones Asíncronas
+
+Las presentaciones usando el endpoint `/transactions_async` devuelven una respuesta inmediata de Stellar-Core. Existen diferentes acciones que los clientes pueden tomar según el `tx_status` específico devuelto:
+
+1. `PENDING`: La presentación es exitosa pero la transacción aún está esperando ser incluida en un ledger. Deberías usar el endpoint [GET /transactions/:transaction_hash](../retrieve-a-transaction.api.mdx) para hacer polling de la transacción presentada y verificar si se incluye en el ledger. Nota que aunque la presentación fue exitosa, aún puede fallar en ser incluida en el ledger.
+2. `DUPLICATE`: La presentación fue un duplicado de una transacción previamente presentada. Esto podría suceder si el cliente presentó la misma transacción múltiples veces.
+3. `ERROR`: La presentación no se completó debido a un error en Stellar-Core. Consulta el mensaje de error adjunto para más detalles, modifica tu transacción si es necesario y vuelve a presentar.
+4. `TRY_AGAIN_LATER`: Esto indica que la instancia de Stellar-Core actualmente no puede procesar la presentación de esta transacción particular. Los clientes deberían esperar un tiempo antes de volver a presentar la transacción. Esto podría suceder por diferentes razones:
+   - Hay otra transacción del mismo cuenta fuente en memoria
+   - Ha sido rechazada debido a una tarifa de inclusión demasiado baja y se ha vuelto a enviar demasiado pronto
+
+<CodeExample>
+
+```js
+let server = sdk.Server("https://horizon-testnet.stellar.org");
+let contractId = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE";
+let contract = new StellarSdk.Contract(contractId);
+
+// Right now, this is just the default fee for this example.
+const fee = StellarSdk.BASE_FEE;
+
+let transaction = new StellarSdk.TransactionBuilder(account, { fee })
+  .setNetworkPassphrase(StellarSdk.Networks.TESTNET)
+  .setTimeout(30) // valid for the next 30s
+  // Add an operation to call increment() on the contract
+  .addOperation(contract.call("increment"))
+  .build();
+
+// Sign this transaction with the secret key
+// NOTE: signing is transaction is network specific. Test network transactions
+// won't work in the public network. To switch networks, use the Network object
+// as explained above (look for StellarSdk.Network).
+let sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecretKey);
+transaction.sign(sourceKeypair);
+
+server.submitAsyncTransaction(transaction).then((result) => {
+  console.log("hash:", result.hash);
+  console.log("status:", result.tx_status);
+  console.log("errorResultXdr:", result.error_result_xdr);
+});
+
+// Add a small sleep duration before polling the transaction.
+time.sleep(5 * time.Second);
+server
+  .transactions()
+  .transaction(result.hash)
+  .call()
+  .then((txResult) => {
+    console.log("Transaction status:", txResult);
+  });
+```
+
+</CodeExample>
+
+#### Presentación de Transacciones Sincrónicas
+
+Debido a la naturaleza bloqueante de este endpoint, las cosas son un poco diferentes en comparación con la estrategia asíncrona. Existen 3 escenarios posibles que los clientes pueden encontrar:
+
+1. La presentación es exitosa y Horizon devuelve la respuesta de la transacción. Este es el camino feliz y los clientes no necesitan hacer nada más que esperar la respuesta de Horizon.
+2. Stellar-Core envía de vuelta una respuesta `ERROR` desde la presentación. Los clientes deberían consultar el mensaje de error adjunto e intentar la presentación nuevamente.
+3. Timeouts: Horizon puede responder con un código HTTP `504`. Esta respuesta no es un error, sino una advertencia de que tu transacción aún no ha sido aceptada por la red. Pueden existir muchas razones posibles para el timeout, la más común es la congestión de la red, pero también podría deberse a otros problemas transitorios.
+   1. **Haciendo polling del hash de la transacción**: Usa el hash de la transacción en la respuesta de timeout y haz polling al endpoint [GET /transactions/:transaction_hash](../retrieve-a-transaction.api.mdx) para ver si se incluyó exitosamente en el ledger.
+   2. **Reenviando la transacción**: Antes de intentar cualquier reenvío, necesitas asegurarte de que tu transacción ha caducado según los límites de tiempo que especificaste. Después de que tu transacción haya caducado, puedes confirmarlo haciendo polling de la transacción nuevamente y obteniendo una respuesta `tx_too_late` de Horizon. Reconstruye la transacción actualizando los límites de tiempo y reenvía la transacción.
+
+:::caution
+
+Ten en cuenta que reenviar una transacción solo es seguro cuando no ha cambiado: mismas operaciones, firmas, número de secuencia, etc... Ten cuidado al sortear un error que requiere cambios en la transacción. Puede provocar transacciones duplicadas, lo que puede causar problemas: pagos duplicados, líneas de confianza incorrectas, y más. Si continúas enfrentando timeouts en los reintentos, considera usar una transacción de fee-bump para ingresar al ledger (después de que el tiempo de la transacción inicial expire) o aumentar la tarifa máxima que estás dispuesto a pagar. Lee sobre [Precios Altos y Estrategias de Costos](../../../../../learn/fundamentals/fees-resource-limits-metering.mdx) para más detalles.
+
+:::
+
+### Ejemplo: Uso de Límites de Tiempo
+
+Los límites de tiempo son opcionales pero **altamente** recomendados, ya que establecen un límite de tiempo definitivo sobre la finalización de la transacción - después de que expire, sabrás con seguridad si se incluyó en el ledger. Por ejemplo, envías una transacción, y entra en la cola de la red Stellar, pero Horizon se bloquea mientras te da una respuesta. Incierto sobre el estado de la transacción, vuelves a enviar la transacción (sin cambios!) hasta que (a) Horizon vuelva a estar operativo para darte una respuesta o (b) tus límites de tiempo se superen.
+
+Solo hay dos resultados posibles para este escenario: bien la transacción se incluye en el ledger (exactamente una vez) y Horizon te da la respuesta, o la transacción nunca sale de la cola, y recibes la correspondiente respuesta `tx_too_late`.
+
+Ejemplo de implementación:
+
+<CodeExample>
+
+```js
+import { Horizon } from "@stellar/stellar-sdk";
+
+let server = Horizon.Server("https://horizon-testnet.stellar.org");
+
+function submitTransaction(tx, timeout) {
+  if (!tx.timeBounds || tx.timeBounds.maxTime === 0) {
+    throw new Error("Always set a reasonable timebound!");
+  }
+  const expiration = parseInt(tx.timeBounds.maxTime);
+
+  return server.submitTransaction(tx).catch(function (error) {
+    if (isNonRetryErrorCase(error)) {
+      // ...do other error handling...
+      return;
+    }
+
+    // the tx no longer has a chance of making it into a ledger
+    if (Date.now() >= expiration) {
+      return new Error("The transaction timed out.");
+    }
+
+    timeout = timeout || 1; // start the (linear) back-off process
+    return sleep(timeout).then(function () {
+      return submitTransaction(tx, timeout + 5);
+    });
+  });
+}
+```
+
+</CodeExample>
+
+Asumimos la existencia de una implementación de espera similar a la de [aquí](https://stackoverflow.com/a/39914235). Asegúrate de integrar backoff en tu mecanismo de reintento. En nuestro código de manejo de errores de ejemplo anterior, implementamos un simple backoff lineal, pero hay [muchas recomendaciones](https://backoff-utils.readthedocs.io/en/latest/strategies.html#why-are-backoff-strategies-useful) para varias otras estrategias. El backoff es importante tanto para mantener el rendimiento como para evitar problemas de limitación de frecuencia.
+
+### Ejemplo: Números de Secuencia Inválidos
+
+Estos errores ocurren típicamente cuando tienes una vista desactualizada de una cuenta. Esto podría deberse a que múltiples dispositivos están usando esta cuenta, tienes envíos concurrentes ocurriendo, o otras razones. La solución es relativamente simple: recupera los detalles de la cuenta e intenta nuevamente con un número de secuencia actualizado.
+
+<CodeExample>
+
+```js
+// suppose `account` is an outdated `AccountResponse` object
+let tx = sdk.TransactionBuilder(account, ...)/* etc */.build();
+server.submitTransaction(tx).catch(function (error) {
+  if (error.response && error.status == 400 && error.extras &&
+      error.extras.result_codes.transaction == sdk.TX_BAD_SEQ) {
+    return server.loadAccount(account.accountId())
+      .then(function (response) {
+        let tx = sdk.TransactionBuilder(response, ...)/* etc */.build()
+        return server.submitTransaction(tx);
+      });
+  }
+  // ...other error conditions...
+})
+```
+
+</CodeExample>
+
+A pesar de la simplicidad de la solución, las cosas pueden salir mal rápido si no entiendes por qué ocurrió el error.
+
+Supongamos que envías transacciones desde múltiples lugares en tu aplicación simultáneamente, y tu usuario presiona rápidamente un botón _Enviar Pago_ varias veces por impaciencia. Si envías la misma transacción de pago exacta para cada pulsación, naturalmente, solo una tendrá éxito. Las otras fallarán con un número de secuencia inválido (`tx_bad_seq`), y si vuelves a enviar sin pensar con un número de secuencia actualizado (como hacemos anteriormente), estos pagos también tendrán éxito, resultando en más de un pago cuando solo se pretendía uno. Así que **ten mucho cuidado al reenviar transacciones** que han sido modificadas para sortear un error.
+
+## Manejando Errores Específicos
+
+Aquí, cubriremos errores específicos comúnmente encontrados durante la presentación de transacciones y te indicaremos la resolución adecuada.
+
+| Resultado               | Código | Descripción                                                                                                                                                                             |
+| ----------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FAILED`                | \-1    | Una de las operaciones falló (consulta la [Lista de Operaciones](../../../../../learn/fundamentals/transactions/list-of-operations.mdx) para errores)                                   |
+| `TOO_EARLY`             | \-2    | `closeTime` del ledger antes del valor `minTime` en la transacción                                                                                                                      |
+| `TOO_LATE`              | \-3    | `closeTime` del ledger después del valor `maxTime` en la transacción                                                                                                                    |
+| `MISSING_OPERATION`     | \-4    | No se especificó ninguna operación                                                                                                                                                      |
+| `BAD_SEQ`               | \-5    | El número de secuencia no coincide con la cuenta fuente                                                                                                                                 |
+| `BAD_AUTH`              | \-6    | Muy pocas firmas válidas / red incorrecta                                                                                                                                               |
+| `INSUFFICIENT_BALANCE`  | \-7    | La tarifa reduciría la cuenta por debajo del balance mínimo; consulta nuestra sección sobre [Lumens](../../../../../learn/fundamentals/lumens.mdx#minimum-balance) para más información |
+| `NO_ACCOUNT`            | \-8    | Cuenta fuente no encontrada                                                                                                                                                             |
+| `INSUFFICIENT_FEE`      | \-9    | La tarifa es demasiado pequeña; consulta nuestra sección sobre [Costos](../../../../../learn/fundamentals/fees-resource-limits-metering.mdx) para más información                       |
+| `BAD_AUTH_EXTRA`        | \-10   | Firmas no utilizadas añadidas a la transacción                                                                                                                                          |
+| `INTERNAL_ERROR`        | \-11   | Ocurrió un error desconocido                                                                                                                                                            |
+| `NOT_SUPPORTED`         | \-12   | El tipo de transacción no está soportado                                                                                                                                                |
+| `FEE_BUMP_INNER_FAILED` | \-13   | La transacción interna de una transacción de fee-bump falló                                                                                                                             |
+| `BAD_SPONSORSHIP`       | \-14   | La patrocinación no está confirmada                                                                                                                                                     |
+
+### Costos insuficientes y precios altos
+
+Consulta la sección [Costos](../../../../../learn/fundamentals/fees-resource-limits-metering.mdx)
+
+### Limitación de frecuencia
+
+Horizon puede limitar la frecuencia de las solicitudes y devolver un error `429 Too Many Requests` al exceder los límites de frecuencia. Si utilizas tu propia instancia, puedes querer aumentar o desactivar la limitación de frecuencia. Si estás utilizando una instancia de Horizon de terceros, puedes querer desplegar la tuya para tener más control sobre esta configuración o enviar solicitudes con menos frecuencia.
+
+### Saldo XLM insuficiente
+
+Cualquier transacción que reduzca el saldo de una cuenta a menos del mínimo será rechazada con un error `INSUFFICIENT_BALANCE`. Del mismo modo, las obligaciones de venta de lumen que reducirían el saldo de una cuenta a menos del mínimo más las obligaciones de venta de lumen serán rechazadas con un error `INSUFFICIENT_BALANCE`.
+
+Para más información sobre balances mínimos, consulta nuestra sección sobre [Lumens](../../../../../learn/fundamentals/lumens.mdx#minimum-balance).

@@ -1,0 +1,601 @@
+---
+title: Recorrido por el frontend de Dapp
+sidebar_position: 60
+---
+
+Así que ahora tenemos todas las piezas en su lugar y estamos listos para conectar los puntos.
+
+## Cosas del tipo de cuenta
+
+Dado que acabamos de pasar por la configuración de todas las claves, empecemos desde allí. Crearemos las funciones que se utilizarán para crear la billetera inteligente del usuario, iniciar sesión con su billetera inteligente y la funcionalidad de cerrar sesión. También añadiremos un "menú de perfil" que puede desplegarse cuando un usuario ha iniciado sesión y que les dará opciones para ver su billetera inteligente en un explorador de bloques, enviar una de esas donaciones tan importantes a nuestro libro de visitas, solicitar más fondos (Testnet), etc.
+
+:::info
+
+Estamos usando algunas piezas del [estado de Svelte](https://svelte.dev/docs/svelte/$state) para mantener el valor de la dirección del contrato de la billetera inteligente del usuario, así como la clave pública de su clave. Tu implementación de mantener este estado puede diferir dependiendo de tu frontend elegido, gestión de estado y diseño del proyecto. Con suerte, en cualquier situación, puedes inspirarte en la forma en que lo hemos hecho para este tutorial.
+
+:::
+
+### Configuración de botones de conexión
+
+Tenemos un componente en `$lib/components/connectButtons.svelte` que alberga toda la funcionalidad de registro, inicio de sesión y cierre de sesión. Esto se integra en el componente de encabezado y está disponible a lo largo de toda la dapp. La premisa básica de este componente es que tenemos una colección de botones, así como las funciones correspondientes que deben llevarse a cabo cuando se hace clic en el botón.
+
+Los botones en sí son bastante simples:
+
+```html title="src/lib/components/connectButtons.svelte"
+<div class="flex space-x-1 md:space-x-2">
+  <button class="btn variant-filled-primary" onclick="{signup}">Signup</button>
+  <button class="btn variant-soft-primary" onclick="{login}">Login</button>
+  <button class="btn variant-soft-error" onclick="{logout}">Logout</button>
+</div>
+```
+
+Si miras el [código fuente](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/components/ConnectButtons.svelte) de este componente, verás que hacemos un poco más de verificación de estado en torno a la exhibición de los botones. Esto hace que un botón de "iniciar sesión" no se muestre cuando un usuario ya está _iniciado sesión_, por ejemplo. Para los propósitos de este tutorial, sin embargo, nos centraremos en las funciones mismas, en lugar del HTML de los botones.
+
+Comencemos con la función de registro.
+
+#### Registro de usuario
+
+Para registrar a nuestro usuario, utilizaremos la instancia `account` de la clase `PasskeyKit` de nuestro archivo `$lib/passkeyClient.ts`. La instancia `account` tiene una función llamada `createWallet` que hará la mayor parte del trabajo pesado por nosotros, solo necesitamos asegurarnos de llamar a la función correctamente.
+
+Hacemos una pequeña verificación de errores aquí, pero no mucho. En aplicaciones prácticas, probablemente querrías investigar la causa de cualquier error aquí y asegurarte de que se mitiguen antes de decirle a un usuario que lo intente de nuevo.
+
+```js title="src/lib/components/connectButtons.svelte"
+import { account, send, fundContract } from "$lib/passkeyClient";
+import { keyId } from "$lib/stores/keyId";
+import { contractId } from "$lib/stores/contractId";
+
+async function signup() {
+  console.log("signing up");
+  try {
+    // The createWallet function takes two strings, an app name and a user name.
+    // It returns the public key of the passkey, a contract address which will
+    // be the user's wallet, and a built transaction (ready to submit) to create
+    // the smart wallet on-chain.
+    const {
+      keyId_base64,
+      contractId: cid,
+      built,
+    } = await account.createWallet("Ye Olde Guestbook", "User Name Goes Here");
+
+    // Store the key ID and contract address in our localStorage stores
+    keyId.set(keyId_base64);
+    contractId.set(cid);
+
+    if (!built) {
+      error(500, {
+        message: "built transaction missing",
+      });
+    }
+
+    // Send the transaction, fund the smart wallet, refresh the balance
+    await send(built);
+    await fundContract($contractId);
+    getBalance();
+  } catch (err) {
+    console.log(err);
+    toastStore.trigger({
+      message: "Something went wrong signing up. Please try again later.",
+      background: "variant-filled-error",
+    });
+  }
+}
+```
+
+#### Inicio de sesión de usuario
+
+¡Genial! El usuario se registra y obtiene algunos lumens (Testnet) todo en uno. Ahora les daremos una manera de iniciar sesión con la clave que ya han asociado con la billetera inteligente.
+
+```js title="src/lib/components/connectButtons.svelte"
+import { getContractId } from "$lib/passkeyClient";
+
+async function login() {
+  console.log("logging in");
+  try {
+    // The connectWallet function requires us to pass a function that can
+    // be used to reverse-lookup the smart wallet address, provided we know
+    // the passkey's ID (the user supplies that during the function's execution)
+    const { keyId_base64, contractId: cid } = await account.connectWallet({
+      getContractId,
+    });
+
+    // Store the key ID and contract address in our localStorage stores
+    keyId.set(keyId_base64);
+    console.log($keyId);
+    contractId.set(cid);
+    console.log($contractId);
+  } catch (err) {
+    console.log(err);
+    toastStore.trigger({
+      message: "Something went wrong logging in. Please try again later.",
+      background: "variant-filled-error",
+    });
+  }
+}
+```
+
+Similar, pero más simple, en comparación con nuestra función de `signup`. Estamos utilizando la función `account.connectWallet`. Esta función hará:
+
+1. Solicitará al usuario que se autentique, proporcionando la ID de la clave en el proceso,
+2. Usará Mercury para buscar el ID del contrato dada la ID de la clave y, finalmente,
+3. Devolverá la ID de la clave y la dirección de la billetera inteligente a nuestra dapp.
+
+¡Genial! Hagamos que el usuario cierre sesión cuando lo necesite.
+
+#### Cierre de sesión de usuario
+
+Esto es bastante más fácil que las funciones de registro o inicio de sesión. Realmente no necesitamos comunicarnos con la red Stellar o Mercury aquí. Todo lo que haremos es limpiar el estado del usuario, esencialmente.
+
+```js title="src/lib/components/connectButtons.svelte"
+async function logout() {
+  try {
+    // Reset the localStorage entry for the keyId
+    keyId.reset();
+    localStorage.removeItem("yog:keyId");
+
+    // Set the contract address store to an empty string
+    contractId.set("");
+
+    // Refresh the page, just for good measure
+    window.location.reload();
+  } catch (err) {
+    console.log(err);
+    toastStore.trigger({
+      message: "Something went wrong logging out. Please try again later.",
+      background: "variant-filled-error",
+    });
+  }
+}
+```
+
+Con esas tres funciones, ¡nuestra dapp está lista para que los usuarios se autentiquen con la dapp! Mucho más fácil de lo que probablemente esperabas, ¿verdad!?
+
+### El "menú de perfil"
+
+Aún en nuestro componente `connectButtons.svelte`, también tenemos una colección de botones y funciones que representan una especie de "menú de perfil". El usuario puede usar estos botones para ver su saldo de billetera inteligente, verlo en [Stellar Expert](https://stellar.expert), enviar una donación a nuestro (humilde) mantenedor del libro de visitas, solicitar más fondos (Testnet), etc. Mucho de esto no es necesario profundizar aquí en este tutorial, aunque te recomiendo encarecidamente que eches un vistazo al [código fuente](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/components/ConnectButtons.svelte) para obtener una mejor comprensión de esta funcionalidad.
+
+Sin embargo, aquí veremos la función `donate`. Este es un ejemplo realmente útil de cómo una dapp puede permitir que sus usuarios de billetera inteligente interactúen con cualquier activo en la red Stellar. (Aquí, estamos usando XLM de Testnet como nuestro activo, pero el flujo sería idéntico para _cualquier_ activo que desees usar.)
+
+El botón es aún bastante simple, al igual que los botones de autenticación. Estamos añadiendo algo de lógica de "carga" para cuando se realiza la transacción, sin embargo. Así que tiene _varias_ más campanas y silbatos.
+
+```html title="src/lib/components/connectButtons.svelte"
+<script lang="ts">
+  import LoaderCircle from "lucide-svelte/icons/loader-circle";
+  import HelpingHand from "lucide-svelte/icons/helping-hand";
+
+  let isDonating: boolean = false;
+</script>
+
+<button
+  class="btn variant-soft-surface w-full"
+  onclick="{donate}"
+  disabled="{isDonating}"
+>
+  <span>
+    {#if isDonating}
+    <LoaderCircle class="animate-spin" />
+    {:else}
+    <HelpingHand />
+    {/if}
+  </span>
+  <span>Send Donation</span>
+</button>
+```
+
+La función `donate` aprovecha el cliente `native` SAC que hicimos en el archivo `$lib/passkeyClient.ts`. Esto nos permite llamar a la función de transferencia del contrato como cualquier otra función de JavaScript.
+
+```js title="src/lib/components/connectButtons.svelte"
+import { account, send, native } from '$lib/passkeyClient';
+import { keyId } from '$lib/stores/keyId';
+import { contractId } from '$lib/stores/contractId';
+
+async function donate() {
+    console.log('starting donation process');
+    isDonating = true;
+    try {
+        const user = prompt("Give this passkey a name")
+        const at = await native.transfer({
+            to: networks.testnet.contractId,
+            from: $contractId,
+            amount: BigInt(donation * 10_000_000),
+        });
+
+        await account.sign(at, { keyId: $keyId });
+        const res = await send(at.built!);
+        console.log(res);
+
+        toastStore.trigger({
+            message: 'Donation received! You really ARE the goat.',
+            background: 'variant-filled-success',
+        });
+        getBalance();
+    } catch (err) {
+        console.log(err);
+        toastStore.trigger({
+            message: 'Something went wrong donating. Please try again later.',
+            background: 'variant-filled-error',
+        });
+    } finally {
+        isDonating = false;
+    }
+}
+```
+
+:::info
+
+Estamos simplificando esta función _solo un poco_ para este tutorial. En la [dapp real](https://github.com/ElliotFriend/ye-olde-guestbook/blob/1a55a5238a71b624b789dfd82a6d7fd996407bd7/src/lib/components/ConnectButtons.svelte#L138), estamos usando un modal para recuperar la entrada del usuario. Eso termina luciendo un poco demasiado desordenado aquí.
+
+:::
+
+En resumen, es una invocación bastante fácil de la función `transfer` de SAC. Solo pasamos los campos `from`, `to` y `amount`. Luego, firmamos la transacción con nuestra instancia `account`, proporcionando nuestra ID de clave en los argumentos. Finalmente, enviamos la transacción usando nuestra función auxiliar, que enviará la solicitud a Launchtube, y estaremos listos para continuar. En este caso, realmente no nos preocupa el valor de retorno. Solo capturaremos cualquier error y notificaremos al usuario con un mensaje de toast.
+
+Suficiente de las cosas de cuenta y activos, ¡vamos a las entradas del libro de visitas!
+
+## Firmar el libro de visitas
+
+Primero, necesitaremos una página que nos permita realmente _firmar_ el libro de visitas. Tendremos un formulario que toma un campo `title` y `message`, y luego enviaremos la transacción con la función auxiliar `send`, tal como lo hicimos con la transferencia de XLM anteriormente.
+
+El formulario es bastante simple y apenas vale la pena mencionarlo. Tenemos un campo de texto, un campo de área de texto y un botón. Se realizan algunas verificaciones para ver si el botón debe estar habilitado (si un usuario no ha iniciado sesión, por ejemplo). De lo contrario, es bastante poco notable:
+
+```html title="src/routes/sign/+page.svelte"
+<script lang="ts">
+  import Signature from "lucide-svelte/icons/signature";
+  import LoaderCircle from "lucide-svelte/icons/loader-circle";
+
+  let messageTitle: string;
+  let messageText: string;
+  let isLoading: boolean = false;
+</script>
+
+<label class="label">
+  <span>Title</span>
+  <input
+    bind:value="{messageTitle}"
+    class="input"
+    type="text"
+    placeholder="Title"
+  />
+</label>
+
+<label class="label">
+  <span>Message</span>
+  <textarea
+    bind:value="{messageText}"
+    class="textarea"
+    rows="4"
+    placeholder="Write your message here"
+  ></textarea>
+</label>
+
+<button
+  on:click="{signGuestbook}"
+  type="button"
+  class="btn variant-filled-primary"
+  disabled="{signButtonDisabled}"
+>
+  <span>
+    {#if isLoading}
+    <LoaderCircle class="animate-spin" />
+    {:else}
+    <Signature />
+    {/if}
+  </span>
+  <span>Sign!</span>
+</button>
+```
+
+La función `signGuestbook` (que se ejecuta cuando se hace clic en el botón) es donde están las partes más interesantes. Incluso así, se ve bastante similar a las otras transacciones que hemos enviado (creación de cuentas y transferencias de XLM).
+
+```js title="src/routes/sign/+page.svelte"
+import ye_olde_guestbook from '$lib/contracts/ye_olde_guestbook';
+import { contractId } from '$lib/stores/contractId';
+import { keyId } from '$lib/stores/keyId';
+import { account, send } from '$lib/passkeyClient';
+
+async function signGuestbook() {
+    try {
+        isLoading = true;
+        const at = await ye_olde_guestbook.write_message({
+            author: $contractId,
+            title: messageTitle,
+            text: messageText,
+        });
+
+        let txn = await account.sign(at.built!, { keyId: $keyId });
+        const { returnValue } = await send(txn.built!);
+        const messageId = xdr.ScVal.fromXDR(returnValue, 'base64').u32();
+
+        toastStore.trigger({
+            message: 'Huzzah!! You signed my guestbook! Thanks.',
+            background: 'variant-filled-success',
+        });
+        goto(`/read/${messageId}`);
+    } catch (err) {
+        console.log(err);
+        toastStore.trigger({
+            message: 'Something went wrong signing the guestbook. Please try again later.',
+            background: 'variant-filled-error',
+        });
+    } finally {
+        isLoading = false;
+    }
+}
+```
+
+El corazón y el alma de esta función es invocar la función `write_message` de nuestro contrato. Gracias a nuestros enlaces generados, esto se hace realmente fácil.
+
+Recibimos la ID del mensaje como valor de retorno y luego redirigimos al usuario a la página donde puede leer _esa_ entrada en particular.
+
+¿Cómo lee esta página la entrada del libro de visitas? ¡Excelente momento para esa pregunta!
+
+## Leer entradas del libro de visitas
+
+### Leer una entrada única
+
+La primera página que crearemos es una que lea y muestre un solo mensaje del libro de visitas desde el almacenamiento del contrato inteligente. Usaremos una función del lado del servidor para esto. De esa manera, si estuviéramos usando un proveedor RPC de pago, podríamos hacer que esta función se ejecute en el servidor y devuelva los datos relevantes al cliente.
+
+:::info
+
+Este `+page.server.ts` es una forma en Svelte de decir "cada vez que esta página es solicitada por un usuario, ejecuta esta función en el servidor y da los datos al cliente."
+
+La parte `[id]` del nombre de archivo le dice a esta ruta que esperamos tener un parámetro basado en la ruta, y podemos usarlo como `id`.
+
+:::
+
+```js title="src/routes/read/\[id]/+page.server.ts"
+import { error } from "@sveltejs/kit";
+import guestbook from "$lib/contracts/ye_olde_guestbook";
+import type { PageServerLoad } from "./$types";
+
+export const load: PageServerLoad = async ({ params }) => {
+  try {
+    let { result } = await guestbook.read_message({
+      message_id: parseInt(params.id),
+    });
+
+    return {
+      id: params.id,
+      message: result.unwrap(),
+    };
+  } catch (err) {
+    error(500, {
+      message:
+        "Sorry, something went wrong. Most likely, the message you're looking for doesn't exist.",
+    });
+  }
+};
+```
+
+Puedes ver aquí que estamos usando una de las funciones del contrato, `read_message` para obtener los datos. Esta es una función de "solo lectura", lo que significa que no se modifica ningún estado on-chain cuando se ejecuta. Así que podemos simplemente simular la invocación, lo cual ya está hecho para ti cuando se llama a la función generada por enlaces, y solo tomar los datos de la respuesta de simulación! ¡Bastante ingenioso, ¿verdad?!
+
+Pasamos los detalles del mensaje resultante de vuelta a la página, donde se mostrarán.
+
+```html title="src/routes/read/\[id]/+page.svelte"
+<script lang="ts">
+  import GuestbookMessage from "$lib/components/GuestbookMessage.svelte";
+  import type { PageData } from "./$types";
+
+  export let data: PageData;
+</script>
+
+<h1 class="h1">Read Message {data.id}</h1>
+<p>
+  You're viewing just message {data.id}. You can
+  <a class="anchor" href="/read">read all of them here</a>, as well.
+</p>
+
+<!-- This component is just a wrapper with a bunch of divs. We won't worry about it right now -->
+<GuestbookMessage message="{data.message}" messageId="{parseInt(data.id)}" />
+```
+
+### Leer todas las entradas
+
+¡Genial! Si conoces la ID de la entrada que deseas leer. La mayoría de las veces, probablemente no lo harías. Hagamos una página que pueda leer/mostrar todas las entradas del libro de visitas.
+
+Para esto, (de nuevo) mantendremos tanto de la lógica de consulta del lado del servidor como sea posible. Estos resultados de entrada del ledger pueden ser almacenados en caché. Y, el cliente no necesita hacer más rondas solo para consultar estas entradas. La ruta que realiza esta consulta es otro archivo `+page.server.ts`:
+
+```js title="src/routes/read/+page.server.ts"
+import {
+  getAllMessages,
+  getWelcomeMessage,
+} from "$lib/server/getLedgerEntries";
+import type { PageServerLoad } from "./$types";
+
+export const load: PageServerLoad = async () => {
+  return {
+    welcomeMessage: await getWelcomeMessage(),
+    messages: await getAllMessages(),
+  };
+};
+```
+
+Estamos haciendo uso de dos funciones que hemos definido en otro lugar. El `welcomeMessage` siempre tendrá la ID 1, y queremos _siempre_ mostrarlo en la parte superior de la página. Las dos funciones están definidas de esta manera:
+
+```js title="src/lib/server/getLedgerEntries.ts"
+
+import { rpc } from '$lib/passkeyClient';
+// notice our bindings re-exports the Stellar SDK, so we don't even really need
+// to import any Stellar-related classes or functions from elsewhere.
+import { Address, networks, Contract, type Message, xdr, scValToNative } from 'ye_olde_guestbook';
+
+// First, we need a function to build these LedgerKeys so we can query the network
+function buildMessageLedgerKey(messageId: number) {
+    const ledgerKey = xdr.LedgerKey.contractData(
+        new xdr.LedgerKeyContractData({
+            contract: new Address(networks.testnet.contractId).toScAddress(),
+            key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Message'), xdr.ScVal.scvU32(messageId)]),
+            durability: xdr.ContractDataDurability.persistent(),
+        }),
+    );
+
+    return ledgerKey;
+}
+
+// To get our welcome message, we use the `getLedgerEntries` function
+// from the RPC instance.
+export async function getWelcomeMessage(): Promise<Message> {
+    const result = await rpc.getLedgerEntries(buildMessageLedgerKey(1));
+    return scValToNative(result.entries[0].val.contractData().val());
+}
+
+// Our contract stores the number of guestbook messages in its instance
+// storage. So, we have a function to query exactly how many messages we
+// need to retrieve.
+export async function getMessageCount() {
+    const result = await rpc.getLedgerEntries(
+        new Contract(networks.testnet.contractId).getFootprint(),
+    );
+
+    const messageCount = result.entries[0].val
+        .contractData()
+        .val()
+        .instance()
+        .storage()
+        ?.filter((item) => item.val().switch().name === 'scvU32');
+
+    return messageCount![0].val().value() as number;
+}
+
+// Now we can iterate and make ledger key for each relevant message,
+// and add that to our getLedgerEntries query. The maximum number of ledger entries
+// to query is 200.
+export async function getAllMessages(): Promise<Message[]> {
+    const totalCount = await getMessageCount();
+    const ledgerKeysArray = [];
+    for (let messageId = 2; messageId <= totalCount; messageId++) {
+        ledgerKeysArray.push(buildMessageLedgerKey(messageId));
+    }
+
+    const result = await rpc.getLedgerEntries(...ledgerKeysArray);
+    const messages = result.entries.map((message) => {
+        return {
+            ...scValToNative(message.val.contractData().val()),
+        };
+    });
+
+    return messages;
+}
+```
+
+¿Captaste todo eso?! ¡Bien hecho! Esa es la parte de consulta para leer todos los mensajes. Ahora, para _mostrar_ esos mensajes, obtenemos esos datos en nuestra página de Svelte.
+
+```html title="src/routes/read/+page.svelte"
+<script lang="ts">
+  import { SlideToggle } from "@skeletonlabs/skeleton";
+  import GuestbookMessage from "$lib/components/GuestbookMessage.svelte";
+
+  import type { PageData } from "./$types";
+  export let data: PageData;
+
+  let sortNewestFirst = true;
+  let messages = data.messages;
+
+  $: if (sortNewestFirst) {
+    messages = messages.sort((a, b) => b.ledger - a.ledger);
+  } else {
+    messages = messages.sort((a, b) => a.ledger - b.ledger);
+  }
+</script>
+
+<div
+  class="flex flex-col md:flex-row justify-start md:justify-between space-y-4"
+>
+  <div class="space-y-4">
+    <h1 class="h1">Read the Book</h1>
+    <p>Take a gander at all these messages!</p>
+  </div>
+  <div class="md:self-end">
+    <SlideToggle
+      name="sort"
+      bind:checked="{sortNewestFirst}"
+      active="bg-primary-500"
+      size="sm"
+      >Showing
+      <code class="code">{sortNewestFirst ? 'Newest' : 'Oldest'}</code>
+      First</SlideToggle
+    >
+  </div>
+</div>
+
+<GuestbookMessage message="{data.welcomeMessage}" messageId="{1}" />
+<hr class="!border-t-2" />
+
+{#each messages as message, i (message.ledger)}
+<GuestbookMessage {message} messageId="{i" + 2} />
+{/each}
+```
+
+Estamos cargando los datos que recuperamos del servidor. Incluso incluimos un pequeño interruptor de alternancia para que el usuario decida si desea ver las entradas más nuevas o más antiguas primero. Luego, es momento de mostrar los mensajes.
+
+De nuevo, usamos el componente `GuestbookMessage`. Mostramos una instancia del componente para cada entrada de mensaje.
+
+## Editar una entrada del libro de visitas
+
+Si echamos un breve vistazo dentro del [componente `GuestbookMessage`](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/components/GuestbookMessage.svelte), podemos ver que tenemos algunos campos de formulario en caso de que el usuario quiera editar un mensaje. Limitamos la exhibición de estas partes del componente a casos donde la dirección de billetera inteligente del usuario _iniciado sesión_ `C...` coincida con el campo `author` de la entrada del libro de visitas.
+
+El HTML de la página está fuera de lo que necesitamos cubrir aquí, pero baste decir que cuando el usuario está editando una entrada, los campos de formulario se comportan bastante similar al formulario en la página de "firmar el libro de visitas". Las funciones son un poco más interesantes y más relevantes para este tutorial.
+
+:::tip
+
+El beneficio de incluir esta funcionalidad dentro del componente que muestra mensajes es que las funciones de edición pueden ser utilizadas donde sea que el usuario esté leyendo los mensajes. Ya sea que estén leyendo todas las entradas, o solo una sola entrada, si fueron el autor de un mensaje, estarán disponibles los botones de edición.
+
+:::
+
+```js title="src/lib/components/GuestbookMessage.svelte"
+import { account, send } from '$lib/passkeyClient';
+import { keyId } from '$lib/stores/keyId';
+
+// This is how we receive the "props" from the pages that instantiate this component
+export let message: Message;
+export let messageId: number;
+
+let editing: boolean;
+let isLoading: boolean;
+
+// Store the original values from the contract's storage. The form will be "bound"
+// to these values later on, when the user is modifying the entry.
+let messageTitle = message.title;
+let messageText = message.text;
+
+/**
+ * If the user chooses to cancel the editing the message, we should revert the
+ * message state back to the original values.
+ */
+const cancelEdit = () => {
+    messageTitle = message.title;
+    messageText = message.text;
+    editing = false;
+};
+
+const submitEdit = async () => {
+    console.log('submitting message edit');
+    isLoading = true;
+    try {
+        const at = await ye_olde_guestbook.edit_message({
+            message_id: messageId,
+            title: messageTitle,
+            text: messageText,
+        });
+
+        const txn = await account.sign(at.built!, { keyId: $keyId });
+        await send(txn.built!);
+
+        toastStore.trigger({
+            message: 'Message edited successfully.',
+            background: 'variant-filled-success',
+        });
+    } catch (err) {
+        console.log(err);
+        toastStore.trigger({
+            message: 'Something went wrong editing your message. Please try again later.',
+            background: 'variant-filled-error',
+        });
+    } finally {
+        editing = false;
+        isLoading.set(false);
+    }
+};
+```
+
+Nota que, a diferencia de cuando firmamos el libro de visitas por primera vez, no tenemos que proporcionar un argumento `author`. El contrato inteligente está diseñado de tal manera que busca al autor (y requiere autenticación) _dentro_ de su propio almacenamiento. Esto asegura que el _autor original_ de una entrada en el libro de visitas es la **única** cuenta autorizada para realizar modificaciones.
+
+¡Ni siquiera nuestro amable anfitrión del libro de visitas podría modificar una entrada!

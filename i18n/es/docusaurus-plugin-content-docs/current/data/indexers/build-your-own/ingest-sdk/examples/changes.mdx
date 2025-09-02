@@ -1,0 +1,213 @@
+---
+title: Recuperar cambios de las entradas del ledger dentro de un rango
+sidebar_position: 30
+---
+
+Este código invoca el binario `stellar-core` (según lo configurado en `ledgerbackend.CaptiveCoreConfig`) para reproducir ledgers desde un rango de ledger dado. Utiliza el `ingest.LedgerChangeReader` para leer cambios de cada ledger (`xdr.LedgerCloseMeta`) y categoriza los cambios según si representan entradas de ledger creadas, actualizadas o eliminadas. La estructura `ingest.Change` se utiliza para capturar cambios individuales, y el código rastrea varios tipos de cambios, como los relacionados con tarifas, transacciones u operaciones.
+
+<CodeExample>
+
+```go
+// Filename: change_entries.go
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/stellar/go/ingest"
+	"github.com/stellar/go/ingest/ledgerbackend"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/xdr"
+	"io"
+)
+
+func panicIf(err error) {
+	if err != nil {
+		panic(fmt.Errorf("An error occurred, panicking: %s\n", err))
+	}
+}
+
+func getChangesFromLedger(passphrase string, ledger xdr.LedgerCloseMeta) []ingest.Change {
+	changeReader, err := ingest.NewLedgerChangeReaderFromLedgerCloseMeta(passphrase, ledger)
+	panicIf(err)
+	defer changeReader.Close()
+
+	changes := make([]ingest.Change, 0)
+	for {
+		change, err := changeReader.Read()
+		if err == io.EOF {
+			break
+		}
+		panicIf(err)
+		changes = append(changes, change)
+	}
+	return changes
+}
+
+func getLedgers(config ledgerbackend.CaptiveCoreConfig, startingLedger uint32, endLedger uint32) []xdr.LedgerCloseMeta {
+	captiveCore, err := ledgerbackend.NewCaptive(config)
+	panicIf(err)
+
+	ctx := context.Background()
+	err = captiveCore.PrepareRange(ctx, ledgerbackend.BoundedRange(startingLedger, endLedger))
+	panicIf(err)
+	defer captiveCore.Close()
+
+	var ledgers []xdr.LedgerCloseMeta
+	for ledgerSeq := startingLedger; ledgerSeq <= endLedger; ledgerSeq++ {
+		ledger, err := captiveCore.GetLedger(ctx, ledgerSeq)
+		panicIf(err)
+		ledgers = append(ledgers, ledger)
+	}
+	return ledgers
+}
+
+type ChangesInfo struct {
+	LedgerEntriesCreated    int32
+	LedgerEntriesUpdated    int32
+	LedgerEntriesDeleted    int32
+	FeeRelatedChanges       int32
+	TxRelatedChanges        int32
+	OperationRelatedChanges int32
+}
+
+func changeCausedBy(change ingest.Change) xdr.LedgerEntryChangeType {
+	if change.Pre == nil && change.Post != nil {
+		return xdr.LedgerEntryChangeTypeLedgerEntryCreated
+	} else if change.Pre != nil && change.Post == nil {
+		return xdr.LedgerEntryChangeTypeLedgerEntryRemoved
+	} else if change.Pre != nil && change.Post != nil {
+		return xdr.LedgerEntryChangeTypeLedgerEntryUpdated
+	}
+	// this should not happen
+	panic(fmt.Errorf("unable to dertermine LedgerEntryChangeType from change"))
+}
+
+func main() {
+	archiveURLs := network.PublicNetworkhistoryArchiveURLs
+	networkPassphrase := network.PublicNetworkPassphrase
+	captiveCoreToml, err := ledgerbackend.NewCaptiveCoreToml(ledgerbackend.CaptiveCoreTomlParams{
+		NetworkPassphrase:  networkPassphrase,
+		HistoryArchiveURLs: archiveURLs,
+	})
+	panicIf(err)
+
+	config := ledgerbackend.CaptiveCoreConfig{
+		// Change these based on your environment:
+		BinaryPath:         "/usr/local/bin/stellar-core",
+		NetworkPassphrase:  networkPassphrase,
+		HistoryArchiveURLs: archiveURLs,
+		Toml:               captiveCoreToml,
+	}
+
+	startingLedger := uint32(28921599) // Replace with your desired ledger number
+	endLedger := startingLedger + 5
+
+	// NOTE: connecting to pubnet and getting ledgers might take a while.
+	ledgers := getLedgers(config, startingLedger, endLedger)
+
+	for seq, ledgerMeta := range ledgers {
+		fmt.Printf("Processing ledger: %d\n", startingLedger+uint32(seq))
+		changes := getChangesFromLedger(config.NetworkPassphrase, ledgerMeta)
+		info := ChangesInfo{}
+		for _, change := range changes {
+
+			/* Uncomment this code to print the change struct
+			jsonData, err := json.MarshalIndent(change, "", "  ")
+			panicIf(err)
+			fmt.Println(string(jsonData))
+			*/
+
+			switch changeCausedBy(change) {
+			case xdr.LedgerEntryChangeTypeLedgerEntryCreated:
+				info.LedgerEntriesCreated++
+			case xdr.LedgerEntryChangeTypeLedgerEntryRemoved:
+				info.LedgerEntriesDeleted++
+			case xdr.LedgerEntryChangeTypeLedgerEntryUpdated:
+				info.LedgerEntriesUpdated++
+			}
+
+			switch change.Reason {
+			case ingest.LedgerEntryChangeReasonFee:
+				info.FeeRelatedChanges++
+			case ingest.LedgerEntryChangeReasonTransaction:
+				info.TxRelatedChanges++
+			case ingest.LedgerEntryChangeReasonOperation:
+				info.OperationRelatedChanges++
+			default:
+			}
+
+		}
+		jsonData, err := json.MarshalIndent(info, "", "  ")
+		panicIf(err)
+		fmt.Println(string(jsonData))
+	}
+}
+```
+
+</CodeExample>
+
+**Respuesta de Ejemplo:**
+
+```bash
+>> go run ./change_entries.go
+
+// Log lines truncated for clarity
+
+Processing ledger: 28921599
+{
+  "LedgerEntriesCreated": 59,
+  "LedgerEntriesUpdated": 907,
+  "LedgerEntriesDeleted": 62,
+  "FeeRelatedChanges": 227,
+  "TxRelatedChanges": 227,
+  "OperationRelatedChanges": 574
+}
+Processing ledger: 28921600
+{
+  "LedgerEntriesCreated": 58,
+  "LedgerEntriesUpdated": 679,
+  "LedgerEntriesDeleted": 58,
+  "FeeRelatedChanges": 120,
+  "TxRelatedChanges": 120,
+  "OperationRelatedChanges": 555
+}
+Processing ledger: 28921601
+{
+  "LedgerEntriesCreated": 61,
+  "LedgerEntriesUpdated": 885,
+  "LedgerEntriesDeleted": 63,
+  "FeeRelatedChanges": 224,
+  "TxRelatedChanges": 224,
+  "OperationRelatedChanges": 561
+}
+Processing ledger: 28921602
+{
+  "LedgerEntriesCreated": 57,
+  "LedgerEntriesUpdated": 609,
+  "LedgerEntriesDeleted": 56,
+  "FeeRelatedChanges": 106,
+  "TxRelatedChanges": 106,
+  "OperationRelatedChanges": 510
+}
+Processing ledger: 28921603
+{
+  "LedgerEntriesCreated": 62,
+  "LedgerEntriesUpdated": 922,
+  "LedgerEntriesDeleted": 59,
+  "FeeRelatedChanges": 230,
+  "TxRelatedChanges": 230,
+  "OperationRelatedChanges": 583
+}
+Processing ledger: 28921604
+{
+  "LedgerEntriesCreated": 61,
+  "LedgerEntriesUpdated": 670,
+  "LedgerEntriesDeleted": 58,
+  "FeeRelatedChanges": 119,
+  "TxRelatedChanges": 119,
+  "OperationRelatedChanges": 551
+}
+```

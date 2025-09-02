@@ -1,0 +1,237 @@
+---
+title: Token Transfer Processor
+sidebar_position: 0
+---
+
+## Overview
+
+The Token Transfer Processor (TTP) is a [Go package](https://github.com/stellar/go/tree/ttp-v1.0.0/ingest/processors/token_transfer) which uses the [ingest-sdk](../../ingest-sdk/README.mdx) to parse Stellar network transaction data and derive token transfer events. Before TTP, developers had to manually parse complex ledger data, operation results, and ledger entry changes to understand when and how value moved between accounts, contracts, and other entities on the network.
+
+Prior to [CAP-67 Unified Events][cap67], tracking token transfers required significant custom logic to handle different operation types, interpret ledger changes, and reconstruct the flow of assets. CAP-67 introduced a standardized event format that simplifies this process by providing a unified way to represent all token transfer activities.
+
+TTP serves as a facade to CAP-67, automatically generating these standardized events from Stellar ledger data. It can operate in two modes:
+
+- **Standalone mode**: TTP analyzes operations, operation results, and ledger entry changes to derive transfer events
+- **Unified events mode**: TTP reads directly from CAP-67 compliant unified events when available in the ledger data
+
+For more details on operational modes, see the [Modes of Operation](#modes-of-operation) section.
+
+## Key Features
+
+- Captures token movements resulting from:
+
+  - Simple payments
+  - Path payments
+  - DEX operations
+  - Account merges
+  - Trustline revocations
+  - Claimable balance operations
+  - Liquidity pool operations
+  - Clawback operations
+  - Stellar Asset Contract events
+  - [SEP-41][sep41] compliant token events
+
+- Generates CAP-67 standardized token events:
+
+  - Transfer: Movement of tokens between accounts
+  - Mint: Creation of new tokens
+  - Burn: Destruction of tokens
+  - Clawback: Asset issuer reclaiming tokens
+  - Fee: Network fees paid
+
+- Handles muxed account information in compliance with CAP-67 multiplexing support
+
+- Reconciliation for older protocol versions to ensure consistency between operation changes and generated events
+
+## Events
+
+TTP generates events in Go bindings based on [protobuf definitions](https://github.com/stellar/go/blob/ttp-v1.0.0/protos/ingest/processors/token_transfer/token_transfer_event.proto). The definitions codify an IDL for the standardized token transfer event models put forth in CAP-67. Each event contains metadata and type-specific information structured as follows:
+
+| Event Type | Description | Key Fields | When Generated |
+| --- | --- | --- | --- |
+| **Transfer** | Asset movement between two entities | `from`, `to`, `amount`, `asset`, `toMuxedInfo` | When assets move between accounts, contracts, or other entities |
+| **Mint** | Asset creation by the issuer | `to`, `amount`, `asset`, `toMuxedInfo` | When an issuer creates new tokens or when assets are sent from the issuer |
+| **Burn** | Asset destruction to the issuer | `from`, `amount`, `asset` | When assets are returned to the issuer for destruction |
+| **Clawback** | Forced asset recovery by issuer | `from`, `amount`, `asset` | When an issuer uses clawback operations to recover assets |
+| **Fee** | Network fee payment or refund | `account`, `amount` | For all transaction fees and Soroban fee refunds |
+
+### Fee Events
+
+TTP generates fee events to track network fees associated with transaction processing. Understanding the different types of fee events is important for accurate accounting:
+
+Fee events are generated for all transactions, whether they succeed or fail. These represent the network fees that accounts pay to submit transactions to the Stellar network.
+
+- **Present for**: Every transaction
+- **Amount representation**: Positive values indicating fees paid
+- **Asset**: Always XLM (Stellar's native asset)
+
+Fee refund events are generated only for Soroban (smart contract) transactions and only when there are unused resources that qualify for a refund.
+
+- **Present for**: Soroban transactions with unused resource fees
+- **Amount representation**: Negative values to indicate money being returned
+- **Asset**: Always XLM
+- **Event type**: Uses the same `Fee` event type, distinguished by the negative amount
+
+:::note
+
+TTP uses negative amounts in fee events to represent refunds rather than creating a separate refund event type. This approach maintains consistency with the CAP-67 specification while clearly indicating the direction of the fee transaction.
+
+:::
+
+### Event Metadata
+
+Every token transfer event includes comprehensive metadata to provide context about when and where the event occurred:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `ledgerSequence` | `uint32` | The ledger number where this event occurred. This provides chronological ordering across the entire network. |
+| `txHash` | `string` | The transaction hash that generated this event. This allows you to trace events back to their originating transaction. |
+| `operationIndex` | `uint32*` | The one-based index of the operation within the transaction that caused this event as defined by [SEP-35][sep35]. This field is `nil` for transaction-level events like fees. |
+| `contractAddress` | `string` | The contract address associated with the asset/token being moved. For classic operations or Stellar Asset Contract Events, this field will be the contractId of the underlying classic asset. This enables integration with Stellar's smart contract ecosystem. |
+
+:::note
+
+The `toMuxedInfo` field is included in Transfer and Mint events when the destination uses a muxed account (M-address) and/or when transaction-level memo is set (in the case of non-smart contract transactions), providing additional routing information.
+
+:::
+
+Please refer to [this](../../../../../build/guides/transactions/pooled-accounts-muxed-accounts-memos.mdx) section for more information on muxed account/memo usage.
+
+Please refer to [this](https://stellar.org/protocol/cap-67#prohibit-the-transaction-memo-and-muxed-source-accounts-from-being-set-on-soroban-transactions) section in CAP-67 to learn more on what to expect in the `toMuxedInfo` field.
+
+:::note
+
+The `contractAddress` field is particularly important for DeFi applications as it provides the bridge between classic Stellar assets and their smart contract representations.
+
+For events from classic transactions and SAC events from smart contract transactions, the `contractAddress` field reflects the SAC address for the asset.
+
+:::
+
+## Go API Overview
+
+TTP provides three distinct functions which derive events from different levels of granularity from the underlying Stellar network data.
+
+### EventsFromLedger
+
+```go
+func (p *EventsProcessor) EventsFromLedger(lcm xdr.LedgerCloseMeta) ([]*TokenTransferEvent, error)
+```
+
+This function processes an entire ledger and returns a flattened list of `TokenTransferEvent` objects. The order of events in the returned slice represents the chronological ordering of debits, credits, and fees as they were applied to accounts, trustlines, and contracts during ledger processing.
+
+The chronological ordering is critical for applications that need to maintain accurate balance tracking or audit trails. For detailed information about how events are ordered, see the [Event Ordering](#event-ordering) section.
+
+### EventsFromTransaction
+
+```go
+func (p *EventsProcessor) EventsFromTransaction(tx ingest.LedgerTransaction) (TransactionEvents, error)
+```
+
+This function processes a single transaction and returns a `TransactionEvents` structure that separates fee-related events from operation-related events:
+
+- `FeeEvents`: Contains fee charges and refunds associated with the transaction
+- `OperationEvents`: Contains all events generated by the transaction's operations
+
+This separation is useful when you need to handle fees differently from operational transfers, such as for accounting or analytics purposes.
+
+### EventsFromOperation
+
+```go
+func (p *EventsProcessor) EventsFromOperation(
+	tx ingest.LedgerTransaction,
+	opIndex uint32,
+	op xdr.Operation,
+	opResult xdr.OperationResult
+	) ([]*TokenTransferEvent, error)
+```
+
+This function processes a single operation within a transaction and returns a list of events generated by that specific operation. This granular approach is useful for applications that need to analyze or react to specific types of operations.
+
+## Modes of Operation
+
+TTP can operate in two distinct modes depending on how the ledger data was generated and what information is available.
+
+### Default Mode (Recommended)
+
+In default mode, TTP analyzes three sources of information to derive token transfer events:
+
+- **Operations**: The operations submitted in transactions
+- **Operation Results**: The success/failure results of each operation
+- **Ledger Entry Changes**: The changes made to the ledger state
+
+This mode works with all Stellar ledgers regardless of how they were generated or which stellar-core version produced them. It is the safest and most compatible option.
+
+```go
+// Default mode - works with all ledgers
+processor := token_transfer.NewEventsProcessor(networkPassphrase)
+```
+
+### Unified Events Stream Mode
+
+In unified events stream mode, TTP reads token transfer events directly from the unified events stream embedded in the ledger data. This mode is more efficient but requires ledgers that were generated with specific stellar-core configuration flags.
+
+```go
+// Unified events mode - only for specially configured ledgers
+processor := token_transfer.NewEventsProcessorForUnifiedEvents(networkPassphrase)
+```
+
+Only use unified events stream mode if you are certain that your ledgers contain unified events. These ledgers must be generated by stellar-core with both `EMIT_CLASSIC_EVENTS=true` and `BACKFILL_STELLAR_ASSET_EVENTS=true` configuration flags enabled. TTP cannot dynamically determine whether a ledger contains unified events or not.
+
+:::caution
+
+If you configure TTP for unified events mode and then provide it ledgers without unified events, TTP will silently produce no events.
+
+:::
+
+**When in doubt, always use the default mode**, as it works reliably with all ledger types.
+
+## Event Ordering
+
+The order of events returned by TTP depends on the Stellar protocol version that was active when the ledger was created. This ordering is crucial for maintaining accurate chronological records of asset movements.
+
+### Pre-Protocol 23 Ordering
+
+Before Protocol 23, events follow this chronological pattern:
+
+```
+All Fee Events (from all transactions)
+↓
+For each transaction in ledger:
+  - Operation Events (from all operations in the transaction)
+  - Fee Refund Event (if applicable, immediately after operation events)
+```
+
+In this ordering, fee refunds appear immediately after the operation events for each individual transaction.
+
+### Protocol 23+ Ordering
+
+Starting with Protocol 23, events follow this chronological pattern:
+
+```
+All Fee Events (from all transactions)
+↓
+All Operation Events (from all transactions, maintaining transaction and operation order)
+↓
+All Fee Refund Events (from all transactions)
+```
+
+In this newer ordering, all fee refunds are grouped together at the end, after all transactions have been processed.
+
+:::note
+
+TTP automatically detects the protocol version and applies the correct ordering rules. You don't need to configure this manually, but understanding the ordering differences is important for applications that depend on event sequence.
+
+:::
+
+The chronological ordering ensures that when you process events in the order returned by TTP, you're following the exact sequence in which debits and credits were applied to accounts during ledger processing. This is essential for maintaining accurate balance calculations and audit trails.
+
+## References
+
+- [CAP-67: Unified Events][cap67]
+- [SEP-41: Asset Token Contract Specification][sep41]
+- [CAP-38: Automated Market Makers](https://stellar.org/protocol/cap-38)
+- [SEP-35: ID Scheme for Stellar Operations][sep35]
+
+[sep41]: https://stellar.org/protocol/sep-41
+[cap67]: https://stellar.org/protocol/cap-67
+[sep35]: https://stellar.org/protocol/sep-35

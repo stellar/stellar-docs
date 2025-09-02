@@ -1,0 +1,143 @@
+---
+title: Actualizar
+sidebar_position: 80
+---
+
+import { Alert } from "@site/src/components/Alert";
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Aquí describiremos los pasos recomendados para actualizar una instalación de Horizon 2.x.
+
+### Requisitos previos
+
+- Una implementación existente de Horizon que consiste en una o más instancias de Horizon.
+- Todas las instancias están en la misma versión 2.x para comenzar.
+- Si la instalación es [bare-metal](./installing.mdx#bare-metal), tienes acceso a la shell o línea de comandos en cada host que tiene una instalación de Horizon.
+- Si está [desplegado directamente en el demonio de Docker](./installing.mdx#containerized), tienes acceso a la línea de comandos en el host que está ejecutando el demonio de Docker.
+- Si está [desplegado en Kubernetes con el gráfico de Helm](./installing.mdx#helm-chart-installation), tienes las herramientas de línea de comandos kubectl y helm en tu estación de trabajo y un inicio de sesión de usuario con los niveles de acceso apropiados para cambiar los recursos en el espacio de nombres objetivo de la implementación de Horizon en el clúster.
+
+### Evaluar la instalación actual
+
+- Identifica la lista de todas las instancias de Horizon que necesitan ser actualizadas.
+
+  - Instalaciones bare-metal: la lista de hosts es gestionada por ti.
+  - Despliegues del demonio de Docker: la lista de hosts y contenedores en ejecución es gestionada por ti.
+  - Despliegues en Kubernetes: obtén la lista de pods que están desplegados desde tu instalación anterior de Helm, tendrán una anotación para `release=your_helm_horizon_installation_name`:
+
+    <CodeExample>
+
+    ```bash
+    kubectl get pods -l release=your_helm_horizon_installation_name -n <your_horizon_namespace>
+    ```
+
+    </CodeExample>
+
+- Identifica tu versión actual del software Horizon:
+
+  - Obtén acceso a la línea de comandos del sistema operativo de cada instancia de Horizon:
+    - Instalaciones bare-metal, esto es típicamente ssh en Linux o Powershell en Windows.
+    - Despliegues del demonio de Docker, usa `docker exec -it <containerid> /bin/bash`
+    - Para despliegues en Kubernetes, usa `kubectl exec -it <pod_name> -n <horizon_namespace> -- /bin/bash`
+  - En la línea de comandos de cada instancia, ejecuta `stellar-horizon version`
+
+- Todas las instancias deberían informar la misma versión, si no, el sistema puede estar inconsistente, usa esta actualización como una oportunidad para establecer consistencia y lograr que todas estén en la misma versión.
+
+### Determina la versión objetivo para la actualización
+
+Ahora que sabes tu versión actual de Horizon, visita [Horizon Releases](https://github.com/stellar/go/releases) y elige la próxima versión mayor respecto a tu versión actual para actualizar. Sigue los pasos [recomendados por GitHub para comparar versiones](https://docs.github.com/en/repositories/releasing-projects-on-github/comparing-releases), haz clic en el menú desplegable `Comparar` de la versión elegida, y luego selecciona tu versión actual y GH mostrará las diferencias entre versiones, selecciona la pestaña `Archivos cambiados`, y ve a `services/horizon/CHANGELOG.md`, destacará las nuevas notas de publicación sobre los cambios que han ocurrido entre tu versión actual y la nueva versión seleccionada. Revisa esto y busca cualquier sección de `Cambios Críticos`, `Reconstrucción de Estado` y `Migración de Esquema de DB` para considerarlo, ya que estas últimas también mencionarán el tiempo esperado para que se aplique la reconstrucción del estado o la migración de la base de datos respectivamente.
+
+### Instalar la nueva versión
+
+Ahora que has identificado la nueva versión y eres consciente de los posibles impactos al actualizar a la nueva versión según las notas de publicación, como las reconstrucciones de estado y las migraciones de bases de datos, estás informado y listo para continuar con la actualización.
+
+Actualizar las implementaciones en producción debe aprovechar una implementación secundaria, de respaldo caliente, también conocida como un [modelo azul/verde](./scaling.mdx#scaling-to-multiple-instances) y realizar la actualización en la implementación inactiva primero. Esto evitará el tiempo de inactividad del sistema para tus usuarios externos, ya que la actualización tiene lugar en la implementación inactiva.
+
+Una buena estrategia para actualizar Horizon, aplicable a implementaciones de una sola o múltiples instancias: apaga todas las instancias, instala la nueva versión de Horizon en una de las instancias de ingestión primero. La razón es que el software de Horizon solo iniciará acciones de `Reconstrucción de Estado` y `Migración de Esquema de DB` relacionadas con una actualización en una instancia donde detecta que la ingestión ha sido habilitada con el parámetro de configuración `INGEST=true`. Esto reduce la complejidad durante la actualización, ya que solo necesitas concentrarte en una instancia y evita potenciales procesos de ingestión concurrentes de Horizon que intenten la misma actualización en la base de datos.
+
+- Instalaciones bare-metal, detén el proceso de Horizon en todas las instancias primero, luego accede a una instancia que esté configurada para la ingestión y usa el gestor de paquetes apt en Linux.
+
+  <CodeExample>
+
+  ```bash
+  sudo apt update
+  sudo apt install stellar-horizon=new_horizon_debian_pkg_version
+  ```
+
+  </CodeExample>
+
+  Reinicia Horizon usando la configuración ya existente, pero incluye la variable de entorno `APPLY_MIGRATIONS=true`, esto hará que Horizon ejecute automáticamente cualquier migración de base de datos que detecte que son necesarias.
+
+- Despliegues en el demonio de Docker, detén primero todos los contenedores de Docker, luego elige un contenedor que tenga habilitada la ingestión, establece la nueva etiqueta para la imagen basada en la versión publicada en Docker Hub - [stellar/stellar-horizon](https://hub.docker.com/r/stellar/stellar-horizon/tags), y reinicia el contenedor en el demonio de Docker, incluyendo la variable de entorno `APPLY_MIGRATIONS=true`, esto hará que Horizon ejecute automáticamente cualquier migración de base de datos que detecte que son necesarias.
+
+- Para las instalaciones de Helm en Kubernetes, primero usa tu herramienta cli de Helm para detener todas las instancias de Horizon escalando todas tus instalaciones de Horizon (para ingestión y web) a 0 réplicas, que has creado previamente en [pasos de ejecución](./running.mdx).
+
+  <CodeExample>
+
+  ```bash
+  helm upgrade all-my-horizon-installations \
+  --namespace my-horizon-namespace-on-cluster \
+  --set ingest.replicaCount=0 \
+  --set web.replicaCount=0
+  ```
+
+  </CodeExample>
+
+  Ahora, usa Helm para iniciar solo una instancia de Horizon desde una instalación de Helm que tenga la ingestión habilitada en el clúster de Kubernetes, establecerás `global.image.horizon.tag` en la etiqueta de versión publicada en [stellar/stellar-horizon](https://hub.docker.com/r/stellar/stellar-horizon/tags)
+
+  <CodeExample>
+
+  ```bash
+  helm upgrade my-horizon \
+  --namespace my-horizon-namespace-on-cluster  \
+  --set global.image.horizon.tag=new_horizon_release_number \
+  --set ingest.horizonConfig.applyMigrations=True \
+  --set ingest.replicaCount=1
+  ```
+
+  </CodeExample>
+
+### Confirmar la actualización en una sola instancia de ingestión primero
+
+Si tienes infraestructura de [monitoreo](./monitoring.mdx) en su lugar, entonces tienes dos opciones para evaluar el estado de la actualización:
+
+- Ver los resultados de métricas utilizando tableros de Grafana que aprovechan las consultas sobre el [modelo de datos de métricas de Horizon](./monitoring.mdx#data-model) para comprobar estadísticas clave como la ingestión y los ledgers de red que están avanzando y en sincronía.
+
+- Ver la URL de 'estado' del servidor web de Horizon en la instancia actualizada:
+
+  <CodeExample>
+
+  ```bash
+  curl http://localhost:8000/
+  ```
+
+  </CodeExample>
+
+  La respuesta será un código de estado HTTP 200 y el cuerpo de la respuesta será una estructura de datos JSON basada en texto con información diagnóstica sobre la versión actual del software Horizon y los números de ledger para la ingestión y la red, actualiza la URL cada 5 segundos aproximadamente, y deberías ver los números de ledger de ingestión y de red avanzando y sincronizados, indicando una buena conexión a la red y la ingestión.
+
+Si las métricas y/o la respuesta de la URL de 'estado' de Horizon no indican un estado saludable basado en el avance de la ingestión del ledger, hay dos pasos para investigar más:
+
+- Un retraso en que Horizon logre un estado saludable tras una actualización es esperado y legítimo para cualquier caso de actualización donde se haya señalado `Reconstrucción de Estado` o `Migración de DB` en el delta de la versión como parte del paso previo [Determinar la versión objetivo para la actualización](#determine-the-target-version-for-upgrade). Generalmente las notas también mencionarán las expectativas de tiempo relativas para que esas tareas se completen, lo que puede ser considerado sobre cuánto esperar ante un retraso.
+- Revisa los registros de la instancia actualizada para confirmar qué está pasando. Cualquier `Reconstrucción de Estado` o `Migración de DB` iniciada será mencionada. Por ejemplo, una migración de base de datos será mencionada en los registros con las siguientes líneas para el inicio y el final:
+  ```
+  2023/09/22 18:27:01 Applying DB migrations...
+  2023/09/22 18:27:01 successfully applied 5 Horizon migrations
+  ```
+
+### Actualizar todas las instancias restantes
+
+En este punto, has actualizado una instancia de ingestión a la nueva versión de Horizon, se ha actualizado automáticamente la base de datos si era necesario y la instancia está funcionando con un estado saludable. Ahora, instala la misma versión de software de Horizon en el resto de las instancias, reiniciando cada una después de la actualización. Para instalaciones bare-metal y del demonio de Docker, eso probablemente será autoexplicativo sobre cómo lograrlo para el resto de las instancias, en instalaciones de gráficos Helm, ejecuta de nuevo la actualización de Helm, configurando la etiqueta de la imagen y también restaurando los `replicaCount` originales:
+
+<CodeExample>
+
+```bash
+helm upgrade all-my-horizon-installations \
+--namespace my-horizon-namespace-on-cluster \
+--set ingest.replicaCount=1 \
+--set web.replicaCount=1 \
+--set global.image.horizon.tag=new_horizon_release_number \
+--set ingest.horizonConfig.applyMigrations=False
+```
+
+</CodeExample>
+
+Para implementaciones en producción siguiendo el modelo de respaldo caliente o azul/verde, esta es la oportunidad de confirmar que la implementación inactiva ha tomado correctamente la actualización y es estable, en este punto, cambia los balanceadores de carga para dirigir el tráfico a la implementación inactiva, haciendo que sea la implementación activa. Ahora, puede tomar tiempo realizar la misma actualización en la otra implementación que ahora está inactiva.

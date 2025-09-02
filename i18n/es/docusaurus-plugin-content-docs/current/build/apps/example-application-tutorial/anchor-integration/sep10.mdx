@@ -1,0 +1,321 @@
+---
+title: "SEP-10: Stellar Web Authentication"
+sidebar_position: 20
+---
+
+import auth_valid from "/assets/basic-pay/auth_valid.png";
+
+Similar a la información del SEP-1, ambos protocolos SEP-6 y SEP-24 utilizan SEP-10 para la autenticación con el usuario. El usuario debe probar que es el propietario de la cuenta antes de poder retirar o depositar activos como parte de SEP-10: Stellar Web Authentication.
+
+Dado que ya tenemos la información del archivo `stellar.toml`, podemos usarla para mostrar algunos elementos interactivos al usuario.
+
+## Solicitar autenticación
+
+:::note
+
+El `/src/routes/dashboard/transfers/+page.svelte` está realizando **mucho** trabajo a lo largo de estas secciones, y lo estamos dividiendo de varias maneras para mostrarlo como parte de este tutorial. Para tener una imagen completa de este archivo, recuerda revisar el código fuente.
+
+:::
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  // `export let data` allows us to pull in any parent load data for use here.
+  /** @type {import('./$types').PageData} */
+  export let data;
+
+  // We import some of our `$lib` functions
+  import { fetchStellarToml } from "$lib/stellar/sep1";
+
+  // An object to easily and consistently class badges based on the status of
+  // a user's authentication token for a given anchor.
+  const authStatusClasses = {
+    unauthenticated: "badge badge-error",
+    auth_expired: "badge badge-warning",
+    auth_valid: "badge badge-success",
+  };
+
+  // A simple function that checks whether a user has a SEP-10 authentication token stored for an anchor, and if it is expired or not.
+  const getAuthStatus = (homeDomain) => {
+    if ($webAuthStore[homeDomain]) {
+      let token = $webAuthStore[homeDomain];
+      if (webAuthStore.isTokenExpired(token)) {
+        return "auth_expired";
+      } else {
+        return "auth_valid";
+      }
+    } else {
+      return "unauthenticated";
+    }
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+## Solicitando una transacción de desafío
+
+Ahora, cuando el usuario hace clic en el botón "autenticar", se activa la función `auth`.
+
+![autenticar](/assets/basic-pay/authenticate.png)
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* This <script> tag has been abbreviated for simplicity */
+
+  import { getChallengeTransaction } from "$lib/stellar/sep10";
+
+  // We import any Svelte components we will need
+  import ConfirmationModal from "$lib/components/ConfirmationModal.svelte";
+
+  // The `open` Svelte context is used to open the confirmation modal
+  import { getContext } from "svelte";
+  const { open } = getContext("simple-modal");
+
+  // Define some component variables that will be used throughout the page
+  let challengeXDR = "";
+  let challengeNetwork = "";
+  let challengeHomeDomain = "";
+
+  // Requests a challenge transaction from a SEP-10 server, and presents it to the user for pincode verification
+  const auth = async (homeDomain) => {
+    // Request the challenge transaction, expecting back the XDR string
+    let { transaction, network_passphrase } = await getChallengeTransaction({
+      publicKey: data.publicKey,
+      homeDomain: homeDomain,
+    });
+
+    // Set the component variables to hold the transaction details
+    challengeXDR = transaction;
+    challengeNetwork = network_passphrase;
+    challengeHomeDomain = homeDomain;
+
+    // Open the confirmation modal for the user to confirm or reject the
+    // challenge transaction. We provide our customized `onAuthConfirm`
+    // function to be called as part of the modal's confirming process.
+    open(ConfirmationModal, {
+      title: "SEP-10 Challenge Transaction",
+      body: "Please confirm your ownership of this account by signing this challenge transaction. This transaction has already been checked and verified and everything looks good from what we can tell. Feel free to double-check that everything lines up with the SEP-10 specification yourself, though.",
+      transactionXDR: challengeXDR,
+      transactionNetwork: challengeNetwork,
+      onConfirm: onAuthConfirm,
+    });
+  };
+
+  /* ... */
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+Como parte de la función `auth`, BasicPay realiza una solicitud `GET` con un parámetro `account` (la clave pública del usuario) al anchor, que devuelve una transacción Stellar firmada con la clave de firma del servidor (llamada una transacción de desafío) con un número de secuencia inválido, por lo que no podría hacer nada si se enviara accidentalmente a la red.
+
+```js title=/src/lib/stellar/sep10.js
+import { Utils } from "stellar-sdk";
+import { fetchStellarToml } from "$lib/stellar/sep1";
+
+// Requests, validates, and returns a SEP-10 challenge transaction from an anchor server.
+export async function getChallengeTransaction({ publicKey, homeDomain }) {
+  let { WEB_AUTH_ENDPOINT, TRANSFER_SERVER, SIGNING_KEY } =
+    await fetchStellarToml(homeDomain);
+
+  // In order for the SEP-10 flow to work, we must have at least a server
+  // signing key, and a web auth endpoint (which can be the transfer server as
+  // a fallback)
+  if (!WEB_AUTH_ENDPOINT || !TRANSFER_SERVER || !SIGNING_KEY) {
+    throw error(500, {
+      message:
+        "could not get challenge transaction (server missing toml entry or entries)",
+    });
+  }
+
+  // Request a challenge transaction for the users's account
+  let res = await fetch(
+    `${WEB_AUTH_ENDPOINT || TRANSFER_SERVER}?${new URLSearchParams({
+      // Possible parameters are `account`, `memo`, `home_domain`, and
+      // `client_domain`. For our purposes, we only supply `account`.
+      account: publicKey,
+    })}`,
+  );
+  let json = await res.json();
+
+  // Validate the challenge transaction meets all the requirements for SEP-10
+  validateChallengeTransaction({
+    transactionXDR: json.transaction,
+    serverSigningKey: SIGNING_KEY,
+    network: json.network_passphrase,
+    clientPublicKey: publicKey,
+    homeDomain: homeDomain,
+  });
+  return json;
+}
+
+// Validates the correct structure and information in a SEP-10 challenge transaction.
+function validateChallengeTransaction({
+  transactionXDR,
+  serverSigningKey,
+  network,
+  clientPublicKey,
+  homeDomain,
+  clientDomain,
+}) {
+  if (!clientDomain) {
+    clientDomain = homeDomain;
+  }
+
+  try {
+    // Use the `readChallengeTx` function from Stellar SDK to read and
+    // verify most of the challenge transaction information
+    let results = Utils.readChallengeTx(
+      transactionXDR,
+      serverSigningKey,
+      network,
+      homeDomain,
+      clientDomain,
+    );
+    // Also make sure the transaction was created for the correct user
+    if (results.clientAccountID === clientPublicKey) {
+      return;
+    } else {
+      throw error(400, {
+        message: "clientAccountID does not match challenge transaction",
+      });
+    }
+  } catch (err) {
+    throw error(400, { message: JSON.stringify(err) });
+  }
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep10.js
+
+## Firmar y enviar la transacción de desafío
+
+En respuesta, el usuario firma la transacción. Puede que hayas notado que presentamos esta transacción de desafío al usuario con nuestro modal de confirmación regular. Una vez que hayan firmado la transacción, la aplicación la envía de vuelta al anchor con una solicitud `POST`. Si la firma es válida, la respuesta de éxito contendrá un [JSON Web Token (JWT)](https://jwt.io/), que BasicPay almacena en la tienda `webAuthStore` para usar en futuras interacciones con el anchor.
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* ... */
+
+  // We import any stores we will need to read and/or write
+  import { invalidateAll } from "$app/navigation";
+  import { walletStore } from "$lib/stores/walletStore";
+  import { webAuthStore } from "$lib/stores/webAuthStore";
+
+  // We import some of our `$lib` functions
+  // highlight-start
+  import {
+    getChallengeTransaction,
+    submitChallengeTransaction,
+  } from "$lib/stellar/sep10";
+  // highlight-end
+
+  // Takes an action after the pincode has been confirmed by the user on a SEP-10 challenge transaction.
+  const onAuthConfirm = async (pincode) => {
+    // Sign the transaction with the user's keypair
+    let signedTransaction = await walletStore.sign({
+      transactionXDR: challengeXDR,
+      network: challengeNetwork,
+      pincode: pincode,
+    });
+    // Submit the signed tx to the SEP-10 server, and get the JWT token back
+    let token = await submitChallengeTransaction({
+      transactionXDR: signedTransaction.toXDR(),
+      homeDomain: challengeHomeDomain,
+    });
+    // Add the token to our store
+    webAuthStore.setAuth(challengeHomeDomain, token);
+    // Reload any relevant `load()` functions (i.e., refresh the page)
+    invalidateAll();
+  };
+
+  /* ... */
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+La función `submitChallengeTransaction` es bastante simple. Tomamos la transacción (en formato XDR) y el nombre de dominio, y la enviamos al `WEB_AUTH_ENDPOINT` relevante proporcionado por el archivo `stellar.toml` del dominio de origen.
+
+```js title=/src/lib/stellar/sep10.js
+// Submits a SEP-10 challenge transaction to an authentication server and returns the SEP-10 token.
+export async function submitChallengeTransaction({
+  transactionXDR,
+  homeDomain,
+}) {
+  let webAuthEndpoint = await getWebAuthEndpoint(homeDomain);
+
+  if (!webAuthEndpoint)
+    throw error(500, {
+      message: "could not authenticate with server (missing toml entry)",
+    });
+  let res = await fetch(webAuthEndpoint, {
+    method: "POST",
+    mode: "cors",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction: transactionXDR }),
+  });
+  let json = await res.json();
+
+  if (!res.ok) {
+    throw error(400, { message: json.error });
+  }
+  return json.token;
+}
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep10.js
+
+## Acerca de la tienda `webAuthStore`
+
+Como gran parte de nuestra aplicación BasicPay, los diversos tokens de autenticación que el usuario puede haber acumulado con el tiempo se almacenan en el `localStorage` del navegador. No hay nada especial sobre esta tienda en particular, pero aquí está cómo la ensamblamos:
+
+```js title=/src/lib/stores/webAuthStore.js
+import { get } from "svelte/store";
+import { persisted } from "svelte-local-storage-store";
+import { Buffer } from "buffer";
+
+function createWebAuthStore() {
+  const { subscribe, update } = persisted("bpa:webAuthStore", {});
+
+  return {
+    subscribe,
+
+    // Stores a JWT authentication token associated with a home domain server.
+    setAuth: (homeDomain, token) =>
+      update((store) => {
+        return {
+          ...store,
+          [homeDomain]: token,
+        };
+      }),
+
+    // Determine whether or not a JSON web token has an expiration date in the future or in the past.
+    isTokenExpired: (homeDomain) => {
+      let token = get(webAuthStore)[homeDomain];
+      if (token) {
+        let payload = JSON.parse(
+          Buffer.from(token.split(".")[1], "base64").toString(),
+        );
+        let timestamp = Math.floor(Date.now() / 1000);
+        return timestamp > payload.exp;
+      } else {
+        return undefined;
+      }
+    },
+  };
+}
+
+export const webAuthStore = createWebAuthStore();
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stores/webAuthStore.js
+
+Ahora que hemos autenticado exitosamente a nuestro usuario con un anchor de activos, podemos mostrar y procesar las diversas capacidades de transferencia del anchor en cuestión. Comenzaremos con SEP-6, ya que eso sentará las bases para el SEP-24 que sigue.
+
+<img src={auth_valid} width="70%" />

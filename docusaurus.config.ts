@@ -154,18 +154,20 @@ const config: Config = {
             },
             {
               to: '/docs/build/smart-contracts/overview',
-              label: 'Smart Contracts Overview',
+              label: 'Introduction',
               activeBasePath: 'docs/build/smart-contracts/overview',
             },
             {
               to: '/docs/build/smart-contracts/getting-started',
               label: 'Getting Started',
               activeBasePath: 'docs/build/smart-contracts/getting-started',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/build/smart-contracts/example-contracts',
               label: 'Example Contracts',
               activeBasePath: 'docs/build/smart-contracts/example-contracts',
+              className: 'has-nested-items',
             },
             {
               type: 'html',
@@ -174,7 +176,7 @@ const config: Config = {
             },
             {
               to: '/docs/build/apps/overview',
-              label: 'Applications Overview',
+              label: 'Introduction',
               activeBasePath: 'docs/build/apps/overview',
             },
             {
@@ -191,6 +193,11 @@ const config: Config = {
               to: '/docs/build/apps/example-application-tutorial/overview',
               label: 'Tutorial: Payment Application, JavaScript',
               activeBasePath: 'docs/build/apps/example-application-tutorial/overview',
+            },
+            {
+              to: '/docs/build/apps/swift-payment-app',
+              label: 'Tutorial: Payment Application, Swift',
+              activeBasePath: 'docs/build/apps/swift-payment-app',
             },
             {
               to: '/docs/build/apps/ingest-sdk/overview',
@@ -216,6 +223,11 @@ const config: Config = {
               type: 'html',
               value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small>',
               className: 'subtitle',
+            },
+            {
+              to: '/docs/build/guides/auth',
+              label: 'Contract Authorization',
+              activeBasePath: 'docs/build/guides/auth',
             },
             {
               to: '/docs/build/guides/conventions',
@@ -289,7 +301,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/build/security-docs" class="dropdown__link">Security Best Practices</a>',
+              value: '<hr><a href="/docs/build/security-docs" class="dropdown__link has-nested-items">Security Best Practices</a>',
             },
           ],
         },
@@ -328,11 +340,13 @@ const config: Config = {
               to: '/docs/learn/fundamentals/stellar-data-structures',
               label: 'Data Structures',
               activeBasePath: 'docs/learn/fundamentals/stellar-data-structures',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/learn/fundamentals/transactions',
               label: 'Operations & Transactions',
               activeBasePath: 'docs/learn/fundamentals/transactions',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/learn/fundamentals/fees-resource-limits-metering',
@@ -344,10 +358,17 @@ const config: Config = {
               label: 'Stellar Ecosystem Proposals (SEPs)',
               activeBasePath: 'docs/learn/fundamentals/stellar-ecosystem-proposals',
             },
-                        {
+            {
+              to: '/docs/learn/fundamentals/contract-development',
+              label: 'Smart Contracts',
+              activeBasePath: 'docs/learn/fundamentals/contract-development',
+              className: 'has-nested-items',
+            },
+            {
               to: '/docs/learn/fundamentals/data-format',
               label: 'Data Format',
               activeBasePath: 'docs/learn/fundamentals/data-format',
+              className: 'has-nested-items',
             },
             {
               to: '/docs/learn/fundamentals/anchors',
@@ -355,12 +376,13 @@ const config: Config = {
               activeBasePath: 'docs/learn/fundamentals/anchors',
             },
             {
-              type: 'html',
-              value: '<hr><a href="/docs/learn/encyclopedia" class="dropdown__link">Encyclopedia</a>',
+              to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
+              label: 'SDEX',
+              activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
             },
             {
-              to: 'docs/learn/glossary',
-              label: 'Glossary',
+              type: 'html',
+              value: '<hr><a href="/docs/learn/glossary" class="dropdown__link">Glossary</a>',
             },
             {
               to: 'docs/learn/migrate',
@@ -525,8 +547,14 @@ const config: Config = {
               activeBasePath: 'docs/tools/quickstart'
             },
             {
+              to: '/docs/tools/developer-tools/openzeppelin-contracts',
+              label: 'OpenZeppelin Contracts',
+              activeBasePath: 'docs/tools/developer-tools/openzeppelin-contracts'
+            },
+            {
               to: '/docs/tools/developer-tools',
-              label: 'More Developer Tools'
+              label: 'More Developer Tools',
+              className: 'has-nested-items',
             },
             {
               type: 'html',
