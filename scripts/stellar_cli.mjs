@@ -25,7 +25,7 @@ if (fs.existsSync(localRepoPath)) {
 
 // Perform a shallow clone of the repository
 console.log("Cloning repository...");
-execSync(`git clone ${repoUrl} ${localRepoPath}`);
+execSync(`git clone --no-single-branch ${repoUrl} ${localRepoPath}`);
 execSync(`cd ${localRepoPath} && git fetch --all`);
 const latestVersion = execSync(
   `cd ${localRepoPath} && git tag | grep -v -E 'rc|preview' | tail -n1`,
