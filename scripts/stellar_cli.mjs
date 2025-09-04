@@ -26,7 +26,9 @@ if (fs.existsSync(localRepoPath)) {
 // Perform a shallow clone of the repository
 console.log("Cloning repository...");
 execSync(`git clone ${repoUrl} ${localRepoPath}`);
-execSync(`cd ${localRepoPath} && git fetch --all`);
+execSync(
+  `cd ${localRepoPath} && git fetch --all && git fetch origin '+refs/pull/*/merge:refs/remotes/origin/pr/*/merge'`,
+);
 const latestVersion = execSync(
   `cd ${localRepoPath} && git tag | grep -v -E 'rc|preview' | tail -n1`,
 )
