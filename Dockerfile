@@ -21,7 +21,7 @@ RUN yarn cache clean --all
 RUN yarn install
 RUN du -sh /app/*
 RUN yarn rpcspec:build --no-minify
-RUN yarn stellar-cli:build --no-minify
+RUN yarn stellar-cli:build --no-minify --cli-ref=main
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
