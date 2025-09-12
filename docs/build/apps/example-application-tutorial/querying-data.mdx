@@ -3,7 +3,7 @@ title: Querying Data
 sidebar_position: 70
 ---
 
-Your application will be querying data from Horizon (one of Stellar's APIs) throughout its functionality. Information such as account balances, transaction history, sequence numbers for transactions, asset availability, and more are stored in Horizon’s database.
+Your application will be querying data from RPC (Stellar's JSON-RPC API) throughout its functionality. Information such as account balances, transaction history, sequence numbers for transactions, asset availability, and more are accessible through RPC methods.
 
 Here is a list of some common queries that you'll make.
 
@@ -15,45 +15,43 @@ In other places in this tutorial, we have omitted the JSDoc descriptions and typ
 
 ## Imports and types
 
-```js title="/src/lib/stellar/horizonQueries.js"
+```js title="/src/lib/stellar/rpcQueries.js"
 import { error } from "@sveltejs/kit";
 import {
-  Server,
   TransactionBuilder,
   Networks,
   StrKey,
   Asset,
 } from "stellar-sdk";
+import { Server } from "stellar-sdk/rpc";
 
-const horizonUrl = "https://horizon-testnet.stellar.org";
-const server = new Server(horizonUrl);
+const rpcUrl = "https://soroban-testnet.stellar.org";
+const server = new Server(rpcUrl);
 
 /**
- * @module $lib/stellar/horizonQueries
+ * @module $lib/stellar/rpcQueries
  * @description A collection of function that helps query various information
- * from the [Horizon API](https://developers.stellar.org/api/horizon). This
+ * from the [RPC API](https://developers.stellar.org/docs/data/apis/rpc). This
  * allows us to abstract and simplify some interactions so we don't have to have
  * _everything_ contained within our `*.svelte` files.
  */
 
 // We'll import some type definitions that already exists within the
+// We'll import some type definitions that already exists within the
 // `stellar-sdk` package, so our functions will know what to expect.
 /** @typedef {import('stellar-sdk').ServerApi.AccountRecord} AccountRecord */
-/** @typedef {import('stellar-sdk').Horizon.ErrorResponseData} ErrorResponseData */
 /** @typedef {import('stellar-sdk').ServerApi.PaymentOperationRecord} PaymentOperationRecord */
-/** @typedef {import('stellar-sdk').Horizon.BalanceLine} BalanceLine */
-/** @typedef {import('stellar-sdk').Horizon.BalanceLineAsset} BalanceLineAsset */
 /** @typedef {import('stellar-sdk').Transaction} Transaction */
 /** @typedef {import('stellar-sdk').ServerApi.PaymentPathRecord} PaymentPathRecord */
 ```
 
-**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/rpcQueries.js
 
 ## fetchAccount
 
 Gives an account's sequence number, asset balances, and trustlines.
 
-```js title="/src/lib/stellar/horizonQueries.js"
+```js title="/src/lib/stellar/rpcQueries.js"
 /**
  * Fetches and returns details about an account on the Stellar network.
  * @async
@@ -65,7 +63,7 @@ Gives an account's sequence number, asset balances, and trustlines.
 export async function fetchAccount(publicKey) {
   if (StrKey.isValidEd25519PublicKey(publicKey)) {
     try {
-      let account = await server.accounts().accountId(publicKey).call();
+      let account = await server.getAccount(publicKey);
       return account;
     } catch (err) {
       // @ts-ignore
@@ -85,13 +83,13 @@ export async function fetchAccount(publicKey) {
 }
 ```
 
-**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/rpcQueries.js
 
 ## fetchAccountBalances
 
 Gets existing balances for a given `publicKey`.
 
-```js title="/src/lib/stellar/horizonQueries.js"
+```js title="/src/lib/stellar/rpcQueries.js"
 /**
  * Fetches and returns balance details for an account on the Stellar network.
  * @async
@@ -105,13 +103,13 @@ export async function fetchAccountBalances(publicKey) {
 }
 ```
 
-**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/rpcQueries.js
 
 ## fetchRecentPayments
 
-Finds any payments made to or from the given `publicKey` (includes: payments, path payments, and account merges).
+Finds any payments made to or from the given `publicKey` (includes: payments, path payments, and account merges). Note: RPC has limited historical data (7 days), so this function retrieves recent transactions containing payment operations.
 
-```js title="/src/lib/stellar/horizonQueries.js"
+```js title="/src/lib/stellar/rpcQueries.js"
 /**
  * Fetches and returns recent `payment`, `createAccount` operations that had an effect on this account.
  * @async
@@ -121,23 +119,53 @@ Finds any payments made to or from the given `publicKey` (includes: payments, pa
  * @returns {Promise<PaymentOperationRecord[]>} Array containing details for each recent payment
  */
 export async function fetchRecentPayments(publicKey, limit = 10) {
-  const { records } = await server
-    .payments()
-    .forAccount(publicKey)
-    .limit(limit)
-    .order("desc")
-    .call();
-  return records;
+  try {
+    // Get recent transactions and filter for payment operations
+    const latestLedger = await server.getLatestLedger();
+    const transactions = await server.getTransactions({
+      startLedger: Math.max(1, latestLedger.sequence - 7 * 24 * 60), // Approximate 7 days
+      limit: limit * 3, // Get more transactions to filter for payments
+    });
+    
+    // Filter and parse transactions for payment operations
+    const paymentOperations = [];
+    for (const tx of transactions.transactions) {
+      if (paymentOperations.length >= limit) break;
+      
+      // Parse transaction meta to find payment operations involving this account
+      // This is a simplified example - in practice, you'd need to parse the XDR
+      // to extract payment operations from the transaction metadata
+      if (tx.source === publicKey || tx.envelope_xdr.includes(publicKey)) {
+        paymentOperations.push({
+          id: tx.hash,
+          source_account: tx.source,
+          type: 'payment', // Simplified - would need to parse actual operation type
+          created_at: tx.createdAt,
+        });
+      }
+    }
+    
+    return paymentOperations;
+  } catch (error) {
+    console.warn('Error fetching recent payments:', error);
+    return [];
+  }
 }
 ```
 
-**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/rpcQueries.js
+
+:::note
+
+This RPC implementation provides a simplified example of fetching payment history. For production applications, consider using indexing services or [Hubble](../../../data/analytics/hubble/README.mdx) for comprehensive transaction history beyond RPC's 7-day limit.
+
+:::
 
 ## submit
 
 Submit a signed transaction to the Stellar network.
 
-```js title="/src/lib/stellar/horizonQueries.js"
+```js title="/src/lib/stellar/rpcQueries.js"
 /**
  * Submits a Stellar transaction to the network for inclusion in the ledger.
  * @async
@@ -147,7 +175,7 @@ Submit a signed transaction to the Stellar network.
  */
 export async function submit(transaction) {
   try {
-    await server.submitTransaction(transaction);
+    await server.sendTransaction(transaction);
   } catch (err) {
     throw error(400, {
       // @ts-ignore
@@ -157,7 +185,7 @@ export async function submit(transaction) {
 }
 ```
 
-**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/rpcQueries.js
 
 ## fetchAssetsWithHomeDomains
 
@@ -165,7 +193,7 @@ We create a brand new `HomeDomainBalanceLine` type that includes the balance inf
 
 Then, it looks at all the issuer accounts and returns only the ones with a `home_domain` set on the account.
 
-```js title="/src/lib/stellar/horizonQueries.js"
+```js title="/src/lib/stellar/rpcQueries.js"
 /**
  * @typedef {Object} HomeDomainObject
  * @property {string} home_domain Domain name the issuer of this asset has set for their account on the Stellar network.
@@ -203,13 +231,13 @@ export async function fetchAssetsWithHomeDomains(balances) {
 }
 ```
 
-**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/rpcQueries.js
 
 ## findStrictSendPaths
 
 Find the available strict send paths between a source asset/amount and receiving account.
 
-```js title="/src/lib/stellar/horizonQueries.js"
+```js title="/src/lib/stellar/rpcQueries.js"
 /**
  * Fetches available paths on the Stellar network between the destination account, and the asset sent by the source account.
  * @async
@@ -241,13 +269,13 @@ export async function findStrictSendPaths({
 }
 ```
 
-**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/rpcQueries.js
 
 ## findStrictReceivePaths
 
 Find the available strict receive paths between a source account and receiving asset/amount.
 
-```js title="/src/lib/stellar/horizonQueries.js"
+```js title="/src/lib/stellar/rpcQueries.js"
 /**
  * Fetches available paths on the Stellar network between the source account, and the asset to be received by the destination.
  * @async
@@ -282,7 +310,7 @@ export async function findStrictReceivePaths({
 }
 ```
 
-**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/rpcQueries.js
 
 ## Query Stellar Expert
 
