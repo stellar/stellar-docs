@@ -68,60 +68,96 @@ Each of these accounts can only claim the balance under unique conditions. Accou
 <CodeExample>
 
 ```js
-const sdk = require("stellar-sdk");
+import * as StellarSdk from "@stellar/stellar-sdk";
 
-async function main() {
-  let server = new sdk.Server("https://horizon-testnet.stellar.org");
-
-  let A = sdk.Keypair.fromSecret(
-    "SAQLZCQA6AYUXK6JSKVPJ2MZ5K5IIABJOEQIG4RVBHX4PG2KMRKWXCHJ",
-  );
-  let B = sdk.Keypair.fromPublicKey(
-    "GAS4V4O2B7DW5T7IQRPEEVCRXMDZESKISR7DVIGKZQYYV3OSQ5SH5LVP",
-  );
-
-  // NOTE: Proper error checks are omitted for brevity; always validate things!
-
-  let aAccount = await server.loadAccount(A.publicKey()).catch(function (err) {
-    console.error(`Failed to load ${A.publicKey()}: ${err}`);
-  });
-  if (!aAccount) {
-    return;
-  }
-
-  // Create a claimable balance with our two above-described conditions.
-  let soon = Math.ceil(Date.now() / 1000 + 60); // .now() is in ms
-  let bCanClaim = sdk.Claimant.predicateBeforeRelativeTime("60");
-  let aCanReclaim = sdk.Claimant.predicateNot(
-    sdk.Claimant.predicateBeforeAbsoluteTime(soon.toString()),
+/**
+ * Creates a claimable balance on Stellar testnet
+ * A claimable balance allows splitting a payment into two parts:
+ * 1. Sender creates the claimable balance
+ * 2. Recipient(s) can claim it later
+ */
+async function createClaimableBalance() {
+  // Connect to Stellar testnet RPC server
+  const server = new StellarSdk.rpc.Server(
+    "https://soroban-testnet.stellar.org",
   );
 
-  // Create the operation and submit it in a transaction.
-  let claimableBalanceEntry = sdk.Operation.createClaimableBalance({
-    claimants: [
-      new sdk.Claimant(B.publicKey(), bCanClaim),
-      new sdk.Claimant(A.publicKey(), aCanReclaim),
-    ],
-    asset: sdk.Asset.native(),
-    amount: "420",
-  });
+  const A = StellarSdk.Keypair.random();
+  const B = StellarSdk.Keypair.random();
 
-  let tx = new sdk.TransactionBuilder(aAccount, { fee: sdk.BASE_FEE })
-    .addOperation(claimableBalanceEntry)
-    .setNetworkPassphrase(sdk.Networks.TESTNET)
-    .setTimeout(180)
-    .build();
+  console.log(`Account A: ${A.publicKey()}`);
+  console.log(`Account B: ${B.publicKey()}`);
 
-  tx.sign(A);
-  let txResponse = await server
-    .submitTransaction(tx)
-    .then(function () {
-      console.log("Claimable balance created!");
-    })
-    .catch(function (err) {
-      console.error(`Tx submission failed: ${err}`);
+  try {
+    // Fund the source account using testnet's built-in airdrop
+    await server.requestAirdrop(A.publicKey());
+
+    // Load the funded account to get current sequence number
+    const aAccount = await server.getAccount(A.publicKey());
+    console.log(`Account sequence: ${aAccount.sequenceNumber()}`);
+
+    // Create a claimable balance with our two above-described conditions.
+    let soon = Math.ceil(Date.now() / 1000 + 60); // .now() is in ms
+    let bCanClaim = StellarSdk.Claimant.predicateBeforeRelativeTime("60");
+    let aCanReclaim = StellarSdk.Claimant.predicateNot(
+      StellarSdk.Claimant.predicateBeforeAbsoluteTime(soon.toString()),
+    );
+
+    // Create claimable balance operation
+    const claimableBalanceOp = StellarSdk.Operation.createClaimableBalance({
+      claimants: [
+        new StellarSdk.Claimant(B.publicKey(), bCanClaim),
+        new StellarSdk.Claimant(A.publicKey(), aCanReclaim),
+      ],
+      asset: StellarSdk.Asset.native(),
+      amount: "420",
     });
+
+    // Build the transaction
+    console.log(`Building transaction...`);
+    const transaction = new StellarSdk.TransactionBuilder(aAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: StellarSdk.Networks.TESTNET,
+    })
+      .addOperation(claimableBalanceOp)
+      .setTimeout(180)
+      .build();
+
+    // Sign the transaction with source account
+    transaction.sign(A);
+
+    // Submit transaction to the network
+    console.log(`Submitting transaction...`);
+    const response = await server.sendTransaction(transaction);
+
+    // Poll for transaction completion (RPC is asynchronous)
+    console.log(`Polling for result...`);
+    const finalResponse = await server.pollTransaction(response.hash, {
+      sleepStrategy: StellarSdk.rpc.LinearSleepStrategy,
+      attempts: 10,
+    });
+
+    if (finalResponse.status === "SUCCESS") {
+      // Extract claimable balance ID from transaction result
+      const txResult = StellarSdk.xdr.TransactionResult.fromXDR(
+        finalResponse.resultXdr.toXDR("base64"),
+        "base64",
+      );
+      const results = txResult.result().results();
+      const operationResult = results[0].value().createClaimableBalanceResult();
+      const balanceId = operationResult.balanceId().toXDR("hex");
+
+      console.log(`Balance ID: ${balanceId}`);
+    } else {
+      console.log(`Transaction failed: ${finalResponse.status}`);
+    }
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+  }
 }
+
+// Run the function
+createClaimableBalance();
 ```
 
 ```go
@@ -261,54 +297,78 @@ except (BadRequestError, BadResponseError) as err:
 
 </CodeExample>
 
-At this point, the `ClaimableBalanceEntry` exists in the ledger, but we’ll need its Balance ID to claim it, which can be done in several ways:
-
-1. The submitter of the entry (Account A in this case) can retrieve the Balance ID before submitting the transaction;
-2. The submitter parses the XDR of the transaction result’s operations; or
-3. Someone queries the list of claimable balances.
-
-Either party could also check the [`/effects`](../../../data/apis/horizon/api-reference/resources/effects/README.mdx) of the transaction or query [`/claimable_balances`](../../../data/apis/horizon/api-reference/resources/claimablebalances/README.mdx) with different filters in Horizon. Note that while (1) may be unavailable in some SDKs as it's just a helper, the other methods are universal.
+At this point, the `ClaimableBalanceEntry` exists in the ledger, but we’ll need its Balance ID to claim it. You can call the RPC's [`getLedgerEntries`](../../../data/apis/rpc/api-reference/methods/getLedgerEntries.mdx) endpoint to do this.
 
 <CodeExample>
 
 ```js
-// Method 1: Suppose `txResponse` comes from the transaction submission
-// above on testnet.
-const builder = sdk.TransactionBuilder(
-  txResponse.envelope_xdr,
-  Networks.TESTNET,
-);
-console.log("Balance ID (1):", builder.build().getClaimableBalanceId(0));
+import * as StellarSdk from "@stellar/stellar-sdk";
 
-// Method 2:
-let txResult = sdk.xdr.TransactionResult.fromXDR(
-  txResponse.result_xdr,
-  "base64",
-);
-let results = txResult.result().results();
+// Replace with your actual Claimable Balance ID
+// Format: 72 hex characters (includes ClaimableBalanceId type + hash)
+const BALANCE_ID =
+  "00000000db1108ff108a807150d02b8672d9a8c0e808bff918cdbe5c7605e63a7f565df5";
 
-// We look at the first result since our first (and only) operation
-// in the transaction was the CreateClaimableBalanceOp.
-let operationResult = results[0].value().createClaimableBalanceResult();
-let balanceId = operationResult.balanceId().toXDR("hex");
-console.log("Balance ID (2):", balanceId);
+/**
+ * Fetches and displays claimable balance details using Stellar RPC
+ */
+async function fetchClaimableBalance(balanceId) {
+  const server = new StellarSdk.rpc.Server(
+    "https://soroban-testnet.stellar.org",
+  );
 
-// Method 3: Account B could alternatively do something like:
-let balances = await server
-  .claimableBalances()
-  .claimant(B.publicKey())
-  .limit(1) // there may be many in general
-  .order("desc") // so always get the latest one
-  .call()
-  .catch(function (err) {
-    console.error(`Claimable balance retrieval failed: ${err}`);
-  });
-if (!balances) {
-  return;
+  try {
+    console.log(`Looking up balance ID: ${balanceId}`);
+
+    // Parse the claimable balance ID from hex XDR
+    const claimableBalanceId = StellarSdk.xdr.ClaimableBalanceId.fromXDR(
+      balanceId,
+      "hex",
+    );
+
+    // Create ledger key for the claimable balance entry
+    const ledgerKey = StellarSdk.xdr.LedgerKey.claimableBalance(
+      new StellarSdk.xdr.LedgerKeyClaimableBalance({
+        balanceId: claimableBalanceId,
+      }),
+    );
+
+    console.log(`Fetching from RPC server...`);
+
+    // Use SDK's getLedgerEntries method with XDR object array
+    const response = await server.getLedgerEntries(ledgerKey);
+
+    if (response.entries && response.entries.length > 0) {
+      const claimableBalance = response.entries[0].val.claimableBalance();
+
+      const asset = StellarSdk.Asset.fromOperation(claimableBalance.asset());
+
+      console.log(`Found claimable balance`);
+      console.log(`Amount: ${claimableBalance.amount().toString()}`);
+      console.log(`Asset: ${asset.toString()} `);
+      console.log(
+        `Number of claimants: ${claimableBalance.claimants().length}`,
+      );
+
+      // Show claimant details
+      console.log(`\nClaimants:`);
+      claimableBalance.claimants().forEach((claimant, index) => {
+        const destination = claimant.v0().destination().ed25519();
+        console.log(
+          `   ${index + 1}. ${StellarSdk.StrKey.encodeEd25519PublicKey(
+            destination,
+          )}`,
+        );
+      });
+    } else {
+      console.log(`Claimable balance not found`);
+    }
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+  }
 }
 
-balanceId = balances.records[0].id;
-console.log("Balance ID (3):", balanceId);
+fetchClaimableBalance(BALANCE_ID);
 ```
 
 ```go
@@ -375,21 +435,76 @@ With the Claimable Balance ID acquired, either Account B or A can actually submi
 <CodeExample>
 
 ```js
-let claimBalance = sdk.Operation.claimClaimableBalance({
-  balanceId: balanceId,
-});
-console.log(A.publicKey(), "claiming", balanceId);
+import * as StellarSdk from "@stellar/stellar-sdk";
 
-let tx = new sdk.TransactionBuilder(aAccount, { fee: sdk.BASE_FEE })
-  .addOperation(claimBalance)
-  .setNetworkPassphrase(sdk.Networks.TESTNET)
-  .setTimeout(180)
-  .build();
+// Replace with your claimable balance ID
+const BALANCE_ID =
+  "0000000067a94da6c5d487fa09fc93c558ca91f6338413d3152d2a17771353f7c4111e11";
 
-tx.sign(A);
-await server.submitTransaction(tx).catch(function (err) {
-  console.error(`Tx submission failed: ${err}`);
-});
+// Replace with the secret key of one of the claimants
+const CLAIMANT_SECRET =
+  "SDJLAUDIHMDO6PAIVVVYH5IFIE5QMZOOBHO37NLF43335ULECK6EURVJ";
+
+/**
+ * Claims a claimable balance
+ */
+async function claimClaimableBalance(balanceId, claimantSecret) {
+  const server = new StellarSdk.rpc.Server(
+    "https://soroban-testnet.stellar.org",
+  );
+
+  try {
+    console.log(`Claiming balance ID: ${balanceId}`);
+    // Create keypair from claimant's secret key
+    const claimantKeypair = StellarSdk.Keypair.fromSecret(claimantSecret);
+
+    // Load the claiming account
+    const claimantAccount = await server.getAccount(
+      claimantKeypair.publicKey(),
+    );
+
+    // Convert balance ID to proper format for the operation
+    const claimableBalanceId = StellarSdk.xdr.ClaimableBalanceId.fromXDR(
+      balanceId,
+      "hex",
+    );
+    const balanceIdHex = claimableBalanceId.toXDR("hex");
+
+    // Create claim operation
+    const claimOperation = StellarSdk.Operation.claimClaimableBalance({
+      balanceId: balanceIdHex,
+    });
+
+    // Build and sign transaction
+    const transaction = new StellarSdk.TransactionBuilder(claimantAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: StellarSdk.Networks.TESTNET,
+    })
+      .addOperation(claimOperation)
+      .setTimeout(180)
+      .build();
+
+    transaction.sign(claimantKeypair);
+
+    // Submit and poll for completion
+    const response = await server.sendTransaction(transaction);
+    const finalResponse = await server.pollTransaction(response.hash, {
+      sleepStrategy: StellarSdk.rpc.LinearSleepStrategy,
+      attempts: 10,
+    });
+
+    if (finalResponse.status === "SUCCESS") {
+      console.log(`Claimable balance claimed successfully`);
+      console.log(`Transaction hash: ${response.hash}`);
+    } else {
+      console.log(`Transaction failed: ${finalResponse.status}`);
+    }
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+  }
+}
+
+claimClaimableBalance(BALANCE_ID, CLAIMANT_SECRET);
 ```
 
 ```go
