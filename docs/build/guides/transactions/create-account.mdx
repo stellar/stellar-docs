@@ -22,11 +22,16 @@ Before creating an account, you need to generate your own keypair:
 <CodeExample>
 
 ```js
+import { Server } from "@stellar/stellar-sdk/rpc";
 import {
   Keypair,
+  // Used by the rest of the example:
   TransactionBuilder,
   BASE_FEE,
   Networks,
+  Operation,
+  Asset,
+  humanizeEvents,
 } from "@stellar/stellar-sdk";
 
 // create a completely new and unique pair of keys
@@ -34,9 +39,12 @@ import {
 const pair = Keypair.random();
 
 pair.secret();
-// SAV76USXIJOBMEQXPANUOQM6F5LIOTLPDIDVRJBFFE2MDJXG24TAPUU7
+// ex: SAV76USXIJOBMEQXPANUOQM6F5LIOTLPDIDVRJBFFE2MDJXG24TAPUU7
 pair.publicKey();
-// GCFXHS4GXL6BVUCXBWXGTITROWLVYXQKQLF4YH5O5JT3YZXCYPAFBJZB
+// ex: GCFXHS4GXL6BVUCXBWXGTITROWLVYXQKQLF4YH5O5JT3YZXCYPAFBJZB
+
+// See https://developers.stellar.org/docs/data/apis/api-providers
+const server = new Server("https://soroban-testnet.stellar.org");
 ```
 
 ```java
@@ -99,57 +107,63 @@ To do that, send Friendbot the public key you created. It’ll create and fund a
 <CodeExample>
 
 ```js
-(async function main() {
-  const s = new Server("https://soroban-testnet.stellar.org");
+// Not necessary for creation, just used later to demo balance fetch.
+const testnetUsdc = new Asset(
+  "USDC",
+  "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+);
 
+(async function main() {
   try {
-    const response = await s.requestAirdrop(pair.publicKey());
-    console.log("SUCCESS! You have a new account :)\n", response);
+    const response = await server.requestAirdrop(pair.publicKey());
+    console.log("SUCCESS! You have a new account:\n", response);
   } catch (e) {
     console.error("ERROR!", e);
   }
 
   // After you've got your test lumens from friendbot, we can also use
   // that account to create a new account on the ledger.
-  try {
-    //make sure the parent account exists on ledger
-    var parentAccount = await server.getAccount(pair.publicKey());
+  //make sure the parent account exists on ledger
+  var parentAccount = await server.getAccount(pair.publicKey());
 
-    //generate a random account to create create a transacion object.
-    var childAccount = Keypair.random();
+  //generate a random account to create create a transacion object.
+  var childAccount = Keypair.random();
 
-    let createAccountTx = new TransactionBuilder(parentAccount, {
-      fee: BASE_FEE,
-      networkPassphrase: Networks.TESTNET,
-    })
-      .addOperation(
-        StellarSdk.Operation.createAccount({
-          destination: childAccount.publicKey(),
-          startingBalance: "5",
-        }),
-      )
-      .setTimeout(180)
-      .build();
+  let createAccountTx = new TransactionBuilder(parentAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.createAccount({
+        destination: childAccount.publicKey(),
+        startingBalance: "5",
+      }),
+    )
+    // Not needed for creation, just used in the later example
+    .addOperation(Operation.changeTrust({ asset: testnetUsdc }))
+    .setTimeout(180)
+    .build();
 
-    //sign the transaction with the account that was created from friendbot.
-    await createAccountTx.sign(pair);
+  // Sign the transaction with the account that was created from friendbot.
+  createAccountTx.sign(pair);
 
-    //submit the transaction
-    const sendTxResponse = await server.sendTransaction(createAccountTx);
-    if (sendTxResponse.status !== "PENDING") {
-      console.log("there was an error");
-      console.log(error.response);
-      console.log(error.status);
-      console.log(error.extras);
-      return error;
-    }
-
-    const txResponse = await server.pollTransaction(sendTxResponse.hash);
-    console.log(txResponse);
-    console.log("Created the new account", childAccount.publicKey());
-  } catch (e) {
-    console.error("ERROR!", e);
+  // Submit the transaction and wait for it to be accepted by the network.
+  const sendTxResponse = await server.sendTransaction(createAccountTx);
+  if (sendTxResponse.status !== "PENDING") {
+    console.log(`There was an error: ${JSON.stringify(sendTxResponse)}`);
+    throw sendTxResponse;
   }
+
+  const txResponse = await server.pollTransaction(sendTxResponse.hash);
+  if (txResponse.status !== "SUCCESS") {
+    console.log(
+      `Transaction status: ${txResponse.status}, events: ${humanizeEvents(
+        txResponse.diagnosticEvents,
+      )}`,
+    );
+  }
+
+  console.log("Created the new account", childAccount.publicKey());
 })();
 ```
 
@@ -173,7 +187,7 @@ package main
 
 import (
 	"net/http"
-	"io/ioutil"
+	"io"
 	"log"
 	"fmt"
 )
@@ -188,7 +202,7 @@ func main() {
 	}
 
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -203,8 +217,7 @@ func main() {
 # if you're trying this on Python, install the `requests` library.
 import requests
 
-public_key = "GD4NB2FLQAN5JO7PKPGZJMNBDYQXVSNVC7DEIZMOL5WSNSBLEBUTEF5Q"
-response = requests.get(f"https://friendbot.stellar.org?addr={public_key}")
+response = requests.get(f"https://friendbot.stellar.org?addr={pair.public_key}")
 if response.status_code == 200:
     print(f"SUCCESS! You have a new account :)\n{response.text}")
 else:
@@ -213,17 +226,28 @@ else:
 
 </CodeExample>
 
-Now for the last step: getting the account’s details and checking its balance. Accounts can carry multiple balances — one for each type of currency they hold.
+Now for the last step: getting the account’s details and checking its balance. Accounts can carry multiple balances — one for each type of currency they hold. Because the Stellar network stores data in a key-value store, you must either (a) know which assets you hold or (b) let your users add them.
 
 <CodeExample>
 
 ```js
-const server = new Server("https://soroban-testnet.stellar.org");
-
-// the JS SDK uses promises for most actions, such as retrieving account data
+// Assume that `pair`, `server`, and `testnetUsdc` still exist from before
 const accountEntry = await server.getAccountEntry(pair.publicKey());
 console.log("Balance for account: " + pair.publicKey());
 console.log("XLM:", accountEntry.balance().toString());
+
+// You can also fetch trustline or smart contract balances:
+const trustlineEntry = await server.getTrustline(pair.publicKey(), testnetUsdc);
+console.log("USDC:", trustlineEntry.balance().toString());
+
+const testnetUsdcSac =
+  "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+const xlmInContract = await server.getSACBalance(
+  testnetUsdcSac,
+  Asset.native(),
+  Networks.TESTNET,
+);
+console.log("XLM in USDC contract:", xlmInContract.balanceEntry.amount);
 ```
 
 ```java
@@ -249,13 +273,11 @@ package main
 import (
 	"log"
 
-	"github.com/stellar/go/clients/horizonclient"
+	"github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
 )
 
 func main() {
-	// Replace this with the output from earlier, or use pair.Address()
-	address := "GCFXHS4GXL6BVUCXBWXGTITROWLVYXQKQLF4YH5O5JT3YZXCYPAFBJZB"
-
 	request := horizonclient.AccountRequest{AccountID: address}
 	account, err := horizonclient.DefaultTestNetClient.AccountDetail(request)
 	if err != nil {
