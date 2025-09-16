@@ -23,16 +23,7 @@ Before creating an account, you need to generate your own keypair:
 
 ```js
 import { Server } from "@stellar/stellar-sdk/rpc";
-import {
-  Keypair,
-  // Used by the rest of the example:
-  TransactionBuilder,
-  BASE_FEE,
-  Networks,
-  Operation,
-  Asset,
-  humanizeEvents,
-} from "@stellar/stellar-sdk";
+import { Keypair } from "@stellar/stellar-sdk";
 
 // create a completely new and unique pair of keys
 // see more about KeyPair objects: https://stellar.github.io/js-stellar-sdk/Keypair.html
@@ -63,21 +54,20 @@ System.out.println(pair.getAccountId());
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/stellar/go/keypair"
 )
 
 func main() {
-	pair, err := keypair.Random()
-	if err != nil {
-		log.Fatal(err)
-	}
+	ctx := context.Background()
 
-	log.Println(pair.Seed())
-	// SAV76USXIJOBMEQXPANUOQM6F5LIOTLPDIDVRJBFFE2MDJXG24TAPUU7
-	log.Println(pair.Address())
-	// GCFXHS4GXL6BVUCXBWXGTITROWLVYXQKQLF4YH5O5JT3YZXCYPAFBJZB
+	parent, err := keypair.Random()
+	check(err)
+
+	log.Printf("Secret: %s", parent.Seed())
+	log.Printf("Public: %s", parent.Address())
 }
 ```
 
@@ -107,6 +97,15 @@ To do that, send Friendbot the public key you created. It’ll create and fund a
 <CodeExample>
 
 ```js
+import {
+  TransactionBuilder,
+  BASE_FEE,
+  Networks,
+  Operation,
+  Asset,
+  humanizeEvents,
+} from "@stellar/stellar-sdk";
+
 // Not necessary for creation, just used later to demo balance fetch.
 const testnetUsdc = new Asset(
   "USDC",
@@ -186,27 +185,85 @@ System.out.println("SUCCESS! You have a new account :)\n" + body);
 package main
 
 import (
-	"net/http"
+	"context"
+	"fmt"
 	"io"
 	"log"
-	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/stellar/go/amount"
+	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/strkey"
+	"github.com/stellar/go/txnbuild"
+	"github.com/stellar/go/xdr"
+
+	"github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
 )
 
+const (
+	rpcURL                = "https://soroban-testnet.stellar.org"
+	friendbotURL          = "https://friendbot.stellar.org/?addr="
+	pollInitialDelay      = time.Second
+	pollAttempts          = 10
+)
+
+
 func main() {
-	// pair is the pair that was generated from previous example, or create a pair based on
-	// existing keys.
-	address := pair.Address()
-	resp, err := http.Get("https://friendbot.stellar.org/?addr=" + address)
-	if err != nil {
-		log.Fatal(err)
+  // Assume `parent` is still defined as above
+	ctx := context.Background()
+	cli := client.NewClient(rpcURL, nil)
+
+	parentAccount, err := cli.LoadAccount(ctx, parent.Address())
+	check(err)
+
+	child := keypair.MustRandom()
+	usdcAsset := txnbuild.CreditAsset{Code: "USDC", Issuer: testnetUSDCIssuer}
+
+	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount:        parentAccount,
+		IncrementSequenceNum: true,
+		BaseFee:              txnbuild.MinBaseFee,
+		Preconditions: txnbuild.Preconditions{
+			TimeBounds: txnbuild.NewInfiniteTimeout(),
+		},
+		Operations: []txnbuild.Operation{
+			&txnbuild.CreateAccount{
+				Destination: child.Address(),
+				Amount:      "5",
+			},
+			// Not needed for creation, just used in the later example
+			&txnbuild.ChangeTrust{
+				Line: usdcAsset.MustToChangeTrustAsset(),
+			},
+		},
+	})
+	check(err)
+
+	tx, err = tx.Sign(network.TestNetworkPassphrase, parent)
+	check(err)
+
+	resp := submitAndAwait(ctx, cli, tx)
+	log.Printf("Transaction confirmed in ledger %d", resp.Ledger)
+	log.Printf("Created the new account %s", child.Address())
+}
+
+func requestAirdrop(address string) string {
+	resp, err := http.Get(friendbotURL + url.QueryEscape(address))
+	check(err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	check(err)
+	if resp.StatusCode >= 400 {
+		log.Fatalf("friendbot returned %s: %s", resp.Status, string(body))
 	}
 
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(string(body))
+	return string(body)
 }
 ```
 
@@ -278,17 +335,20 @@ import (
 )
 
 func main() {
-	request := horizonclient.AccountRequest{AccountID: address}
-	account, err := horizonclient.DefaultTestNetClient.AccountDetail(request)
-	if err != nil {
-		log.Fatal(err)
-	}
+  ctx := context.TODO()
+	cli := client.NewClient(rpcURL, nil)
 
-	log.Println("Balances for account:", address)
+  // Assume `parent` is defined as in the beginning
+	accountEntry := getAccountEntry(ctx, cli, parent.Address())
+	log.Printf("Balance for account %s", parent.Address())
+	log.Printf("XLM: %s", amount.String(accountEntry.Balance))
 
-	for _, balance := range account.Balances {
-		log.Println(balance)
-	}
+	trustlineEntry := getTrustlineEntry(ctx, cli, parent.Address(), usdcAsset)
+	log.Printf("USDC trustline balance (raw): %d", trustlineEntry.Balance)
+
+	sacAmount := getSACBalance(ctx, cli, testnetUSDCContractID,
+		xdr.MustNewNativeAsset(), network.TestNetworkPassphrase)
+	log.Printf("XLM in USDC contract (raw): %s", sacAmount)
 }
 ```
 
@@ -311,3 +371,224 @@ Now that you’ve got an account, you can [start sending and receiving payments]
 In the above code samples, proper error checking is omitted for brevity. However, you should _always_ validate your results, as there are many ways that requests can fail. You should refer to the guide on [Error Handling](../../../data/apis/horizon/api-reference/errors/error-handling.mdx) for tips on error management strategies.
 
 </Alert>
+
+## Footnote
+
+Some SDK languages have more utilities than others. Utility functions referenced above that aren't native to the SDKs are defined here, such as `pollTransaction` in the Go SDK.
+
+<Details summary="Transaction submission">
+
+<CodeExample>
+
+```go
+func submitAndAwait(
+  ctx context.Context,
+  cli *client.Client,
+  tx *txnbuild.Transaction,
+) protocol.GetTransactionResponse {
+	txnB64, err := tx.Base64()
+	check(err)
+
+	sendResp, err := cli.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: txnB64})
+	check(err)
+	if sendResp.Status != "PENDING" {
+		log.Fatalf("transaction submission failed with status %s", sendResp.Status)
+	}
+
+	return pollTransaction(ctx, cli, sendResp.Hash)
+}
+
+func pollTransaction(ctx context.Context, cli *client.Client, hash string) protocol.GetTransactionResponse {
+	delay := pollInitialDelay
+	for range pollAttempts {
+		resp, err := cli.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
+		check(err)
+
+		switch resp.Status {
+		case protocol.TransactionStatusSuccess:
+			return resp
+		case protocol.TransactionStatusFailed:
+			log.Fatalf("transaction failed: %s", strings.Join(resp.DiagnosticEventsXDR, "\n"))
+		case protocol.TransactionStatusNotFound:
+			// keep polling
+		default:
+			// unexpected status, continue polling in case it's transient
+		}
+
+		select {
+		case <-ctx.Done():
+			log.Fatalf("context cancelled while polling: %v", ctx.Err())
+		case <-time.After(delay):
+		}
+		delay += pollInitialDelay
+	}
+
+	log.Fatalf("transaction %s not found after polling", hash)
+	return protocol.GetTransactionResponse{}
+}
+```
+
+</CodeExample>
+
+</Details>
+
+<Details summary="Retrieving account details">
+
+<CodeExample>
+
+```go
+func getAccountEntry(ctx context.Context, cli *client.Client, address string) *xdr.AccountEntry {
+	ledgerKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeAccount,
+		Account: &xdr.LedgerKeyAccount{
+			AccountId: xdr.MustAddress(address),
+		},
+	}
+
+	keyB64, err := xdr.MarshalBase64(ledgerKey)
+	check(err)
+
+	resp, err := cli.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+	check(err)
+	if len(resp.Entries) == 0 {
+		log.Fatalf("account %s not found", address)
+	}
+
+	var ledgerData xdr.LedgerEntryData
+	check(xdr.SafeUnmarshalBase64(resp.Entries[0].DataXDR, &ledgerData))
+	if ledgerData.Account == nil {
+		log.Fatalf("ledger entry for %s missing account data", address)
+	}
+
+	return ledgerData.Account
+}
+```
+
+</CodeExample>
+
+</Details>
+
+<Details summary="Retrieving trustline details">
+
+<CodeExample>
+
+```go
+func getTrustlineEntry(ctx context.Context, cli *client.Client, account string, asset txnbuild.CreditAsset) xdr.TrustLineEntry {
+	trustlineAsset, err := asset.MustToTrustLineAsset().ToXDR()
+	check(err)
+
+	ledgerKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeTrustline,
+		TrustLine: &xdr.LedgerKeyTrustLine{
+			AccountId: xdr.MustAddress(account),
+			Asset:     trustlineAsset,
+		},
+	}
+
+	keyB64, err := xdr.MarshalBase64(ledgerKey)
+	check(err)
+
+	resp, err := cli.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+	check(err)
+	if len(resp.Entries) == 0 {
+		check(fmt.Errorf("trustline for %s:%s not found", asset.Code, asset.Issuer))
+	}
+
+	var ledgerData xdr.LedgerEntryData
+	check(xdr.SafeUnmarshalBase64(resp.Entries[0].DataXDR, &ledgerData))
+	return ledgerData.MustTrustLine()
+}
+```
+
+</CodeExample>
+
+</Details>
+
+<Details summary="Retrieving the SAC balance held by a contract">
+
+<CodeExample>
+
+```go
+func getSACBalance(ctx context.Context, cli *client.Client, contractID string, asset xdr.Asset, networkPassphrase string) string {
+	targetContract, err := decodeContractID(contractID)
+	check(err)
+
+	sacContractHash, err := asset.ContractID(networkPassphrase)
+	check(err)
+
+	sacContractID := xdr.ContractId(sacContractHash)
+	sacAddress := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &sacContractID}
+	targetAddress := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &targetContract}
+	balanceSymbol, err := xdr.NewScVal(xdr.ScValTypeScvSymbol, xdr.ScSymbol("Balance"))
+	check(err)
+
+	addressVal, err := xdr.NewScVal(xdr.ScValTypeScvAddress, targetAddress)
+	check(err)
+
+	vec := xdr.ScVec{balanceSymbol, addressVal}
+	keyVal, err := xdr.NewScVal(xdr.ScValTypeScvVec, &vec)
+	check(err)
+
+	ledgerKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract:   sacAddress,
+			Key:        keyVal,
+			Durability: xdr.ContractDataDurabilityPersistent,
+		},
+	}
+
+	keyB64, err := xdr.MarshalBase64(ledgerKey)
+	check(err)
+
+	resp, err := cli.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+	check(err)
+	if len(resp.Entries) == 0 {
+		return "0"
+	}
+
+	var ledgerData xdr.LedgerEntryData
+	check(xdr.SafeUnmarshalBase64(resp.Entries[0].DataXDR, &ledgerData))
+
+	balanceMap := ledgerData.MustContractData().Val.MustMap()
+	for _, entry := range *balanceMap {
+		key := string(entry.Key.MustSym())
+		switch key {
+		case "amount":
+			return amount.String128Raw(entry.Val.MustI128())
+		}
+	}
+
+	return "0"
+}
+
+func decodeContractID(contractID string) (xdr.ContractId, error) {
+	bytes, err := strkey.Decode(strkey.VersionByteContract, contractID)
+	if err != nil {
+		return xdr.ContractId{}, err
+	}
+	var id xdr.ContractId
+	copy(id[:], bytes)
+	return id, nil
+}
+```
+
+</CodeExample>
+
+</Details>
+
+<Details summary="Transaction submission">
+
+<CodeExample>
+
+```go
+func check(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+</CodeExample>
+
+</Details>
