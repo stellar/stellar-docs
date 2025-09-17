@@ -174,6 +174,146 @@ sendPayments().catch((error) => {
   process.exit(1);
 });
 ```
+
+```java
+// send_payment.java
+// Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
+
+import org.stellar.sdk.*;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.xdr.*;
+import org.stellar.sdk.xdr.LedgerEntry.LedgerEntryData;
+import org.stellar.sdk.xdr.LedgerKey.LedgerKeyAccount;
+import org.stellar.sdk.xdr.PublicKey.PublicKeyBuilder;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
+public class SendPaymentJavaExample {
+  public static void main(String[] args) throws Exception {
+    final String RPC_URL = "https://soroban-testnet.stellar.org";
+    SorobanServer rpc = new SorobanServer(RPC_URL);
+
+    // Generate sender/recipient and fund via Friendbot (testnet)
+    // get the friendbot url from rpc info
+    var info = rpc.getNetwork();
+    System.out.println("Friendbot URL: " + info.getFriendbotUrl()); 
+
+    KeyPair sender = KeyPair.random();
+    KeyPair recipient = KeyPair.random();
+    friendbotFund(sender.getAccountId(), info.getFriendbotUrl());
+    friendbotFund(recipient.getAccountId(), info.getFriendbotUrl());
+
+    // Load sender sequence using RPC getLedgerEntries
+    long senderSeq = loadAccountSequenceViaRpc(rpc, sender.getAccountId());
+    Account source = new Account(sender.getAccountId(), senderSeq);
+
+    // do this in a loop, send payment once every 30 seconds
+    while (true) {
+      // Build classic payment: 10 XLM, memo id, 180s timeout
+      Transaction tx = new TransactionBuilder(source, Network.TESTNET)
+          .setBaseFee(Transaction.MIN_BASE_FEE)
+          .addOperation(PaymentOperation.builder().
+              destination(recipient.getAccountId()).
+              asset(new AssetTypeNative()).
+              amount(new BigDecimal("10")).build())
+          .addMemo(new MemoId(1234567890L))
+          .setTimeout(180)
+          .build();
+
+      tx.sign(sender);
+
+      // Submit via RPC
+      var sendResp = rpc.sendTransaction(tx);
+      if (!SendTransactionStatus.PENDING.equals(sendResp.getStatus())) {
+        throw new RuntimeException("Failed to send transaction, status: " + sendResp.getStatus());
+      }
+      System.out.println("Submitted. Hash: " + sendResp.getHash());
+
+      // Poll final status (throws on FAILED/NOT_FOUND)
+      var finalResp = pollTransaction(rpc, sendResp.getHash());
+      System.out.println("Success! Committed on ledger: " + finalResp.getLedger());
+      Thread.sleep(30000L); // wait 30s
+    }
+  }
+
+  // Fund account with Friendbot (testnet)
+  static void friendbotFund(String accountId, String friendbotUrl) throws Exception {
+    OkHttpClient http = new OkHttpClient.Builder().build();
+    String url = friendbotUrl + "?addr=" + URLEncoder.encode(accountId, StandardCharsets.UTF_8);
+    
+    Request req = new Request.Builder().url(url).build();
+    Response res = http.newCall(req).execute();
+
+    if (res.code() / 100 != 2) {
+      throw new RuntimeException("Friendbot funding failed: " + res.code() + " " + res.body().string());
+    }
+    System.out.println("Funded: " + accountId);
+  }
+
+  // Use RPC getLedgerEntries to fetch AccountEntry and read seqNum
+  static long loadAccountSequenceViaRpc(SorobanServer rpc, String accountId) throws Exception {
+    // Build LedgerKey for account
+    PublicKey pk = KeyPair.fromAccountId(accountId).getXdrPublicKey();
+
+    PublicKeyBuilder pb = PublicKey.builder();
+    pb.discriminant(PublicKeyType.PUBLIC_KEY_TYPE_ED25519);
+    pb.ed25519(pk.getEd25519());
+    AccountID aid = new AccountID(pb.build());
+
+    LedgerKeyAccount lka = new LedgerKeyAccount();
+    lka.setAccountID(aid);
+
+    LedgerKey key = new LedgerKey();
+    key.setDiscriminant(LedgerEntryType.ACCOUNT);
+    key.setAccount(lka);
+   
+    var gle = rpc.getLedgerEntries(List.of(key));
+    if (gle.getEntries() == null || gle.getEntries().isEmpty()) {
+      throw new RuntimeException("Account not found in ledger entries: " + accountId);
+    }
+
+    // Decode first entry's ledger XDR to fetch sequence
+    LedgerEntryData data = gle.getEntries().get(0).parseXdr();
+    if (data.getDiscriminant() != LedgerEntryType.ACCOUNT) {
+      throw new RuntimeException("Unexpected ledger entry type for account.");
+    }
+    AccountEntry acc = data.getAccount();
+    return acc.getSeqNum().getSequenceNumber().getInt64();
+  }
+
+  // Helper: wrap SorobanServer.pollTransaction and enforce failure handling
+  static GetTransactionResponse pollTransaction(SorobanServer rpc, String txHash) throws Exception {
+    GetTransactionResponse resp = rpc.pollTransaction(txHash);
+   
+    if (GetTransactionStatus.SUCCESS.equals(resp.getStatus())) {
+      return resp;
+    }
+    if (GetTransactionStatus.FAILED.equals(resp.getStatus())) {
+      if (resp.getResultXdr() != null) {
+        System.err.println("Failed TX, Result XDR (base64): " + resp.getResultXdr());
+      }
+      throw new RuntimeException("Transaction failed.");
+    }
+    if (GetTransactionStatus.NOT_FOUND.equals(resp.getStatus())) {
+      throw new RuntimeException("Transaction not found.");
+    }
+    throw new RuntimeException("Unexpected status: " + resp.getStatus());
+  }
+}
+
+```
+
 </CodeExample>
 </Details>
 
@@ -267,6 +407,7 @@ async function monitorPayments() {
                 for (const entry of event.value.map()) {
                     if (StellarSdk.scValToNative(entry.key()) === "amount") {
                         amount = StellarSdk.scValToBigInt(entry.val());
+                        break;
                     }
                 }
                 console.log(`Amount: ${amount.toString()} stroops (${(Number(amount) / 10000000).toFixed(7)} XLM)`);
@@ -295,6 +436,113 @@ monitorPayments().catch(error => {
 });
 ```
 
+```java
+// monitor_payment.java
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Address;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.*;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.*;
+
+public class MonitorPaymentsJavaExample {
+  public static void main(String[] args) throws Exception {
+    final String RPC_URL = "https://soroban-testnet.stellar.org";
+    SorobanServer rpc = new SorobanServer(RPC_URL);
+
+    // Load the account we monitor payments FROM (written by send_payment example)
+    String monitoredFromAccount = Files.readString(Paths.get("sender_public.key"), StandardCharsets.UTF_8).trim();
+
+    // Build topic filters using SDK helpers (base64 XDR via toXdrBase64())
+    String transferTopicFilter = Scv.toSymbol("transfer").toXdrBase64();
+    String fromTopicFilter = Scv.toAddress(monitoredFromAccount).toXdrBase64();
+
+    // Starting point: latest ledger
+    var latest = rpc.getLatestLedger();
+    Long startLedger = latest.getSequence();
+    String cursor = null;
+    System.out.printf("Starting payment monitoring from ledger %d and from account %s%n", startLedger, monitoredFromAccount);
+
+    while (true) {
+      // Build request: type "contract", topics [[transfer, from, "*", "*"]]
+      var filter = new org.stellar.sdk.responses.sorobanrpc.GetEventsRequest.Filter();
+      filter.setType("contract");
+      filter.setTopics(Collections.singletonList(Arrays.asList(transferTopicFilter, fromTopicFilter, "*", "*")));
+
+      var req = new org.stellar.sdk.responses.sorobanrpc.GetEventsRequest();
+      req.setStartLedger(startLedger);
+      req.setCursor(cursor);
+      req.setFilters(Collections.singletonList(filter));
+      req.setLimit(10);
+
+      var eventsResp = rpc.getEvents(req);
+      var events = eventsResp.getEvents();
+      System.out.println("Found " + events.size() + " payment(s):");
+
+      for (var ev : events) {
+        System.out.println("\n--- Payment Received ---");
+        System.out.println("Ledger: " + ev.getLedger());
+        System.out.println("Transaction Hash: " + ev.getTxHash());
+        System.out.println("Closed At: " + ev.getLedgerClosedAt());
+
+        List<ScVal> topics = ev.getTopic();
+        if (topics.size() < 3) {
+          System.out.println("Invalid event, not enough topics.");
+          continue;
+        }
+
+        try {
+          String fromAddr = Scv.fromAddress(topics.get(1)).toString();
+          String toAddr = Scv.fromAddress(topics.get(2)).toString();
+          System.out.println("Transfer: " + fromAddr + " → " + toAddr);
+        } catch (Exception e) {
+          System.out.println("From/To: Unable to decode addresses: " + e.getMessage());
+        }
+
+        try {
+          // value is an SCV_MAP with k:amount -> v:SCV_I128
+          ScVal v = ev.getValue();
+          String amountStr = null;
+          
+          var map = Scv.fromMap(v);
+          for (var e : map.entrySet()) {
+            String key = new String(Scv.fromString(e.getKey()));
+            if ("amount".equals(key)) {
+              SCVal amountVal = e.getValue();
+              amountStr = Scv.fromInt128(amountVal).toString();
+              break;
+            }
+          }
+          
+          if (amountStr != null) {
+            java.math.BigInteger stroops = new java.math.BigInteger(amountStr);
+            double xlm = stroops.doubleValue() / 10000000.0;
+            System.out.printf("Amount: %s stroops (%.7f XLM)%n", stroops.toString(), xlm);
+          }
+        } catch (Exception e) {
+          System.out.println("Failed to decode transfer amount: " + e.getMessage());
+        }
+
+        try {
+          System.out.println("Asset: " + topics.get(3).toString());
+        } catch (Exception ex) {
+          System.out.println("Asset: Unable to decode asset" + ex.getMessage();
+        }
+      }
+
+      // pagination: update cursor and clear startLedger for subsequent calls
+      cursor = eventsResp.getCursor();
+      startLedger = null;
+      Thread.sleep(5000L);
+    }
+  }
+}
+
+```
+
 </CodeExample>
 </Details>
 
@@ -305,8 +553,23 @@ monitorPayments().catch(error => {
 <CodeExample>
 
 ```bash
-// js
+# js
 node send_payment.js
+
+# java
+# JRE 17 or higher should be installed - https://adoptium.net/temurin/releases/?version=17&package=jdk
+# download Stellar Java SDK jar, latest release on maven central
+JAR_REPO='https://repo1.maven.org/maven2/network/lightsail/stellar-sdk'
+JAR_VERSION="$( \
+  curl -fsSL "$JAR_REPO/maven-metadata.xml" \
+  | awk -F'[<>]' '/<release>/{print $3; exit}' \
+)"
+echo "Latest Stellar SDK Version: $JAR_VERSION" 
+JAR_FILE="stellar-sdk-$JAR_VERSION-uber.jar" 
+curl -fsSL -o "$JAR_FILE" "$JAR_REPO/$JAR_VERSION/$JAR_FILE" 
+
+javac -cp "$JAR_FILE" SendPaymentJavaExample.java
+java -cp ".:$JAR_FILE" SendPaymentJavaExample
 ```
 
 </CodeExample>
@@ -317,8 +580,12 @@ node send_payment.js
 <CodeExample>
 
 ```bash
-// js
+# js
 node monitor_payments.js
+
+# java
+javac -cp "$JAR_FILE" MonitorPaymentsJavaExample.java
+java -cp ".:$JAR_FILE" MonitorPaymentsJavaExample
 ```
 
 </CodeExample>
