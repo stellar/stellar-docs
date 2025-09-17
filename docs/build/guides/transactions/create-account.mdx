@@ -39,12 +39,12 @@ console.log("Public:", pair.publicKey());
 // create a completely new and unique pair of keys.
 // see more about KeyPair objects: https://stellar.github.io/java-stellar-sdk/org/stellar/sdk/KeyPair.html
 import org.stellar.sdk.KeyPair;
-KeyPair pair = KeyPair.random();
 
-System.out.println("Secret:", new String(pair.getSecretSeed()));
-// SAV76USXIJOBMEQXPANUOQM6F5LIOTLPDIDVRJBFFE2MDJXG24TAPUU7
-System.out.println("Public:", pair.getAccountId());
+KeyPair parent = KeyPair.random();
+log("Public: %s", parent.getAccountId());
 // GCFXHS4GXL6BVUCXBWXGTITROWLVYXQKQLF4YH5O5JT3YZXCYPAFBJZB
+log("Secret: %s", new String(parent.getSecretSeed()));
+// SAV76USXIJOBMEQXPANUOQM6F5LIOTLPDIDVRJBFFE2MDJXG24TAPUU7
 ```
 
 ```go
@@ -169,12 +169,62 @@ import java.net.*;
 import java.io.*;
 import java.util.*;
 
-String friendbotUrl = String.format(
-  "https://friendbot.stellar.org/?addr=%s",
-  pair.getAccountId());
-InputStream response = new URL(friendbotUrl).openStream();
-String body = new Scanner(response, "UTF-8").useDelimiter("\\A").next();
-System.out.println("SUCCESS! You have a new account :)\n" + body);
+private static final HttpClient HTTP = HttpClient.newBuilder()
+  .connectTimeout(Duration.ofSeconds(20))
+  .build();
+private static final SorobanServer SERVER = new SorobanServer(RPC_URL);
+
+public static void main(String[] args) throws Exception {
+  KeyPair parent = KeyPair.random();
+  log("Secret: %s", new String(parent.getSecretSeed()));
+  log("Public: %s", parent.getAccountId());
+
+  String friendbotResponse = requestAirdrop(parent.getAccountId());
+  log("SUCCESS! You have a new account:\n%s", friendbotResponse);
+
+  Account parentAccount = SERVER.loadAccount(parent.getAccountId());
+
+  KeyPair child = KeyPair.random();
+  AssetTypeCreditAlphaNum12 usdcAsset = Asset.createNonNative("USDC", TESTNET_USDC_ISSUER);
+
+  Transaction transaction = new TransactionBuilder(parentAccount, Network.TESTNET)
+    .setBaseFee(Transaction.MIN_BASE_FEE)
+    .setTimeout(TransactionBuilder.TIMEOUT_INFINITE)
+    .addOperation(new CreateAccountOperation.Builder(child.getAccountId(), "5").build())
+    .addOperation(new ChangeTrustOperation.Builder(usdcAsset, TESTNET_USDC_ISSUER).build())
+    .build();
+  transaction.sign(parent);
+
+  SendTransactionResponse sendResp = sendTransaction(transaction);
+  GetTransactionResponse txResp = pollTransaction(sendResp.getHash());
+  long ledgerSeq = txResp.getLedger() != null ? txResp.getLedger() : txResp.getLatestLedger();
+  log("Transaction confirmed in ledger %d", ledgerSeq);
+  log("Created the new account %s", child.getAccountId());
+
+  long nativeBalance = loadNativeBalance(parent.getAccountId());
+  log("Balance for account %s", parent.getAccountId());
+  log("XLM: %d", nativeBalance);
+
+  long trustlineBalance = getTrustlineBalance(parent.getAccountId(), usdcAsset);
+  log("USDC trustline balance (raw): %d", trustlineBalance);
+
+  BigInteger sacAmount = getSacBalance(
+    TESTNET_USDC_CONTRACT,
+    new AssetTypeNative(),
+    Network.TESTNET.getNetworkPassphrase());
+  log("XLM in USDC contract (raw): %s", sacAmount.toString());
+}
+
+private static String requestAirdrop(String accountId) throws IOException, InterruptedException {
+  HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create(FRIENDBOT_URL + accountId))
+    .timeout(Duration.ofSeconds(30))
+    .GET()
+    .build();
+  HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+  check(response.statusCode() / 100 == 2, "Friendbot returned " + response.statusCode() + ": " + response.body());
+  return response.body();
+}
 ```
 
 ```go
@@ -530,6 +580,22 @@ def poll_transaction(hash_: str):
 <Details summary="Retrieving account details">
 <CodeExample>
 
+```java
+private static long loadNativeBalance(String accountId) throws IOException {
+  LedgerKey key = new LedgerKey();
+  key.setDiscriminant(LedgerEntryType.ACCOUNT);
+  LedgerKeyAccount accountKey = new LedgerKeyAccount();
+  accountKey.setAccountID(KeyPair.fromAccountId(accountId).getXdrAccountId());
+  key.setAccount(accountKey);
+
+  GetLedgerEntriesResponse response = SERVER.getLedgerEntries(Collections.singletonList(key));
+  check(!response.getEntries().isEmpty(), "Account " + accountId + " not found");
+  LedgerEntryData data = LedgerEntryData.fromXdr(response.getEntries().get(0).getXdr());
+  check(data.getAccount() != null, "Ledger entry missing account data");
+  return data.getAccount().getBalance().getInt64();
+}
+```
+
 ```go
 import (
   "context"
@@ -569,7 +635,6 @@ func getAccountEntry(ctx context.Context, cli *client.Client, address string) *x
 ```
 
 ```python
-
 def load_native_balance(account_id: str) -> int:
   key = LedgerKey(
     LedgerEntryType.ACCOUNT,
@@ -590,6 +655,28 @@ def load_native_balance(account_id: str) -> int:
 
 <Details summary="Retrieving trustline details">
 <CodeExample>
+
+```java
+private static long getTrustlineBalance(String accountId, org.stellar.sdk.Asset asset) throws IOException {
+  LedgerKey key = new LedgerKey();
+  key.setDiscriminant(LedgerEntryType.TRUSTLINE);
+  LedgerKeyTrustLine trustLineKey = new LedgerKeyTrustLine();
+  trustLineKey.setAccountID(KeyPair.fromAccountId(accountId).getXdrAccountId());
+  trustLineKey.setAsset(asset.toXdr());
+  key.setTrustLine(trustLineKey);
+
+  GetLedgerEntriesResponse response = SERVER.getLedgerEntries(Collections.singletonList(key));
+  if (response.getEntries().isEmpty()) {
+    return 0L;
+  }
+  LedgerEntryData data = LedgerEntryData.fromXdr(response.getEntries().get(0).getXdr());
+  TrustLineEntry trustLine = data.getTrustLine();
+  if (trustLine == null) {
+    return 0L;
+  }
+  return trustLine.getBalance().getInt64();
+}
+```
 
 ```go
 import (
@@ -653,6 +740,40 @@ def get_trustline(account_id: str, asset: Asset) -> int:
 
 <Details summary="Retrieving the SAC balance held by a contract">
 <CodeExample>
+
+```java
+private static BigInteger getSacBalance(
+  String contractId, org.stellar.sdk.Asset asset, String networkPassphrase
+) throws IOException {
+  byte[] targetContract = StrKey.decodeContractId(contractId);
+  byte[] sacContractId = StrKey.decodeContractId(asset.contractId(networkPassphrase));
+
+  LedgerKey key = new LedgerKey();
+  key.setDiscriminant(LedgerEntryType.CONTRACT_DATA);
+  LedgerKeyContractData contractDataKey = new LedgerKeyContractData();
+  contractDataKey.setContract(new SCAddress(SCAddressType.SC_ADDRESS_TYPE_CONTRACT, sacContractId));
+  contractDataKey.setKey(buildSacBalanceKey(targetContract));
+  contractDataKey.setDurability(ContractDataDurability.PERSISTENT);
+  key.setContractData(contractDataKey);
+
+  GetLedgerEntriesResponse response = SERVER.getLedgerEntries(Collections.singletonList(key));
+  if (response.getEntries().isEmpty()) {
+    return BigInteger.ZERO;
+  }
+  LedgerEntryData data = LedgerEntryData.fromXdr(response.getEntries().get(0).getXdr());
+  if (data.getContractData() == null || data.getContractData().getVal().getMap() == null) {
+    return BigInteger.ZERO;
+  }
+  for (SCMapEntry entry : data.getContractData().getVal().getMap().getEntries()) {
+    boolean isBalanceKey = entry.getKey().getDiscriminant() == SCValType.SCV_SYMBOL
+        && "Balance".equals(new String(entry.getKey().getSym().getBytes()));
+    if (isBalanceKey) {
+      return scValToBigInteger(entry.getVal());
+    }
+  }
+  return BigInteger.ZERO;
+}
+```
 
 ```go
 import (
@@ -769,6 +890,18 @@ def get_sac_balance(contract_id: str, asset: Asset, network_passphrase: str) -> 
 
 <Details summary="Error handling">
 <CodeExample>
+
+```java
+private static void check(boolean condition, String message) {
+  if (!condition) {
+    throw new IllegalStateException(message);
+  }
+}
+
+private static void log(String format, Object... args) {
+  System.out.println(String.format(format, args));
+}
+```
 
 ```go
 func check(err error) {
