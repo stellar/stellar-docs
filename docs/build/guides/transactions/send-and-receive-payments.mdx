@@ -176,19 +176,30 @@ sendPayments().catch((error) => {
 ```
 
 ```java
-// send_payment.java
+// SendPaymentExample.java
 // Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
 
-import org.stellar.sdk.*;
+import org.stellar.sdk.Account;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.MemoId;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
 import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
 import org.stellar.sdk.operations.PaymentOperation;
 import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
 import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
 import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
-import org.stellar.sdk.xdr.*;
+import org.stellar.sdk.xdr.AccountEntry;
+import org.stellar.sdk.xdr.AccountID;
 import org.stellar.sdk.xdr.LedgerEntry.LedgerEntryData;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
 import org.stellar.sdk.xdr.LedgerKey.LedgerKeyAccount;
+import org.stellar.sdk.xdr.PublicKey;
 import org.stellar.sdk.xdr.PublicKey.PublicKeyBuilder;
+import org.stellar.sdk.xdr.PublicKeyType;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -197,6 +208,9 @@ import okhttp3.Response;
 import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 
 public class SendPaymentJavaExample {
@@ -207,12 +221,17 @@ public class SendPaymentJavaExample {
     // Generate sender/recipient and fund via Friendbot (testnet)
     // get the friendbot url from rpc info
     var info = rpc.getNetwork();
-    System.out.println("Friendbot URL: " + info.getFriendbotUrl()); 
+    System.out.println("Friendbot URL: " + info.getFriendbotUrl());
 
     KeyPair sender = KeyPair.random();
     KeyPair recipient = KeyPair.random();
     friendbotFund(sender.getAccountId(), info.getFriendbotUrl());
     friendbotFund(recipient.getAccountId(), info.getFriendbotUrl());
+    Files.writeString(Paths.get("sender_public.key"),
+        sender.getAccountId(),
+        StandardOpenOption.CREATE,
+        StandardOpenOption.TRUNCATE_EXISTING,
+        StandardOpenOption.WRITE);
 
     // Load sender sequence using RPC getLedgerEntries
     long senderSeq = loadAccountSequenceViaRpc(rpc, sender.getAccountId());
@@ -223,10 +242,8 @@ public class SendPaymentJavaExample {
       // Build classic payment: 10 XLM, memo id, 180s timeout
       Transaction tx = new TransactionBuilder(source, Network.TESTNET)
           .setBaseFee(Transaction.MIN_BASE_FEE)
-          .addOperation(PaymentOperation.builder().
-              destination(recipient.getAccountId()).
-              asset(new AssetTypeNative()).
-              amount(new BigDecimal("10")).build())
+          .addOperation(PaymentOperation.builder().destination(recipient.getAccountId()).asset(new AssetTypeNative())
+              .amount(new BigDecimal("10")).build())
           .addMemo(new MemoId(1234567890L))
           .setTimeout(180)
           .build();
@@ -251,7 +268,7 @@ public class SendPaymentJavaExample {
   static void friendbotFund(String accountId, String friendbotUrl) throws Exception {
     OkHttpClient http = new OkHttpClient.Builder().build();
     String url = friendbotUrl + "?addr=" + URLEncoder.encode(accountId, StandardCharsets.UTF_8);
-    
+
     Request req = new Request.Builder().url(url).build();
     Response res = http.newCall(req).execute();
 
@@ -277,7 +294,7 @@ public class SendPaymentJavaExample {
     LedgerKey key = new LedgerKey();
     key.setDiscriminant(LedgerEntryType.ACCOUNT);
     key.setAccount(lka);
-   
+
     var gle = rpc.getLedgerEntries(List.of(key));
     if (gle.getEntries() == null || gle.getEntries().isEmpty()) {
       throw new RuntimeException("Account not found in ledger entries: " + accountId);
@@ -292,10 +309,9 @@ public class SendPaymentJavaExample {
     return acc.getSeqNum().getSequenceNumber().getInt64();
   }
 
-  // Helper: wrap SorobanServer.pollTransaction and enforce failure handling
   static GetTransactionResponse pollTransaction(SorobanServer rpc, String txHash) throws Exception {
     GetTransactionResponse resp = rpc.pollTransaction(txHash);
-   
+
     if (GetTransactionStatus.SUCCESS.equals(resp.getStatus())) {
       return resp;
     }
@@ -437,16 +453,25 @@ monitorPayments().catch(error => {
 ```
 
 ```java
-// monitor_payment.java
-import org.stellar.sdk.SorobanServer;
-import org.stellar.sdk.Address;
-import org.stellar.sdk.scval.Scv;
-import org.stellar.sdk.xdr.*;
+// MonitorPaymentExample.java
+// Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
 
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.responses.sorobanrpc.GetLatestLedgerResponse;
+
+import org.stellar.sdk.requests.sorobanrpc.EventFilterType;
+import org.stellar.sdk.requests.sorobanrpc.GetEventsRequest;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCSymbol;
+import org.stellar.sdk.xdr.SCVal;
+
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.*;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 
 public class MonitorPaymentsJavaExample {
   public static void main(String[] args) throws Exception {
@@ -461,75 +486,72 @@ public class MonitorPaymentsJavaExample {
     String fromTopicFilter = Scv.toAddress(monitoredFromAccount).toXdrBase64();
 
     // Starting point: latest ledger
-    var latest = rpc.getLatestLedger();
-    Long startLedger = latest.getSequence();
+    GetLatestLedgerResponse latest = rpc.getLatestLedger();
+    Long startLedger = latest.getSequence().longValue();
     String cursor = null;
-    System.out.printf("Starting payment monitoring from ledger %d and from account %s%n", startLedger, monitoredFromAccount);
+    System.out.printf("Starting payment monitoring from ledger %d and from account %s%n", startLedger,
+        monitoredFromAccount);
 
     while (true) {
-      // Build request: type "contract", topics [[transfer, from, "*", "*"]]
-      var filter = new org.stellar.sdk.responses.sorobanrpc.GetEventsRequest.Filter();
-      filter.setType("contract");
-      filter.setTopics(Collections.singletonList(Arrays.asList(transferTopicFilter, fromTopicFilter, "*", "*")));
 
-      var req = new org.stellar.sdk.responses.sorobanrpc.GetEventsRequest();
-      req.setStartLedger(startLedger);
-      req.setCursor(cursor);
-      req.setFilters(Collections.singletonList(filter));
-      req.setLimit(10);
+      GetEventsRequest.EventFilter eventFilter = GetEventsRequest.EventFilter.builder()
+          .type(EventFilterType.CONTRACT)
+          .topic(Arrays.asList(transferTopicFilter, fromTopicFilter, "*", "*"))
+          .build();
 
-      var eventsResp = rpc.getEvents(req);
+      GetEventsRequest.PaginationOptions paginationOptions = GetEventsRequest.PaginationOptions.builder()
+          .limit(10L)
+          .cursor(cursor)
+          .build();
+
+      GetEventsRequest getEventsRequest = GetEventsRequest.builder()
+          .startLedger(startLedger)
+          .filter(eventFilter)
+          .pagination(paginationOptions)
+          .build();
+
+      var eventsResp = rpc.getEvents(getEventsRequest);
       var events = eventsResp.getEvents();
       System.out.println("Found " + events.size() + " payment(s):");
 
       for (var ev : events) {
         System.out.println("\n--- Payment Received ---");
         System.out.println("Ledger: " + ev.getLedger());
-        System.out.println("Transaction Hash: " + ev.getTxHash());
+        System.out.println("Transaction Hash: " + ev.getTransactionHash());
         System.out.println("Closed At: " + ev.getLedgerClosedAt());
 
-        List<ScVal> topics = ev.getTopic();
+        List<String> topics = ev.getTopic();
         if (topics.size() < 3) {
           System.out.println("Invalid event, not enough topics.");
           continue;
         }
 
         try {
-          String fromAddr = Scv.fromAddress(topics.get(1)).toString();
-          String toAddr = Scv.fromAddress(topics.get(2)).toString();
+          String fromAddr = Scv.fromAddress(SCVal.fromXdrBase64(topics.get(1))).toString();
+          String toAddr = Scv.fromAddress(SCVal.fromXdrBase64(topics.get(2))).toString();
           System.out.println("Transfer: " + fromAddr + " → " + toAddr);
         } catch (Exception e) {
           System.out.println("From/To: Unable to decode addresses: " + e.getMessage());
         }
 
         try {
-          // value is an SCV_MAP with k:amount -> v:SCV_I128
-          ScVal v = ev.getValue();
-          String amountStr = null;
-          
-          var map = Scv.fromMap(v);
-          for (var e : map.entrySet()) {
-            String key = new String(Scv.fromString(e.getKey()));
-            if ("amount".equals(key)) {
-              SCVal amountVal = e.getValue();
-              amountStr = Scv.fromInt128(amountVal).toString();
-              break;
-            }
-          }
-          
-          if (amountStr != null) {
-            java.math.BigInteger stroops = new java.math.BigInteger(amountStr);
-            double xlm = stroops.doubleValue() / 10000000.0;
-            System.out.printf("Amount: %s stroops (%.7f XLM)%n", stroops.toString(), xlm);
+          // the event value is a map with key of Symbol for 'amount' to i128 value
+          Map<SCVal, SCVal> map = Scv.fromMap(SCVal.fromXdrBase64(ev.getValue()));
+          SCVal amount = map.get(Scv.toSymbol("amount"));
+
+          if (amount != null) {
+            String amountStr = Scv.fromInt128(amount).toString();
+            BigDecimal raw = new BigDecimal(amountStr);
+            System.out.printf("Token Amount Transferred: (%.7f)%n", raw.scaleByPowerOfTen(-7));
           }
         } catch (Exception e) {
           System.out.println("Failed to decode transfer amount: " + e.getMessage());
         }
 
         try {
-          System.out.println("Asset: " + topics.get(3).toString());
+          System.out.println("Asset: " + new String(Scv.fromString(SCVal.fromXdrBase64(topics.get(3)))));
         } catch (Exception ex) {
-          System.out.println("Asset: Unable to decode asset" + ex.getMessage();
+          System.out.println("Asset: Unable to decode asset" + ex.getMessage());
         }
       }
 
@@ -540,7 +562,6 @@ public class MonitorPaymentsJavaExample {
     }
   }
 }
-
 ```
 
 </CodeExample>
@@ -560,16 +581,12 @@ node send_payment.js
 # JRE 17 or higher should be installed - https://adoptium.net/temurin/releases/?version=17&package=jdk
 # download Stellar Java SDK jar, latest release on maven central
 JAR_REPO='https://repo1.maven.org/maven2/network/lightsail/stellar-sdk'
-JAR_VERSION="$( \
-  curl -fsSL "$JAR_REPO/maven-metadata.xml" \
-  | awk -F'[<>]' '/<release>/{print $3; exit}' \
-)"
-echo "Latest Stellar SDK Version: $JAR_VERSION" 
+JAR_VERSION="2.0.0" # replace with latest version if needed
 JAR_FILE="stellar-sdk-$JAR_VERSION-uber.jar" 
 curl -fsSL -o "$JAR_FILE" "$JAR_REPO/$JAR_VERSION/$JAR_FILE" 
 
-javac -cp "$JAR_FILE" SendPaymentJavaExample.java
-java -cp ".:$JAR_FILE" SendPaymentJavaExample
+javac -cp "$JAR_FILE" SendPaymentExample.java
+java -cp ".:$JAR_FILE" SendPaymentExample
 ```
 
 </CodeExample>
@@ -584,8 +601,8 @@ java -cp ".:$JAR_FILE" SendPaymentJavaExample
 node monitor_payments.js
 
 # java
-javac -cp "$JAR_FILE" MonitorPaymentsJavaExample.java
-java -cp ".:$JAR_FILE" MonitorPaymentsJavaExample
+javac -cp "$JAR_FILE" MonitorPaymentExample.java
+java -cp ".:$JAR_FILE" MonitorPaymentExample
 ```
 
 </CodeExample>
