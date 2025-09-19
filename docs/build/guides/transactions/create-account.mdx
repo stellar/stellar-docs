@@ -339,7 +339,8 @@ public final class CreateAccountExample {
     GetNetworkResponse networkInfo = SERVER.getNetwork();
     String friendbotUrl = networkInfo != null ? networkInfo.getFriendbotUrl() : null;
     check(friendbotUrl != null && !friendbotUrl.isBlank(), "Friendbot URL not provided by network");
-    requestFunds(friendbotUrl, parent.getAccountId());
+    String friendbotResponse = requestFunds(friendbotUrl, parent.getAccountId());
+    log("SUCCESS! You have a new account:\n%s", friendbotResponse);
 
     Account parentAccount = SERVER.loadAccount(parent.getAccountId());
     KeyPair child = KeyPair.random();
@@ -354,11 +355,22 @@ public final class CreateAccountExample {
         .build();
     transaction.sign(parent);
 
-    SendTransactionResponse sendResp = sendTransaction(transaction);
-    GetTransactionResponse txResp = SERVER.pollTransaction(sendResp.getHash());
-    long ledgerSeq = txResp.getLedger() != null ? txResp.getLedger() : txResp.getLatestLedger();
+    long ledgerSeq = submitAndConfirm(transaction);
     log("Transaction confirmed in ledger %d", ledgerSeq);
     log("Created the new account %s", child.getAccountId());
+  }
+
+  private static long submitAndConfirm(Transaction transaction) throws IOException {
+    SendTransactionResponse sendResp = SERVER.sendTransaction(transaction);
+    check(sendResp.getStatus() == SendTransactionStatus.PENDING,
+        "Transaction submission failed: " + sendResp.getStatus());
+
+    GetTransactionResponse txResp = SERVER.pollTransaction(sendResp.getHash());
+    check(txResp.getStatus() == GetTransactionResponse.Status.SUCCESS,
+        "Transaction failed: " + txResp.getStatus());
+    Long ledger = txResp.getLedger() != null ? txResp.getLedger() : txResp.getLatestLedger();
+    check(ledger != null, "Transaction completed but ledger sequence unavailable");
+    return ledger;
   }
 
   private static String requestFunds(String friendbotUrl, String accountId)
@@ -374,14 +386,6 @@ public final class CreateAccountExample {
     check(response.statusCode() / 100 == 2,
         "Friendbot returned " + response.statusCode() + ": " + response.body());
     return response.body();
-  }
-
-  private static SendTransactionResponse sendTransaction(Transaction transaction)
-      throws IOException {
-    SendTransactionResponse response = SERVER.sendTransaction(transaction);
-    check(response.getStatus() == SendTransactionStatus.PENDING,
-        "Transaction submission failed: " + response.getStatus());
-    return response;
   }
 
   private static void check(boolean condition, String message) {
@@ -540,7 +544,6 @@ func check(err error) {
 ```
 
 ```python
-import time
 import requests
 from stellar_sdk import *
 from stellar_sdk.soroban_rpc import *
@@ -565,22 +568,15 @@ def request_funds(friendbot_url: str, account_id: str) -> str:
   return resp.text
 
 
-def send_transaction(transaction):
+def submit_and_confirm(transaction):
   response = SERVER.send_transaction(transaction)
   if response.status != SendTransactionStatus.PENDING:
     raise RuntimeError(f"Transaction submission failed: {response.status}")
-  return response
 
-
-def poll_transaction(hash_: str):
-  for attempt in range(10):
-    response = SERVER.get_transaction(hash_)
-    if response.status == GetTransactionStatus.SUCCESS:
-      return response
-    if response.status == GetTransactionStatus.FAILED:
-      raise RuntimeError(f"Transaction failed: {response.diagnostic_events_xdr}")
-    time.sleep(1 * (attempt + 1))
-  raise RuntimeError(f"Transaction {hash_} not found after polling")
+  tx_resp = SERVER.poll_transaction(response.hash)
+  if tx_resp.status == GetTransactionStatus.SUCCESS:
+    return tx_resp.ledger or tx_resp.latest_ledger
+  raise RuntimeError(f"Transaction failed: {tx_resp.diagnostic_events_xdr}")
 
 
 if __name__ == "__main__":
@@ -607,9 +603,7 @@ if __name__ == "__main__":
   )
   tx.sign(parent)
 
-  send_resp = send_transaction(tx)
-  tx_resp = poll_transaction(send_resp.hash)
-  ledger_seq = tx_resp.ledger or tx_resp.latest_ledger
+  ledger_seq = submit_and_confirm(tx)
   print(f"Transaction confirmed in ledger {ledger_seq}")
   print(f"Created the new account {child.public_key}")
 ```
