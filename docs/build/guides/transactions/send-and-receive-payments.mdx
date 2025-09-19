@@ -291,6 +291,207 @@ public class SendPaymentJavaExample {
 
 ```
 
+```go
+// sender.go
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/txnbuild"
+	sdk "github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+)
+
+// friendbotFund funds an account using the Stellar testnet friendbot
+func friendbotFund(accountID, friendbotURL string) error {
+	// Construct the URL with account parameter
+	fullURL := friendbotURL + "?addr=" + url.QueryEscape(accountID)
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	// Make HTTP GET request
+	resp, err := client.Get(fullURL)
+	if err != nil {
+		return fmt.Errorf("failed to make friendbot request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Check if response is successful (2xx status code)
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("friendbot funding failed: %d", resp.StatusCode)
+	}
+
+	fmt.Printf("Funded: %s\n", accountID)
+	return nil
+}
+
+// check panics if there's an error
+func check(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+// SignAndSend builds, signs, and submits a transaction with the given operations
+func SignAndSend(
+	ctx context.Context,
+	client *sdk.Client,
+	account txnbuild.Account,
+	signers []*keypair.Full,
+	operations ...txnbuild.Operation,
+) protocol.GetTransactionResponse {
+	// Build, sign, and submit the transaction
+	tx, err := txnbuild.NewTransaction(
+		txnbuild.TransactionParams{
+			SourceAccount:        account,
+			IncrementSequenceNum: true,
+			BaseFee:              txnbuild.MinBaseFee,
+			Preconditions: txnbuild.Preconditions{
+				TimeBounds: txnbuild.NewInfiniteTimeout(),
+			},
+			Operations: operations,
+		},
+	)
+	check(err)
+
+	for _, signer := range signers {
+		tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+		check(err)
+	}
+
+	txnB64, err := tx.Base64()
+	check(err)
+
+	txSendResp, err := client.SendTransaction(ctx,
+		protocol.SendTransactionRequest{Transaction: txnB64})
+	check(err)
+
+	for i := range 5 {
+		txResp, err := client.GetTransaction(ctx,
+			protocol.GetTransactionRequest{Hash: txSendResp.Hash})
+		check(err)
+
+		switch txResp.Status {
+		case "NOT_FOUND":
+		case "SUCCESS":
+			return txResp
+		case "FAILED":
+			panic(fmt.Errorf("transaction failed: %s",
+				strings.Join(txResp.DiagnosticEventsXDR, "\n")))
+		}
+
+		// Increase delay for each polling request
+		time.Sleep(time.Duration(i) * time.Second)
+	}
+
+	panic(fmt.Errorf("transaction never found: %s", txSendResp.Hash))
+}
+
+// sendPayment creates and submits a payment transaction using the helper function
+func sendPayment(ctx context.Context, rpcClient *sdk.Client, sourceAccount txnbuild.Account, signerKP *keypair.Full, destinationAddr string) error {
+	// Create payment operation
+	paymentOp := txnbuild.Payment{
+		Destination: destinationAddr,
+		Amount:      "10",
+		Asset:       txnbuild.NativeAsset{},
+	}
+
+	// Use the helper function to build, sign, and submit
+	fmt.Printf("Submitting payment of 10 XLM to %s...\n", destinationAddr)
+
+	txResp := SignAndSend(ctx, rpcClient, sourceAccount, []*keypair.Full{signerKP}, &paymentOp)
+
+	fmt.Printf("Success! Committed on ledger: %d\n", txResp.Ledger)
+	return nil
+}
+
+func main() {
+	const RPC_URL = "https://soroban-testnet.stellar.org"
+
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	rpcClient := sdk.NewClient(RPC_URL, httpClient)
+
+	// Get network info to obtain friendbot URL
+	ctx := context.Background()
+	networkInfo, err := rpcClient.GetNetwork(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get network info: %v", err))
+	}
+
+	fmt.Printf("Friendbot URL: %s\n", networkInfo.FriendbotURL)
+
+	// Generate sender and recipient keypairs
+	sender, err := keypair.Random()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate sender keypair: %v", err))
+	}
+
+	recipient, err := keypair.Random()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate recipient keypair: %v", err))
+	}
+
+	// Fund accounts via friendbot
+	err = friendbotFund(sender.Address(), networkInfo.FriendbotURL)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to fund sender: %v", err))
+	}
+
+	err = friendbotFund(recipient.Address(), networkInfo.FriendbotURL)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to fund recipient: %v", err))
+	}
+
+	// Save sender public key to file
+	err = os.WriteFile("sender_public.key", []byte(sender.Address()), 0644)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to write sender public key: %v", err))
+	}
+
+	// Load sender account info
+	senderAccount, err := rpcClient.LoadAccount(ctx, sender.Address())
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get sender account: %v", err))
+	}
+
+	// Payment loop - send payment every 30 seconds
+	for {
+		err := sendPayment(ctx, rpcClient, senderAccount, sender, recipient.Address())
+		if err != nil {
+			panic(fmt.Sprintf("Payment failed: %v", err))
+		}
+
+		fmt.Println("Waiting 30 seconds before next payment...")
+		time.Sleep(30 * time.Second)
+
+		// Reload account to get updated sequence number
+		senderAccount, err = rpcClient.LoadAccount(ctx, sender.Address())
+		if err != nil {
+			panic(fmt.Sprintf("Failed to reload sender account: %v", err))
+		}
+	}
+}
+```
+
 </CodeExample>
 </Details>
 
@@ -515,6 +716,344 @@ public class MonitorPaymentsJavaExample {
 }
 ```
 
+```go
+// monitor.go
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/base64"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/stellar/go/strkey"
+	"github.com/stellar/go/xdr"
+	sdk "github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+)
+
+func main() {
+	const RPC_URL = "https://soroban-testnet.stellar.org"
+
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	rpcClient := sdk.NewClient(RPC_URL, httpClient)
+	ctx := context.Background()
+
+	// Load the account we monitor payments FROM (written by send_payment example)
+	senderKeyBytes, err := os.ReadFile("sender_public.key")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to read sender_public.key: %v", err))
+	}
+	monitoredFromAccount := strings.TrimSpace(string(senderKeyBytes))
+
+	fmt.Printf("Starting payment monitoring from account: %s\n", monitoredFromAccount)
+
+	// Get latest ledger as starting point
+	latestLedger, err := rpcClient.GetLatestLedger(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get latest ledger: %v", err))
+	}
+
+	startLedger := latestLedger.Sequence
+	var cursor string
+
+	fmt.Printf("Starting payment monitoring from ledger %d\n", startLedger)
+
+	for {
+		err := monitorPayments(ctx, rpcClient, monitoredFromAccount, &startLedger, &cursor)
+		if err != nil {
+			fmt.Printf("Error monitoring payments: %v\n", err)
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func monitorPayments(ctx context.Context, client *sdk.Client, fromAccount string, startLedger *uint32, cursor *string) error {
+	// Create a simple event filter for contract events
+	eventFilter := protocol.EventFilter{
+		EventType: protocol.EventTypeSet{protocol.EventTypeContract: nil},
+		// We'll filter by topics in the processing logic instead
+	}
+
+	// Create request
+	request := protocol.GetEventsRequest{
+		Filters: []protocol.EventFilter{eventFilter},
+	}
+
+	// Set startLedger only on first call
+	if *startLedger != 0 {
+		request.StartLedger = *startLedger
+	}
+
+	// Set cursor for pagination
+	if *cursor != "" {
+		parsedCursor, err := protocol.ParseCursor(*cursor)
+		if err != nil {
+			return fmt.Errorf("failed to parse cursor: %v", err)
+		}
+		request.Pagination = &protocol.PaginationOptions{
+			Cursor: &parsedCursor,
+			Limit:  10,
+		}
+	} else {
+		request.Pagination = &protocol.PaginationOptions{
+			Limit: 10,
+		}
+	}
+
+	// Get events
+	eventsResp, err := client.GetEvents(ctx, request)
+	if err != nil {
+		return fmt.Errorf("failed to get events: %v", err)
+	}
+
+	// Filter events that match our criteria
+	relevantEvents := []protocol.EventInfo{}
+	for _, event := range eventsResp.Events {
+		if isPaymentEvent(event, fromAccount) {
+			relevantEvents = append(relevantEvents, event)
+		}
+	}
+
+	fmt.Printf("Found %d payment(s):\n", len(relevantEvents))
+
+	// Process relevant events
+	for _, event := range relevantEvents {
+		err := processPaymentEvent(event)
+		if err != nil {
+			fmt.Printf("Error processing event: %v\n", err)
+			continue
+		}
+	}
+
+	// Update pagination
+	*cursor = eventsResp.Cursor
+	*startLedger = 0 // Clear start ledger for subsequent calls
+
+	return nil
+}
+
+func isPaymentEvent(event protocol.EventInfo, fromAccount string) bool {
+	// Check if this is a transfer event by looking at the first topic
+	if len(event.TopicXDR) < 2 {
+		return false
+	}
+
+	// Try to decode the first topic to see if it's "transfer"
+	if isTransferTopic(event.TopicXDR[0]) && isFromAccount(event.TopicXDR[1], fromAccount) {
+		return true
+	}
+
+	return false
+}
+
+func isTransferTopic(topicXDR string) bool {
+	xdrBytes, err := base64.StdEncoding.DecodeString(topicXDR)
+	if err != nil {
+		return false
+	}
+
+	var scVal xdr.ScVal
+	err = scVal.UnmarshalBinary(xdrBytes)
+	if err != nil {
+		return false
+	}
+
+	return scVal.Type == xdr.ScValTypeScvSymbol &&
+		scVal.Sym != nil &&
+		string(*scVal.Sym) == "transfer"
+}
+
+func isFromAccount(topicXDR, expectedAccount string) bool {
+	decodedAddr, err := decodeAddressFromXDR(topicXDR)
+	return err == nil && decodedAddr == expectedAccount
+}
+
+func createTransferTopicFilter() (string, error) {
+	// Create "transfer" symbol and encode to base64 XDR
+	symbol := xdr.ScSymbol("transfer")
+	scVal := xdr.ScVal{
+		Type: xdr.ScValTypeScvSymbol,
+		Sym:  &symbol,
+	}
+
+	// Use XDR marshaling to base64
+	xdrBytes, err := scVal.MarshalBinary()
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(xdrBytes), nil
+}
+
+func createAddressTopicFilter(accountID string) (string, error) {
+	// Convert address string to AccountId
+	accountKey, err := xdr.AddressToAccountId(accountID)
+	if err != nil {
+		return "", err
+	}
+
+	// Create SCAddress for account
+	scAddr := xdr.ScAddress{
+		Type:      xdr.ScAddressTypeScAddressTypeAccount,
+		AccountId: &accountKey,
+	}
+
+	scVal := xdr.ScVal{
+		Type:    xdr.ScValTypeScvAddress,
+		Address: &scAddr,
+	}
+
+	// Use XDR marshaling to base64
+	xdrBytes, err := scVal.MarshalBinary()
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(xdrBytes), nil
+}
+
+func processPaymentEvent(event protocol.EventInfo) error {
+	fmt.Println("\n--- Payment Received ---")
+	fmt.Printf("Ledger: %d\n", event.Ledger)
+	fmt.Printf("Transaction Hash: %s\n", event.TransactionHash)
+	fmt.Printf("Closed At: %s\n", event.LedgerClosedAt)
+
+	// Parse topics
+	if len(event.TopicXDR) < 3 {
+		fmt.Println("Invalid event, not enough topics.")
+		return nil
+	}
+
+	// Decode from and to addresses
+	fromAddr, err := decodeAddressFromXDR(event.TopicXDR[1])
+	if err != nil {
+		fmt.Printf("From/To: Unable to decode from address: %v\n", err)
+	} else {
+		toAddr, err := decodeAddressFromXDR(event.TopicXDR[2])
+		if err != nil {
+			fmt.Printf("From/To: Unable to decode to address: %v\n", err)
+		} else {
+			fmt.Printf("Transfer: %s → %s\n", fromAddr, toAddr)
+		}
+	}
+
+	// Decode amount from event value
+	if event.ValueXDR != "" {
+		amount, err := decodeAmountFromXDR(event.ValueXDR)
+		if err != nil {
+			fmt.Printf("Failed to decode transfer amount: %v\n", err)
+		} else {
+			fmt.Printf("Token Amount Transferred: %.7f\n", float64(amount)/10000000) // Scale by 10^7
+		}
+	}
+
+	// Decode asset if available
+	if len(event.TopicXDR) > 3 {
+		asset, err := decodeAssetFromXDR(event.TopicXDR[3])
+		if err != nil {
+			fmt.Printf("Asset: Unable to decode asset: %v\n", err)
+		} else {
+			fmt.Printf("Asset: %s\n", asset)
+		}
+	}
+
+	return nil
+}
+
+func decodeAddressFromXDR(base64XDR string) (string, error) {
+	xdrBytes, err := base64.StdEncoding.DecodeString(base64XDR)
+	if err != nil {
+		return "", err
+	}
+
+	var scVal xdr.ScVal
+	err = scVal.UnmarshalBinary(xdrBytes)
+	if err != nil {
+		return "", err
+	}
+
+	if scVal.Type != xdr.ScValTypeScvAddress || scVal.Address == nil {
+		return "", fmt.Errorf("not an address type")
+	}
+
+	switch scVal.Address.Type {
+	case xdr.ScAddressTypeScAddressTypeAccount:
+		if scVal.Address.AccountId == nil {
+			return "", fmt.Errorf("account ID is nil")
+		}
+		return scVal.Address.AccountId.Address(), nil
+	case xdr.ScAddressTypeScAddressTypeContract:
+		if scVal.Address.ContractId == nil {
+			return "", fmt.Errorf("contract ID is nil")
+		}
+		return strkey.MustEncode(strkey.VersionByteContract, scVal.Address.ContractId[:]), nil
+	default:
+		return "", fmt.Errorf("unknown address type")
+	}
+}
+
+func decodeAmountFromXDR(base64XDR string) (int64, error) {
+	xdrBytes, err := base64.StdEncoding.DecodeString(base64XDR)
+	if err != nil {
+		return 0, err
+	}
+
+	var scVal xdr.ScVal
+	err = scVal.UnmarshalBinary(xdrBytes)
+	if err != nil {
+		return 0, err
+	}
+
+	// The value should be a map containing an "amount" key
+	if scVal.Type != xdr.ScValTypeScvMap || scVal.Map == nil {
+		return 0, fmt.Errorf("value is not a map")
+	}
+
+	// Look for the "amount" key in the map
+	for _, pair := range **scVal.Map {
+		if pair.Key.Type == xdr.ScValTypeScvSymbol && pair.Key.Sym != nil && string(*pair.Key.Sym) == "amount" {
+			// Found the amount key, extract the value
+			if pair.Val.Type == xdr.ScValTypeScvI128 && pair.Val.I128 != nil {
+				// Convert I128 to int64 (simplified - just use the low part for now)
+				return int64(pair.Val.I128.Lo), nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("amount not found in map")
+}
+
+func decodeAssetFromXDR(base64XDR string) (string, error) {
+	xdrBytes, err := base64.StdEncoding.DecodeString(base64XDR)
+	if err != nil {
+		return "", err
+	}
+
+	var scVal xdr.ScVal
+	err = scVal.UnmarshalBinary(xdrBytes)
+	if err != nil {
+		return "", err
+	}
+
+	if scVal.Type == xdr.ScValTypeScvString && scVal.Str != nil {
+		return string(*scVal.Str), nil
+	}
+
+	return "", fmt.Errorf("not a string type")
+}
+```
+
 </CodeExample>
 </Details>
 
@@ -538,6 +1077,16 @@ curl -fsSL -o "$JAR_FILE" "$JAR_REPO/$JAR_VERSION/$JAR_FILE"
 
 javac -cp "$JAR_FILE" SendPaymentExample.java
 java -cp ".:$JAR_FILE" SendPaymentExample
+
+# go
+mkdir -p payments_example/sender
+cd payments_example
+go mod init payments_example
+go get github.com/stellar/go@latest
+go get github.com/stellar/stellar-rpc@latest 
+# save sender.go code to sender/sender.go file
+go build -o sender sender/sender.go
+./sender
 ```
 
 </CodeExample>
@@ -554,6 +1103,12 @@ node monitor_payments.js
 # java
 javac -cp "$JAR_FILE" MonitorPaymentExample.java
 java -cp ".:$JAR_FILE" MonitorPaymentExample
+
+# go
+mkdir -p payments_example/monitor
+# save monitor.go code to monitor/monitor.go file
+go build -o monitor monitor/monitor.go
+./monitor
 ```
 
 </CodeExample>
