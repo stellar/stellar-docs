@@ -62,23 +62,35 @@ There’s no validation on IDs and as far as the Stellar network is concerned, a
 
 ## Examples
 
-In this section, we’ll demonstrate how to create muxed accounts and how they interface with their supported operations. Since custodial account workarounds based on transaction memos are unnecessary now, we’ll use that as a skeleton for our example structure.
+The following examples demonstrate how muxed accounts work in practice, showing the three main payment scenarios: standard account-to-account, muxed-to-unmuxed, and muxed-to-muxed payments.
 
-After preparing some supporting code, we’ll demonstrate three examples:
+**_Note:_** _The complete code implementation for all examples follows after this section. You can run individual examples using their respective functions or execute all three sequentially using the main function._
 
-- Example 1: Normal, “full” Stellar account payments (i.e. G to G)
-- Example 2: Mixed payments (i.e. M to G)
-- Example 3: Fully muxed payments (i.e. M to M)
+Muxed accounts (M...) are a client-side abstraction that don't actually exist on the Stellar ledger — only the underlying G account lives on-chain. This means operations like loading account data must always use the base G account, while payment operations can still provide either M or G address. The code diverges only slightly to handle this distinction between the logical muxed account and the actual account.
 
-### Preamble
+**Transaction Fees:** All transactions incur a fee (typically 100 stroops or 0.0000100 XLM). Since the custodian account is the source of all transactions in these examples, fees are always debited from the custodian's balance. You'll see this reflected in the before/after balance comparisons, where the custodian account decreases by both the payment amount and the transaction fee.
 
-First, let’s create two accounts and then a handful of virtual accounts representing “custodial customers” that the parent account manages:
+### Example 1 - Basic Payment (G → G)
 
-:::info
+This example establishes baseline behavior with a standard payment between two regular Stellar accounts. Both accounts exist directly on the ledger, demonstrating traditional Stellar payment flow without muxed account abstractions. The custodian account balance decreases by 10 XLM plus transaction fees, while the outsider account increases by exactly 10 XLM.
 
-The following code snippet contains helper functions and boiler plate code that will help in the following examples. These helper functions are similar to the ones mentioned in the [clawback examples](./clawbacks.mdx#Preamble) with slight modifications. They are included here for completeness.
+### Example 2 - Muxed to Unmuxed Payment (M → G)
 
-:::
+This demonstrates a payment from a muxed account (representing a custodial customer) to a regular Stellar account. The underlying custodian account executes the payment, but the transaction includes the muxed address to identify which customer initiated it.
+
+The transaction is signed with custodian keys since muxed accounts have no secret keys. The custodian account balance decreases by 10 XLM plus fees.
+
+### Example 3 - Muxed to Muxed Payment (M → M)
+
+When two muxed accounts share the same underlying account, payments between them are essentially the account sending to itself. The payment amount (+10 XLM and -10 XLM) cancels out, but transaction fees are still charged since the operation is recorded on the ledger.
+
+The account balance decreases only by the transaction fee. You may want to detect these transactions in your application to avoid unnecessary fees. Note that payments between muxed accounts with different underlying accounts would behave like normal G-to-G payments.
+
+---
+
+## Code Implementation
+
+_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` or execute individual examples using their respective functions._
 
 <CodeExample>
 
@@ -114,7 +126,7 @@ function formatAccount(accountId) {
 }
 
 function scaleAsset(x) {
-  return Number((x * 10n) / 10000000n) / 10; // one decimal place
+  return Number(x) / 10000000; // Preserves decimal precision
 }
 
 // Helper function to get XLM balance using RPC
@@ -165,7 +177,7 @@ function buildTx(source, signer, ops) {
   return tx;
 }
 
-// Updated loadAccount function for RPC
+// Helper function to load account, handling muxed accounts
 function loadAccount(account) {
   if (sdk.StrKey.isValidMed25519PublicKey(account.accountId())) {
     return loadAccount(account.baseAccount());
@@ -174,43 +186,41 @@ function loadAccount(account) {
   }
 }
 
-// Updated showBalance function to work with RPC and display formatted balance
+// Helper function to display balance of an account
 async function showBalance(acc) {
   const balance = await getXLMBalance(acc.accountId());
   console.log(`${formatAccount(acc.accountId())}: ${balance} XLM`);
 }
 
-function makePayment(source, dest, description = "Payment") {
+// Function to make a payment from source to destination account
+async function makePayment(source, dest, description = "Payment") {
   console.log(
     `\nPayment: ${formatAccount(source.accountId())} → ${formatAccount(
       dest.accountId(),
     )} (10 XLM)`,
   );
 
-  return loadAccount(source)
-    .then(async (accountBeforePayment) => {
-      console.log("Before payment:");
-      await showBalance(accountBeforePayment);
+  const accountBeforePayment = await loadAccount(source);
+  console.log("Before payment:");
+  await showBalance(accountBeforePayment);
 
-      let payment = sdk.Operation.payment({
-        source: source.accountId(),
-        destination: dest.accountId(),
-        asset: sdk.Asset.native(),
-        amount: "10",
-      });
+  let payment = sdk.Operation.payment({
+    source: source.accountId(),
+    destination: dest.accountId(),
+    asset: sdk.Asset.native(),
+    amount: "10",
+  });
 
-      let tx = buildTx(accountBeforePayment, custodian, [payment]);
+  let tx = buildTx(accountBeforePayment, custodian, [payment]);
 
-      return submitAndPollTransaction(tx, description);
-    })
-    .then(async () => {
-      const accountAfterPayment = await loadAccount(source);
-      console.log("After payment:");
-      await showBalance(accountAfterPayment);
-    });
+  await submitAndPollTransaction(tx, description);
+
+  const accountAfterPayment = await loadAccount(source);
+  console.log("After payment:");
+  await showBalance(accountAfterPayment);
 }
 
-// Setup function to fund accounts
+// Setup function to fund accounts and create muxed customers
 async function preamble() {
   console.log("=== FUNDING ACCOUNTS WITH XLM ===");
   await Promise.all([
@@ -218,9 +228,6 @@ async function preamble() {
     server.requestAirdrop(outsider.publicKey()),
   ]);
   console.log("All accounts funded with XLM via airdrop");
-
-  // Wait for funding to complete
-  await new Promise((resolve) => setTimeout(resolve, 3000));
 
   [custodianAcc, outsiderAcc] = await Promise.all([
     server.getAccount(custodian.publicKey()),
@@ -241,100 +248,38 @@ async function preamble() {
       customer.accountId(),
     );
   });
-  console.log();
 }
-```
 
-</CodeExample>
-
-### Muxed Operations Model
-
-Since muxed accounts are an abstraction over the underlying base account, this means that operations like loading account data must always use the base G account, while payments can optionally include the muxed address for off-chain routing purposes. The code diverges only slightly to handle this distinction between the logical muxed account and the actual ledger account.
-
-### Example 1 - Basic Payment from G account to G account
-
-This example demonstrates a standard payment between two regular Stellar accounts (G... addresses) to establish the baseline behavior. Both the custodian and outsider accounts exist directly on the Stellar ledger, so this payment follows the traditional Stellar payment flow without any muxed account abstractions.
-
-<CodeExample>
-
-```js
+// Example 1: Basic payment between two G accounts
 async function runUnmuxedExample() {
-  try {
-    await preamble();
+  console.log("=== BASIC PAYMENT EXAMPLE (G → G) ===");
 
-    console.log("=== INITIAL BALANCES ===");
-    await showBalance(custodianAcc);
-    await showBalance(outsiderAcc);
-    console.log();
+  console.log("=== INITIAL BALANCES ===");
+  await showBalance(custodianAcc);
+  await showBalance(outsiderAcc);
 
-    await makePayment(
-      custodianAcc,
-      outsiderAcc,
-      "Basic Payment from G to G address",
-    );
+  await makePayment(
+    custodianAcc,
+    outsiderAcc,
+    "Basic Payment from G to G address",
+  );
 
-    console.log("\n=== FINAL BALANCES ===");
-    const finalCustodianAcc = await server.getAccount(custodian.publicKey());
-    const finalOutsiderAcc = await server.getAccount(outsider.publicKey());
-    await showBalance(finalCustodianAcc);
-    await showBalance(finalOutsiderAcc);
+  console.log("\n=== FINAL BALANCES ===");
+  const finalCustodianAcc = await server.getAccount(custodian.publicKey());
+  const finalOutsiderAcc = await server.getAccount(outsider.publicKey());
+  await showBalance(finalCustodianAcc);
+  await showBalance(finalOutsiderAcc);
 
-    console.log("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===");
-  } catch (error) {
-    console.error("Error in example:", error.message);
-  }
+  console.log("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===");
 }
-```
 
-</CodeExample>
+// Example 2: Payment from M account to G account
+async function runMuxedToUnmuxedExample() {
+  console.log("=== MUXED TO UNMUXED PAYMENT EXAMPLE (M → G) ===");
 
-when you invoke `runUnmuxedExample()`, you should see output similar to:
-
-```
-=== FUNDING ACCOUNTS WITH XLM ===
-All accounts funded with XLM via airdrop
-
-=== ACCOUNT SETUP ===
-Custodian:
-        GDIQ4C4GJM2Y3XO7YKRO5BQMGBUZJAXQIYE3IKUS7LPBNPV4DGSEWXRN
-Outsider:
-        GBO2OQP6VSRVXBO7FRVW6U7FZA2W5T43CFKEAARRMUU5C7A7SDNH3XQM
-Customers:
-    1: MDIQ4C4GJM2Y3XO7YKRO5BQMGBUZJAXQIYE3IKUS7LPBNPV4DGSEWAAAAAAAAAAAAH2SO
-   22: MDIQ4C4GJM2Y3XO7YKRO5BQMGBUZJAXQIYE3IKUS7LPBNPV4DGSEWAAAAAAAAAAACYRUK
-  333: MDIQ4C4GJM2Y3XO7YKRO5BQMGBUZJAXQIYE3IKUS7LPBNPV4DGSEWAAAAAAAAAABJWGJ2
- 4444: MDIQ4C4GJM2Y3XO7YKRO5BQMGBUZJAXQIYE3IKUS7LPBNPV4DGSEWAAAAAAAAAARLTXZY
-
-=== INITIAL BALANCES ===
-GDIQ4C4G (Custodian): 10000.0000000 XLM
-GBO2OQP6 (Outsider): 10000.0000000 XLM
-
-
-Payment: GDIQ4C4G (Custodian) → GBO2OQP6 (Outsider) (10 XLM)
-Before payment:
-GDIQ4C4G (Custodian): 10000.0000000 XLM
-Basic Payment from G to G address submitted: 0661bc10dc467a5dbabaff9f83995b23cbc50a77e142f1823eb8266132521dbb
-Basic Payment from G to G address completed successfully
-After payment:
-GDIQ4C4G (Custodian): 9989.9000000 XLM
-
-=== FINAL BALANCES ===
-GDIQ4C4G (Custodian): 9989.9000000 XLM
-GBO2OQP6 (Outsider): 10010.0000000 XLM
-
-=== BASIC PAYMENT EXAMPLE COMPLETED ===
-```
-
-### Example 2 - Payment from Muxed Account to Unmuxed Account
-
-This example demonstrates a payment from a muxed account (representing a custodial customer) to a regular Stellar account. Since the muxed account doesn't actually exist on the ledger, the payment is executed by the underlying custodian account, but the transaction includes the muxed address to identify which "customer" initiated the payment.
-
-<CodeExample>
-
-```js
-async function muxedToUnmuxedPayment() {
-  console.log("=== MUXED TO UNMUXED PAYMENT EXAMPLE ===");
-
+  console.log("=== INITIAL BALANCES ===");
+  await showBalance(custodianAcc);
+  await showBalance(outsiderAcc);
   const src = customers[0];
   console.log(
     `Sending 10 XLM from Customer ${src.id()} to ${formatAccount(
@@ -343,88 +288,22 @@ async function muxedToUnmuxedPayment() {
   );
 
   await makePayment(src, outsiderAcc, "Payment from M to G address");
-  console.log();
+
+  console.log("\n=== FINAL BALANCES ===");
+  const finalCustodianAcc = await server.getAccount(custodian.publicKey());
+  const finalOutsiderAcc = await server.getAccount(outsider.publicKey());
+  await showBalance(finalCustodianAcc);
+  await showBalance(finalOutsiderAcc);
+
+  console.log("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===");
 }
 
-async function runMuxedToUnmuxedExample() {
-  try {
-    await preamble();
+// Example 3: Payment between two M accounts
+async function runMuxedToMuxedExample() {
+  console.log("=== MUXED TO MUXED PAYMENT EXAMPLE (M → M) ===");
 
-    console.log("=== INITIAL BALANCES ===");
-    await showBalance(custodianAcc);
-    await showBalance(outsiderAcc);
-    console.log();
-
-    await muxedToUnmuxedPayment();
-
-    console.log("\n=== FINAL BALANCES ===");
-    const finalCustodianAcc = await server.getAccount(custodian.publicKey());
-    const finalOutsiderAcc = await server.getAccount(outsider.publicKey());
-    await showBalance(finalCustodianAcc);
-    await showBalance(finalOutsiderAcc);
-
-    console.log("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===");
-  } catch (error) {
-    console.error("Error in example:", error.message);
-  }
-}
-```
-
-</CodeExample>
-
-When you invoke `runMuxedToUnmuxedExample()`, you should see output similar to:
-
-```
-=== FUNDING ACCOUNTS WITH XLM ===
-All accounts funded with XLM via airdrop
-
-=== ACCOUNT SETUP ===
-Custodian:
-        GBUXT67A32XQVPZBBTWMHFMN3WIBXR32SIS3UBIW2I2KGAXCAK3MRHJR
-Outsider:
-        GBJLU6GMFMLFLUHXT4I4ZUVUVZNV5IFIAQVBV6LVE4TU3222AJVSIOSR
-Customers:
-    1: MBUXT67A32XQVPZBBTWMHFMN3WIBXR32SIS3UBIW2I2KGAXCAK3MQAAAAAAAAAAAAFQ2K
-   22: MBUXT67A32XQVPZBBTWMHFMN3WIBXR32SIS3UBIW2I2KGAXCAK3MQAAAAAAAAAAAC234O
-  333: MBUXT67A32XQVPZBBTWMHFMN3WIBXR32SIS3UBIW2I2KGAXCAK3MQAAAAAAAAAABJUMB6
- 4444: MBUXT67A32XQVPZBBTWMHFMN3WIBXR32SIS3UBIW2I2KGAXCAK3MQAAAAAAAAAARLR5R4
-
-=== INITIAL BALANCES ===
-GBUXT67A (Custodian): 10000.0000000 XLM
-GBJLU6GM (Outsider): 10000.0000000 XLM
-
-=== MUXED TO UNMUXED PAYMENT EXAMPLE ===
-Sending 10 XLM from Customer 1 to GBJLU6GM (Outsider).
-
-Payment: MBUXT67A...AAFQ2K (Customer 1) → GBJLU6GM (Outsider) (10 XLM)
-Before payment:
-GBUXT67A (Custodian): 10000.0000000 XLM
-Payment from M to G address submitted: 6005039333329d4abf3c68b22898781ae2844734d6d37ab515ed65fa71479531
-Payment from M to G address completed successfully
-After payment:
-GBUXT67A (Custodian): 9989.9000000 XLM
-
-
-=== FINAL BALANCES ===
-GBUXT67A (Custodian): 9989.9000000 XLM
-GBJLU6GM (Outsider): 10010.0000000 XLM
-
-=== MUXED TO UNMUXED EXAMPLE COMPLETED ===
-```
-
-Notice that we still sign the transaction with the custodian keys, because muxed accounts have no concept of a secret key. Ultimately, everything still goes through the parent account, and so we should see the parent account’s balance decrease by 10 XLM accordingly.
-
-Of course, there’s also a fee charged for the transaction itself.
-
-### Example 3 - Payment from Muxed Account to Muxed Account.
-
-When two muxed accounts sharing an underlying Stellar account communicate, it’s as if the underlying account is talking to itself. A payment between two such accounts, then, is essentially a no-op.
-
-<CodeExample>
-
-```js
-async function muxedToMuxedPayment() {
-  console.log("=== MUXED TO MUXED PAYMENT EXAMPLE ===");
+  console.log("=== INITIAL BALANCES ===");
+  await showBalance(custodianAcc);
 
   const src = customers[1]; // Customer 22
   const dest = customers[2]; // Customer 333
@@ -434,73 +313,56 @@ async function muxedToMuxedPayment() {
   );
 
   await makePayment(src, dest, "Payment from M to M address");
-  console.log();
+
+  console.log("\n=== FINAL BALANCES ===");
+  const finalCustodianAcc = await server.getAccount(custodian.publicKey());
+  await showBalance(finalCustodianAcc);
+
+  console.log("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===");
 }
 
-async function runMuxedToMuxedExample() {
+// Main function that runs preamble once and then all three examples
+async function runAllMuxedExamples() {
   try {
+    // Run setup/funding only once
     await preamble();
 
-    console.log("=== INITIAL BALANCES ===");
+    // Show initial state
+    console.log("=== OVERALL INITIAL BALANCES ===");
     await showBalance(custodianAcc);
-    console.log();
+    await showBalance(outsiderAcc);
+    console.log("\n" + "=".repeat(60) + "\n");
 
-    await muxedToMuxedPayment();
+    // Run all three examples sequentially
+    await runUnmuxedExample();
+    console.log("\n" + "=".repeat(60) + "\n");
 
-    console.log("\n=== FINAL BALANCES ===");
-    const finalCustodianAcc = await server.getAccount(custodian.publicKey());
-    await showBalance(finalCustodianAcc);
+    await runMuxedToUnmuxedExample();
+    console.log("\n" + "=".repeat(60) + "\n");
 
-    console.log("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===");
+    await runMuxedToMuxedExample();
+
+    console.log("\n=== ALL MUXED ACCOUNT EXAMPLES COMPLETED ===");
   } catch (error) {
-    console.error("Error in example:", error.message);
+    console.error("Error in examples:", error.message);
   }
 }
+
+// Run the main function
+runAllMuxedExamples();
 ```
 
 </CodeExample>
 
-when you invoke `runMuxedToMuxedExample()`, you should see output similar to:
+### Running the Examples
 
-```
-=== FUNDING ACCOUNTS WITH XLM ===
-All accounts funded with XLM via airdrop
+- **All Examples**: `runAllMuxedExamples()` - Runs setup once and executes all three examples
+- **Individual Examples**:
+- `runUnmuxedExample()` - Basic G→G payment
+- `runMuxedToUnmuxedExample()` - Muxed→Unmuxed payment
+- `runMuxedToMuxedExample()` - Muxed→Muxed payment
 
-=== ACCOUNT SETUP ===
-Custodian:
-        GA7YMR5RQ2YUXOPQFFV6J3OSSZL7JP5NSFBBZB7BMSWMJTMRTWKYUSQS
-Outsider:
-        GCFOOY75DWKC6MWZNFN2CDKWJ3O2FCES3B43ULY5XZAY3WZEPOHTPWU6
-Customers:
-    1: MA7YMR5RQ2YUXOPQFFV6J3OSSZL7JP5NSFBBZB7BMSWMJTMRTWKYUAAAAAAAAAAAAFLE4
-   22: MA7YMR5RQ2YUXOPQFFV6J3OSSZL7JP5NSFBBZB7BMSWMJTMRTWKYUAAAAAAAAAAAC2ACY
-  333: MA7YMR5RQ2YUXOPQFFV6J3OSSZL7JP5NSFBBZB7BMSWMJTMRTWKYUAAAAAAAAAABJUX7I
- 4444: MA7YMR5RQ2YUXOPQFFV6J3OSSZL7JP5NSFBBZB7BMSWMJTMRTWKYUAAAAAAAAAARLRGPK
-
-=== INITIAL BALANCES ===
-GA7YMR5R (Custodian): 10000.0000000 XLM
-
-=== MUXED TO MUXED PAYMENT EXAMPLE ===
-Sending 10 XLM from Customer 22 to Customer 333.
-
-Payment: MA7YMR5R...AC2ACY (Customer 22) → MA7YMR5R...BJUX7I (Customer 333) (10 XLM)
-Before payment:
-GA7YMR5R (Custodian): 10000.0000000 XLM
-Payment from M to M address submitted: abee916b3e9b5819c2682585b262284a7c2d2234de235d8ae507630e69cd59c0
-Payment from M to M address completed successfully
-After payment:
-GA7YMR5R (Custodian): 9999.9000000 XLM
-
-
-=== FINAL BALANCES ===
-GA7YMR5R (Custodian): 9999.9000000 XLM
-
-=== MUXED TO MUXED EXAMPLE COMPLETED ===
-```
-
-Notice that the account’s balance is essentially unchanged, yet it was charged a fee since this transaction is still recorded in the ledger (despite doing next to nothing). You may want to detect these types of transactions in your application to avoid paying unnecessary transaction fees.
-
-If we were to make a payment between two muxed accounts that had different underlying Stellar accounts, this would be equivalent to a payment between those two respective G... accounts.
+**_Note:_** _When running individual examples, ensure you call `preamble()` first to set up and fund the accounts._
 
 ### More Examples
 
@@ -517,7 +379,9 @@ Even still, if this does occur, parsing a transaction with a muxed parameter wit
 - If your SDK is out-of-date, parsing will error out. You should upgrade your SDK. For example, the JavaScript SDK will throw a helpful message:
 
 ```
+
 “destination is invalid; did you forget to enable muxing?”
+
 ```
 
 - If your SDK is up-to-date, you will see the muxed (`M...`) address parsed out. What happens next depends on your application.
