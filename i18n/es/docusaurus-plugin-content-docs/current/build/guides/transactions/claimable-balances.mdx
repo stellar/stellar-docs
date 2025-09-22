@@ -1,0 +1,703 @@
+---
+title: Saldos reclamables
+description: Divide un pago en dos partes creando un saldo reclamable.
+sidebar_position: 20
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import Details from "@theme/Details";
+
+Los saldos reclamables fueron introducidos en [CAP-0023](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0023.md) y se usan para dividir un pago en dos partes.
+
+- Parte 1: la cuenta que envía crea un pago, o ClaimableBalanceEntry, usando la operación Create Claimable Balance
+- Parte 2: la(s) cuenta(s) destinataria(s), o reclamante(s), acepta(n) el ClaimableBalanceEntry usando la operación Claim Claimable Balance
+
+Los saldos reclamables permiten que una cuenta envíe un pago a otra cuenta que no necesariamente está preparada para recibir el pago. Pueden usarse cuando envías un activo no nativo a una cuenta que aún no ha establecido una trustline, lo cual puede ser útil para anchors que integran nuevos usuarios. El reclamante debe establecer una trustline para el activo antes de poder reclamar el saldo reclamable; de lo contrario, la reclamación resultará en un error `op_no_trust`.
+
+Es importante notar que si un saldo reclamable no es reclamado, permanece en el ledger para siempre, ocupando espacio y, en última instancia, haciendo que la red sea menos eficiente. **Por esta razón, es buena idea poner una de tus propias cuentas como reclamante de un saldo reclamable.** Así puedes aceptar tu propio saldo reclamable si es necesario, liberando espacio en la red.
+
+Cada ClaimableBalanceEntry es una entrada del ledger, y cada reclamante en esa entrada incrementa el balance mínimo de la cuenta fuente en una reserva base.
+
+Una vez que un ClaimableBalanceEntry ha sido reclamado, es eliminado.
+
+## Operaciones
+
+### Crear saldo reclamable
+
+Para parámetros básicos, consulta la entrada Crear saldo reclamable en nuestra [sección Lista de operaciones](../../../learn/fundamentals/transactions/list-of-operations.mdx#create-claimable-balance).
+
+#### Parámetros adicionales
+
+`Claim_Predicate_` Reclamante — un objeto que contiene tanto la cuenta destino que puede reclamar el ClaimableBalanceEntry como un ClaimPredicate que debe evaluarse como verdadero para que la reclamación tenga éxito.
+
+Un ClaimPredicate es una estructura de datos recursiva que puede usarse para construir condicionales complejos usando diferentes ClaimPredicateTypes. A continuación, algunos ejemplos con el prefijo `Claim_Predicate_` removido para mayor legibilidad. Ten en cuenta que los SDKs esperan que las marcas de tiempo Unix estén expresadas en segundos.
+
+- Puede reclamar en cualquier momento - `UNCONDITIONAL`
+- Puede reclamar si el tiempo de cierre del ledger, incluyendo la reclamación, es antes de X segundos + el tiempo de cierre del ledger en el que se creó el ClaimableBalanceEntry - `BEFORE_RELATIVE_TIME(X)`
+- Puede reclamar si el tiempo de cierre del ledger incluyendo la reclamación es antes de X (marca de tiempo Unix) - `BEFORE_ABSOLUTE_TIME(X)`
+- Puede reclamar si el tiempo de cierre del ledger, incluyendo la reclamación, es en o después de X segundos + el tiempo de cierre del ledger en el que se creó el ClaimableBalanceEntry - `NOT(BEFORE_RELATIVE_TIME(X))`
+- Puede reclamar si el tiempo de cierre del ledger, incluyendo la reclamación, es en o después de X (marca de tiempo Unix) - `NOT(BEFORE_ABSOLUTE_TIME(X))`
+- Puede reclamar entre las marcas de tiempo Unix X e Y (dado que X < Y) - `AND(NOT(BEFORE_ABSOLUTE_TIME(X))`, `BEFORE_ABSOLUTE_TIME(Y))`
+- Puede reclamar fuera de las marcas de tiempo Unix X e Y (dado que X < Y) - `OR(BEFORE_ABSOLUTE_TIME(X)`, `NOT(BEFORE_ABSOLUTE_TIME(Y))`
+
+`ClaimableBalanceID` ClaimableBalanceID es una unión con un posible tipo (`CLAIMABLE_BALANCE_ID_TYPE_V0`). Contiene un hash SHA-256 del OperationID para Saldos Reclamables.
+
+Una operación Crear saldo reclamable exitosa devolverá un ID de Balance, que es requerido al reclamar el ClaimableBalanceEntry con la operación Claim Claimable Balance.
+
+### Reclamar saldo reclamable
+
+Para parámetros básicos, consulta la entrada Reclamar saldo reclamable en nuestra [sección Lista de operaciones](../../../learn/fundamentals/transactions/list-of-operations#claim-claimable-balance).
+
+Esta operación cargará el ClaimableBalanceEntry que corresponde al Balance ID y luego buscará la cuenta fuente de esta operación en la lista de reclamantes de la entrada. Si se encuentra una coincidencia en el reclamante, y el ClaimPredicate evalúa a verdadero, entonces el ClaimableBalanceEntry puede ser reclamado. El saldo en la entrada será transferido a la cuenta fuente si no hay problemas de límite o trustline (para activos no nativos), lo que significa que el reclamante debe establecer una trustline para el activo antes de reclamarlo.
+
+### Recuperar saldo reclamable
+
+Esta operación recupera un saldo reclamable, devolviendo el activo a la cuenta emisora, quemándolo. Debes recuperar el saldo reclamable completo, no solo una parte. Una vez que un saldo reclamable ha sido reclamado, usa la operación regular de recuperación para recuperarlo.
+
+Las recuperaciones de saldos reclamables requieren el ID del saldo reclamable.
+
+Aprende más sobre recuperaciones en nuestra [Guía de recuperaciones](./clawbacks.mdx).
+
+## Ejemplo
+
+El código a continuación demuestra, mediante los SDKs de JavaScript y Go, cómo una cuenta (Cuenta A) crea un ClaimableBalanceEntry con dos reclamantes: Cuenta A (ella misma) y Cuenta B (otro destinatario).
+
+Cada una de estas cuentas solo puede reclamar el saldo bajo condiciones únicas. La Cuenta B tiene un minuto completo para reclamar el saldo antes de que la Cuenta A pueda recuperarlo para sí misma.
+
+**Nota:** en general no existe un mecanismo de recuperación para un saldo reclamable — si ninguno de los predicados puede cumplirse, el saldo no puede recuperarse. El ejemplo de recuperación a continuación funciona como una red de seguridad para esta situación.
+
+<Details summary="Haz clic aquí para ver funciones auxiliares">
+
+<CodeExample>
+
+```go
+func fundAccount(rpcClient *client.Client, address string) error {
+	ctx := context.Background()
+
+	// Use GetNetwork method from client
+	networkResp, err := rpcClient.GetNetwork(ctx)
+	if err != nil {
+		return err
+	}
+
+	if networkResp.FriendbotURL != "" {
+		friendbotURL := networkResp.FriendbotURL + "?addr=" + url.QueryEscape(address)
+		resp, err := http.Post(friendbotURL, "application/x-www-form-urlencoded", nil)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("friendbot failed with status: %d", resp.StatusCode)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("friendbot not configured for network - %s", networkResp.Passphrase)
+}
+
+func panicIf(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+</CodeExample>
+
+</Details>
+
+<CodeExample>
+
+```js
+import * as StellarSdk from "@stellar/stellar-sdk";
+
+/**
+ * Creates a claimable balance on Stellar testnet
+ * A claimable balance allows splitting a payment into two parts:
+ * 1. Sender creates the claimable balance
+ * 2. Recipient(s) can claim it later
+ */
+async function createClaimableBalance() {
+  // Connect to Stellar testnet RPC server
+  const server = new StellarSdk.rpc.Server(
+    "https://soroban-testnet.stellar.org",
+  );
+
+  const A = StellarSdk.Keypair.random();
+  const B = StellarSdk.Keypair.random();
+
+  console.log(
+    `Account A... public key: ${A.publicKey()}, secret: ${A.secret()}`,
+  );
+  console.log(
+    `Account B... public key: ${B.publicKey()}, secret: ${B.secret()}`,
+  );
+
+  try {
+    // Fund the source account using testnet's built-in airdrop
+    await server.requestAirdrop(A.publicKey());
+
+    // Load the funded account to get current sequence number
+    const aAccount = await server.getAccount(A.publicKey());
+    console.log(`Account sequence: ${aAccount.sequenceNumber()}`);
+
+    // Create a claimable balance with our two above-described conditions.
+    let soon = Math.ceil(Date.now() / 1000 + 60); // .now() is in ms
+    let bCanClaim = StellarSdk.Claimant.predicateBeforeRelativeTime("60");
+    let aCanReclaim = StellarSdk.Claimant.predicateNot(
+      StellarSdk.Claimant.predicateBeforeAbsoluteTime(soon.toString()),
+    );
+
+    // Create claimable balance operation
+    const claimableBalanceOp = StellarSdk.Operation.createClaimableBalance({
+      claimants: [
+        new StellarSdk.Claimant(B.publicKey(), bCanClaim),
+        new StellarSdk.Claimant(A.publicKey(), aCanReclaim),
+      ],
+      asset: StellarSdk.Asset.native(),
+      amount: "420",
+    });
+
+    // Build the transaction
+    console.log(`Building transaction...`);
+    const transaction = new StellarSdk.TransactionBuilder(aAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: StellarSdk.Networks.TESTNET,
+    })
+      .addOperation(claimableBalanceOp)
+      .setTimeout(180)
+      .build();
+
+    /*
+      Claimable BalanceIds are predictable and can be derived from the Sha256 hash of the operation that creates them.
+    */
+    const predictableBalanceId = transaction.getClaimableBalanceId(0);
+
+    // Sign the transaction with source account
+    transaction.sign(A);
+
+    // Submit transaction to the network
+    console.log(`Submitting transaction...`);
+    const response = await server.sendTransaction(transaction);
+
+    // Poll for transaction completion (RPC is asynchronous)
+    console.log(`Polling for result...`);
+    const finalResponse = await server.pollTransaction(response.hash);
+
+    if (finalResponse.status === "SUCCESS") {
+      // Extract claimable balance ID from transaction result
+      const txResult = finalResponse.resultXdr;
+      const results = txResult.result().results();
+      const operationResult = results[0].value().createClaimableBalanceResult();
+      const balanceId = operationResult.balanceId().toXDR("hex");
+
+      console.log(`Balance ID (from txResult): ${balanceId}`);
+      console.log(
+        `Predictable Balance ID (obtained before txSubmission): ${predictableBalanceId}`,
+      );
+      if (balanceId === predictableBalanceId) {
+        console.log(`Balance ID from txResult matches the predictable ID`);
+      } else {
+        console.log(
+          ` Balance ID from txResult does NOT match the predictable ID`,
+        );
+      }
+    } else {
+      console.log(`Transaction failed: ${finalResponse.status}`);
+    }
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+  }
+}
+
+// Run the function
+createClaimableBalance();
+```
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+
+	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/txnbuild"
+	"github.com/stellar/go/xdr"
+)
+
+func main() {
+	// Create RPC client
+	rpcClient := client.NewClient("https://soroban-testnet.stellar.org", nil)
+	defer rpcClient.Close()
+
+	// Generate random keypairs
+	A := keypair.MustRandom()
+	B := keypair.MustRandom()
+
+	fmt.Printf("Account A: public key: %s, secret key: %s\n", A.Address(), A.Seed())
+	fmt.Printf("Account B: public key: %s\n", B.Address())
+
+	// Fund account using GetNetwork + friendbot
+	fmt.Println("\nFunding account...")
+	panicIf(fundAccount(rpcClient, A.Address()))
+	fmt.Println("Account funded")
+
+	// Wait for funding
+	time.Sleep(3 * time.Second)
+
+	// Use LoadAccount method from the client
+	ctx := context.Background()
+	sourceAccount, err := rpcClient.LoadAccount(ctx, A.Address())
+	panicIf(err)
+
+	// Create a claimable balance with our two above-described conditions.
+	soon := time.Now().Add(time.Second * 60)
+	bCanClaim := txnbuild.BeforeRelativeTimePredicate(60)
+	aCanReclaim := txnbuild.NotPredicate(
+		txnbuild.BeforeAbsoluteTimePredicate(soon.Unix()),
+	)
+
+	// Create claimable balance operation
+	claimableBalanceOp := txnbuild.CreateClaimableBalance{
+		Destinations: []txnbuild.Claimant{
+			txnbuild.NewClaimant(B.Address(), &bCanClaim),
+			txnbuild.NewClaimant(A.Address(), &aCanReclaim),
+		},
+		Asset:  txnbuild.NativeAsset{},
+		Amount: "1",
+	}
+
+	// Build transaction
+	tx, err := txnbuild.NewTransaction(
+		txnbuild.TransactionParams{
+			SourceAccount:        sourceAccount,
+			IncrementSequenceNum: true,
+			BaseFee:              txnbuild.MinBaseFee,
+			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewInfiniteTimeout()},
+			Operations:           []txnbuild.Operation{&claimableBalanceOp},
+		},
+	)
+	panicIf(err)
+
+	// Sign transaction
+	tx, err = tx.Sign(network.TestNetworkPassphrase, A)
+	panicIf(err)
+
+	// Get transaction XDR
+	txXDR, err := tx.Base64()
+	panicIf(err)
+
+	// Submit using RPC client's SendTransaction method
+	fmt.Println("Submitting transaction...")
+	sendResp, err := rpcClient.SendTransaction(ctx, protocol.SendTransactionRequest{
+		Transaction: txXDR,
+	})
+	panicIf(err)
+
+	if sendResp.Status != "PENDING" {
+		log.Fatalf("Transaction not pending: %s", sendResp.Status)
+	}
+
+	fmt.Printf("Transaction submitted: %s\n", sendResp.Hash)
+
+	// Poll using RPC client's GetTransaction method
+	fmt.Println("Polling for result...")
+	for i := 0; i < 10; i++ {
+		resp, err := rpcClient.GetTransaction(ctx, protocol.GetTransactionRequest{
+			Hash: sendResp.Hash,
+		})
+		if err != nil {
+			log.Printf("Error getting transaction: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if resp.Status != protocol.TransactionStatusNotFound {
+			if resp.Status == protocol.TransactionStatusSuccess {
+				// Extract balance ID
+				balanceID, err := extractBalanceID(&resp)
+				if err != nil {
+					log.Printf("Error extracting balance ID: %v", err)
+				} else {
+					fmt.Println("\nSUCCESS: Claimable balance created")
+					fmt.Printf("Balance ID: %s\n", balanceID)
+				}
+			} else {
+				fmt.Printf("Transaction failed: %s\n", resp.Status)
+			}
+			return
+		}
+
+		time.Sleep(time.Duration(i+1) * time.Second)
+	}
+
+	fmt.Println("Transaction polling timeout")
+}
+
+func extractBalanceID(resp *protocol.GetTransactionResponse) (string, error) {
+	if resp.ResultXDR == "" {
+		return "", fmt.Errorf("no result XDR")
+	}
+
+	var txResult xdr.TransactionResult
+	err := xdr.SafeUnmarshalBase64(resp.ResultXDR, &txResult)
+	if err != nil {
+		return "", err
+	}
+
+	if results, ok := txResult.OperationResults(); ok && len(results) > 0 {
+		operationResult := results[0].MustTr().CreateClaimableBalanceResult
+		return xdr.MarshalHex(operationResult.BalanceId)
+	}
+
+	return "", fmt.Errorf("no operation results")
+}
+```
+
+</CodeExample>
+
+En este punto, el `ClaimableBalanceEntry` existe en el libro mayor, pero necesitaremos su ID de saldo para reclamarlo. Puedes llamar al endpoint [`getLedgerEntries`](../../../data/apis/rpc/api-reference/methods/getLedgerEntries.mdx) del RPC para hacer esto.
+
+<CodeExample>
+
+```js
+import * as StellarSdk from "@stellar/stellar-sdk";
+
+// Replace with your actual Claimable Balance ID
+// Format: 72 hex characters (includes ClaimableBalanceId type + hash)
+const BALANCE_ID =
+  "00000000db1108ff108a807150d02b8672d9a8c0e808bff918cdbe5c7605e63a7f565df5";
+
+/**
+ * Fetches and displays claimable balance details using Stellar RPC
+ */
+async function fetchClaimableBalance(balanceId) {
+  const server = new StellarSdk.rpc.Server(
+    "https://soroban-testnet.stellar.org",
+  );
+
+  try {
+    console.log(`Looking up balance ID: ${balanceId}`);
+
+    // Parse the claimable balance ID from hex XDR
+    const claimableBalanceId = StellarSdk.xdr.ClaimableBalanceId.fromXDR(
+      balanceId,
+      "hex",
+    );
+
+    // Create ledger key for the claimable balance entry
+    const ledgerKey = StellarSdk.xdr.LedgerKey.claimableBalance(
+      new StellarSdk.xdr.LedgerKeyClaimableBalance({
+        balanceId: claimableBalanceId,
+      }),
+    );
+
+    console.log(`Fetching from RPC server...`);
+
+    // Use SDK's getLedgerEntries method with XDR object array
+    const response = await server.getLedgerEntries(ledgerKey);
+
+    if (response.entries && response.entries.length > 0) {
+      const claimableBalance = response.entries[0].val.claimableBalance();
+
+      const asset = StellarSdk.Asset.fromOperation(claimableBalance.asset());
+
+      console.log(`Found claimable balance`);
+      console.log(`Amount: ${claimableBalance.amount().toString()}`);
+      console.log(`Asset: ${asset.toString()} `);
+      // Show claimant details
+      console.log(`\nClaimants:`);
+      claimableBalance.claimants().forEach((claimant, index) => {
+        const destination = claimant.v0().destination().ed25519();
+        console.log(
+          `   ${index + 1}. ${StellarSdk.StrKey.encodeEd25519PublicKey(
+            destination,
+          )}`,
+        );
+      });
+    } else {
+      console.log(`Claimable balance not found`);
+    }
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+  }
+}
+
+fetchClaimableBalance(BALANCE_ID);
+```
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+
+	"github.com/stellar/go/xdr"
+)
+
+// Replace with your claimable balance ID
+const BALANCE_ID = "00000000a4c91c4561f2d8b30dad9cf6475221b3003a3b4e12fc0cf78a13251c0e7ff665"
+
+func main() {
+	// Create RPC client
+	rpcClient := client.NewClient("https://soroban-testnet.stellar.org", nil)
+	defer rpcClient.Close()
+
+	fmt.Printf("Looking up balance ID: %s\n", BALANCE_ID)
+
+	// Parse claimable balance ID from hex
+	var claimableBalanceID xdr.ClaimableBalanceId
+	err := xdr.SafeUnmarshalHex(BALANCE_ID, &claimableBalanceID)
+	panicIf(err)
+
+	// Create ledger key for claimable balance
+	ledgerKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeClaimableBalance,
+		ClaimableBalance: &xdr.LedgerKeyClaimableBalance{
+			BalanceId: claimableBalanceID,
+		},
+	}
+
+	// Convert ledger key to base64 for RPC call
+	ledgerKeyB64, err := xdr.MarshalBase64(ledgerKey)
+	panicIf(err)
+
+	fmt.Println("Fetching from RPC server...")
+
+	// Use GetLedgerEntries method from client
+	ctx := context.Background()
+	resp, err := rpcClient.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{
+		Keys: []string{ledgerKeyB64},
+	})
+	panicIf(err)
+
+	if len(resp.Entries) > 0 {
+		entry := resp.Entries[0]
+		fmt.Println("Found claimable balance")
+
+		// Parse the ledger entry XDR
+		var ledgerEntryData xdr.LedgerEntryData
+		err = xdr.SafeUnmarshalBase64(entry.DataXDR, &ledgerEntryData)
+		panicIf(err)
+
+		claimableBalance := ledgerEntryData.ClaimableBalance
+
+		// Display details
+		fmt.Printf("Amount: %d\n", int64(claimableBalance.Amount))
+		fmt.Printf("Asset: %s\n", claimableBalance.Asset.String())
+		// Show claimants
+		fmt.Println("\nClaimants:")
+		for i, claimant := range claimableBalance.Claimants {
+			address := claimant.V0.Destination.Address()
+			fmt.Printf("   %d. %s\n", i+1, address)
+		}
+	} else {
+		fmt.Println("Claimable balance not found")
+	}
+}
+```
+
+</CodeExample>
+
+Con el ID de Claimable Balance obtenido, tanto la Cuenta B como la A pueden enviar una reclamación, dependiendo de qué predicado se cumpla. Aquí asumiremos que ha pasado un minuto, así que la Cuenta A simplemente reclama de nuevo la entrada de saldo.
+
+<CodeExample>
+
+```js
+import * as StellarSdk from "@stellar/stellar-sdk";
+
+// Replace with your claimable balance ID
+const BALANCE_ID =
+  "0000000067a94da6c5d487fa09fc93c558ca91f6338413d3152d2a17771353f7c4111e11";
+
+// Replace with the secret key of one of the claimants
+const CLAIMANT_SECRET =
+  "SDJLAUDIHMDO6PAIVVVYH5IFIE5QMZOOBHO37NLF43335ULECK6EURVJ";
+
+/**
+ * Claims a claimable balance
+ */
+async function claimClaimableBalance(balanceId, claimantSecret) {
+  const server = new StellarSdk.rpc.Server(
+    "https://soroban-testnet.stellar.org",
+  );
+
+  try {
+    console.log(`Claiming balance ID: ${balanceId}`);
+    // Create keypair from claimant's secret key
+    const claimantKeypair = StellarSdk.Keypair.fromSecret(claimantSecret);
+
+    // Load the claiming account
+    const claimantAccount = await server.getAccount(
+      claimantKeypair.publicKey(),
+    );
+
+    // Convert balance ID to proper format for the operation
+    const claimableBalanceId = StellarSdk.xdr.ClaimableBalanceId.fromXDR(
+      balanceId,
+      "hex",
+    );
+    const balanceIdHex = claimableBalanceId.toXDR("hex");
+
+    // Create claim operation
+    const claimOperation = StellarSdk.Operation.claimClaimableBalance({
+      balanceId: balanceIdHex,
+    });
+
+    // Build and sign transaction
+    const transaction = new StellarSdk.TransactionBuilder(claimantAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: StellarSdk.Networks.TESTNET,
+    })
+      .addOperation(claimOperation)
+      .setTimeout(180)
+      .build();
+
+    transaction.sign(claimantKeypair);
+
+    // Submit and poll for completion
+    const response = await server.sendTransaction(transaction);
+    const finalResponse = await server.pollTransaction(response.hash);
+
+    if (finalResponse.status === "SUCCESS") {
+      console.log(`Claimable balance claimed successfully`);
+      console.log(`Transaction hash: ${response.hash}`);
+    } else {
+      console.log(`Transaction failed: ${finalResponse.status}`);
+    }
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+  }
+}
+
+claimClaimableBalance(BALANCE_ID, CLAIMANT_SECRET);
+```
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+
+	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/txnbuild"
+)
+
+// Replace with your claimable balance ID and claimant secret
+const BALANCE_ID = "00000000a4c91c4561f2d8b30dad9cf6475221b3003a3b4e12fc0cf78a13251c0e7ff665"
+const CLAIMANT_SECRET = "SBMODTOLLH2LGF4AJU5XOGHRQCGKEVJUZSAUAGJL7KGKC7XLJ3SG3F7N"
+
+func main() {
+	// Create RPC client
+	rpcClient := client.NewClient("https://soroban-testnet.stellar.org", nil)
+	defer rpcClient.Close()
+
+	// Create keypair from claimant secret
+	keypairAccA, err := keypair.ParseFull(CLAIMANT_SECRET)
+	panicIf(err)
+
+	fmt.Printf("Claiming account: %s\n", keypairAccA.Address())
+	fmt.Printf("Balance ID: %s\n", BALANCE_ID)
+
+	ctx := context.Background()
+
+	// Load the claimant account using client's LoadAccount method
+	accountA, err := rpcClient.LoadAccount(ctx, keypairAccA.Address())
+	panicIf(err)
+
+	// Create claim claimable balance operation
+	claimOp := txnbuild.ClaimClaimableBalance{
+		BalanceID: BALANCE_ID,
+	}
+
+	// Build transaction
+	fmt.Println("Building claim transaction...")
+	tx, err := txnbuild.NewTransaction(
+		txnbuild.TransactionParams{
+			SourceAccount:        accountA,
+			IncrementSequenceNum: true,
+			BaseFee:              txnbuild.MinBaseFee,
+			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewInfiniteTimeout()},
+			Operations:           []txnbuild.Operation{&claimOp},
+		},
+	)
+	panicIf(err)
+
+	// Sign transaction
+	tx, err = tx.Sign(network.TestNetworkPassphrase, keypairAccA)
+	panicIf(err)
+
+	// Get transaction XDR
+	txXDR, err := tx.Base64()
+	panicIf(err)
+
+	// Submit using RPC client's SendTransaction method
+	fmt.Println("Submitting claim transaction...")
+	sendResp, err := rpcClient.SendTransaction(ctx, protocol.SendTransactionRequest{
+		Transaction: txXDR,
+	})
+	panicIf(err)
+
+	if sendResp.Status != "PENDING" {
+		log.Fatalf("Transaction not pending: %s", sendResp.Status)
+	}
+
+	fmt.Printf("Transaction submitted: %s\n", sendResp.Hash)
+
+	// Poll for completion using RPC client's GetTransaction method
+	fmt.Println("Polling for result...")
+	for i := 0; i < 10; i++ {
+		resp, err := rpcClient.GetTransaction(ctx, protocol.GetTransactionRequest{
+			Hash: sendResp.Hash,
+		})
+		if err != nil {
+			log.Printf("Error getting transaction: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if resp.Status != protocol.TransactionStatusNotFound {
+			if resp.Status == protocol.TransactionStatusSuccess {
+				fmt.Println("\nSUCCESS: Claimable balance claimed")
+				fmt.Printf("Transaction hash: %s\n", sendResp.Hash)
+				fmt.Printf("Claimed by: %s\n", keypairAccA.Address())
+			} else {
+				fmt.Printf("Transaction failed: %s\n", resp.Status)
+				if resp.ResultXDR != "" {
+					fmt.Printf("Result XDR: %s\n", resp.ResultXDR)
+				}
+			}
+			return
+		}
+
+		time.Sleep(time.Duration(i+1) * time.Second)
+	}
+
+	fmt.Println("Transaction polling timeout")
+}
+```
+
+</CodeExample>
+
+¡Y eso es todo! Como optamos por la ruta de recuperación, la Cuenta A debería tener el mismo saldo con el que empezó (menos las tarifas), y la Cuenta B debería permanecer sin cambios.

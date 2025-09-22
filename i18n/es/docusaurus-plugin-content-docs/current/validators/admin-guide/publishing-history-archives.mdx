@@ -1,0 +1,291 @@
+---
+title: Publicar archivos de historia
+sidebar_position: 50
+---
+
+Si deseas ejecutar un [validador completo](../README.mdx#full-validator), debes configurar tu nodo para publicar un archivo de historia. Puedes alojar un archivo utilizando un blob store como Amazon S3 o los espacios de Digital Ocean, o simplemente puedes servir un archivo local directamente a través de un servidor HTTP como Nginx o Apache. Si estás configurando un [validador básico](../README.mdx#basic-validator), puedes omitir esta sección. No importa qué tipo de nodo planeas ejecutar, asegúrate de configurarlo para `get` historia, lo cual se cubre en [Preparación del entorno](./environment-preparation.mdx).
+
+## Almacenamiento en caché y archivos de historia
+
+El costo _principal_ de ejecutar un validador muy probablemente será el ancho de banda de salida. Una parte crucial de tu estrategia para gestionar esos costos debería ser el almacenamiento en caché. Puedes reducir significativamente estos costos de transferencia de datos utilizando técnicas comunes de caché o una CDN. Se aplican tres reglas simples al almacenar en caché los archivos de historia:
+
+1. No almacenes en caché el archivo de estado del archivo `.well-known/stellar-history.json` (`Cache-Control: no-cache`)
+2. No almacenes en caché las respuestas HTTP 4xx (`Cache-Control: no-cache`)
+3. Almacena en caché todo lo demás durante el mayor tiempo posible (**> 1 día**)
+
+## Archivo de historia local usando nginx
+
+Aquí, demostramos cómo puedes configurar tu nodo para almacenar sus archivos de historia en el sistema de archivos local, y luego publicar esa historia utilizando nginx para nuestro software de servidor web.
+
+Primero, debes agregar una estrofa de configuración de historia a tu archivo de configuración `/etc/stellar/stellar-core.cfg`.
+
+```toml
+[HISTORY.local]
+get="cp /mnt/xvdf/stellar-core-archive/node_001/{0} {1}"
+put="cp {0} /mnt/xvdf/stellar-core-archive/node_001/{1}"
+mkdir="mkdir -p /mnt/xvdf/stellar-core-archive/node_001/{0}"
+```
+
+Luego, debes ejecutar el comando `new-hist` de Stellar Core para crear el archivo de historia local.
+
+```bash
+sudo -u stellar stellar-core --conf /etc/stellar/stellar-core.cfg new-hist local
+```
+
+Este comando crea la estructura del archivo de historia:
+
+```bash
+$ tree -a /mnt/xvdf/stellar-core-archive/
+/mnt/xvdf/stellar-core-archive
+└── node_001
+    ├── history
+    │   └── 00
+    │       └── 00
+    │           └── 00
+    │               └── history-00000000.json
+    └── .well-known
+        └── stellar-history.json
+
+6 directories, 2 files
+```
+
+Ahora que la estructura de archivos del archivo de historia está lista, puedes configurar un host virtual en nginx para servir el archivo local.
+
+```nginx
+server {
+  listen 80;
+  root /mnt/xvdf/stellar-core-archive/node_001/;
+
+  server_name history.example.com;
+
+  # do not cache 404 errors
+  error_page 404 /404.html;
+  location = /404.html {
+    add_header Cache-Control "no-cache" always;
+  }
+
+  # do not cache history state file
+  location ~ ^/.well-known/stellar-history.json$ {
+    add_header Cache-Control "no-cache" always;
+    try_files $uri =404;
+  }
+
+  # cache entire history archive for 1 day
+  location / {
+    add_header Cache-Control "max-age=86400";
+    try_files $uri =404;
+  }
+}
+```
+
+## Archivo de historia de Amazon S3
+
+Ahora, demostremos una configuración donde tu nodo almacena sus archivos de historia utilizando el servicio S3 de Amazon. Luego puedes publicar esa historia utilizando un sitio estático de Amazon S3, o nuevamente usar nginx para tu software de servidor web. Esta vez, usando nginx, incluiremos también alguna configuración de proxy y CDN.
+
+Comienza agregando una estrofa de configuración de historia a tu archivo de configuración `/etc/stellar/stellar-core.cfg`.
+
+```toml
+[HISTORY.s3]
+get='curl -sf http://history.example.com/{0} -o {1}' # Cached HTTP endpoint
+put='aws s3 cp --region us-east-1 {0} s3://bucket.name/{1}' # Direct S3 access
+```
+
+Luego, debes ejecutar el comando `new-hist` de Stellar Core para crear e inicializar el archivo S3.
+
+```bash
+sudo -u stellar stellar-core --conf /etc/stellar/stellar-core.cfg new-hist s3
+```
+
+Estos archivos de historia S3 pueden ser servidos con algo tan simple como un sitio estático de Amazon S3.
+
+Opcionalmente, puedes querer colocar un proxy inverso y CDN delante del sitio estático de S3 (usaremos nginx para este ejemplo).
+
+```nginx
+server {
+  listen 80;
+  root /srv/nginx/history.example.com;
+  index index.html index.htm;
+
+  server_name history.example.com;
+
+  # use google nameservers for lookups
+  resolver 8.8.8.8 8.8.4.4;
+
+  # bucket.name s3 static site endpoint
+  set $s3_bucket "bucket.name.s3-website-us-east-1.amazonaws.com";
+
+  # do not cache 404 errors
+  error_page 404 /404.html;
+  location = /404.html {
+    add_header Cache-Control "no-cache" always;
+  }
+
+  # do not cache history state file
+  location ~ ^/.well-known/stellar-history.json$ {
+    add_header Cache-Control "no-cache" always;
+    proxy_intercept_errors on;
+    proxy_pass  http://$s3_bucket;
+    proxy_read_timeout 120s;
+    proxy_redirect off;
+    proxy_buffering off;
+    proxy_set_header        Host            $s3_bucket;
+    proxy_set_header        X-Real-IP       $remote_addr;
+    proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header        X-Forwarded-Proto $scheme;
+  }
+
+  # cache history archive for 1 day
+  location / {
+    add_header Cache-Control "max-age=86400";
+    proxy_intercept_errors on;
+    proxy_pass  http://$s3_bucket;
+    proxy_read_timeout 120s;
+    proxy_redirect off;
+    proxy_buffering off;
+    proxy_set_header        Host            $s3_bucket;
+    proxy_set_header        X-Real-IP       $remote_addr;
+    proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header        X-Forwarded-Proto $scheme;
+  }
+}
+```
+
+## Rellenar un archivo de historia
+
+Dada la opción, lo mejor es configurar tu archivo de historia _antes de_ que tu nodo inicie la sincronización con una red existente. De esa manera, la historia de tu validador se publica a medida que te unes y luego sincronizas con la red.
+
+Sin embargo, si no has publicado un archivo durante la sincronización inicial del nodo, los pasos requeridos para crear un archivo de historia para un validador existente — en otras palabras, para actualizar un validador básico a un validador completo — son bastante sencillos. Primero, deberás detener tu instancia de `stellar-core`:
+
+```bash
+systemctl stop stellar-core # modify this if not using systemctl
+```
+
+Luego, agrega la configuración del archivo de historia al archivo de configuración de tu nodo `/etc/stellar/stellar-core.cfg`.
+
+```toml
+[HISTORY.local]
+get="cp /mnt/xvdf/stellar-core-archive/node_001/{0} {1}"
+put="cp {0} /mnt/xvdf/stellar-core-archive/node_001/{1}"
+mkdir="mkdir -p /mnt/xvdf/stellar-core-archive/node_001/{0}"
+```
+
+A continuación, debes ejecutar el comando `new-hist` de Stellar Core para crear e inicializar el archivo local. (Esto se realiza como usuario `stellar`.)
+
+```bash
+sudo -u stellar stellar-core --conf /etc/stellar/stellar-core.cfg new-hist local
+```
+
+Ahora puedes reiniciar tu instancia de Stellar Core:
+
+```bash
+systemctl start stellar-core # modify this if not using systemctl
+```
+
+A medida que permites que tu nodo se una a la red nuevamente, puedes observar cómo comienza a publicar varias comprobaciones de punto en el archivo recién creado.
+
+```log
+2019-04-25T12:30:43.275 GDUQJ [History INFO] Publishing 1 queued checkpoints [16895-16895]: Awaiting 0/0 prerequisites of: publish-000041ff
+```
+
+En esta etapa, tu validador está publicando con éxito su historia, lo que permite a otros usuarios unirse a la red utilizando tu archivo.
+
+## Archivo de historia completo
+
+La herramienta de línea de comandos [stellar-archivist](https://github.com/stellar/go/tree/master/tools/stellar-archivist) puede ser utilizada para reflejar, explorar y reparar archivos existentes. Usando los [repositorios de paquetes SDF](https://github.com/stellar/packages), puedes instalar `stellar-archivist` ejecutando:
+
+```bash
+apt-get install stellar-archivist
+```
+
+Si decides publicar un archivo completo — lo que permite a otros usuarios unirse a la red desde el libro mayor de génesis — puedes usar `stellar-archivist` para agregar todos los datos de historia faltantes a tu archivo parcial, y para verificar el estado y la integridad de tu archivo. Por ejemplo:
+
+```bash
+stellar-archivist scan file:///mnt/xvdf/stellar-core-archive/node_001
+```
+
+```log
+2019/04/25 11:42:51 Scanning checkpoint files in range: [0x0000003f, 0x0000417f]
+2019/04/25 11:42:51 Checkpoint files scanned with 324 errors
+2019/04/25 11:42:51 Archive: 3 history, 2 ledger, 2 transactions, 2 results, 2 scp
+2019/04/25 11:42:51 Scanning all buckets, and those referenced by range
+2019/04/25 11:42:51 Archive: 30 buckets total, 30 referenced
+2019/04/25 11:42:51 Examining checkpoint files for gaps
+2019/04/25 11:42:51 Examining buckets referenced by checkpoints
+2019/04/25 11:42:51 Missing history (260): [0x0000003f-0x000040ff]
+2019/04/25 11:42:51 Missing ledger (260): [0x0000003f-0x000040ff]
+2019/04/25 11:42:51 Missing transactions (260): [0x0000003f-0x000040ff]
+2019/04/25 11:42:51 Missing results (260): [0x0000003f-0x000040ff]
+2019/04/25 11:42:51 No missing buckets referenced in range [0x0000003f, 0x0000417f]
+2019/04/25 11:42:51 324 errors scanning checkpoints
+```
+
+Como puedes ver en la salida del comando `scan`, falta algo de historia, libro mayor, transacciones y resultados del archivo de historia local.
+
+Puedes reparar los datos faltantes usando el comando `repair` de stellar-archivist combinado con un archivo completo conocido — como el archivo público de historia SDF:
+
+```bash
+stellar-archivist repair http://history.stellar.org/prd/core-testnet/core_testnet_001/ file:///mnt/xvdf/stellar-core-archive/node_001/
+```
+
+```log
+2019/04/25 11:50:15 repairing http://history.stellar.org/prd/core-testnet/core_testnet_001/ -> file:///mnt/xvdf/stellar-core-archive/node_001/
+2019/04/25 11:50:15 Starting scan for repair
+2019/04/25 11:50:15 Scanning checkpoint files in range: [0x0000003f, 0x000041bf]
+2019/04/25 11:50:15 Checkpoint files scanned with 244 errors
+2019/04/25 11:50:15 Archive: 4 history, 3 ledger, 263 transactions, 61 results, 3 scp
+2019/04/25 11:50:15 Error: 244 errors scanning checkpoints
+2019/04/25 11:50:15 Examining checkpoint files for gaps
+2019/04/25 11:50:15 Repairing history/00/00/00/history-0000003f.json
+2019/04/25 11:50:15 Repairing history/00/00/00/history-0000007f.json
+2019/04/25 11:50:15 Repairing history/00/00/00/history-000000bf.json
+...
+2019/04/25 11:50:22 Repairing ledger/00/00/00/ledger-0000003f.xdr.gz
+2019/04/25 11:50:23 Repairing ledger/00/00/00/ledger-0000007f.xdr.gz
+2019/04/25 11:50:23 Repairing ledger/00/00/00/ledger-000000bf.xdr.gz
+...
+2019/04/25 11:51:18 Repairing results/00/00/0e/results-00000ebf.xdr.gz
+2019/04/25 11:51:18 Repairing results/00/00/0e/results-00000eff.xdr.gz
+2019/04/25 11:51:19 Repairing results/00/00/0f/results-00000f3f.xdr.gz
+...
+2019/04/25 11:51:39 Repairing scp/00/00/00/scp-0000003f.xdr.gz
+2019/04/25 11:51:39 Repairing scp/00/00/00/scp-0000007f.xdr.gz
+2019/04/25 11:51:39 Repairing scp/00/00/00/scp-000000bf.xdr.gz
+...
+2019/04/25 11:51:50 Re-running checkpoing-file scan, for bucket repair
+2019/04/25 11:51:50 Scanning checkpoint files in range: [0x0000003f, 0x000041bf]
+2019/04/25 11:51:50 Checkpoint files scanned with 5 errors
+2019/04/25 11:51:50 Archive: 264 history, 263 ledger, 263 transactions, 263 results, 241 scp
+2019/04/25 11:51:50 Error: 5 errors scanning checkpoints
+2019/04/25 11:51:50 Scanning all buckets, and those referenced by range
+2019/04/25 11:51:50 Archive: 40 buckets total, 2478 referenced
+2019/04/25 11:51:50 Examining buckets referenced by checkpoints
+2019/04/25 11:51:50 Repairing bucket/57/18/d4/bucket-5718d412bdc19084dafeb7e1852cf06f454392df627e1ec056c8b756263a47f1.xdr.gz
+2019/04/25 11:51:50 Repairing bucket/8a/a1/62/bucket-8aa1624cc44aa02609366fe6038ffc5309698d4ba8212ef9c0d89dc1f2c73033.xdr.gz
+2019/04/25 11:51:50 Repairing bucket/30/82/6a/bucket-30826a8569cb6b178526ddba71b995c612128439f090f371b6bf70fe8cf7ec24.xdr.gz
+...
+```
+
+Una exploración final del archivo local confirma que ha sido reparado con éxito
+
+```bash
+stellar-archivist scan file:///mnt/xvdf/stellar-core-archive/node_001
+```
+
+```log
+2019/04/25 12:15:41 Scanning checkpoint files in range: [0x0000003f, 0x000041bf]
+2019/04/25 12:15:41 Archive: 264 history, 263 ledger, 263 transactions, 263 results, 241 scp
+2019/04/25 12:15:41 Scanning all buckets, and those referenced by range
+2019/04/25 12:15:41 Archive: 2478 buckets total, 2478 referenced
+2019/04/25 12:15:41 Examining checkpoint files for gaps
+2019/04/25 12:15:41 Examining buckets referenced by checkpoints
+2019/04/25 12:15:41 No checkpoint files missing in range [0x0000003f, 0x000041bf]
+2019/04/25 12:15:41 No missing buckets referenced in range [0x0000003f, 0x000041bf]
+```
+
+Finalmente, puedes iniciar tu instancia de stellar Core una vez más.
+
+```bash
+systemctl start stellar-core
+```
+
+Ahora deberías tener un archivo de historia completo siendo escrito por tu validador completo. ¡Felicidades!

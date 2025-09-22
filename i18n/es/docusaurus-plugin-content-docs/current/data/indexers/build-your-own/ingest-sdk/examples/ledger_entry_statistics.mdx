@@ -1,0 +1,129 @@
+---
+title: Obtener el conteo de cada tipo de entrada del ledger del archivo de historial
+sidebar_position: 20
+---
+
+Este ejemplo se conecta al Stellar History Archive e inicializa un lector de cambios de punto de control con `ingest.NewCheckpointChangeReader` para leer los cambios de entradas del ledger de una imagen del archivo de historial que ocurre en un ledger de punto de control dado. Itera sobre los cambios del ledger, procesando diferentes tipos de entrada como `Account`, `ClaimableBalance`, `Trustline` y `Offer`, utilizando la estructura `ingest.Change`. El código rastrea estadísticas en una estructura `entriesInfo`, contando las entradas totales y tipos específicos.
+
+<CodeExample>
+
+```go
+// Filename: ledger_entries.go
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/stellar/go/historyarchive"
+	"github.com/stellar/go/ingest"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/support/storage"
+	"github.com/stellar/go/xdr"
+	"io"
+)
+
+func panicIf(err error) {
+	if err != nil {
+		panic(fmt.Errorf("An error occurred, panicking: %s\n", err))
+	}
+}
+
+// It helps to have a type to distinguish between the type of key and value, when defining a map
+type AccountIdStr string
+
+type entriesInfo struct {
+	TotalEntries              int32
+	NumAccounts               int32
+	NumAccountsWithTrustlines int32
+	NumClaimableBalances      int32
+	NumOffers                 int32
+}
+
+func main() {
+	archiveURLs := network.PublicNetworkhistoryArchiveURLs
+	networkPassphrase := network.PublicNetworkPassphrase
+
+	// Open a history archive using our existing configuration details.
+	historyArchive, err := historyarchive.NewArchivePool(
+		archiveURLs,
+		historyarchive.ArchiveOptions{
+			NetworkPassphrase: networkPassphrase,
+			ConnectOptions: storage.ConnectOptions{
+				S3Region:         "us-west-1",
+				UnsignedRequests: false,
+			},
+		},
+	)
+	panicIf(err)
+
+	// We pass 48921599 because given a checkpoint frequency of 64 ledgers (the
+	// default in `ConnectOptions`, above), 48921599+1 mod 64 == 0. Incompatible
+	// sequence numbers will likely result in 404 errors.
+	// Ledger seq 48921599 corresponds to about 8 years
+	var reader *ingest.CheckpointChangeReader
+
+	// NOTE: Connecting to pubnet and reading the checkpoint might take a while.
+	reader, err = ingest.NewCheckpointChangeReader(context.Background(), historyArchive, 48921599)
+	panicIf(err)
+	defer reader.Close()
+
+	trustlinesPerAccount := make(map[AccountIdStr]int32)
+
+	info := entriesInfo{}
+	for {
+		var entry ingest.Change
+		entry, err = reader.Read()
+		if err == io.EOF {
+			break
+		}
+		panicIf(err)
+
+		info.TotalEntries++
+
+		switch entry.Type {
+		case xdr.LedgerEntryTypeClaimableBalance:
+			info.NumClaimableBalances++
+		case xdr.LedgerEntryTypeAccount:
+			info.NumAccounts++
+		case xdr.LedgerEntryTypeTrustline:
+			accountId := entry.Post.Data.MustTrustLine().AccountId
+			trustlinesPerAccount[AccountIdStr(accountId.Address())]++
+		case xdr.LedgerEntryTypeOffer:
+			info.NumOffers++
+		default:
+			// there are other types as well, but we are not including them in this example
+		}
+		// Print progress after every 1000 entries are read
+		if info.TotalEntries%1000 == 0 {
+			fmt.Printf("Processed %d ledger entry changes...\r", info.TotalEntries)
+		}
+	}
+	info.NumAccountsWithTrustlines = int32(len(trustlinesPerAccount))
+
+	fmt.Println()
+	// Marshal the struct into JSON with indentation
+	jsonData, err := json.MarshalIndent(&info, "", "    ")
+	panicIf(err)
+	// Print the indented JSON
+	fmt.Println(string(jsonData))
+}
+```
+
+</CodeExample>
+
+**Respuesta de ejemplo:**
+
+```bash
+>> go run  ./ledger_entries.go
+Processed 40123000 ledger entry changes...
+{
+    "TotalEntries": 40123409,
+    "NumAccounts": 7699007,
+    "NumAccountsWithTrustlines": 3414587,
+    "NumClaimableBalances": 7559287,
+    "NumOffers": 1053870
+}
+
+```

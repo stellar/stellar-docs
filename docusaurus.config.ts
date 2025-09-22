@@ -195,6 +195,11 @@ const config: Config = {
               activeBasePath: 'docs/build/apps/example-application-tutorial/overview',
             },
             {
+              to: '/docs/build/apps/swift-payment-app',
+              label: 'Tutorial: Payment Application, Swift',
+              activeBasePath: 'docs/build/apps/swift-payment-app',
+            },
+            {
               to: '/docs/build/apps/ingest-sdk/overview',
               label: 'Tutorial: Network Ingestion Pipeline',
               activeBasePath: 'docs/build/apps/ingest-sdk/overview',
@@ -377,11 +382,7 @@ const config: Config = {
             },
             {
               type: 'html',
-              value: '<hr><a href="/docs/learn/encyclopedia" class="dropdown__link">Encyclopedia</a>',
-            },
-            {
-              to: 'docs/learn/glossary',
-              label: 'Glossary',
+              value: '<hr><a href="/docs/learn/glossary" class="dropdown__link">Glossary</a>',
             },
             {
               to: 'docs/learn/migrate',

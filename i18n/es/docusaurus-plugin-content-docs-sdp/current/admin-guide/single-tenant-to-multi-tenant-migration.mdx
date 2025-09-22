@@ -1,0 +1,373 @@
+---
+title: Guía de migración de 1.x a 2.x
+description: Guía de migración de inquilino único a inquilino múltiple.
+keywords:
+  - migration
+  - single-tenant
+  - multi-tenant
+  - SDP
+  - 1.x
+  - 2.x
+sidebar_position: 70
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Aquí encontrarás los pasos necesarios para migrar una aplicación existente de la Stellar Disbursement Platform (SDP) de inquilino único (`1.x`) a una versión de inquilino múltiple (`2.x+`).
+
+## ¿Por qué migrar?
+
+A partir de la versión `2.x`, la SDP proporciona una arquitectura de inquilino múltiple, donde múltiples organizaciones pueden gestionar desembolsos bajo una infraestructura unificada mientras mantienen conjuntos de datos y gestión de fondos separados.
+
+Las nuevas funciones y correcciones solo se publicarán en la versión de inquilino múltiple.
+
+La versión de inquilino múltiple también se adapta a escenarios de inquilino único, a través de una configuración simplificada que se describirá más adelante en este documento.
+
+:::caution
+
+Esta guía fue preparada y probada con bases de código `1.1.7 -> 2.1.0`. Si estás en una versión posterior, es posible que las nuevas migraciones de base de datos causen un error al seguir estos pasos.
+
+Tienes la opción de usar la versión `2.1.0` para realizar esta migración, y luego actualizar a la última versión después de completar la migración.
+
+:::
+
+## Preparación para las migraciones
+
+### Detener la versión de inquilino único 🚧
+
+Antes de proceder con la migración, asegúrate de que la versión de inquilino único de la SDP no esté en ejecución. Esto es crucial para prevenir cualquier inconsistencia de datos o conflictos durante el proceso de migración.
+
+### Prevención de doble gasto 🚨
+
+Para evitar el doble gasto, asegúrate de que ningún pago esté en estado `PENDING`, de lo contrario, esto podría resultar en tener el mismo pago enviado de manera independiente por las instancias de inquilino único y de inquilino múltiple. Puedes hacer esto revisando la tabla `payments` por cualquier pago en estado `PENDING`:
+
+<CodeExample>
+
+```sql
+SELECT * FROM public.payments WHERE status = ANY(array['PENDING']::payment_status[]);
+```
+
+</CodeExample>
+
+De manera similar, revisa la tabla `submitter_transactions` por cualquier transacción en estado `PENDING`:
+
+<CodeExample>
+
+```sql
+SELECT * FROM public.submitter_transactions WHERE status = ANY(array['PROCESSING']::transaction_status[]);
+```
+
+</CodeExample>
+
+Si hay algún pago en estado `PENDING` o transacciones en estado `PROCESSING`, deberías esperar a que se procesen y se transicionen a `SUCCESS` o `FAILED` antes de continuar con la migración.
+
+### Eliminar cuentas de canal 🧹
+
+En la versión `2.x`, las cuentas de canal están cifradas utilizando el `CHANNEL_ACCOUNT_ENCRYPTION_PASSPHRASE`, que es un entorno diferente del que se utilizó en la versión de inquilino único (`DISTRIBUTION_SEED`). Para evitar problemas, eliminemos todas las cuentas de canal existentes en la versión de inquilino único antes de la migración:
+
+<CodeExample>
+
+```bash
+./stellar-disbursement-platform channel-accounts delete --delete-all-accounts
+```
+
+</CodeExample>
+
+### Copia de seguridad y configuración de base de datos 💾
+
+Haz una copia de seguridad de tu base de datos de inquilino único antes de proceder con la migración. En este punto, la instancia de inquilino único debe estar detenida, y no debe haber pagos en estado `PENDING` ni `PROCESSING` en submitter_transactions.
+
+También se recomienda que crees una nueva base de datos para la versión de inquilino múltiple para evitar cualquier pérdida de datos. Usa el volcado de la base de datos de inquilino único para poblar el estado inicial de esta de inquilino múltiple. A partir de este punto, cada vez que nos referimos a **la base de datos**, nos referiremos a la nueva base de datos de inquilino múltiple que se creó a partir de un volcado de la base de datos de inquilino único.
+
+Así es como puedes hacer la copia de seguridad y la restauración:
+
+<CodeExample>
+
+```bash
+pg_dump --dbname=$singleTenantDB > sdp-singleTenant.sql
+createdb $multiTenantDB
+psql --dbname=$multiTenantDB < sdp-singleTenant.sql
+```
+
+</CodeExample>
+
+## Cambios explicados
+
+Entre los cambios introducidos en la versión de inquilino múltiple, los más significativos son:
+
+1. **Infraestructura**: la versión de inquilino múltiple incluye un corredor de eventos (Kafka) como un componente de infraestructura adicional que es altamente recomendado para configuraciones de inquilino múltiple, especialmente cuando se requiere un alto rendimiento.
+2. **Variables de entorno**: la versión de inquilino múltiple introduce nuevas variables de entorno para configurar el corredor de eventos, así como variables adicionales relevantes para la multi-tenencia.
+3. **Segregation of Funds**: the multi-tenant version introduces the concept of a distribution account for each tenant, which is used to submit transactions on behalf of the tenant. También existe la cuenta de distribución HOST, que se utiliza para financiar las cuentas de distribución de los inquilinos y las cuentas de canal TSS.
+4. **Comandos CLI**: algunos comandos de CLI han sido revisados para ser conscientes del inquilino, mientras que otros han sido incluidos para soportar nuevas características de inquilino múltiple.
+5. **Estructura de la base de datos**: la estructura de la base de datos ha sido revisada para acomodar la multi-tenencia y las tablas ahora están distribuidas en múltiples esquemas, proporcionando aislamiento entre los inquilinos.
+
+### Infraestructura
+
+Para la configuración de la infraestructura, SDP Multi-tenant ofrece modos operativos flexibles.
+
+#### Corredor de eventos frente a trabajos programados
+
+Los administradores pueden elegir entre usar un corredor de eventos para operaciones impulsadas por eventos, o trabajos programados para operaciones periódicas. Se recomiendan corredores de eventos para configuraciones de inquilino múltiple, ya que proporcionan una forma escalable y confiable de manejar eventos, mientras que los trabajos programados son recomendados para configuraciones locales o SDPs de inquilino único. Además, los corredores de eventos proporcionan una comunicación más rápida entre servicios.
+
+#### Versión de Anchor Platform
+
+Mientras que la versión de inquilino único usó [`stellar/anchor-platform:2.1.3`](https://hub.docker.com/layers/stellar/anchor-platform/2.1.3/images/sha256-e6ef4b17a8d3e5d1455fa3d8f5f7e2a2b9534ad749584ff5446d685eb07837e9?context=explore), la versión de inquilino múltiple requiere [`stellar/anchor-platform:2.6.0`](https://hub.docker.com/layers/stellar/anchor-platform/2.6.0/images/sha256-913fa2461d36d5150724a172ca46f8c76284a3890b60a9d5709fe0c606af78b9) o posterior.
+
+### Variables de entorno
+
+A continuación se presentan las variables de entorno que se han agregado o modificado en la versión de inquilino múltiple.
+
+Variables de entorno generales:
+
+- `ADMIN_ACCOUNT`: El nombre de usuario de la cuenta de administrador utilizada para autenticar las solicitudes HTTP al servidor de administración. Las solicitudes dirigidas a la administración deben agregar el encabezado "Authorization", formateado como Base64 codificado `"ADMIN_ACCOUNT:ADMIN_API_KEY"`.
+- `ADMIN_API_KEY`: La clave API de la cuenta de administrador utilizada para autenticar las solicitudes HTTP al servidor de administración. Las solicitudes dirigidas a la administración deben agregar el encabezado "Authorization", formateado como Base64 codificado `"ADMIN_ACCOUNT:ADMIN_API_KEY"`.
+- `ADMIN_PORT`: el puerto del servidor de administración utilizado para crear y gestionar inquilinos. El valor por defecto es 8003.
+- `INSTANCE_NAME`: el nombre de la instancia de SDP que se mostrará en el archivo `stellar.toml`. Ejemplo: "SDP Testnet".
+- `SINGLE_TENANT_MODE`: Cuando se establece en `"true"`, habilita el modo de inquilino único, que es útil para el desarrollo local o configuraciones de inquilino único. Además de establecerlo en verdadero, necesitarás configurar el inquilino predeterminado llamando a la solicitud [`POST /tenants/default-tenant`](../api-reference/default-tenant.api.mdx).
+- `TENANT_XLM_BOOTSTRAP_AMOUNT`: La cantidad de XLM que la cuenta Stellar HOST depositará en la cuenta de distribución del inquilino para su arranque.
+
+Variables de entorno para la configuración de cuentas Stellar:
+
+- `CHANNEL_ACCOUNT_ENCRYPTION_PASSPHRASE`: Una clave privada ed25519 compatible con Stellar utilizada para cifrar/desfijar las claves privadas de las cuentas de canal. Cuando no está configurado, se utilizará el valor de la opción 'distribution-seed', que fue utilizada en la versión de inquilino único. **Atención**, al migrar desde el inquilino único, establecer esta configuración en algo diferente del antiguo `DISTRIBUTION_SEED` impedirá que el código pueda descifrar las cuentas de canal.
+- `DISTRIBUTION_ACCOUNT_ENCRYPTION_PASSPHRASE`: Una clave privada ed25519 compatible con Stellar utilizada para cifrar/desfijar las claves privadas de las cuentas de distribución en memoria.
+
+Variables de entorno para la configuración del corredor de eventos:
+
+- `BROKER_URLS`: Una lista separada por comas de las URL del corredor de mensajes.
+- `CONSUMER_GROUP_ID`: Especifica un ID de grupo para los consumidores del corredor.
+- `EVENT_BROKER_TYPE`: Especifica el tipo de corredor de eventos que se utilizará. Opciones: "KAFKA", "NONE". El valor por defecto es "Kafka".
+- `KAFKA_SECURITY_PROTOCOL`: Define el protocolo de seguridad para Kafka. Opciones: PLAINTEXT, SASL_PLAINTEXT, SASL_SSL, SSL.
+- `KAFKA_SASL_USERNAME`: Especifica el nombre de usuario SASL de Kafka, requerido cuando el protocolo de seguridad de Kafka se establece en `SASL_PLAINTEXT` o `SASL_SSL`.
+- `KAFKA_SASL_PASSWORD`: Especifica la contraseña SASL de Kafka, requerida cuando el protocolo de seguridad de Kafka se establece en `SASL_PLAINTEXT` o `SASL_SSL`.
+- `KAFKA_SSL_ACCESS_KEY`: La clave de acceso de Kafka (almacenamiento de claves) en formato PEM, requerida cuando el protocolo de seguridad de Kafka se establece en `SSL`.
+- `KAFKA_SSL_ACCESS_CERTIFICATE`: El certificado de acceso SSL de Kafka en formato PEM que coincide con la clave de acceso de Kafka, requerido cuando el protocolo de seguridad de Kafka se establece en `SSL`.
+
+Variables de entorno del programador:
+
+- `ENABLE_SCHEDULER`: Por defecto "false". Esto habilita trabajos programados que reemplazan las operaciones de un corredor para sincronizar pagos entre SDP y TSS, así como para enviar invitaciones a receptores. Debería establecerse en "true" cuando el corredor de eventos esté deshabilitado. It should be set to "true" when the event broker is disabled.
+- `SCHEDULER_PAYMENT_JOB_SECONDS`: Interval in seconds for the job that synchronizes payments between SDP and TSS. Minimum is 5s.
+- `SCHEDULER_RECEIVER_INVITATION_JOB_SECONDS`: Interval in seconds for the job that submits receiver invitations. El mínimo es 5s.
+
+Del lado de Anchor Platform, debemos establecer las siguientes variables:
+
+- `SEP10_HOME_DOMAINS="localhost:8000, *.stellar.local:8000"`: una lista separada por comas de dominios principales utilizados para [SEP-10]. Esto debería contener los dominios de las instancias de inquilino de la SDP.
+- `SEP10_HOME_DOMAIN=""`: esto debería ser una cadena vacía para la versión de inquilino múltiple.
+- `SEP10_WEB_AUTH_DOMAIN=<localhost:8080>`: el dominio principal de la instancia de la Anchor Platform.
+
+### Segregación de fondos
+
+En la versión de inquilino múltiple, los fondos de los inquilinos están aislados entre sí **a menos que el inquilino sea creado con `"distribution_account_type": "DISTRIBUTION_ACCOUNT.STELLAR.ENV"`**. Para más información sobre los tipos de cuentas de distribución, consulta la sección de [Provisionamiento de inquilinos](./tenant-provisioning.mdx#creating-tenants).
+
+Las cuentas de canal, por otro lado, son compartidas entre inquilinos, y son creadas por la cuenta de distribución HOST, configurada en la variable de entorno `DISTRIBUTION_SEED`. Las cuentas de canal están cifradas utilizando la variable de entorno `CHANNEL_ACCOUNT_ENCRYPTION_PASSPHRASE`, o el `DISTRIBUTION_SEED` si la primera no está configurada. En la versión de inquilino único, las cuentas de canal estaban cifradas por el `DISTRIBUTION_SEED`. En la versión de inquilino único, las cuentas de canal estaban encriptadas por el `DISTRIBUTION_SEED`.
+
+### Comandos CLI
+
+Los siguientes comandos de CLI se actualizaron para ser conscientes del inquilino:
+
+#### Migraciones de base de datos y población
+
+Los comandos de inquilino único para la migración de la base de datos y la pre-población solían ser:
+
+<CodeExample>
+
+```bash
+./stellar-disbursement-platform db migrate up           # ⚠️ DECOMISSIONED in 2.x!
+./stellar-disbursement-platform db auth migrate up      # ⚠️ 2.x REQUIRES A (NEW) TENANT-AWARE FLAG!
+./stellar-disbursement-platform db setup-for-network    # ⚠️ 2.x REQUIRES A (NEW) TENANT-AWARE FLAG!
+```
+
+</CodeExample>
+
+Los nuevos comandos de inquilino múltiple son:
+
+<CodeExample>
+
+```bash
+./stellar-disbursement-platform db admin migrate up
+./stellar-disbursement-platform db tss migrate up
+./stellar-disbursement-platform db auth migrate up --all
+./stellar-disbursement-platform db sdp migrate up --all
+./stellar-disbursement-platform db setup-for-network --all
+```
+
+</CodeExample>
+
+Por favor, ten en cuenta que algunos comandos requieren una bandera consciente del inquilino, que puede ser:
+
+- `--all`: para ejecutar estas migraciones en todos los inquilinos.
+- `--tenant-id`: para especificar el ID del inquilino para ejecutar las migraciones.
+
+#### Cuentas de canal
+
+El comando ensure se actualizó de utilizar la bandera `--num-channel-accounts-ensure` a usar un argumento posicional:
+
+<CodeExample>
+
+```bash
+./stellar-disbursement-platform channel-accounts ensure --num-channel-accounts-ensure 1 # OLD WAY
+./stellar-disbursement-platform channel-accounts ensure 1                               # NEW WAY
+```
+
+</CodeExample>
+
+### Estructura de la base de datos
+
+En la versión actualizada, la estructura de la base de datos ha sido revisada para acomodar la multi-tenencia. Como resultado, las tablas ahora están distribuidas en múltiples esquemas, y se han introducido nuevas tablas para soportar la arquitectura de inquilino múltiple. Los siguientes esquemas son utilizados en la versión de inquilino múltiple:
+
+- **admin**: alberga tablas asociadas a la administración de inquilinos. Sirve como el punto central para gestionar información relacionada con inquilinos y resolver nombres de esquemas de inquilinos basados en IDs de inquilinos. Ninguna de estas tablas existía en la versión de inquilino único.
+- **sdp\_&lt;nombre del inquilino&gt;**: son esquemas por inquilino que están precedidos por `sdp_`. Por ejemplo, para los inquilinos BlueCorp y RedCorp, los esquemas provisionados se llamarían `sdp_bluecorp` y `sdp_redcorp`, respectivamente. Estos esquemas contienen todas las tablas necesarias para la operación de la SDP adaptadas a cada inquilino, incluida la autenticación de usuarios por inquilino.
+- **tss**: es un esquema dedicado al Servicio de Presentación de Transacciones (TSS). Las tablas TSS no pertenecen a ningún inquilino, aunque cada transacción TSS contiene una columna que indica a qué inquilino pertenece.
+
+Estos cambios permiten el aislamiento de los datos de los inquilinos por esquema, asegurando que los datos de cada inquilino se mantengan separados de los demás.
+
+## Guía de migración paso a paso
+
+:::tip
+
+El proyecto tiene un [script](https://github.com/stellar/stellar-disbursement-platform-backend/blob/4420bba6628546918dfcca027ac504898121fed9/internal/integrationtests/scripts/singletenant_to_multitenant_db_migration_test.sh) que realiza estos pasos, así como un [CI](https://github.com/stellar/stellar-disbursement-platform-backend/blob/4420bba6628546918dfcca027ac504898121fed9/.github/workflows/singletenant_to_multitenant_db_migration_test.yml) que asegura que estos pasos funcionen. Puedes usarlos como referencia. Puedes usarlos como referencia.
+
+:::
+
+Usando la nueva base de datos creada a partir del volcado de la base de datos de inquilino único como punto de partida (como se describe en la sección de [Copia de seguridad y configuración de la base de datos](#database-backup--setup-)), ahora podemos proceder con los pasos de migración a continuación.
+
+### Desplegar la nueva versión
+
+Para transitar a una configuración de inquilino múltiple, despliega la última versión de la SDP `2+`. Si estás utilizando gráficos Helm, puedes obtener el gráfico Helm del [repositorio de gráficos de SDP](https://github.com/stellar/helm-charts/pull/80).
+
+### Ejecutando migraciones iniciales de base de datos
+
+Tras el despliegue de la SDP de inquilino múltiple, el siguiente paso es realizar las iniciales **migraciones de base de datos**. No incluye aún las tablas específicas del inquilino, se crearán más adelante.
+
+Comandos de migración:
+
+<CodeExample>
+
+```bash
+./stellar-disbursement-platform db admin migrate up
+./stellar-disbursement-platform db tss migrate up
+```
+
+</CodeExample>
+
+Estos comandos crearán las tablas de administración de inquilinos en el esquema **admin** y las tablas del Servicio de Presentación de Transacciones en el esquema **tss**, respectivamente.
+
+### Nuevo proceso de aprovisionamiento de inquilinos
+
+Después de aplicar con éxito las migraciones de base de datos, el siguiente paso es aprovisionar un nuevo inquilino. Esto se logra haciendo una solicitud HTTP a la **API de administración**.
+
+Ten en cuenta que se aprovisionará a los inquilinos con todas las migraciones por inquilino incluidas.
+
+#### Iniciando el servidor API de SDP
+
+Para facilitar el aprovisionamiento de inquilinos, inicia el servidor SDP usando el comando:
+
+<CodeExample>
+
+```bash
+./stellar-disbursement-platform serve
+```
+
+</CodeExample>
+
+#### Publicando en la API de administración
+
+- **Puerto de la API**: La API de Admin es accesible en el puerto `8003` por defecto. Esta configuración del puerto se puede ajustar alterando la variable de entorno `ADMIN_PORT`.
+- **Autenticación**: La API de Admin emplea Autenticación Básica para asegurar el acceso. Para autenticarte, completa el encabezado de la solicitud "Authorization" con `"Authorization: Basic ${Base64(ADMIN_ACCOUNT:ADMIN_API_KEY)}"`.
+
+Aquí hay un script de shell que se puede usar para crear un inquilino a través de la API de Admin:
+
+<CodeExample>
+
+```bash
+ADMIN_ACCOUNT="SDP-admin"
+ADMIN_API_KEY="api_key_1234567890"
+basicAuthCredentials=$(echo -n "$ADMIN_ACCOUNT:$ADMIN_API_KEY" | base64)
+AuthHeader="Authorization: Basic $basicAuthCredentials"
+
+tenant="bluecorp"
+baseURL="http://$tenant.stellar.local:8000"
+sdpUIBaseURL="http://$tenant.stellar.local:3000"
+ownerEmail="owner@$tenant.org"
+# NOTE: please refer to the distribution_account_type values in the API reference
+distributionAccountType="DISTRIBUTION_ACCOUNT.STELLAR.DB_VAULT"
+
+curl -X POST http://localhost:8003/tenants \
+     -H "Content-Type: application/json" \
+     -H "$AuthHeader" \
+     -d '{
+            "name": "'"$tenant"'",
+            "organization_name": "Blue Corp",
+            "base_url": "'"$baseURL"'",
+            "sdp_ui_base_url": "'"$sdpUIBaseURL"'",
+            "owner_email": "'"$ownerEmail"'",
+            "owner_first_name": "john",
+            "owner_last_name": "doe",
+            "distribution_account_type": "'"$distributionAccountType"'"
+     }'
+```
+
+</CodeExample>
+
+En el SDP de varios inquilinos, ciertas configuraciones que anteriormente se gestionaban a través de variables de entorno en la configuración de inquilino único ahora se almacenan en la tabla **tenants** en el esquema de administración. Este cambio permite que cada inquilino tenga su propia configuración personalizada.
+
+El campo **name** es importante porque es el identificador del inquilino. Los otros campos se pueden establecer con los mismos valores utilizados en las variables de entorno de la versión sin inquilino.
+
+### Importando tus datos
+
+Ahora que hemos provisionado un nuevo inquilino, podemos importar nuestros datos en él. Necesitamos copiar los datos de nuestras antiguas tablas al nuevo esquema de inquilino.
+
+Ten en cuenta que las siguientes tablas no necesitan ser copiadas:
+
+- **_gorp_migrations_**
+- **_auth_migrations_**
+- **_organizations_**
+
+Para ayudar con el proceso de importación, hemos agregado una función al esquema de `admin` que copiará los datos de las tablas v1 ubicadas en el esquema público al nuevo esquema de inquilino. La función se llama `import_tenant_data_from_v1_to_v2` y recibe como parámetro el nombre del inquilino. El nombre del inquilino debe ser el mismo que el `$name` utilizado en la llamada de la API para crear el inquilino.
+
+<CodeExample>
+
+```sql
+    SELECT admin.migrate_tenant_data_from_v1_to_v2('tenant_name')
+```
+
+</CodeExample>
+
+Esto concluye la migración de los datos del SDP a la versión de varios inquilinos. El siguiente paso es eliminar las antiguas tablas que ya no son necesarias.
+
+### Eliminar tablas antiguas
+
+Ahora, el único paso que falta es eliminar las tablas de inquilino único que no deberían estar en la base de datos de varios inquilinos:
+
+<CodeExample>
+
+```sql
+BEGIN TRANSACTION;
+
+DROP TABLE public.messages CASCADE;
+DROP TABLE public.payments CASCADE;
+DROP TABLE public.disbursements CASCADE;
+DROP TABLE public.receiver_verifications CASCADE;
+DROP TABLE public.receiver_wallets CASCADE;
+DROP TABLE public.auth_user_password_reset CASCADE;
+DROP TABLE public.auth_user_mfa_codes CASCADE;
+DROP TABLE public.receivers CASCADE;
+DROP TABLE public.auth_users CASCADE;
+DROP TABLE public.wallets_assets CASCADE;
+DROP TABLE public.assets CASCADE;
+DROP TABLE public.wallets CASCADE;
+DROP TABLE public.organizations CASCADE;
+DROP TABLE public.gorp_migrations CASCADE;
+DROP TABLE public.auth_migrations CASCADE;
+DROP TABLE public.submitter_transactions CASCADE;
+DROP TABLE public.channel_accounts CASCADE;
+
+COMMIT;
+```
+
+</CodeExample>
+
+### Conclusión 🎉
+
+Esto debería concluir la migración de datos de la versión de inquilino único a la versión de varios inquilinos del SDP. Por favor, asegúrate de ejecutar una prueba e2e para garantizar que todo funcione como se espera.
+
+[SEP-10]: https://stellar.org/protocol/sep-10
