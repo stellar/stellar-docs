@@ -1,0 +1,166 @@
+---
+title: Exportación de Historial Completo
+sidebar_position: 60
+---
+
+Esta página describe las prácticas recomendadas para usar Galexie y crear un data lake con el historial completo de los metadatos del ledger.
+
+## ¿Por qué Exportar el Historial Completo?
+
+Exportar el historial completo de los metadatos del ledger de Stellar proporciona un data lake completo de todo lo que ha ocurrido on-chain. Esto facilita y agiliza la recuperación de datos en cualquier punto de la historia de la red.
+
+Esto permite:
+
+- **Analítica** - ejecutar análisis de tendencias históricas con `stellar-etl`
+- **RPC de Historial Completo** - backend del data lake que suministra metadatos del ledger a instancias RPC para habilitar el acceso a datos del historial completo
+- **Datos en Tiempo Real** - acceso a datos en tiempo real sobre el acceso completo a datos históricos
+
+## Costos y Requisitos de Almacenamiento
+
+Las estimaciones están basadas en los costos de GCP Compute Engine y Google Cloud Storage
+
+- **Costo Total** ~= $1,100 USD
+  - Costos de Cómputo ~= $500 USD
+  - Costos de Operaciones Clase A de GCS (escrituras) ~= $600 USD
+- **Tamaño Total de Almacenamiento** ~= 3 TB
+
+## Estrategia de Exportación
+
+La mejor forma de exportar el historial completo con Galexie es ejecutando múltiples instancias individuales de Galexie en paralelo. Como referencia, se estima que se tarda aproximadamente 150 días en exportar el historial completo usando una sola instancia de Galexie. Ejecutar en paralelo con 40-50 instancias de Galexie toma aproximadamente 4-5 días.
+
+1. Asegúrate de haber configurado un sistema de almacenamiento y contar con el hardware adecuado según lo definido en los [Requisitos Previos](./prerequisites.mdx) de Galexie
+2. Determina cuántas instancias paralelas de Galexie quieres ejecutar
+3. Recuerda pasar rangos de ledger no solapados a cada una de tus instancias de Galexie
+
+Nota que los ledgers anteriores en la historia son más pequeños y se exportan más rápido que los ledgers más recientes. Esta diferencia de desempeño se hace evidente alrededor del ledger 30,000,000. Debido a esta diferencia de desempeño, generalmente es mejor asignar más instancias de Galexie para los ledgers más recientes.
+
+### Cómo se Ve Esto en la Práctica
+
+Supongamos que hay 50,000,000 de ledgers que Galexie necesita exportar.
+
+- Para 50 instancias, la división podría ser:
+  - 15 instancias para procesar desde genesis hasta 29,999,999
+  - 35 instancias para procesar de 30,000,000 a 50,000,000
+
+Cada instancia seguirá las mismas instrucciones de [Ejecutar Galexie](./running.mdx)
+
+```
+galexie append --start <start_ledger> --end <end_ledger>
+```
+
+Donde se ejecutaría tu primera instancia
+
+```
+galexie append --start 2 --end 1999999
+```
+
+La segunda se ejecutaría
+
+```
+galexie append --start 2000000 --end 3999999
+```
+
+y así sucesivamente
+
+### Métodos para ejecutar múltiples instancias de Galexie
+
+Existen diferentes formas de iniciar múltiples instancias de Galexie que pueden variar según tu proveedor de la nube o hardware local.
+
+#### GCP Batch
+
+Dentro de GCP puedes usar [Batch](https://cloud.google.com/batch/docs/get-started), que acepta un archivo JSON o YAML de `job` que puede parametrizar los rangos de inicio y fin del ledger para cada instancia de Galexie
+
+Ejemplo de archivo YAML para job de GCP Batch
+
+```yaml
+job:
+  taskGroups:
+  - taskSpec:
+      computeResource:
+        cpuMilli: 2000
+        memoryMib: 8000
+      maxRetryCount: 1
+      container:
+        imageUri: "stellar/stellar-galexie:23.0.0"
+        entrypoint: "galexie"
+        commands: ["append", "--start", "${START}", "--end", "#{END}"]
+      tasks:
+      # It is possible to use the GCP batch index instead of manually naming each task
+      - name: "galexie-1"
+        environments:
+          START: "2"
+          END: "1999999"
+      - name: "galexie-2"
+        environments:
+          START: "2000000"
+          END: "3999999"
+      ...
+
+    requireHostsFile: true
+    requireTaskHostsFile: true
+  allocationPolicy:
+    instances:
+    - policy:
+        machineType: "e2-standard-2"
+        disks:
+        - newDisk:
+            type: "pd-standard"
+            sizeGb: 100
+          mountPoint: "/mnt/shared"
+```
+
+#### Instancias de cómputo en GCP
+
+Puedes iniciar manualmente múltiples instancias individuales de cómputo
+
+Ejemplo de instancia de cómputo en GCP
+
+```yaml
+#container-declaration-0.yaml
+spec:
+  restartPolicy: Always
+  containers:
+    - name: galexie
+      image: stellar/stellar-galexie:23.0.0
+      command:
+        - galexie
+      args:
+        - append
+        - --start
+        - "2"
+        - --end
+        - "1999999"
+      securityContext:
+        privileged: true
+```
+
+Luego crea la instancia ejecutando el siguiente comando `gcloud`
+
+```sh
+gcloud compute instances create "galexie-0" \
+  --zone=us-central1-a \
+  --machine-type=e2-standard-2 \
+  --image-family=cos-stable \
+  --image-project=cos-cloud \
+  --boot-disk-size=100GB \
+  --boot-disk-type=pd-standard \
+  --boot-disk-device-name="galexie-0" \
+  --tags=http-server,https-server \
+  --scopes=https://www.googleapis.com/auth/cloud-platform \
+  --service-account=<service-account> \
+  --metadata-from-file=gce-container-declaration="container-declaration-0.yaml"
+```
+
+Repite el proceso para tantas instancias paralelas de Galexie como desees
+
+#### Instancias locales de Galexie
+
+Puedes ejecutar múltiples instancias de Galexie localmente con un ejecutable de Galexie desarrollado localmente
+
+```sh
+./galexie append --start 2 --end 1999999 & \
+./galexie append --start 2000000 --end 3999999 & \
+./galexie append --start 4000000 --end 5999999 &
+
+...
+```
