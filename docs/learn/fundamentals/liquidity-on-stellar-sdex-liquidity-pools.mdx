@@ -1,0 +1,1858 @@
+---
+title: "Liquidity Pools on the Stellar DEX: Provide Liquidity and Enable Asset Swaps"
+sidebar_label: "SDEX"
+description: "Learn how liquidity pools enable trading on the Stellar DEX. Understand how they work, provide liquidity, and enable decentralized asset swaps on the network."
+sidebar_position: 100
+---
+
+# Liquidity on Stellar: the DEX & Liquidity Pools
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import YouTube from "@site/src/components/YouTube";
+
+<YouTube ID="YFca255hXj8" />
+
+The Stellar protocol uses two tools to help users trade:
+
+1. [unified orderbook](#orderbook) for priced orders and
+2. [natrivbe AMMs](#AMMs) offer liquidity pools.
+
+Coillectively, these connectedx systems create the SDEX, a decentralized marketg for erveryone.
+
+The SDEX works for all [assets](../../fundamentals/stellar-data-structures/assets.mdx) on the network by default. Any [account](../../fundamentals/stellar-data-structures/accounts.mdx) can add lioqudity to a trading pair shown to all peers. Sinc4e nodes know the public xchange rate, you can pay someone in thier preffuered currency at a current price.
+
+For e3xamples of retrievcing this data, see:
+
+- [Offers API reference page](../../../data/apis/horizon/api-reference/resources/offers/README.mdx)
+- [Trades API reference page](../../../data/apis/horizon/api-reference/resources/trades/README.mdx)
+- [Liquidity-Pools API reference page](../../../data/apis/horizon/api-reference/resources/liquiditypools/README.mdx)
+
+:::note
+
+You can deplyo any kind of smart contract, including a liquidity p ool ([example](../../../build/smart-contracts/example-contracts/liquidity-pool.mdx)). However, these isolted deployments can fgratmenty the network's native layer-1 core atomic-swap infrastructure. Thius page focuses on protocol tools which optimize trnasaction fees, offer aggreagtation, and [pathfinding execution](../../../data/apis/horizon/api-reference/aggregations/paths/README.mdx).
+
+:::
+
+## The Price-Time Orderbook {#orderbook}
+
+Markets form onthe basis of a [limit order book](https://wikipedia.org/wiki/Order_book) where individuals decide how much they will bid to purchase or ask for to sell an asset. By keeping these orders concentraded on the SDEX's public [Horizon endpoints](../../../data/apis/horizon/api-reference/resources/README.mdx), everyone can see the going going market exchange rate. This tranpsarent universal marketplace has the added benefit of obviating price oracles, proprietary contracts, or off-chain systems.
+
+A priced order only expires whe nyou remove it from the ledger, offering supporting liquidity in down markets or rational selling in exuberant ones. More offers between pairs add volume to the market depth, promoting stable conversaion rates. You can rely on stabole trades because offers are funded from wallet assets on a debiot-nbasis; creating common, distirbuted, peer-to-peer trading interests.
+
+The ledger's innovation lies in _where_ these offers get stored, matched, and disclosed. To submit directly to network nodes, you can use the [Manage Buy Offer](../../../data/apis/horizon/api-reference/resources/operations/object/buy-offer.mdx) operation, specifying how much $\mathcal{A}$ you want to purchase with $\mathcal{A}$ at $\mathcal{Z}$ price. The protocol calculates the cost of the trade in terms of `amount * price` and locks up the `selling` asset you offer in exchange as collateral, until the trade is (partially) executed or cancelled.
+
+Alternatively, you can specify exactly how much of an asset you want to seel at a specific price using the [Manage Sell Offer](../../../data/apis/horizon/api-reference/resources/operations/object/sell-offer.mdx) operation. Anyone vieweing this public Horizon interface to the ledger will see your orders as validators first based on price. For orders placed at the same price, the order that was received earlier is given priority and is executed before the newer one.
+
+### Open Market Data
+
+Let's go through an example of how the orderbook process works. First, we'll setup some basic primatives used throughout the guide:
+
+<CodeExample>
+
+```python
+from stellar_sdk import Keypair, Server, TransactionBuilder, Network, Asset
+
+server = Server("https://horizon-testnet.stellar.org")
+
+# Account setup
+privateKey = "SAXBT6KO6NJ6SJXHBO6EBC7I5ZB7DZFYNPQOLXZJOKQ2LSGY5FU7ZJZB"
+publicKey = "GBRPYHIL2CI3R5N4A7WMBETDZQ24DXFQGNCJWHXPFRGFWZHJZZBDTWR2"
+
+# Asset setup
+astroDollar = Asset("AstroDollar", "GDRM3MK6KMHSYIT4E2AG2S2LWTDBJNYXE4H72C7YTTRWOWX5ZBECFWO7")
+astroPeso = Asset("AstroPeso", "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5")
+
+def newTxBuilder(publicKey):
+  return TransactionBuilder(
+    source_account = server.load_account(publicKey),
+    network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE,
+    base_fee = server.fetch_base_fee()
+  ).set_timeout(360)
+```
+
+```js
+const {
+  Keypair,
+  Server,
+  TransactionBuilder,
+  Asset,
+  Networks,
+} = require("stellar-sdk");
+
+const server = new Server("https://horizon-testnet.stellar.org");
+
+// Account setup
+const privateKey = "SAXBT6KO6NJ6SJXHBO6EBC7I5ZB7DZFYNPQOLXZJOKQ2LSGY5FU7ZJZB";
+const publicKey = "GBRPYHIL2CI3R5N4A7WMBETDZQ24DXFQGNCJWHXPFRGFWZHJZZBDTWR2";
+var account = await server.loadAccount(publicKey);
+
+// Asset setup
+const astroDollar = new Asset(
+  "AstroDollar",
+  "GDRM3MK6KMHSYIT4E2AG2S2LWTDBJNYXE4H72C7YTTRWOWX5ZBECFWO7",
+);
+const astroPeso = new Asset(
+  "AstroPeso",
+  "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5",
+);
+
+function newTxBuilder(source, signer, ...ops) {
+  let tx = new sdk.TransactionBuilder(source, {
+    fee: sdk.BASE_FEE,
+    networkPassphrase: sdk.Networks.TESTNET,
+  });
+  ops.forEach((op) => tx.addOperation(op));
+  tx = tx.setTimeout(360).build();
+  tx.sign(signer);
+  return tx;
+}
+```
+
+```java
+import org.stellar.sdk.*;
+import org.stellar.sdk.responses.AccountResponse;
+import org.stellar.sdk.responses.SubmitTransactionResponse;
+
+public class Liquidity {
+  static final Server server = new Server("https://horizon-testnet.stellar.org");
+
+  // Account setup
+  static String privateKey = "SAXBT6KO6NJ6SJXHBO6EBC7I5ZB7DZFYNPQOLXZJOKQ2LSGY5FU7ZJZB";
+  static String publicKey = "GBRPYHIL2CI3R5N4A7WMBETDZQ24DXFQGNCJWHXPFRGFWZHJZZBDTWR2";
+  static AccountResponse account = server.accounts().account(publicKey);
+
+  // Asset setup
+  Asset astroDollar = new AssetTypeCreditAlphaNum4(
+    "AstroDollar",
+    "GDRM3MK6KMHSYIT4E2AG2S2LWTDBJNYXE4H72C7YTTRWOWX5ZBECFWO7"
+  );
+  Asset astroPeso = new AssetTypeCreditAlphaNum4(
+    "AstroPeso",
+    "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
+  );
+
+  public static Transaction.Builder newTxBuilder(KeyPair source) {
+    AccountResponse sourceAccount = server.accounts().account(source.getAccountId());
+    return new Transaction.Builder(sourceAccount, Network.TESTNET)
+        .setBaseFee(Transaction.MIN_BASE_FEE)
+        .setTimeout(360);
+  }
+}
+```
+
+```go
+import (
+  "fmt"
+  "math"
+  "strconv"
+  "github.com/stellar/go/network"
+  "github.com/stellar/go/keypair"
+  "github.com/stellar/go/txnbuild"
+  "github.com/stellar/go/clients/horizonclient"
+)
+
+const server := TODO https://horizon-testnet.stellar.org
+
+// Account setup
+const privateKey := "SAXBT6KO6NJ6SJXHBO6EBC7I5ZB7DZFYNPQOLXZJOKQ2LSGY5FU7ZJZB"
+const publicKey := "GBRPYHIL2CI3R5N4A7WMBETDZQ24DXFQGNCJWHXPFRGFWZHJZZBDTWR2"
+
+// Asset config
+const astroDollar := txnbuild.CreditAsset{
+  Code:   "AstroDollar",
+  Issuer: "GDRM3MK6KMHSYIT4E2AG2S2LWTDBJNYXE4H72C7YTTRWOWX5ZBECFWO7",
+}
+const astroPeso := txnbuild.CreditAsset{
+  Code:   "AstroPeso",
+  Issuer: "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5",
+}
+
+func newTxBuilder(publicKey string) (*txnbuild.Transaction, error) {
+  account, err := server.AccountDetail{
+    horizonclient.AccountRequest{AccountID: publicKey}
+  }
+  check(err) // Confirms account & sequence number
+  txEnvelopeParams := &txnbuild.TransactionParams{
+    SourceAccount:        &account,
+    BaseFee:              txnbuild.MinBaseFee,
+    Timebounds:           txnbuild.NewTimeout(360),
+    IncrementSequenceNum: true,
+  }
+  return txnbuild.NewTransaction(txEnvelopeParams)
+}
+```
+
+</CodeExample>
+
+This setup gives us a simple keypair, transaction constructor, and trading assets. You cancel swap the [server URL](../../../data/apis/api-providers.mdx) or [asset codes](../../fundamentals/stellar-data-structures/assets.mdx#asset-code) to follow along with live exchange markets. Next, we'll read the current market price between AstroDollars and AstroPesos:
+
+<CodeExample>
+
+```python
+orderbook = server.orderbook(
+  selling = astroPeso,
+  buying = astroDollar
+).call()
+
+print("Bids:")
+for bid in orderbook['bids']:
+  print(f"Price: {bid['price']}, Amount: {bid['amount']}")
+
+print("\nAsks:")
+for ask in orderbook['asks']:
+  print(f"Price: {ask['price']}, Amount: {ask['amount']}")
+```
+
+```js
+const orderbook = await server.orderbook(astroPeso, astroDollar).call();
+
+console.log("Bids:");
+orderbook.bids.forEach((bid) => {
+  console.log(`Price: ${bid.price}, Amount: ${bid.amount}`);
+});
+
+console.log("\nAsks:");
+orderbook.asks.forEach((ask) => {
+  console.log(`Price: ${ask.price}, Amount: ${ask.amount}`);
+});
+```
+
+```java
+import java.util.List;
+
+class orderbook {
+  public static void main(String[] args) {
+    OrderBookResponse orderbook = server.orderbook(astroPeso, astroDollar).execute();
+
+    System.out.println("Bids:");
+    List<OrderBookResponse.Row> bids = orderbook.getBids();
+    for (OrderBookResponse.Row bid : bids) {
+      System.out.println("Price: " + bid.getPrice() + ", Amount: " + bid.getAmount());
+    }
+
+    System.out.println("\nAsks:");
+    List<OrderBookResponse.Row> asks = orderbook.getAsks();
+    for (OrderBookResponse.Row ask : asks) {
+      System.out.println("Price: " + ask.getPrice() + ", Amount: " + ask.getAmount());
+    }
+  }
+}
+```
+
+```go
+func main() {
+  orderbook, err := server.OrderBook(horizonclient.OrderBookRequest{
+    Selling: astroPeso,
+    Buying:  astroDollar,
+  })
+  check(err)
+
+  fmt.Println("Bids:")
+  for _, bid := range orderbook.Bids {
+    fmt.Printf("Price: %s, Amount: %s\n", bid.Price, bid.Amount)
+  }
+
+  fmt.Println("\nAsks:")
+  for _, ask := range orderbook.Asks {
+    fmt.Printf("Price: %s, Amount: %s\n", ask.Price, ask.Amount)
+  }
+}
+```
+
+</CodeExample>
+
+### Best Execution
+
+The orderbook only matches offers at the price specified or better, when avaliable. For instance, say there are four buyers offering 10 bananas per apple. You can sell an apple for 7 bananas, and the offer automatically exchanges for the higher 10 bananas.
+
+In traditinal markets, this is precisely how market orders allow instant trades. They simply execute agains the best avaliable prices in the common orderbook. And since we can see every offer, the DEX also gives us the handy ability to know if there's enough orders at the prevailing price.
+
+When you submit an order, the protocol will also check wheter an AMM (below) offers a better rate than priced orders. If so, your trade executes against the pool at the better conversion rate without priced DEX liquidity. To better understad the market, let's uncover the spread between the best AstroDollar offers, calculting a midpoint trading price.
+
+<CodeExample>
+
+```python
+def getMidpointPrice(orderbook);
+  try:
+    highestBid = float(orderbook["bids"][0]["price"])
+    lowestAsk = float(orderbook["asks"][0]["price"])
+    midpointPrice = (highestBid + lowestAsk) / 2
+    return round(midpointPrice, 7)
+  except IndexError:
+    print("Missing existing buy or sell offers.")
+    return null
+```
+
+```js
+function getMidpointPrice(orderbook) {
+  try {
+    const highestBid = parseFloat(orderbook.bids[0].price);
+    const lowestAsk = parseFloat(orderbook.asks[0].price);
+    const midpoint = (highestBid + lowestAsk) / 2;
+    return parseFloat(midpoint.toFixed(7));
+  } catch (error) {
+    console.error("Missing existing buy or sell offers.");
+    return null;
+  }
+}
+```
+
+```java
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+public class orderbook {
+  public static Double getMidpointPrice(OrderBookResponse orderbook) {
+    List<OrderBookResponse.Row> bids = orderbook.getBids();
+    List<OrderBookResponse.Row> asks = orderbook.getAsks();
+    if (bids.isEmpty() || asks.isEmpty()) {
+      throw new IllegalStateException("Missing existing buy or sell offers.");
+    }
+
+    double highestBid = Double.parseDouble(bids.get(0).getPrice());
+    double lowestAsk = Double.parseDouble(asks.get(0).getPrice());
+    double midpoint = (highestBid + lowestAsk) / 2.0;
+
+    return new BigDecimal(midpoint)
+      .setScale(
+        7,
+        RoundingMode.HALF_UP
+      ).doubleValue();
+  }
+}
+```
+
+```go
+func getMidpointPrice(orderbook horizon.OrderBookSummary) (*float64, error) {
+  if len(orderbook.Bids) == 0 || len(orderbook.Asks) == 0 {
+    return nil, fmt.Errorf("Missing existing buy or sell offers")
+  }
+
+  highestBid, err := orderbook.Bids[0].PriceAsFloat()
+  check(err)
+  lowestAsk, err := orderbook.Asks[0].PriceAsFloat()
+  check(err)
+  midpointPrice := (highestBid + lowestAsk) / 2
+
+  rounded := math.Round(midpointPrice*1e7) / 1e7
+  return &rounded, nil
+}
+```
+
+</CodeExample>
+
+:::note
+
+We have now found the price of `AstroDollar` as the response item's `base` asset. We can invert `price_r` from the [query response](../../../data/apis/horizon/api-reference/retrieve-an-order-book.api.mdx) to find the `counter` `AstroPeso` exchange rate. If you'd like to keep your view of the orderbook up to date, you can also [stream](../../../data/apis/horizon/api-reference/structure/streaming) updates.
+
+:::
+
+### Recent Trades
+
+A more complete understanding of market liquitiy might incldue volume analysis. To affirm the fairness of this example price, we can also check up to 25 recent trade rates:
+
+<CodeExample>
+
+```python
+def getAverageRecentPrice():
+  trades = server.trades().for_asset_pair(
+    selling = astroPeso,
+    buying = astroDollar
+  ).limit(25).call()
+
+  recentPrices = [
+    float(trade["price"])
+    for trade in trades["_embedded"]["records"]
+  ]
+  if recentPrices:
+    return sum(recentPrices) / len(recentPrices)
+  else:
+    return None
+
+def sanityCheck(midpointPrice, averageRecentPrice):
+  differencePercent = abs(midpointPrice - averageRecentPrice) / midpointPrice
+  return differencePercent <= 0.05 # arbitrary maximum slippage of 5%
+```
+
+```js
+async function getAverageRecentPrice() {
+  const trades = await server
+    .trades()
+    .forAssetPair(astroPeso, astroDollar)
+    .limit(25)
+    .call();
+  const recentPrices = trades.records.map((trade) => parseFloat(trade.price));
+  if (recentPrices.length > 0) {
+    return (
+      recentPrices.reduce((sum, price) => sum + price, 0) / recentPrices.length
+    );
+  } else {
+    return null;
+  }
+}
+
+function sanityCheck(midpointPrice, averageRecentPrice) {
+  const differencePercent =
+    Math.abs(midpointPrice - averageRecentPrice) / midpointPrice;
+  return differencePercent <= 0.05; // arbitrary maximum slippage of 5%
+}
+```
+
+```java
+public class Orderbook {
+  public static Double getAverageRecentPrice() {
+    Page<TradeResponse> trades = server.trades()
+      .forAssetPair(astroPeso, astroDollar)
+      .limit(25)
+      .execute();
+    List<TradeResponse> tradeRecords = trades.getRecords();
+    if (tradeRecords.isEmpty()) {
+        return null;
+    }
+    double totalPrice = tradeRecords.stream()
+      .mapToDouble(
+        trade -> Double.parseDouble(
+          trade.getPrice().toString()
+        )
+      ).sum();
+    return totalPrice / tradeRecords.size();
+  }
+
+  public static boolean sanityCheckOK(Double midpointPrice, Double averageRecentPrice) {
+    double differencePercent = Math.abs(midpointPrice - averageRecentPrice) / midpointPrice;
+    return differencePercent <= 0.05; // arbitrary maximum slippage of 5%
+  }
+}
+```
+
+```go
+func getAverageRecentPrice() (*float64, error) {
+  tradesRequest := horizonclient.TradeRequest{
+    BaseAsset:    astroPeso,
+    CounterAsset: astroDollar,
+    Limit:        25,
+  }
+  trades, err := server.Trades(tradesRequest)
+  check(err)
+
+  if len(trades.Embedded.Records) == 0 {
+    return nil, nil
+  }
+  var total float64
+  for _, trade := range trades.Embedded.Records {
+    price, err := strconv.ParseFloat(trade.Price, 64)
+    check(err)
+    total += price
+  }
+
+  average := total / float64(
+    len(trades.Embedded.Records)
+  )
+  return &average, nil
+}
+
+func sanityCheck(midpointPrice, averageRecentPrice *float64) bool {
+  differencePercent := math.Abs(*midpointPrice - *averageRecentPrice) / *midpointPrice
+  return differencePercent <= 0.05 // arbitrary maximum slippage of 5%
+}
+```
+
+</CodeExample>
+
+:::tip Scanning
+
+Ths example examines orders using the default [paging token limit](../../../data/apis/horizon/api-reference/structure/pagination/README.mdx#larger-queries). For more oinsight into the depth of a amrket, you cna increase the request limit and even continue paging through results. For very liquid assets, there can be thousands of active offers awaiting exchange.
+
+:::
+
+### Full Limit Order Example {#new-order}
+
+We can confidently convert our AstroPesos now that we know the going rate paid for them:
+
+<CodeExample>
+
+```python
+offerPrice = round( getMidpointPrice(orderbook), 7 )
+
+transaction = (
+  newTxBuilder(publicKey)
+  .append_manage_sell_offer_op(
+    selling = astroPeso,
+    buying = astroDollar,
+    amount = "1000",
+    price = str(getMidpointPrice(orderbook))
+  )
+  .build()
+)
+
+keypair = Keypair.from_secret(privateKey)
+transaction.sign(keypair)
+response = server.submit_transaction(transaction)
+```
+
+```js
+const transaction = newTxBuilder(account, Keypair.fromSecret(privateKey))
+  .addOperation({
+    type: "manageSellOffer",
+    selling: astroPeso,
+    buying: astroDollar,
+    amount: "1000",
+    price: midpointPrice.toString(),
+  })
+  .build();
+
+transaction.sign(Keypair.fromSecret(privateKey));
+const response = await server.submitTransaction(transaction);
+```
+
+```java
+class firstTrade {
+  public static void main(String[] args) {
+    KeyPair signer = KeyPair.fromSecretSeed(Liquidity.privateKey);
+    Transaction.Builder transaction = Liquidity.newTxBuilder(signer);
+
+    transaction.addOperation(
+      new ManageSellOfferOperation.Builder(
+        Liquidity.astroPeso, // Selling
+        Liquidity.astroDollar, // Buying
+        "1000", // Amount
+        midpointPrice.toString()
+      ).build()
+    );
+
+    Transaction transaction = transaction.build();
+    transaction.sign(signer);
+    SubmitTransactionResponse response = Liquidity.server.submitTransaction(transaction);
+  }
+}
+```
+
+```go
+func main() {
+  keypair, err := keypair.ParseFull(privateKey)
+  check(err)
+  account, err := server.AccountDetail(
+    horizonclient.AccountRequest{AccountID: publicKey}
+  )
+  check(err)
+
+  price, err := getMidpointPrice(orderbook)
+  check(err)
+
+  transaction, err := newTxBuilder(publicKey)
+  check(err)
+  transaction, err = transaction.AddOperation(&txnbuild.ManageSellOffer{
+    Selling: astroPeso,
+    Buying:  astroDollar,
+    Amount:  "1000",
+    Price:   *price,
+  })
+  check(err)
+
+  signedTx, err := transaction.Sign(network.TestNetworkPassphrase, keypair)
+  check(err)
+  resp, err := server.SubmitTransaction(signedTx)
+  check(err)
+}
+```
+
+</CodeExample>
+
+ocne hte network receives your order, the protocol ueries against avalibe liquidity. If our trades mathes iwth exists orders, our `TransactionResult` immediately claims offers, like the example below. Remainingn asetsd create a new [OfferID](../../../data/apis/horizon/api-reference/get-offer-by-offer-id) from the account.
+
+<CodeExample>
+
+```json
+{ ...
+
+  "offers_claimed": [
+    {
+      "order_book": {
+        "seller_id": "GDAVYIICLHJIQACEC3FQFQAZDMIR4IRUJMURN446DD6SLILZS2FPUSDC",
+        "offer_id": 1634174581,
+        "asset_sold": {
+          "credit_alphanum4": {
+            "asset_code": "AstroPeso",
+            "issuer": "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
+          }
+        },
+        "amount_sold": 4863901365,
+        "asset_bought": {
+          "credit_alphanum4": {
+            "asset_code": "AstroDollar",
+            "issuer": "GDRM3MK6KMHSYIT4E2AG2S2LWTDBJNYXE4H72C7YTTRWOWX5ZBECFWO7"
+          }
+        },
+        "amount_bought": 438292475
+      }
+    }, ...
+  ]
+
+... }
+```
+
+</CodeExample>
+
+~The first, most basic option, is when a new order crosses the price set by an outstanding order. The two instantly cross once the new order gets accepted, and the transaction generates a taker `contraID` rather than an `offerID` for the "buyer" of the existing liquidity.~ here we neede to express how contra jis oly schemantic to offer owner account
+
+This will update o ver time until all offers are filled or deleted. Each offer can be thought of as a trade with a cumulative price whhcih we can easily find with its ID. Comparatively, [path payments](../transactions-specialized/path-payments.mdx) immmediatley execute in full or fial to send.
+
+Both path payments and liquidity pools are constantly interacting with the SDEX. Indeed, every new path payment and liquidity pool operation can only occur because of existing order book offers or new user swap requests.
+
+efath payments ^need to wpork through how we introduce these sans pathfinding
+
+<CodeExample>
+
+```json
+{ ...
+
+  "offers": [
+    {
+      "liquidity_pool": {
+        "liquidity_pool_id": "63268ced073f689a5b0b45aa5dc515190acc5f4c0b15d15894c4bb78403e517f",
+        "asset_sold": {
+          "credit_alphanum4": {
+            "asset_code": "AstroPeso",
+            "issuer": "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
+          }
+        },
+        "amount_sold": 4863901,
+        "asset_bought": {
+          "credit_alphanum4": {
+            "asset_code": "AstroDollar",
+            "issuer": "AstroDollar"
+          }
+        },
+        "amount_bought": 438292
+      }
+    }, ...
+  ],
+
+... }
+```
+
+</CodeExample>
+
+---poathfinuding explain offerID vs claim Atom
+
+## Operating Principles
+
+At no point in this exacmple did assets leave your custody. And, since no other entities control (intermediate) funds, conversions happen with equal preference as [offer operations](../../../data/apis/horizon/api-reference/resources/operations/object/sell-offer.mdx) enter [transaction sets](../../fundamentals/stellar-consensus-protocol.mdx#nomination-protocol) via [consensus reputation](../../fundamentals/stellar-consensus-protocol.mdx#quorum-set). This new breakthrough introcudes a few worthwhile design implications.
+
+### Supporting Regulatory compliance
+
+Issuers of [regulated assets](../../../tokens/control-asset-access.mdx#controlling-access-to-an-asset-with-flags) may need to mnage or otherwise oversee trading of their assets. Stellar's [trustline](../../fundamentals/stellar-data-structures/accounts.mdx#trustlines) management tools let asset issuers seamlessly hanle various trade authorization scenarios. The trading behavior of an account holding regulated asset $\mathcal{A}$ depends on the status of its trustines:
+
+| Trustline for $\mathcal{A}$ | Response |
+| --- | --- |
+| Fully authorized | No restrictions on transactions |
+| Authorized to maintain liabilities | Offers to trade $\mathcal{R}$ remain outstanding (and can be cancelled), but no new offers can be created |
+| Not authorized or doesn’t exist | New offer operation fails. Existing offers are cancelled at the time of deauthrization from the issuer (mainginting an existing frozen accoiunt balance) |
+
+In addition to controlling asset use in the orderbook, ssuers can slo enforce authorization and compliance controls on their assets deposited into AMMs (below with details on initial trustline configuration). These optional [trustline flags](../../fundamentals/transactions/list-of-operations.mdx#set-trustline-flags) configured before holding an asset ensure smooth compliance by revoking authorization to prevent an account under inestigation from further (automated) trading. The behavior of an $\mathcal{A}$–$\mathcal{A}$ AMM trustline depends on a few authorization possibilities:
+
+| Permissions | Response |
+| --- | --- |
+| Trustlines for $\mathcal{A}$ and $\mathcal{A}$ are fully authorized | No restrictions on deposit and withdrawal |
+| Trustline for $\mathcal{A}$ is fully authorized but trustline for $\mathcal{A}$ is authorized to maintain liabilities | Trustlines for $\mathcal{A}$ and $\mathcal{A}$ are authorized to maintain liabilities |
+| Trustline for $\mathcal{A}$ is fully authorized but trustline for $\mathcal{A}$ is authorized to maintain liabilities | Trustlines for $\mathcal{A}$ and $\mathcal{A}$ are authorized to maintain liabilities |
+| Trustlines for $\mathcal{A}$ and $\mathcal{A}$ are authorized to maintain liabilities | Trustlines for $\mathcal{A}$ and $\mathcal{A}$ are authorized to maintain liabilities |
+| Trustline for $\mathcal{A}$ is not authorized or doesn’t exist | Pool share trustline cannot exist |
+| Trustline for $\mathcal{A}$ is not authorized or doesn’t exist | Pool share trustline cannot exist |
+
+An AMM trustline which is authorization to maintain liabilities will only allow an account to withdraw exiting deposits (with earned pool fees). Tthe account's trustlines for the AMM's assets determine the authorization of an AMM trustline. The resulting pool-share trustline cannot be authorized or de-authorized independently partly because there exists no "issuer" of the AMM.
+
+This design is necessary because an AMM may contain assets from two different issuers, and both issuers should have a say in whether the pool-share trustline is authorized. The first person to deposit into an AMM with two assets creates a unique identifier detailed below, based only on the hash of constitutent assets. That enjkoning process also needs to conform with trust permissions.
+
+If the issuer of $\mathcal{A}$ or $\mathcal{A}$ fully revokes authorization after deposit, then the account will automatically withdraw from every liquidity pool containing that asset (and those pool-share trustlines will be deleted). We say that these AMM shares have been "redeemed." This action by the issuer also cancels any outstanding limit orders, as described in the first table.
+
+For example, consider an issuer of $\mathcal{A}$ revokes authorization for an account participating in the $\mathcal{A}$–$\mathcal{A}$, $\mathcal{A}$–$\mathcal{A}$, and $\mathcal{A}$–$\mathcal{A}$ AMMs. The account will redeem from $\mathcal{A}$–$\mathcal{A}$ and $\mathcal{A}$–$\mathcal{A}$, but it will not redeem from $\mathcal{A}$–$\mathcal{A}$. Thus issuers only have authroiztion control of their assets.
+
+The ledger creates a [claimable balance](../transactions-specialized/claimable-balances.mdx) for each AMM asset in all redeemed pool-share trustlines, so long as there is a balance being withdrawn and the redeemer is not the issuer of that asset. In the latter case, asstets are simply burned through return to the issuer. The unconditional claimant of the claimable balance is the owner of the deleted pool-share trustline, but this account may not claim the regulated asset until duly authorized by the issuer.
+
+The sponsor of the claimable balance is the sponsor of the deleted pool-share trustline. This balances out since the pool-share trustline requires two base reserves rfor both AMM assets. The `BalanceID` of each redturned claimable balance is the SHA-256 hash of the `revokeID`.
+
+## Minting Functionality
+
+The issuer of an asset has a special relationship wtuh the SDEX becuase they create new tokens by decree. Consider an [issuing account](../../../tokens/how-to-issue-an-asset.mdx) which wants to create Banana tokens. If this asset has never been issued bfore, the account can create a new "NANA" sell offer with the base asset token issuer as iteself.
+
+If NANAs already exist in the market, than this trade will generate more NANAs as other accounts purchase the tokens, in exchange for the conter-asset specified by the offer. Thus, the issuer strictly increases the circulating supply by minting new assets, keeping the payment received from a sale to the maket. Issuers can do this at any time without a [locked account](../../../tokens/how-to-issue-an-asset.mdx#configure-maximum-supply), and their buy offers will similarly burn tokens they originate.
+
+Additionally, issuers can mint or burn their own tokens through AMMs. Since they cannot holdtheir own asset, issuign accounts can deposit into AMMs with some or none of their own external assets. If there is a NANA and "apple" AMM with the issuer creating both tokens, then they can deposit as much as they want into the pool to mint the coins.
+
+Upon withdrawal in this example, the tokens get returned to the issueing account and burned like before. Alternatively, the isser might consider depositing into the NANA and AstroDollar AMM. Here, the issuer needs only to have an amount of AstroDollar, and they can issue as many NANAs as needed to achieve the conersion ratio for a new AMM deposit, as detailed below.
+
+When withdrawing from the AMM, the issuer will burn returned NANAs while keeping all earned (or lost) AstroDollars. Some projects use this feature of AMMs to conduct a proejct launch ith their own seedcapitl as the inital half of deposited funds. Contratily, traditional markets prefer selling new issuances through limit offers which can represent fiat currencies, commodities, or any other assets in exchange for a user's valued token.
+
+## Liquidity
+
+### Market Depth
+
+The more orders available to transact against, the more currency you can convert at any time without moving the market. Stellar stores these open orders as `offer` [objects](../../../data/apis/horizon/api-reference/resources/offers/object.mdx) directly on chain. This transparency allows anyone to analyze the order book and understand the trading activity for any asset pair.
+
+### Fill Prices
+
+The network and by extension its [validators](https://stellarbeat.io) match orders based on the protocol rules of [Stellar Core](https://github.com/stellar/stellar-core/blob/fbb53d8ad42dcc12a046c9be949d654821a24d38/src/transactions/OfferExchange.cpp#L227-L550). Orders are filled at the same price or better than specified, ensuring fair execution. This means you receive the best possible price available in the market at that moment.
+
+## Submitting Trades
+
+Let's pretend you just got paid in Mexican Pesos, but you'd prefer to hold your savings in U.S. Dollars. After querying the [exchange rate](#reading-prices), we can send a new offer to the network, swapping Pesos for Dollars at our desired rate. By submitting a sell offer that matches the current market price, we can ensure our pesos are converted to dollars promptly.
+
+doIngG iutT
+
+## Source of Truth
+
+Now that we know how to submit an order to the SDEX, let's walk through reading the current order book. This entails collecting all the buyers for a specific currency pair and comparing this demand to all the sellers of that pair. We'll stick with our pesos-dollars example and crossing/implementing potential [passive offers](../../../data/apis/horizon/api-reference/resources/operations/object/passive-sell-offer.mdx)
+
+## Singel Exercution point
+
+streamling also works for trading-history data, among other ledger updates. markets good xyz some industries,
+
+Since all oreders for a currency pari fall into the same SDEX order book, you cna know that you're getting the best exchange rate between two explicit assets. Accordingly, you can analyze the past valuation of a currency by reading its exchanged trades feed. We'll continue our exmaple and set up a recent trading price query:
+
+<CodeExample>
+
+```python
+response = server.trades().for_asset_pair(astroPeso, astroDollar).call()
+
+for trade in response['_embedded']['records']:
+    price = int(trade['price_r']['n']) / int(trade['price_r']['d'])
+    print(f"Trade ID: {trade['id']}, Price: {price}, Amount: {trade['base_amount']}")
+
+```
+
+```js
+(async function () {
+  const response = await server
+    .trades()
+    .forAssetPair(astroPeso, astroDollar)
+    .call();
+
+  response.records.forEach((trade) => {
+    const price = parseInt(trade.price_r.n) / parseInt(trade.price_r.d);
+    console.log(
+      `Trade ID: ${trade.id}, Price: ${price}, Amount: ${trade.base_amount}`,
+    );
+  });
+})();
+```
+
+```java
+public static void main(String[] args) throws Exception {
+  Page<TradeResponse> trades = server.trades()
+    .forAssetPair(astroPeso, astroDollar)
+    .execute();
+
+  for (TradeResponse trade : trades.getRecords()) {
+    double price = (double) trade.getPrice().getN() / trade.getPrice().getD();
+    System.out.println("Trade ID: " + trade.getId() + ", Price: " + price + ", Amount: " + trade.getBaseAmount());
+  }
+}
+
+```
+
+```go
+func main() {
+  trades, err := server.Trades(horizonclient.TradeRequest{
+    BaseAsset:    astroPeso,
+    CounterAsset: astroDollar,
+  })
+  check(err)
+
+  for _, trade := range trades.Embedded.Records {
+    price := float64(trade.PriceR.N) / float64(trade.PriceR.D)
+    fmt.Printf("Trade ID: %s, Price: %f, Amount: %s\n", trade.ID, price, trade.BaseAmount)
+  }
+}
+```
+
+</CodeExample>
+
+## Commingling and Interoperability
+
+The SDEX facilitates seamless interoperability between different assets by combining orders in a unified order book. This design ensures that liquidity is concentrated, reducing spreads and improving execution for all participants. The SDEX has processed 4.5 billion trades across a dynamic range of assets, demonstrating its robustness and efficiency in facilitating decentralized trading.
+
+## Access
+
+### Order books
+
+An order book is a record of outstanding orders on a network, and each record sits between two assets (wheat and sheep, for example). The order book for this asset pair records every account wanting to sell wheat for sheep and every account wanting to sell sheep for wheat. In traditional finance, buying is expressed as a “bid” order, and selling is expressed as an “ask” order (ask orders are also called offers).
+
+A couple of notes on order books on Stellar:
+
+- The term “offers” usually refers specifically to ask orders. However, the Protocol all orders are stored as selling&mdash;i.e., the system automatically converts bids to asks. Because of this, the terms “offer” and “order” are used interchangeably in the Stellar ecosystem.[^buys]
+- Order books contain all orders that are acceptable to parties on either side to make a trade.
+- Some assets will have a small or nonexistent order book between them. In these cases, Stellar facilitates path payments, which we’ll discuss later.
+
+[^buys]: When you create a buy offer using the [`createBuyOffer`](../../../data/apis/horizon/api-reference/resources/operations/object/buy-offer.mdx) operation, it is internally converted and stored as a sell offer.
+
+To view an order book chart, see the [Order Book Wikipedia Page](https://en.wikipedia.org/wiki/Order_book). In addition, there are also plenty of video tutorials and articles out there that can help you understand how order books work in greater detail.
+
+### Viewing Activity
+
+#### Liquidity Pools
+
+You can access the transactions, operations, and effects related to a liquidity pool if you want to track its activity. Let’s see how we can track the latest deposits in a pool (suppose `poolId` is defined as before):
+
+<CodeExample>
+
+```python
+def watch_liquidity_pool_activity():
+  for op in (
+    server.operations()
+    .for_liquidity_pool(liquidity_pool_id=pool_id)
+    .cursor("now")
+    .stream()
+  ):
+    if op["type"] == "liquidity_pool_deposit":
+      print("Reserves deposited:")
+      for r in op["reserves_deposited"]:
+        print(f"  {r['amount']} of {r['asset']}")
+      print(f"  for pool shares: {op['shares_received']}")
+    # ...
+```
+
+```js
+server
+  .operations()
+  .forLiquidityPool(poolId)
+  .call()
+  .then((ops) => {
+    ops.records
+      .filter((op) => op.type == "liquidity_pool_deposit")
+      .forEach((op) => {
+        console.log("Reserves deposited:");
+        op.reserves_deposited.forEach((r) =>
+          console.log(`    ${r.amount} of ${r.asset}`),
+        );
+        console.log("  for pool shares: ", op.shares_received);
+      });
+  });
+```
+
+```java
+
+```
+
+```go
+
+```
+
+</CodeExample>
+
+### Order Execution
+
+An account can create orders to buy or sell assets using the Manage Buy Offer, Manage Sell Offer, or Passive Order operations. The account must hold the asset it wants to exchange, and it must trust the issuer of the asset it is trying to buy.
+
+Orders behave like limit orders in traditional markets. When an account initiates an order, it is checked against the existing orderbook for that asset pair. If the submitted order is a marketable order (for a marketable buy limit order, the limit price is at or above the ask price; for a marketable sell limit order, the limit price is at or below the bid price), it is filled at the existing order price for the available quantity at that price. If the order is not marketable (i.e., does not cross an existing order), the order is saved on the orderbook until it is either consumed by another order, consumed by a path payment, or canceled by the account that created the order.
+
+Each order constitutes a selling obligation for the selling asset and buying obligation for the buying asset. These obligations are stored in the account (for lumens) or trustline (for other assets) owned by the account creating the order. Any operation that would cause an account to be unable to satisfy its obligations (such as sending away too much balance) will fail. This guarantees that any order in the orderbook can be executed entirely.
+
+#### Purchase Assets (Manage Buy Offer)
+
+When creating a buy order via the Manage Buy Offer operation, the price is specified as 1 unit of the base currency (the asset being bought), in terms of the quote asset (the asset that is being sold). For example, if you’re buying 100 XLM in exchange for 20 USD, you would specify the price as `{20, 100}`, which would be the equivalent of 5 XLM for 1 USD (or \$.20 per XLM).
+
+#### Manage Sell Offer
+
+When creating a sell order via the Manage Sell Offer operation, the price is specified as 1 unit of base currency (the asset being sold), in terms of the quote asset (the asset that is being bought). For example, if you’re selling 100 XLM in exchange for 40 USD, you would specify the price as `{40, 100}`, which would be the equivalent of 2.5 XLM for 1 USD (or \$.40 per XLM).
+
+#### Passive Order
+
+Passive orders allow markets to have zero spread. If you want to exchange USD from anchor A for USD from anchor B at a 1:1 price, you can create two passive orders so the two orders don’t fill each other.
+
+A passive order is an order that does not execute against a marketable counter order with the same price. It will only fill if the prices are not equal. For example, if the best order to buy BTC for XLM has a price of 100 XLM/BTC, and you make a passive offer to sell BTC at 100 XLM/BTC, your passive offer does not take that existing offer. If you instead make a passive offer to sell BTC at 99 XLM/BTC it would cross the existing offer and fill at 100 XLM/BTC.
+
+An account can place a passive sell order via the Create Passive Sell Offer operation.
+
+### Price and Operations
+
+Each order is quoted with an associated price and is represented as a ratio of the two assets in the order, one being the “quote asset” and the other being the “base asset”. This is to ensure there is no loss of precision when representing the price of the order (as opposed to storing the fraction as a floating-point number).
+
+Prices are specified as a `{numerator, denominator}` pair with both components of the fraction represented as 32-bit signed integers. The numerator is considered the base asset (like bananas), and the denominator is considered the quote asset (like dollars). When expressing a price of "Asset $\mathcal{A}$ in terms of Asset $\mathcal{B}$," the amount of $\mathcal{B}$ is the denominator (and therefore the quote asset), and $\mathcal{A}$ is the numerator (and therefore the base asset). <!--
+
+TODO: break out to burn
+
+numerator and denominator are stored as signed 32-bit integers, but since one bit is for the sign, only 31 bits are available for the value
+
+-->
+
+The order price you set is independent of the fee you pay for submitting that order in a transaction. Fees are always paid in lumens, and you specify them as a separate parameter when submitting the order to the network. To learn more about transaction fees, see our [section on Fees](../../fundamentals/fees-resource-limits-metering.mdx).
+
+## Automated Market Makers {#amms}
+
+Market makers are businesses that traditionally help establish liquidity on exchanges.[^liq] They are historically a party willing to buy or sell an asset at any time. They maintain an “inventory” of said asset (to sell) alongside a stockpile of cash (to buy).
+
+A market maker hopes to get a buyer real soon when they purchase an asset, or a seller if they run out.[^risk] They profit off the difference between what they buy an asset at and what they can sell it for—called the “spread.” The more volatile an asset, the less competition there might be between buyers and sellers to narrow the spread.
+
+In other words, it becomes more expensive to trade an asset the less liquid it becomes, as you will need to “cross the spread” more often to fill sizable orders in reasonable time. AMMs democratize the process of market-making by encoding the maximum spread into a pool of capital, creating liquidity. When users want to trade, their order can execute against the AMM in place of explicit SDEX order book offers, should no bids or asks exist inside the spread.
+
+:::info
+
+Liquidity refers to how easily and cost-effectively one asset can be converted to another. Market-making businesses accept the inherent risk that an asset will move in one direction or another before a closing trade can cancel out any positions (or lack thereof), and they expect that the “fees” they can extract from the spread will exceed any trade losses over time. These small costs accrue in AMM pools, and gains become shared by users depositing their capital.
+
+:::
+
+### Authorization Setup
+
+### Operations
+
+There are two operations that facilitate participation in a liquidity pool: `LiquidityPoolDeposit` and `LiquidityPoolWithdraw`. Use `LiquidityPoolDeposit` to start providing liquidity to the market. Use `LiquidityPoolWithdraw` to stop providing liquidity to the market.
+
+However, users don’t need to participate in the pool to take advantage of what it’s offering: an easy way to exchange two assets. For that, just use `PathPaymentStrictReceive` or `PathPaymentStrictSend`. If your application is already using path payments, then you don’t need to change anything for users to take advantage of the prices available in liquidity pools. ✅
+
+### Deterministic Pricing
+
+Instead of relying on the buy and sell orders of the SDEX, AMMs keep assets liquid 24/7 using pooled capital and a mathematical equation. AMMs hold two different assets in a liquidity pool, and the quantities of those assets (or reserves) are inputs for that equation (Asset $\mathcal{A}$ \* Asset $\mathcal{B}$ = k). If an AMM holds more of the reserve assets, the asset prices move less in response to a trade.
+
+When you submit an..
+
+<CodeExample>
+
+```python
+def getSpotPrice():
+  resp = server.liquidity_pools().liquidity_pool(poolId).call()
+  amountA = resp["reserves"][0]["amount"]
+  amountB = resp["reserves"][1]["amount"]
+  spotPrice = Decimal(amountA) / Decimal(amountB)
+  print(f"Price: {amountA}/{amountB} = {spotPrice:.7f}") # Max network precision
+```
+
+```js
+const BigNumber = require("bignumber.js");
+
+async function getSpotPrice() {
+  const pool = await server.liquidityPools().liquidityPoolId(poolId).call();
+  const [a, b] = pool.reserves.map((r) => r.amount);
+  const spotPrice = new BigNumber(a).div(b);
+  console.log(`Price: ${a}/${b} = ${spotPrice.toFormat(7)}`);
+}
+```
+
+```java
+public static void getSpotPrice(String[] args) throws Exception {
+  LiquidityPoolResponse poolInfo = server.liquidityPools().liquidityPool(poolId).execute();
+  double reserveA = Double.parseDouble(poolInfo.getReserves().get(0).getAmount());
+  double reserveB = Double.parseDouble(poolInfo.getReserves().get(1).getAmount());
+  double spotPrice = reserveA / reserveB;
+  System.out.printf("Price: %.7f/%7f = %.7f%n", reserveA, reserveB, spotPrice);
+}
+```
+
+```go
+func getSpotPrice(server *horizonclient.Client, poolID string) {
+  poolRequest := horizonclient.LiquidityPoolRequest{LiquidityPoolID: poolID}
+  pool, err := server.LiquidityPoolDetail(poolRequest)
+  check(err)
+
+  reserveA, err := strconv.ParseFloat(pool.Reserves[0].Amount, 64)
+  check(err)
+  reserveB, err := strconv.ParseFloat(pool.Reserves[1].Amount, 64)
+  check(err)
+
+  spotPrice := reserveA / reserveB
+  fmt.Printf("Price: %.7f/%.7f = %.7f\n", reserveA, reserveB, spotPrice)
+}
+```
+
+</CodeExample>
+
+#### AMM Calculations
+
+AMMs are willing to make some trades and unwilling to make others. For example, if 1 EUR = 1.17 USD, then the AMM might be willing to sell 1 EUR for 1.18 USD and unwilling to sell 1 EUR for 1.16 USD. To determine what trades are acceptable, the AMM enforces a [trading functyion](https://en.wikipedia.org/wiki/Constant_function_market_maker). The Protocol supports arbitrary functions, althought it presently only adopts a constant-product market maker. This means that AMMs presently never allow the product of the reserves to decrease, although the Protocol is configured to use other bondign curves.
+
+For example, suppose the current reserves in the liquidity pool are 1000 EUR and 1170 USD which implies a product of 1,170,000. Selling 1 EUR for 1.18 USD would be acceptable because that would leave reserves of 999 EUR and 1171.18 USD, which implies a product of 1,170,008.82. But selling 1 EUR for 1.16 USD would not be acceptable because that would leave reserves of 999 EUR and 1171.16 USD, which implies a product of 1,169,988.84.
+
+AMMs decide exchange rates based on the ratio of reserves in the liquidity pool. If this ratio is different than the true exchange rate, arbitrageurs will come in and trade with the AMM at a favorable price. This arbitrage trade moves the ratio of the reserves back toward the true exchange rate.
+
+AMMs charge fees on every trade, which is a fixed percentage of the amount bought by the AMM. For example, if an automated market maker sells 100 EUR for 118 USD then the fee is charged on the USD. The fee is 0.30%. If you actually wanted to make this trade, you would need to pay about 118.355 USD for 100 EUR. The automated market maker factors the fees into the trading fdunction, so the product of the reserves grows after every trade.
+
+### AMM Participation
+
+A pool of deposits from accounts allows trades to execute against the predefined market making algorithm.
+
+Any eligible participant can deposit assets into an AMM and receive pool shares representing their AMM ownership in return. If there are 150 total pool shares and one user owns 30, they are entitled to withdraw 20% of the liquidity pool asset at any time.
+
+Pool shares are similar to other assets, but they cannot be transferred yet. You can only increase the number of pool shares you hold by depositing into a liquidity pool with the `LiquidityPoolDespositOp` and decrease the number of pool shares you hold by withdrawing from a liquidity pool with `LiquidityPoolWithdrawOp`. Accordingly, pool shares cannot be sent in payments, sold using offers, or within claimable balances.
+
+A pool share has two representations. The full representation is used with [`ChangeTrustOp`](../../fundamentals/transactions/list-of-operations.mdx#change-trust), and the hashed representation is used in all other cases. When constructing the asset representation of a pool share, the assets must be in lexicographical order. For example, $\mathcal{A}$–$\mathcal{B}$ is in the correct order but $\mathcal{B}$–$\mathcal{A}$ is not. This results in a canonical representation of a pool share.
+
+AMMs charge a fee on all trades and the participants in the liquidity pool receive a share of the fee proportional to their share of the assets in the liquidity pool. Participants collect these fees when they withdraw their assets from the pool. The [communitee agreed](https://groups.google.com/g/stellar-dev/c/Ofb2KXwzva0/m/kyYI8Es9AQAJ) on the current fixed rate of 0.30%, the fee used in UniswapV2. These charges are completely separate from the network fees.
+
+### Trustlines
+
+Users need to establish trustlines to three different assets to participate in a liquidity pool: both the reserve assets (unless one of them is XLM) and the pool share itself.
+
+An account needs a trustline for every pool share it wants to own. It is not possible to deposit into a liquidity pool without a trustline for the corresponding pool share. Pool share trustlines differ from trustlines for other assets in a few ways:
+
+1. A pool share trustline cannot be created unless the account already has trustlines that are authorized or authorized to maintain liabilities for the assets in the liquidity pool. See below for more information about how authorization impacts pool share trustlines.
+2. A pool share trustline requires 2 base reserves instead of 1. For example, an account (2 base reserves) with a trustline for asset $\mathcal{A}$ (1 base reserve), a trustline for asset $\mathcal{B}$ (1 base reserve), and a trustline for the $\mathcal{A}$–$\mathcal{B}$ pool share (2 base reserves) would have a reserve requirement of 6 base reserves.
+
+## Example Preamble
+
+Here we will cover basic AMM participation and querying.
+
+For all of the following examples, we’ll be working with three funded Testnet accounts. If you’d like to follow along, generate some keypairs and fund them via the friendbot.
+
+The following code sets up the accounts and defines some helper functions. These should be familiar if you’ve played around with other examples like clawbacks.[^revoking]
+
+[^revoking]: The protocol handles compliance edge cases if an account has trustlines revoked for one or more of the assets in an AMM. Once this happens, the account is forced to redeem all AMM pool shares. Since they by definition are not authorized to hold at least of asset, it gets returned to them as an unconditional claimable balance, avaliable once the issuer authorizes the account again.
+
+{/* TODO: Need to unify keypairs/kps diction */}
+
+<CodeExample>
+
+```python
+from decimal import Decimal
+from stellar_sdk import *
+
+server = Server("https://horizon-testnet.stellar.org")
+
+secrets = [
+  "SBGCD73TK2PTW2DQNWUYZSTCTHHVJPL4GZF3GVZMCDL6GYETYNAYOADN",
+  "SAAQFHI2FMSIC6OFPWZ3PDIIX3OF64RS3EB52VLYYZBX6GYB54TW3Q4U",
+  "SCJWYFTBDMDPAABHVJZE3DRMBRTEH4AIC5YUM54QGW57NUBM2XX6433P",
+]
+keypairs = [Keypair.from_secret(secret = secrets) for secrets in secretsList]
+
+# Returns the given asset pair in "protocol order"
+def orderAsset(a, b):
+  return [a, b] if LiquidityPoolAsset.is_valid_lexicographic_order(a, b) else [b, a]
+
+# kp0 issues the assets
+kp0 = keypairs[0]
+assetA, assetB = orderAsset(
+  Asset("A", kp0.public_key),
+  Asset("B", kp0.public_key)
+)
+
+def distributeAssets(issuerKp, recipientKp, assets):
+  builder = newTxBuilder(issuerKp.public_key)
+  for asset in assets:
+    builder.append_change_trust_op(
+      asset = asset,
+      source = recipientKp.public_key
+    ).append_payment_op(
+      destination = recipientKp.public_key,
+      asset = asset,
+      amount = "100000",
+      source = issuerKp.public_key
+    )
+
+  tx = builder.build()
+  tx.sign(issuerKp)
+  tx.sign(recipientKp)
+  return server.submit_transaction(tx)
+
+def preamble():
+  resp1 = distributeAssets(kp0, keypairs[1], [assetA, assetB])
+  resp2 = distributeAssets(kp0, keypairs[2], [assetA, assetB])
+  # ...
+```
+
+```js
+const sdk = require("stellar-sdk");
+
+let server = new sdk.Server("https://horizon-testnet.stellar.org");
+
+const kps = [
+  "SBGCD73TK2PTW2DQNWUYZSTCTHHVJPL4GZF3GVZMCDL6GYETYNAYOADN",
+  "SAAQFHI2FMSIC6OFPWZ3PDIIX3OF64RS3EB52VLYYZBX6GYB54TW3Q4U",
+  "SCJWYFTBDMDPAABHVJZE3DRMBRTEH4AIC5YUM54QGW57NUBM2XX6433P",
+].map((s) => sdk.Keypair.fromSecret(s));
+
+// Returns the given asset pair in "protocol order"
+function orderAssets(A, B) {
+  return sdk.Asset.compare(A, B) <= 0 ? [A, B] : [B, A];
+}
+
+// kp0 issues the assets
+const kp0 = kps[0];
+const [A, B] = orderAssets(
+  new sdk.Asset("A", kp0.publicKey()),
+  new sdk.Asset("B", kp0.publicKey()),
+);
+
+// Establishes trustlines and funds `recipientKps` for all `assets`
+function distributeAssets(issuerKp, recipientKps, ...assets) {
+  return server.loadAccount(issuerKp.publicKey()).then((issuer) => {
+    const ops = recipientKps
+      .map((recipientKp) =>
+        assets.map((asset) => [
+          sdk.Operation.changeTrust({
+            source: recipientKp.publicKey(),
+            asset: asset,
+          }),
+          sdk.Operation.payment({
+            source: issuerKp.publicKey(),
+            destination: recipientKp.publicKey(),
+            amount: "100000",
+            asset: asset,
+          }),
+        ]),
+      )
+      .flat(2);
+
+    let tx = newTxBuilder(issuer, issuerKp, ...ops);
+    tx.sign(...recipientKps);
+    return server.submitTransaction(tx);
+  });
+}
+
+function preamble() {
+  return distributeAssets(kp0, [kps[1], kps[2]], A, B);
+}
+```
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+private static final String[] secrets = {
+  "SBGCD73TK2PTW2DQNWUYZSTCTHHVJPL4GZF3GVZMCDL6GYETYNAYOADN",
+  "SAAQFHI2FMSIC6OFPWZ3PDIIX3OF64RS3EB52VLYYZBX6GYB54TW3Q4U",
+  "SCJWYFTBDMDPAABHVJZE3DRMBRTEH4AIC5YUM54QGW57NUBM2XX6433P"
+};
+
+private static final List<KeyPair> keypairs = new ArrayList<>();
+static {
+  for (String secret : secrets) {
+    keypairs.add(KeyPair.fromSecretSeed(secret));
+  }
+}
+
+// Establishes trustlines and funds `recipientKps` for all `assets`
+public static void distributeAssets(KeyPair issuer, KeyPair recipient, Asset[] assets) throws Exception {
+  Transaction.Builder builder = newTxBuilder(issuer);
+
+  for (Asset asset : assets) {
+    builder.addOperation(
+        new ChangeTrustOperation.Builder(asset)
+            .setSourceAccount(recipient.getAccountId())
+            .build()
+    );
+    builder.addOperation(
+        new PaymentOperation.Builder(
+          recipient.getAccountId(),
+          asset,
+          "100000")
+            .setSourceAccount(issuer.getAccountId())
+            .build()
+    );
+  }
+
+  Transaction transaction = builder.build();
+  transaction.sign(issuer);
+  transaction.sign(recipient);
+  server.submitTransaction(transaction);
+}
+
+// Function to order assets in "protocol order"
+public static Asset[] orderAssets(Asset assetA, Asset assetB) {
+  return LiquidityPoolAsset.isValidLexicographicOrder(assetA, assetB) ?
+      new Asset[]{assetA, assetB} :
+      new Asset[]{assetB, assetA};
+}
+
+public static void preamble() throws Exception {
+  KeyPair kp0 = keypairs.get(0);
+  Asset[] assets = orderAssets(
+      new AssetTypeCreditAlphaNum4("A", kp0.getAccountId()),
+      new AssetTypeCreditAlphaNum4("B", kp0.getAccountId())
+  );
+  distributeAssets(kp0, keypairs.get(1), assets);
+  distributeAssets(kp0, keypairs.get(2), assets);
+}
+```
+
+```go
+var secrets = []string{
+  "SBGCD73TK2PTW2DQNWUYZSTCTHHVJPL4GZF3GVZMCDL6GYETYNAYOADN",
+  "SAAQFHI2FMSIC6OFPWZ3PDIIX3OF64RS3EB52VLYYZBX6GYB54TW3Q4U",
+  "SCJWYFTBDMDPAABHVJZE3DRMBRTEH4AIC5YUM54QGW57NUBM2XX6433P",
+}
+
+func distributeAssets(issuerKp, recipientKp *keypair.Full, assets []txnbuild.Asset) error {
+  tx, err := newTxBuilder(issuerKp.Address())
+  check(err)
+
+  ops := []txnbuild.Operation{}
+  for _, asset := range assets {
+    ops = append(ops,
+      &txnbuild.ChangeTrust{
+        Line:  asset,
+        SourceAccount: recipientKp.Address(),
+      },
+      &txnbuild.Payment{
+        Destination: recipientKp.Address(),
+        Asset:       asset,
+        Amount:      "100000",
+        SourceAccount: issuerKp.Address(),
+      },
+    )
+  }
+
+  tx.Params.Operations = ops
+  tx, err := tx.BuildSignEncode(issuerKp, recipientKp)
+  check(err)
+
+  _, err = server.SubmitTransactionXDR(tx)
+  return err
+}
+
+// Function to order assets in "protocol order"
+func orderAssets(a, b txnbuild.Asset) (txnbuild.Asset, txnbuild.Asset) {
+  if a.LessThan(b) {
+    return a, b
+  }
+  return b, a
+}
+
+func preamble() {
+  kp0 := keypair.MustParseFull(secrets[0])
+  kp1 := keypair.MustParseFull(secrets[1])
+  kp2 := keypair.MustParseFull(secrets[2])
+
+  assetA, assetB := orderAssets(
+    txnbuild.CreditAsset{"A", kp0.Address()},
+    txnbuild.CreditAsset{"B", kp0.Address()},
+  )
+
+  err := distributeAssets(kp0, kp1, []txnbuild.Asset{assetA, assetB})
+  check(err)
+  err = distributeAssets(kp0, kp2, []txnbuild.Asset{assetA, assetB})
+  check(err)
+}
+```
+
+</CodeExample>
+
+Here, we use `distributeAssets()` to establish trustlines and set up initial balances of two custom assets (`A` and `B`, issued by `kp0`) for two accounts (`kp2` and `kp3`). For someone to participate in the pool, they must establish trustlines to each of the asset issuers and to the pool share asset (explained below).
+
+:::danger TODO
+
+Case when buying asset an asset, amount aquired > existing trustline amount. implicates https://developers.stellar.org/docs/data/apis/horizon/api-reference/list-liquidity-pools (reserves)
+
+:::
+
+Note the `orderAssets()` helper here. Operations related to liquidity pools refer to the asset pair arbitrarily as `A` and `B`; however, they must be “ordered” such that `A` < `B`. This ordering is defined by the protocol, but its details should not be relevant (if you’re curious, it’s essentially lexicographically ordered by asset type, code, then issuer). We can use the comparison methods built into the SDKs (like `Asset.compare`) to ensure we pass them in the right order and avoid errors.
+
+#### Participant Creation
+
+First, let's create an AMM for the asset pair defined in the preamble. This involves establishing a trustline to the pool itself:
+
+<CodeExample>
+
+```python
+poolAsset = LiquidityPoolAsset(
+  asset_a = assetA,
+  asset_b = assetB
+)
+
+def establishPoolTrustline(source, poolAsset):
+  tx = (
+    newTxBuilder(source.public_key)
+      .appendChangeTrustOp(asset = poolAsset)
+      .build()
+  )
+  tx.sign(source)
+  return server.submitTransaction(tx)
+```
+
+```js
+const poolAsset = new sdk.LiquidityPoolAsset(A, B, sdk.LiquidityPoolFeeV18);
+
+function establishPoolTrustline(account, keypair, poolAsset) {
+  return server.submitTransaction(
+    newTxBuilder(
+      account,
+      keypair,
+      sdk.Operation.changeTrust({
+        asset: poolAsset,
+      }),
+    ),
+  );
+}
+```
+
+```java
+import org.stellar.sdk.responses.SubmitTransactionResponse;
+
+public static SubmitTransactionResponse establishPoolTrustline(KeyPair source, LiquidityPoolAsset poolAsset) throws Exception {
+  Transaction tx = newTxBuilder(source)
+    .addOperation(
+      new ChangeTrustOperation.Builder(poolAsset).build()
+    )
+    .build();
+
+  tx.sign(source);
+  return server.submitTransaction(tx);
+}
+```
+
+```go
+func establishPoolTrustline(source *keypair.Full, poolAsset txnbuild.LiquidityPoolAsset) {
+  tx := newTxBuilder(source.Address())
+  tx.Operations = []txnbuild.Operation{
+    &txnbuild.ChangeTrust{
+      Line: poolAsset,
+    },
+  }
+  tx, err := txnbuild.NewTransaction(*tx)
+  check(err)
+  signedTx, err := tx.Sign(network.TestNetworkPassphrase, source)
+  check(err)
+  _, err = server.SubmitTransaction(signedTx)
+  check(err)
+}
+```
+
+</CodeExample>
+
+This lets the participants hold pool shares, which means now they can perform AMM deposits and withdrawals.
+
+#### Participant Deposits
+
+To work with a liquidity pool, you need to know its ID beforehand. It’s a deterministic value, and only a single liquidity pool can exist for a particular asset pair, so you can calculate it locally from the pool parameters.
+
+<CodeExample>
+
+```python
+poolId = poolAsset.liquidity_pool_id
+
+def addLiquidity(source, maxReserveA, maxReserveB):
+  exactPrice = maxReserveA / maxReserveB
+  minPrice = exactPrice - (exactPrice * Decimal("0.1"))
+  maxPrice = exactPrice + (exactPrice * Decimal("0.1"))
+
+  transaction = (
+    newTxBuilder(source.public_key)
+      .append_liquidity_pool_deposit_op(
+        liquidity_pool_id = poolId,
+        max_amount_a = f"{maxReserveA:.7f}",
+        max_amount_b = f"{maxReserveB:.7f}",
+        min_price = f"{minPrice:.7f}",
+        max_price = f"{maxPrice:.7f}",
+      )
+      .build()
+  )
+
+  transaction.sign(source)
+  return server.submit_transaction(transaction)
+```
+
+```js
+const poolId = sdk
+  .getLiquidityPoolId(
+    "constant_product",
+    poolAsset.getLiquidityPoolParameters(),
+  )
+  .toString("hex");
+
+function addLiquidity(source, signer, poolId, maxReserveA, maxReserveB) {
+  const exactPrice = maxReserveA / maxReserveB;
+  const minPrice = exactPrice - exactPrice * 0.1;
+  const maxPrice = exactPrice + exactPrice * 0.1;
+
+  return server.submitTransaction(
+    newTxBuilder(
+      source,
+      signer,
+      sdk.Operation.liquidityPoolDeposit({
+        liquidityPoolId: poolId,
+        maxAmountA: maxReserveA,
+        maxAmountB: maxReserveB,
+        minPrice: minPrice.toFixed(7),
+        maxPrice: maxPrice.toFixed(7),
+      }),
+    ),
+  );
+}
+```
+
+```java
+private static final String poolId = poolAsset.getLiquidityPoolId();
+
+public static SubmitTransactionResponse addLiquidity(
+  KeyPair source,
+  String poolId,
+  String maxReserveA,
+  String maxReserveB,
+) throws Exception {
+  double exactPrice = Double.parseDouble(maxReserveA) / Double.parseDouble(maxReserveB);
+  double minPrice = exactPrice - exactPrice * 0.1;
+  double maxPrice = exactPrice + exactPrice * 0.1;
+
+  Transaction transaction = newTxBuilder(source)
+    .addOperation(
+      new LiquidityPoolDepositOperation.Builder(
+        poolId,
+        maxReserveA,
+        maxReserveB,
+        String.format("%.7f", minPrice),
+        String.format("%.7f", maxPrice)
+      ).build()
+    )
+    .build();
+
+  transaction.sign(source);
+  return server.submitTransaction(transaction);
+}
+
+```
+
+```go
+var poolId, _ = poolShareAsset.LiquidityPoolID()
+
+func addLiquidity(source *keypair.Full, maxReserveA, maxReserveB float64) {
+  exactPrice := maxReserveA / maxReserveB
+  minPrice := exactPrice - exactPrice*0.1
+  maxPrice := exactPrice + exactPrice*0.1
+
+  tx := newTxBuilder(source.Address())
+  tx.Operations = []txnbuild.Operation{
+    &txnbuild.LiquidityPoolDeposit{
+      LiquidityPoolID: poolId,
+      MaxAmountA:      formatFloat(maxReserveA),
+      MaxAmountB:      formatFloat(maxReserveB),
+      MinPrice:        formatFloat(minPrice),
+      MaxPrice:        formatFloat(maxPrice),
+    },
+  }
+
+  tx, err := txnbuild.NewTransaction(*tx)
+  check(err)
+  signedTx, err := tx.Sign(network.TestNetworkPassphrase, source)
+  check(err)
+  _, err = server.SubmitTransaction(signedTx)
+  check(err)
+}
+
+```
+
+</CodeExample>
+
+When depositing assets into a liquidity pool, you need to define your acceptable price bounds. In the above function, we allow for a ±10% margin of error from the “spot price”. This margin is by no means a recommendation and is chosen just for demonstration.
+
+Notice that we also specify the maximum amount of each reserve we’re willing to deposit. This, alongside the minimum and maximum prices, helps define boundaries for the deposit, since there can always be a change in the exchange rate between submitting the operation and it getting accepted by the network.
+
+#### Calculating Price
+
+While the network automatically calulates the AMM price product, this does not show up in the order book itself per se. Rather, your order will execute strictly at the best avaliable limit offer or AMM rate. While limit orders specify volume, AMM prices actually vary in real time based on the pool size, which we can find:
+
+aslo let's see "The pool’s state (reserves, fees, shares, parameters) is stored directly on the Stellar ledger.
+
+from http://localhost:3000/docs/data/apis/horizon/api-reference/resources/liquiditypools
+
+```
+  case LIQUIDITY_POOL_CONSTANT_PRODUCT:
+        struct
+        {
+            LiquidityPoolConstantProductParameters params;
+
+            int64 reserveA;        // amount of A in the pool
+            int64 reserveB;        // amount of B in the pool
+            int64 totalPoolShares; // total number of pool shares issued
+            int64 poolSharesTrustLineCount; // number of trust lines for the
+                                            // associated pool shares
+        } constantProduct;
+    }
+    body;
+};
+```
+
+<CodeExample>
+
+```python
+# This proposal only introduces a constant product liquidity pool.
+# The invariant for such a liquidity pool is (X + x - Fx) (Y - y) >= XY
+#
+# X and Y are the initial reserves of the liquidity pool
+# F is the fee charged by the liquidity pool
+# x is the amount received by the liquidity pool
+# y is the amount disbursed by the liquidity pool
+
+import requests
+
+def fetch_amm_pool_data(asset_1, asset_2):
+    url = f"https://horizon.stellar.org/liquidity_pools?reserves={asset_1},{asset_2}"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception("Error fetching data from Horizon API")
+
+    data = response.json()
+
+    # Assuming we want the first AMM pool found
+    pool_data = data['_embedded']['records'][0]
+
+    # Extract reserves
+    reserve_xlm = float(pool_data['reserves'][0]['amount']) # XLM reserves
+    reserve_usd = float(pool_data['reserves'][1]['amount']) # USD reserves
+
+    return reserve_xlm, reserve_usd
+
+def amm_price_xlm_usd(reserve_xlm, reserve_usd, trade_usd, xlm_price_usd):
+    """
+    TODO remove this and make CamelCase
+    Calculate the price impact of a trade worth $100 of XLM using an AMM's constant product formula.
+
+    :param reserve_xlm: Reserve of XLM in the pool.
+    :param reserve_usd: Reserve of the other token (e.g., USD stablecoin) in the pool.
+    :param trade_usd: The amount of USD equivalent to be traded.
+    :param xlm_price_usd: Current price of XLM in USD (e.g., 0.12 for $0.12/XLM).
+
+    :return: The price for the $100 trade in XLM.
+    """
+    # Convert the trade amount in USD to XLM based on the current market price
+    dx = trade_usd / xlm_price_usd # Amount of XLM to trade
+
+    # Constant product invariant (x * y = k)
+    k = reserve_xlm * reserve_usd
+
+    # New XLM reserve after the trade
+    new_reserve_xlm = reserve_xlm + dx
+
+    # Calculate the new reserve of USD after the trade
+    new_reserve_usd = k / new_reserve_xlm
+
+    # Amount of USD received (dy)
+    dy = reserve_usd - new_reserve_usd
+
+    # Price of the trade in terms of USD received per XLM traded
+    price = dy / dx
+
+    return price
+
+# Example: Fetch reserves and calculate price impact for $100 worth of XLM
+# ALSO remoOVE@!@
+if __name__ == "__main__":
+    asset_1 = "XLM" # Asset 1 (XLM)
+    asset_2 = "USD" # Asset 2 (USD stablecoin)
+
+
+    reserve_xlm, reserve_usd = fetch_amm_pool_data(asset_1, asset_2)
+
+    # Define trade and market parameters
+    trade_usd = 100 # Amount of USD equivalent to trade
+    xlm_price_usd = 0.12 # Current price of XLM in USD
+
+    # Calculate price impact for $100 worth of XLM
+    price_impact = amm_price_xlm_usd(reserve_xlm, reserve_usd, trade_usd, xlm_price_usd)
+
+    print(f"Reserves: {reserve_xlm} XLM, {reserve_usd} USD")
+    print(f"Price for trading $100 worth of XLM is: {price_impact} USD per XLM")
+```
+
+```js
+
+```
+
+```java
+
+```
+
+```go
+
+```
+
+</CodeExample>
+
+#### Participant Withdrawals
+
+If you own shares of a particular pool, you can withdraw reserves from it. The operation structure mirrors the deposit closely:
+
+<CodeExample>
+
+```python
+def removeLiquidity(source, poolId, sharesAmount):
+  poolInfo = server.liquidity_pools().liquidity_pool(poolId).call()
+  totalShares = Decimal(poolInfo["total_shares"])
+  minReserveA = (
+      sharesAmount
+      / totalShares
+      * Decimal(poolInfo["reserves"][0]["amount"])
+      * Decimal("0.95") # 95% safety factor
+  )
+  minReserveB = (
+      sharesAmount
+      / totalShares
+      * Decimal(poolInfo["reserves"][1]["amount"])
+      * Decimal("0.95")
+  )
+  tx = (
+      newTxBuilder(source.public_key)
+      .appendLiquidityPoolWithdrawOp(
+          liquidityPoolId=poolId,
+          amount=f"{sharesAmount:.7f}",
+          minAmountA=f"{minReserveA:.7f}",
+          minAmountB=f"{minReserveB:.7f}",
+      )
+      .build()
+  )
+  tx.sign(source)
+  return server.submit_transaction(tx)
+```
+
+```js
+function removeLiquidity(source, signer, poolId, sharesAmount) {
+  return server
+    .liquidityPools()
+    .liquidityPoolId(poolId)
+    .call()
+    .then((poolInfo) => {
+      let totalShares = poolInfo.total_shares;
+      let minReserveA =
+        (sharesAmount / totalShares) * poolInfo.reserves[0].amount * 0.95; // 95% safety factor
+      let minReserveB =
+        (sharesAmount / totalShares) * poolInfo.reserves[1].amount * 0.95;
+
+      return server.submitTransaction(
+        newTxBuilder(
+          source,
+          signer,
+          sdk.Operation.liquidityPoolWithdraw({
+            liquidityPoolId: poolId,
+            amount: sharesAmount,
+            minAmountA: minReserveA.toFixed(7),
+            minAmountB: minReserveB.toFixed(7),
+          }),
+        ),
+      );
+    });
+}
+```
+
+```java
+public Map<String, Object> removeLiquidity(KeyPair source, String poolId, String sharesAmount) throws Exception {
+  Map<String, Object> poolInfo = server.liquidityPools()
+    .liquidityPool(poolId)
+    .call();
+
+  double totalShares = Double.parseDouble(poolInfo.get("total_shares").toString());
+  double reserveA = Double.parseDouble(((Map<String, String>) ((List<Object>) poolInfo.get("reserves")).get(0)).get("amount"));
+  double reserveB = Double.parseDouble(((Map<String, String>) ((List<Object>) poolInfo.get("reserves")).get(1)).get("amount"));
+
+  double minReserveA = (Double.parseDouble(sharesAmount) / totalShares) * reserveA * 0.95; // 95% safety factor
+  double minReserveB = (Double.parseDouble(sharesAmount) / totalShares) * reserveB * 0.95;
+
+  Transaction transaction = newTxBuilder(source)
+    .addOperation(
+      new LiquidityPoolWithdrawOperation.Builder(
+        poolId,
+        sharesAmount,
+        String.format("%.7f", minReserveA),
+        String.format("%.7f", minReserveB)
+      ).build()
+    )
+    .build();
+
+  transaction.sign(source);
+  return server.submitTransaction(transaction);
+}
+```
+
+```go
+func removeLiquidity(source *keypair.Full, poolID string, sharesAmount float64) {
+  poolRequest := horizonclient.LiquidityPoolRequest{LiquidityPoolID: poolID}
+  poolInfo, err := client.LiquidityPoolDetail(poolRequest)
+  check(err)
+
+  totalShares, err := strconv.ParseFloat(poolInfo.TotalShares, 64)
+  check(err)
+  reserveA, err := strconv.ParseFloat(poolInfo.Reserves[0].Amount, 64)
+  check(err)
+  reserveB, err := strconv.ParseFloat(poolInfo.Reserves[1].Amount, 64)
+  check(err)
+
+  minReserveA := (sharesAmount / totalShares) * reserveA * 0.95 // 95% safety factor
+  minReserveB := (sharesAmount / totalShares) * reserveB * 0.95
+
+  tx := newTxBuilder(source.Address())
+  tx.Operations = []txnbuild.Operation{
+    &txnbuild.LiquidityPoolWithdraw{
+      LiquidityPoolID: poolID,
+      Amount:          formatFloat(sharesAmount),
+      MinAmountA:      formatFloat(minReserveA),
+      MinAmountB:      formatFloat(minReserveB),
+    },
+  }
+
+  tx, err := tx.Build()
+  check(err)
+  signedTx, err := tx.Sign(txnbuild.NetworkTest, source)
+  check(err)
+  resp, err := client.SubmitTransaction(signedTx)
+  check(err)
+}
+```
+
+</CodeExample>
+
+Notice here that we specify the minimum amount. Much like with a strict-receive path payment, we’re specifying that we’re not willing to receive less than this amount of each asset from the pool. This effectively defines a minimum withdrawal price.
+
+#### Putting it all together
+
+Finally, we can combine these pieces together to simulate some participation in a liquidity pool. We’ll have everyone deposit increasing amounts into the pool, then one participant withdraws their shares. Between each step, we’ll retrieve the spot price.
+
+{/* TODO: Move get spo `getSpotPrice` to the above calcualtion example */}
+
+<CodeExample>
+
+```python
+# Step 1: kp1 adds liquidity
+establishPoolTrustline(kps[1], poolAsset)
+addLiquidity(
+  kps[1],
+  poolId,
+  Decimal(1000),
+  Decimal(3000)
+) # Divides into 1:3 ratio
+getSpotPrice()
+
+# Step 2: kp2 adds liquidity
+establishPoolTrustline(kps[2], poolAsset)
+addLiquidity(
+  kps[2],
+  poolId,
+  Decimal(2000),
+  Decimal(6000)
+) # Larger deposit this time
+getSpotPrice()
+
+# Step 3: kp1 removes all liquidity
+accountDetails = server.accounts().account_id(kps[1].public_key).call()
+for bals in accountDetails["balances"]:
+  if (
+    bals["asset_type"] == "liquidity_pool_shares" and
+    bals["liquidity_pool_id"] == poolId
+  ):
+    balance = Decimal(bals["balance"])
+    break
+if not balance:
+  raise Exception("No liquidity pool shares found for kp1")
+removeLiquidity(kps[1], poolId, balance)
+getSpotPrice()
+```
+
+```js
+async function main() {
+  const accounts = await Promise.all(
+    kps.map((kp) => server.loadAccount(kp.publicKey())),
+  );
+
+  for (let i = 1; i < kps.length; i++) {
+    const acc = accounts[i];
+    const kp = kps[i];
+    baseAmount = i + 1; // Arbitrary deposit increasing amounts
+    const depositA = (baseAmount * 1000).toString();
+    const depositB = (baseAmount * 3000).toString(); // Scalars maintain a 1:3 ratio
+
+    await establishPoolTrustline(acc, kp, poolAsset);
+    await addLiquidity(acc, kp, poolId, depositA, depositB);
+    await getSpotPrice();
+  }
+
+  // kp1 removes all liquidity
+  const { balances } = await server
+    .accounts()
+    .accountId(kps[1].publicKey())
+    .call();
+
+  const balance = balances.find(
+    (bal) =>
+      bal.asset_type === "liquidity_pool_shares" &&
+      bal.liquidity_pool_id === poolId,
+  )?.balance;
+  if (!balance) throw new Error("No liquidity pool shares found for kp1.");
+
+  await removeLiquidity(accounts[1], kps[1], poolId, balance);
+  await getSpotPrice();
+}
+
+preamble().then(main);
+```
+
+```java
+public static void main(String[] args) throws Exception {
+  List<AccountResponse> accounts = new ArrayList<>();
+  for (KeyPair kp : kps) {
+      accounts.add(server.accounts().account(kp.getAccountId()));
+  }
+
+  for (int i = 1; i < kps.size(); i++) {
+    establishPoolTrustline(kps.get(i), poolAsset);
+    double depositA = (i + 1) * 1000; // Incremental deposit scalar
+    double depositB = (i + 1) * 3000; // And maintain 1:3 ratio
+    addLiquidity(kps.get(i), poolId, depositA, depositB);
+    getSpotPrice();
+  }
+
+  // kp1 removes all liquidity
+  KeyPair kp1 = kps.get(1);
+  double balance = kp1.getBalances().stream()
+    .filter(
+      balance ->
+        "liquidity_pool_shares".equals(balance.getAssetType()) &&
+        poolId.equals(balance.getLiquidityPoolId())
+    )
+    .mapToDouble(balance -> Double.parseDouble(balance.getBalance()))
+    .findFirst();
+  if (!balance.isPresent()) {
+    throw new Exception("No liquidity pool shares found for kp1");
+  }
+  removeLiquidity(kp1, poolId, balance);
+  getSpotPrice();
+}
+```
+
+```go
+func main() {
+  kps := make([]*keypair.Full, len(secrets))
+  for i, secret := range secrets {
+    kps[i] = keypair.MustParseFull(secret)
+  }
+
+  // Simulate deposits from participants
+  for i := 1; i < len(kps); i++ {
+    kp := kps[i]
+    // Arbitrary deposit increasing amounts
+    depositA := float64(i+1) * 1000
+    depositB := float64(i+1) * 3000 // Scalar maintains 1:3 ratio
+
+    establishPoolTrustline(kp, poolID)
+    addLiquidity(kp, poolID, depositA, depositB)
+    getSpotPrice(poolID)
+  }
+
+  // kp1 removes all liquidity
+  kp1 := kps[1]
+  account, err := server.AccountDetail(
+    horizonclient.AccountRequest{AccountID: kp1.Address()}
+  )
+  check(err)
+
+  var balance float64
+  for _, bal := range account.Balances {
+    if bal.AssetType == "liquidity_pool_shares" &&
+    bal.LiquidityPoolID == poolID {
+      balance, err = strconv.ParseFloat(bal.Balance, 64)
+      check(err)
+      break
+    }
+  }
+  if balance == 0 {
+    log.Fatalf("No liquidity pool shares found for kp1.")
+  }
+  removeLiquidity(kp1, poolID, balance)
+  getSpotPrice(poolID)
+}
+```
+
+</CodeExample>
+
+TODO list:
+
+- passive sell offers (with examples)
+
+- change op.s to one-liners, and incorpoate the max logic from https://github.com/stellar/new-docs/pull/590/files#diff-b038b9d2cd4d60b0cf8f43750d27e973fcd16fb7062f0b57ecda32e41ceb185eR731-R735
+  - https://developers.stellar.org/docs/learn/fundamentals/transactions/list-of-operations#liquidity-pool-deposit
+  - https://developers.stellar.org/docs/learn/fundamentals/transactions/list-of-operations#liquidity-pool-withdraw
