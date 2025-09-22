@@ -1,0 +1,145 @@
+---
+title: Extender una entrada persistente y un contrato utilizando el SDK de JavaScript
+description: Cómo extender una entrada persistente y un contrato utilizando el SDK de JavaScript
+---
+
+El almacenamiento persistente proporciona un mecanismo duradero para retener datos en la red durante un largo período. Los datos del usuario, las instancias de contrato y su código correspondiente (hash wasm) se almacenan como almacenamiento de instancia con durabilidad persistente para asegurar que permanezcan disponibles y sean gestionados de manera eficiente por el sistema de archivo de la red.
+
+Cada entrada realizada en el almacenamiento persistente se almacena como un almacén clave-valor. Una entrada consiste en:
+
+- Una clave (identificador para los datos)
+- Un valor (los datos en sí)
+- Un Tiempo de Vida (TTL) que determina cuánto tiempo permanecen los datos en la red
+
+Cuando el TTL caduca, los datos se archivan en la red y ya no son accesibles a menos que se desarchiven. Para evitar que los datos y contratos sean inaccesibles, el TTL puede extenderse antes de que caduque.
+
+## Proceso de Extensión
+
+1. Crea la clave del ledger para la entrada que va a extenderse.
+2. Construye una transacción que incluya la operación `extendFootprintTtl` con tu TTL objetivo y adjunta los datos de la transacción de Soroban.
+3. Prepara la transacción, fírmala con tu clave secreta y envíala a la red.
+
+### Extender una entrada persistente
+
+```javascript
+const StellarSdk = require("@stellar/stellar-sdk");
+const { Server } = require("@stellar/stellar-sdk/rpc");
+
+async function extendPersistentEntryTTL(contractId, storageKey, sourceKeypair) {
+  const server = new Server("https://soroban-testnet.stellar.org");
+  const account = await server.getAccount(sourceKeypair.publicKey());
+  const fee = "100"; // BASE_FEE of 100 stroops
+
+  // Create an identifier for the persistent entry
+  const persistentEntry = new StellarSdk.xdr.LedgerKey.contractData({
+    contract: StellarSdk.Address.fromString(contractId).toScAddress(),
+    key: StellarSdk.xdr.ScVal.scvSymbol(storageKey),
+    durability: StellarSdk.xdr.ContractDataDurability.persistent(),
+  });
+
+  // Build the transaction
+  let transaction = new StellarSdk.TransactionBuilder(account, {
+    fee,
+    networkPassphrase: StellarSdk.Networks.TESTNET,
+  })
+    .addOperation(
+      StellarSdk.Operation.extendFootprintTtl({
+        extendTo: 100_000, // The number of ledgers past the LCL (last closed ledger) by which to extend. Roughly 5 days
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  // Attach Soroban transaction data
+  const sorobanData = new StellarSdk.SorobanDataBuilder()
+    .setReadOnly(persistentEntry)
+    .build();
+  transaction.setSorobanData(sorobanData);
+
+  // Prepare the transaction for signing.
+  transaction = await server.prepareTransaction(transaction);
+
+  transaction.sign(sourceKeypair);
+  return await server.sendTransaction(transaction);
+}
+```
+
+### Extender el código del contrato
+
+```javascript
+const StellarSdk = require("@stellar/stellar-sdk");
+const { Server } = require("@stellar/stellar-sdk/rpc");
+
+async function extendContractCodeTTL(contractId, sourceKeypair) {
+  const server = new Server("https://soroban-testnet.stellar.org");
+  const account = await server.getAccount(sourceKeypair.publicKey());
+  const fee = "100";
+
+  // Get the footprint
+  const contract = new StellarSdk.Contract(contractId);
+  const footprint = contract.getFootprint();
+
+  // Build the transaction
+  let transaction = new StellarSdk.TransactionBuilder(account, {
+    fee,
+    networkPassphrase: StellarSdk.Networks.TESTNET,
+  })
+    .addOperation(
+      StellarSdk.Operation.extendFootprintTtl({
+        extendTo: 100_000, //The number of ledgers past the LCL by which to extend
+        footprint: footprint,
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  // Attach Soroban transaction data
+  const sorobanData = new StellarSdk.SorobanDataBuilder()
+    .setFootprint(footprint)
+    .build();
+  transaction.setSorobanData(sorobanData);
+
+  // Prepare the transaction
+  transaction = await server.prepareTransaction(transaction);
+
+  transaction.sign(sourceKeypair);
+  return await server.sendTransaction(transaction);
+}
+```
+
+### Extender tanto el contrato como una entrada persistente
+
+En Stellar, cada operación de Soroban debe ser la única operación de Soroban en una sola transacción. Además, las entradas del ledger persistente tienen sus propios valores de TTL que se evalúan de forma independiente. Debido a que la operación de extensión de TTL solo acepta una huella de ledger por transacción, no puedes combinar extensiones para diferentes entradas del ledger en una sola transacción. En cambio, debes crear dos transacciones separadas para garantizar que cada clave de ledger se extienda correctamente.
+
+```javascript
+async function extendContractAndPersistentEntry(
+  contractId,
+  storageKey,
+  sourceKeypair,
+) {
+  // Extend the persistent entry
+  const persistentResult = await extendPersistentEntryTTL(
+    contractId,
+    storageKey,
+    sourceKeypair,
+  );
+
+  // Extend the contract code
+  const contractResult = await extendContractCodeTTL(contractId, sourceKeypair);
+  return { persistentResult, contractResult };
+}
+```
+
+Ejemplo de uso:
+
+```javascript
+const contractId = "CBEE2DHGMYRKJKSJO5E55LBKFMPXE57ZWKTXTCRMC5ANIRJ7IW2Y2WVE";
+const storageKey = "BALANCE";
+const sourceKeypair = StellarSdk.Keypair.fromSecret(
+  "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+);
+
+extendPersistentEntryTTL(contractId, storageKey, sourceKeypair)
+  .then((result) => console.log("Extension successful:", result))
+  .catch((error) => console.error("Extension failed:", error));
+```

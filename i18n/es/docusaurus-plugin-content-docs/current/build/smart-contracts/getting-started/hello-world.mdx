@@ -1,0 +1,347 @@
+---
+sidebar_position: 10
+sidebar_label: 1. Hola Mundo
+title: Escribir, Probar y Desplegar un Contrato Inteligente en Rust
+description: Crear tu primer contrato inteligente en Stellar con esta guía Hola Mundo. Aprende cómo escribir, desplegar y probar tu contrato utilizando Rust y el CLI de Stellar.
+---
+
+# Hola Mundo
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+Una vez que hayas [configurado](./setup.mdx) tu entorno de desarrollo, estás listo para crear tu primer contrato inteligente.
+
+## Crear un nuevo proyecto
+
+Crear un nuevo proyecto usando el comando `init` para crear un proyecto `soroban-hello-world`.
+
+```sh
+stellar contract init soroban-hello-world
+```
+
+El comando `init` creará un proyecto de espacio de trabajo en Rust, usando la estructura recomendada para incluir contratos Soroban. Veamos la estructura del proyecto:
+
+```
+.
+├── Cargo.lock
+├── Cargo.toml
+├── README.md
+└── contracts
+    ├── hello_world
+    │   ├── Cargo.toml
+    │   ├── Makefile
+    │   ├── src
+    │   │   ├── lib.rs
+    │   │   └── test.rs
+```
+
+### Cargo.toml
+
+El archivo `Cargo.toml` en la raíz del proyecto está configurado como Espacio de Trabajo en Rust, lo que nos permite incluir múltiples contratos inteligentes en un solo proyecto.
+
+#### Espacio de Trabajo en Rust
+
+El archivo `Cargo.toml` establece los miembros del espacio de trabajo como todo el contenido del directorio `contracts` y establece la versión de la dependencia `soroban-sdk` del espacio de trabajo, incluyendo la característica `testutils`, que permitirá generar utilidades de prueba para llamar al contrato en las pruebas.
+
+```toml title="Cargo.toml"
+[workspace]
+resolver = "2"
+members = [
+  "contracts/*",
+]
+
+[workspace.dependencies]
+soroban-sdk = "22"
+```
+
+:::info
+
+Los `testutils` se habilitan automáticamente dentro de [pruebas unitarias de Rust] dentro del mismo crate que tu contrato. Si escribes pruebas desde otro crate, necesitarás requerir la característica `testutils` para esas pruebas y habilitar la característica `testutils` al ejecutar tus pruebas con `cargo test --features testutils` para poder usar esas utilidades de prueba.
+
+:::
+
+#### Perfil `release`
+
+Configurar el perfil `release` para optimizar la construcción del contrato es fundamental. Los contratos Soroban tienen un tamaño máximo de 64KB. Los programas en Rust, incluso los pequeños, sin estas configuraciones, casi siempre superan este tamaño.
+
+El archivo `Cargo.toml` tiene el siguiente perfil de lanzamiento configurado.
+
+```toml
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+```
+
+#### Perfil `release-with-logs`
+
+Configurar un perfil `release-with-logs` puede ser útil si necesitas construir un archivo `.wasm` que tenga habilitados los registros para imprimir registros de depuración al usar el [`stellar-cli`]. Nota que esto no es necesario para acceder a registros de depuración en pruebas o para usar un depurador paso a paso.
+
+```toml
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true
+```
+
+Consulta el [ejemplo de registro] para más información sobre cómo registrar.
+
+[ejemplo de registro]: ../example-contracts/logging.mdx
+
+### Directorio de contratos
+
+El directorio `contracts` es donde vivirán los contratos Soroban, cada uno en su propio directorio. Ya hay un contrato `hello_world` allí para ayudarte a comenzar.
+
+#### Archivo Cargo.toml específico del contrato
+
+Cada contrato debería tener su propio archivo `Cargo.toml`, que depende del `Cargo.toml` de nivel superior del que acabamos de hablar.
+
+Aquí es donde podemos especificar información del paquete específica del contrato.
+
+```toml title="contracts/hello_world/Cargo.toml"
+[package]
+name = "hello-world"
+version = "0.0.0"
+edition = "2021"
+publish = false
+```
+
+El `crate-type` está configurado como `cdylib`, que es necesario para construir contratos.
+
+```toml
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+```
+
+También hemos incluido la dependencia soroban-sdk, configurada para usar la versión del Cargo.toml del espacio de trabajo.
+
+```toml
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+```
+
+#### Código fuente del contrato
+
+Crear un contrato Soroban implica escribir código Rust en el archivo `lib.rs` del proyecto.
+
+Todos los contratos deben comenzar con `#![no_std]` para asegurar que no se incluya la biblioteca estándar de Rust en la construcción. La biblioteca estándar de Rust es grande y no se adapta bien a ser desplegada en programas pequeños como los que se despliegan en blockchains.
+
+```rust
+#![no_std]
+```
+
+El contrato importa los tipos y macros que necesita del crate `soroban-sdk`.
+
+```rust
+use soroban_sdk::{contract, contractimpl, vec, Env, String, Vec};
+```
+
+Muchos de los tipos disponibles en programas típicos de Rust, como `std::vec::Vec`, no están disponibles, ya que no hay asignador y no hay memoria en el heap en los contratos Soroban. El `soroban-sdk` proporciona una variedad de tipos como `Vec`, `Map`, `Bytes`, `BytesN`, `Symbol`, que todos utilizan la memoria y las capacidades nativas del entorno Soroban. Los valores primitivos como `u128`, `i128`, `u64`, `i64`, `u32`, `i32`, y `bool` también se pueden usar. No se admiten flotantes y matemáticas de punto flotante.
+
+Las entradas del contrato no deben ser referencias.
+
+El atributo `#[contract]` designa la estructura `Contract` como el tipo al que se asocian las funciones del contrato. Esto implica que la estructura tendrá funciones de contrato implementadas para ella.
+
+```rust
+#[contract]
+pub struct Contract;
+```
+
+Las funciones del contrato se definen dentro de un bloque `impl` para la estructura, que está anotado con `#[contractimpl]`. Es importante notar que las funciones del contrato deben tener nombres con una longitud máxima de 32 caracteres. Además, si una función se pretende invocar desde fuera del contrato, debe estar marcada con el modificador de visibilidad `pub`. Es común que el primer argumento de una función de contrato sea de tipo `Env`, permitiendo acceder a una copia del entorno Soroban, que es típicamente necesario para varias operaciones dentro del contrato.
+
+```rust
+#[contractimpl]
+impl Contract {
+    pub fn hello(env: Env, to: String) -> Vec<String> {
+        vec![&env, String::from_str(&env, "Hello"), to]
+    }
+}
+```
+
+Uniendo esas piezas, un contrato simple se ve así.
+
+```rust title="contracts/hello_world/src/lib.rs"
+#![no_std]
+use soroban_sdk::{contract, contractimpl, vec, Env, String, Vec};
+
+#[contract]
+pub struct Contract;
+
+#[contractimpl]
+impl Contract {
+    pub fn hello(env: Env, to: String) -> Vec<String> {
+        vec![&env, String::from_str(&env, "Hello"), to]
+    }
+}
+
+mod test;
+```
+
+Nota la línea `mod test` al final, esto le dirá a Rust que compile y ejecute el código de prueba, que veremos a continuación.
+
+#### Pruebas unitarias del contrato
+
+Escribir pruebas para contratos Soroban implica escribir código Rust usando las instalaciones de prueba y la cadena de herramientas que usarías para probar cualquier código Rust.
+
+Dado nuestro `Contract`, una prueba simple se verá así.
+
+<Tabs>
+<TabItem value="lib.rs" label="contracts/hello_world/src/lib.rs">
+
+```rust
+#![no_std]
+use soroban_sdk::{contract, contractimpl, vec, Env, String, Vec};
+
+#[contract]
+pub struct Contract;
+
+#[contractimpl]
+impl Contract {
+    pub fn hello(env: Env, to: String) -> Vec<String> {
+        vec![&env, String::from_str(&env, "Hello"), to]
+    }
+}
+
+mod test;
+```
+
+</TabItem>
+<TabItem value="test.rs" label="contracts/hello_world/src/test.rs" default>
+
+```rust
+#![cfg(test)]
+
+use super::*;
+use soroban_sdk::{vec, Env, String};
+
+#[test]
+fn test() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let words = client.hello(&String::from_str(&env, "Dev"));
+    assert_eq!(
+        words,
+        vec![
+            &env,
+            String::from_str(&env, "Hello"),
+            String::from_str(&env, "Dev"),
+        ]
+    );
+}
+```
+
+</TabItem>
+</Tabs>
+
+En cualquier prueba, lo primero que siempre se requiere es un `Env`, que es el entorno Soroban en el que se ejecutará el contrato.
+
+```rust
+let env = Env::default();
+```
+
+El contrato se registra con el entorno usando el tipo de contrato. Los contratos pueden especificar un ID de contrato fijo como el primer argumento, o proporcionar `None` y se generará uno.
+
+```rust
+let contract_id = env.register(Contract, ());
+```
+
+Todas las funciones públicas dentro de un bloque `impl` que está anotado con el atributo `#[contractimpl]` tienen una función correspondiente generada en un tipo de cliente generado. El tipo de cliente se nombrará igual que el tipo de contrato con `Client` añadido. Por ejemplo, en nuestro contrato, el tipo de contrato es `Contract`, y el cliente se llama `ContractClient`.
+
+```rust
+let client = ContractClient::new(&env, &contract_id);
+let words = client.hello(&String::from_str(&env, "Dev"));
+```
+
+Los valores devueltos por las funciones pueden ser afirmados:
+
+```rust
+    assert_eq!(
+        words,
+        vec![
+            &env,
+            String::from_str(&env, "Hello"),
+            String::from_str(&env, "Dev"),
+        ]
+    );
+```
+
+## Ejecutar las pruebas
+
+Ejecuta `cargo test` y observa cómo se ejecuta la prueba unitaria. Deberías ver la siguiente salida:
+
+```sh
+cargo test
+```
+
+```
+running 1 test
+test test::test ... ok
+```
+
+Intenta cambiar los valores en la prueba para ver cómo funciona.
+
+:::note
+
+La primera vez que ejecutes las pruebas, es posible que veas la salida en el terminal de cargo compilando todas las dependencias antes de ejecutar las pruebas.
+
+:::
+
+## Construir el contrato
+
+Para construir un contrato inteligente para desplegar o ejecutar, usa el comando `stellar contract build`.
+
+```sh
+stellar contract build
+```
+
+:::tip
+
+If you get an error like `can't find crate for 'core'`, it means you didn't install the wasm32 target during the [setup step](./setup.mdx#install-the-target). Puedes hacerlo ejecutando `rustup target add wasm32v1-none` (usa `rustup target add wasm32v1-none` para versiones de Rust **anteriores a** `v1.85.0`).
+
+:::
+
+Este es un pequeño envoltorio alrededor de `cargo build` que establece el objetivo en `wasm32v1-none` y el perfil en `release`. Puedes pensarlo como un acceso directo para el siguiente comando:
+
+```sh
+cargo build --target wasm32v1-none --release
+```
+
+Un archivo `.wasm` se generará en el directorio `target`, en `target/wasm32v1-none/release/hello_world.wasm`. El archivo `.wasm` es el contrato construido.
+
+El archivo `.wasm` contiene la lógica del contrato, así como los [tipos de especificación / interfaz](../../../learn/fundamentals/contract-development/types/fully-typed-contracts.mdx) del contrato, que pueden importarse en otros contratos que deseen llamarlo. Este es el único artefacto necesario para desplegar el contrato, compartir la interfaz con otros, o realizar pruebas de integración contra el contrato.
+
+## Optimizing Builds
+
+Usa `stellar contract optimize` para minimizar aún más el tamaño del `.wasm`:
+
+```sh
+stellar contract optimize --wasm target/wasm32v1-none/release/hello_world.wasm
+```
+
+Esto optimizará y generará un nuevo archivo `hello_world.optimized.wasm` en la misma ubicación que el archivo de entrada `.wasm`.
+
+:::tip
+
+Construir contratos optimizados solo es necesario al desplegar en una red con tarifas o al analizar y perfilar un contrato para hacerlo lo más pequeño posible. Si recién estás comenzando a escribir un contrato, estos pasos no son necesarios. Consulta [Construir](#build-the-contract) para obtener detalles sobre cómo construir para desarrollo.
+
+:::
+
+## Resumen
+
+En esta sección, escribimos un contrato simple que se puede despliegar en una red Soroban.
+
+A continuación, aprenderemos a desplegar el contrato HelloWorld en la red Testnet de Stellar e interactuar con él a través de RPC usando el CLI.
+
+[Pruebas unitarias de Rust]: https://doc.rust-lang.org/rust-by-example/testing/unit_testing.html
+[`stellar-cli`]: setup.mdx#install-the-stellar-cli

@@ -1,0 +1,497 @@
+---
+title: Invocar una función de contrato en una transacción usando SDKs
+hide_table_of_contents: true
+description: Usa el Stellar SDK para crear, simular y ensamblar una transacción.
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+Este es un ejemplo simple que utiliza el SDK de Stellar para crear, simular y luego ensamblar una transacción Stellar que invoca una función `increment` del [contrato de ejemplo auth](../../smart-contracts/example-contracts/auth.mdx).
+
+<Tabs>
+<TabItem value="js" label="JavaScript">
+
+:::tip
+
+Por favor, dirígete a [la página de inicio del proyecto](https://github.com/stellar/js-stellar-sdk) del SDK de JavaScript para aprender cómo instalarlo.
+
+:::
+
+Primero, sube los bytes de [el contrato de ejemplo](../../smart-contracts/example-contracts/auth.mdx) a la blockchain usando [Stellar CLI](../../../tools/cli/stellar-cli.mdx). Esto se llama "instalar" porque, desde la perspectiva de la blockchain misma, este contrato ha sido instalado.
+
+```bash
+stellar contract build
+stellar contract upload --wasm target/wasm32v1-none/release/test_auth_contract.wasm --network testnet
+```
+
+Esto devolverá un hash; guárdalo, lo usarás pronto. Para este ejemplo, usaremos `bc7d436bab44815c03956b344dc814fac3ef60e9aca34c3a0dfe358fcef7527f`.
+
+Aún no se ha desplegado ningún contrato con este hash. En Soroban, puedes tener muchos contratos inteligentes que todos referencian el mismo hash de Wasm, definiendo su comportamiento. Lo haremos desde el propio código de JavaScript a continuación.
+
+```ts
+import { Keypair } from "@stellar/stellar-sdk"
+import { Client, basicNodeSigner } from "@stellar/stellar-sdk/contract"
+import { Server } from "@stellar/stellar-sdk/rpc"
+
+// As mentioned, we are using Testnet for this example
+const rpcUrl = "https://soroban-testnet.stellar.org"
+const networkPassphrase = "Test SDF Network ; September 2015"
+const wasmHash = "bc7d436bab44815c03956b344dc814fac3ef60e9aca34c3a0dfe358fcef7527f"
+
+/**
+ * Generate a random keypair and fund it
+ */
+async function generateFundedKeypair() {
+  const keypair = Keypair.random();
+  const server = new Server(rpcUrl);
+  await server.requestAirdrop(keypair.publicKey());
+  return keypair
+}
+
+(async () => {
+  // The source account will be used to sign and send the transaction.
+  const sourceKeypair = await generateFundedKeypair()
+
+  // If you are using a browser, you can pass in `signTransaction` from your
+  // Wallet extension such as Freighter. If you're using Node, you can use
+  // `signTransaction` from `basicNodeSigner`.
+  const { signTransaction } = basicNodeSigner(sourceKeypair, networkPassphrase)
+
+  // This constructs and simulates a deploy transaction. Once we sign and send
+  // this below, it will create a brand new smart contract instance that
+  // references the wasm we uploaded with the CLI.
+  const deployTx = await Client.deploy(
+    null, // if the contract has a `__constructor` function, its arguments go here
+    {
+      networkPassphrase,
+      rpcUrl,
+      wasmHash,
+      publicKey: sourceKeypair.publicKey(),
+      signTransaction,
+    }
+  )
+  // Like other `Client` methods, `deploy` returns an `AssembledTransaction`,
+  // which wraps logic for signing, sending, and awaiting completion of the
+  // transaction. Once that all completes, the `result` of this transaction
+  // will contain the final `Client` instance, which we can use to invoke
+  // methods on the new contract. Here we are using JS destructuring to get the
+  // `result` key from the object returned by `signAndSend`, and put it in a
+  // local variable called `client`.
+  const { result: client } = await deployTx.signAndSend()
+
+  ...
+```
+
+:::tip Cliente de un contrato existente
+
+Si no necesitas desplegar un contrato, y en su lugar ya conoces el ID de un contrato desplegado, puedes instanciar un Cliente para él directamente. Esto usa argumentos similares a los que se utilizan para `Client.deploy` arriba, con la adición de `contractId`:
+
+```diff
+-const deployTx = await Client.deploy(
+-  null,
+-  {
++const client = await Client.from({
++  contractId: "C123abc…",
+   networkPassphrase,
+   rpcUrl,
+   wasmHash,
+   publicKey: sourceKeypair.publicKey(),
+   signTransaction,
+ })
+```
+
+:::
+
+Ahora que hemos instanciado un `client`, podemos usarlo para llamar a métodos en el contrato. Retomando donde nos quedamos:
+
+```ts
+  ...
+
+  // This will construct and simulate an `increment` transaction. Since the
+  // `auth` contract requires that this transaction be signed, we will need to
+  // call `signAndSend` on it, like we did with `deployTx` above.
+  const incrementTx = await client.increment({
+    user: sourceKeypair.publicKey(), // who needs to sign
+    value: 1, // how much to increment by
+  })
+
+  // For calls that don't need to be signed, you can get the `result` of their
+  // simulation right away, on a call like `client.increment()` above.
+  const { result } = await incrementTx.signAndSend()
+
+  // Now you can do whatever you need to with the `result`, which in this case
+  // contains the new value of the incrementor/counter.
+  console.log("New incremented value:", result)
+})();
+```
+
+</TabItem>
+
+<TabItem value="py" label="Python">
+
+:::tip
+
+Por favor, dirígete a [la página de inicio del proyecto](https://github.com/StellarCN/py-stellar-base) del SDK de Python para aprender cómo instalarlo.
+
+Además, Python proporciona mucho código de ejemplo, que puedes encontrar [aquí](https://github.com/StellarCN/py-stellar-base/tree/main/examples).
+
+:::
+
+```py
+import time
+
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
+from stellar_sdk import xdr as stellar_xdr
+from stellar_sdk.exceptions import PrepareTransactionException
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+
+secret = "SAAPYAPTTRZMCUZFPG3G66V4ZMHTK4TWA6NS7U4F7Z3IMUD52EK4DDEV"
+rpc_server_url = "https://soroban-testnet.stellar.org:443"
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+
+# Here we will use a deployed instance of the `increment` example contract.
+contract_id = "CDOGJBJMRVVXW5K3UJ5BGVJ5RSQXQB4UFVQYVFOIARC2UYXSEPF4YAVR"
+# The source account will be used to sign and send the transaction.
+source_keypair = Keypair.from_secret(secret)
+# Configure SorobanClient to use the `stellar-rpc` instance of your choosing.
+soroban_server = SorobanServer(rpc_server_url)
+# Transactions require a valid sequence number (which varies from one account to another).
+# We fetch this sequence number from the RPC server.
+source = soroban_server.load_account(source_keypair.public_key)
+
+tx = (
+    # The transaction begins as pretty standard. The source account, minimum fee,
+    # and network passphrase are provided.
+    TransactionBuilder(source, network_passphrase, base_fee=100)
+    # This transaction will be valid for the next 30 seconds
+    .set_timeout(30)
+    # The invocation of the `increment` function of our contract is added to the transaction.
+    .append_invoke_contract_function_op(
+        contract_id=contract_id,
+        function_name="increment",
+        parameters=[scval.to_address(source_keypair.public_key), scval.to_uint32(5)],
+    ).build()
+)
+
+print(f"builtTransaction: {tx.to_xdr()}")
+
+try:
+    # We use the RPC server to "prepare" the transaction. This simulating the
+    # transaction, discovering the soroban data, and updating the
+    # transaction to include that soroban data. If you know the soroban data ahead of
+    # time, you could manually use `set_soroban_data` and skip this step.
+    tx = soroban_server.prepare_transaction(tx)
+except PrepareTransactionException as e:
+    print(f"Prepare Transaction Failed: {e.simulate_transaction_response}")
+    raise e
+
+# Sign the transaction with the source account's keypair.
+tx.sign(source_keypair)
+
+# Let's see the base64-encoded XDR of the transaction we just built.
+print(f"Signed prepared transaction XDR: {tx.to_xdr()}")
+
+# Submit the transaction to the Stellar-RPC server. The RPC server will
+# then submit the transaction into the network for us. Then we will have to
+# wait, polling `get_transaction` until the transaction completes.
+send_transaction_data = soroban_server.send_transaction(tx)
+print(f"Sent transaction: {send_transaction_data}")
+if send_transaction_data.status != SendTransactionStatus.PENDING:
+    print(send_transaction_data.error_result_xdr)
+    raise Exception("Send transaction failed")
+
+while True:
+    print("Waiting for transaction to be confirmed...")
+    # Poll `get_transaction` until the status is not "NOT_FOUND"
+    get_transaction_data = soroban_server.get_transaction(send_transaction_data.hash)
+    if get_transaction_data.status != GetTransactionStatus.NOT_FOUND:
+        break
+    time.sleep(3)
+
+print(f"getTransaction response: {get_transaction_data}")
+
+if get_transaction_data.status == GetTransactionStatus.SUCCESS:
+    # The transaction was successful, so we can extract the `result_meta_xdr`
+    transaction_meta = stellar_xdr.TransactionMeta.from_xdr(
+        get_transaction_data.result_meta_xdr
+    )
+    result = transaction_meta.v3.soroban_meta.return_value
+    # Find the return value from the contract and return it
+    print(f"Transaction result: {scval.from_uint32(result)}")
+else:
+    # The transaction failed, so we can extract the `result_xdr`
+    print(f"Transaction failed: {get_transaction_data.result_xdr}")
+    raise Exception("Transaction failed")
+```
+
+</TabItem>
+
+<TabItem value="java" label="Java">
+
+:::tip
+
+Por favor, dirígete a [la página de inicio del proyecto](https://github.com/lightsail-network/java-stellar-sdk) del SDK de Java para aprender cómo instalarlo.
+
+:::
+
+```java
+import org.stellar.sdk.AccountNotFoundException;
+import org.stellar.sdk.InvokeHostFunctionOperation;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.PrepareTransactionException;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.requests.sorobanrpc.SorobanRpcErrorResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+import org.stellar.sdk.xdr.TransactionMeta;
+
+import java.io.IOException;
+import java.util.List;
+
+public class Example {
+    public static void main(String[] args) throws SorobanRpcErrorResponse, IOException, InterruptedException {
+        // The source account will be used to sign and send the transaction.
+        KeyPair sourceKeypair = KeyPair.fromSecretSeed("SAAPYAPTTRZMCUZFPG3G66V4ZMHTK4TWA6NS7U4F7Z3IMUD52EK4DDEV");
+
+        // Configure SorobanClient to use the `stellar-rpc` instance of your choosing.
+        SorobanServer sorobanServer = new SorobanServer("https://soroban-testnet.stellar.org");
+
+        // Here we will use a deployed instance of the `increment` example contract.
+        String contractAddress = "CDOGJBJMRVVXW5K3UJ5BGVJ5RSQXQB4UFVQYVFOIARC2UYXSEPF4YAVR";
+
+        // Transactions require a valid sequence number (which varies from one account to
+        // another). We fetch this sequence number from the RPC server.
+        TransactionBuilderAccount sourceAccount = null;
+        try {
+            sourceAccount = sorobanServer.getAccount(sourceKeypair.getAccountId());
+        } catch (AccountNotFoundException e) {
+            throw new RuntimeException("Account not found, please activate it first");
+        }
+
+        // The invocation of the `increment` function.
+        InvokeHostFunctionOperation operation = InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(contractAddress, "increment",
+                List.of(
+                        Scv.toAddress(sourceAccount.getAccountId()),
+                        Scv.toUint32(5)
+                )
+        ).build();
+
+        // Create a transaction with the source account and the operation we want to invoke.
+        Transaction transaction = new TransactionBuilder(sourceAccount, Network.TESTNET)
+                .addOperation(operation) // The invocation of the `increment` function of our contract is added to the transaction.
+                .setTimeout(30) // This transaction will be valid for the next 30 seconds
+                .setBaseFee(100)  // The base fee is 100 stroops (0.00001 XLM)
+                .build();
+
+        // We use the RPC server to "prepare" the transaction. This simulating the
+        // transaction, discovering the soroban data, and updating the
+        // transaction to include that soroban data. If you know the soroban data ahead of
+        // time, you could manually use `setSorobanData` and skip this step.
+        try {
+            transaction = sorobanServer.prepareTransaction(transaction);
+        } catch (PrepareTransactionException e) {
+            // You should handle the error here
+            System.out.println("Prepare Transaction Failed: " + e.getMessage());
+            throw new RuntimeException(e);
+        }
+
+        // Sign the transaction with the source account's keypair.
+        transaction.sign(sourceKeypair);
+
+        // Let's see the base64-encoded XDR of the transaction we just built.
+        System.out.println("Signed prepared transaction XDR: " + transaction.toEnvelopeXdrBase64());
+
+        // Submit the transaction to the Stellar-RPC server. The RPC server will then
+        // submit the transaction into the network for us. Then we will have to wait,
+        // polling `getTransaction` until the transaction completes.
+        SendTransactionResponse response = sorobanServer.sendTransaction(transaction);
+        if (!SendTransactionResponse.SendTransactionStatus.PENDING.equals(response.getStatus())) {
+            throw new RuntimeException("Sending transaction failed");
+        }
+
+        // Poll `getTransaction` until the status is not "NOT_FOUND"
+        GetTransactionResponse getTransactionResponse;
+        while (true) {
+            System.out.println("Waiting for transaction confirmation...");
+            // See if the transaction is complete
+            getTransactionResponse = sorobanServer.getTransaction(response.getHash());
+            if (!GetTransactionResponse.GetTransactionStatus.NOT_FOUND.equals(getTransactionResponse.getStatus())) {
+                break;
+            }
+            // Wait one second
+            Thread.sleep(1000);
+        }
+
+        System.out.println("Get transaction response: " + getTransactionResponse);
+
+        if (GetTransactionResponse.GetTransactionStatus.SUCCESS.equals(getTransactionResponse.getStatus())) {
+            // The transaction was successful, so we can extract the `resultMetaXdr`
+            TransactionMeta transactionMeta = TransactionMeta.fromXdrBase64(getTransactionResponse.getResultMetaXdr());
+            SCVal result = transactionMeta.getV3().getSorobanMeta().getReturnValue();
+            long parsedResult = Scv.fromUint32(result);
+            System.out.println("Transaction result: " + parsedResult);
+        } else {
+            // The transaction failed, so we can extract the `resultXdr`
+            System.out.println("Transaction failed: " + getTransactionResponse.getResultXdr());
+        }
+    }
+}
+```
+
+</TabItem>
+<TabItem value="rust" label="Rust">
+
+:::tip
+
+Por favor, visita [la página principal del proyecto](https://github.com/rahul-soshte/rs-soroban-client) de la biblioteca Rust Soroban Client para aprender cómo instalarla.
+
+Otros ejemplos se encuentran en la carpeta [`examples/`](https://github.com/rahul-soshte/rs-soroban-client/tree/main/examples) del repositorio.
+
+:::
+
+Primero, despliega [el contrato de ejemplo](../../smart-contracts/example-contracts/auth.mdx) en la blockchain usando [Stellar CLI](../../../tools/cli/stellar-cli.mdx).
+
+```bash
+stellar contract build
+stellar contract deploy --wasm ./target/wasm32v1-none/release/soroban_auth_contract.wasm --network testnet
+```
+
+Esto devolverá un ID de contrato; en el siguiente ejemplo usaremos `CBU3OHKZ2BHOHK5VMG3HBWIW3PBQHZLNMHNJUGM23W5NBFA75JMMWAVT`.
+
+```rust
+use std::{cell::RefCell, rc::Rc, time::Duration};
+
+use soroban_client::{
+    account::{Account, AccountBehavior},
+    address::{Address, AddressTrait},
+    contract::{ContractBehavior, Contracts},
+    keypair::{Keypair, KeypairBehavior},
+    network::{NetworkPassphrase, Networks},
+    soroban_rpc::{
+        GetTransactionResponse, SendTransactionResponse, SendTransactionStatus, TransactionStatus,
+    },
+    transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
+    Options, Server,
+};
+
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server_url = "https://soroban-testnet.stellar.org";
+    let server = soroban_client::Server::new(server_url, Options::default())?;
+
+    let source_keypair = Keypair::random()?;
+    let source_public_key = &source_keypair.public_key();
+    let signers = [source_keypair];
+
+    // Get account information from server
+    let account_data = server.request_airdrop(source_public_key).await?;
+    let source_account = Rc::new(RefCell::new(Account::new(
+        source_public_key,
+        &account_data.sequence_number(),
+    )?));
+
+    // Calling the increment method of the contract
+    let contract_addr = "CBU3OHKZ2BHOHK5VMG3HBWIW3PBQHZLNMHNJUGM23W5NBFA75JMMWAVT";
+    let contract = Contracts::new(contract_addr).unwrap();
+    let tx = TransactionBuilder::new(source_account, Networks::testnet(), None)
+        .fee(1000u32)
+        .add_operation(contract.call(
+            "increment",
+            Some(vec![
+                Address::account(signers[0].raw_public_key())?.to_sc_val()?,
+                3u32.into(),
+            ]),
+        ))
+        .build();
+
+    // Preparing the transaction, this will call `server.simulate_transaction` and
+    // `assemble_transaction` to enhance the transaction with the soroban data and auths
+    let ptxr = server.prepare_transaction(&tx).await;
+    let mut ptx = match ptxr {
+        Ok(p) => p,
+        Err(e) => {
+            // Manage errors here
+            return Err(e.into());
+        }
+    };
+
+    // Sign the transaction with the source account
+    ptx.sign(&signers);
+
+    println!("> Calling increment on contract {contract_addr}",);
+    let response = server.send_transaction(ptx).await?;
+
+    let hash = &response.hash;
+    println!(">> Tx hash: {hash}");
+    let counter: u32 = if let Some(tx_result) = wait_success(&server, response).await {
+        // On success we can extract the returned value
+        let (_meta, ret_val) = tx_result.to_result_meta().expect("No result meta");
+        ret_val
+            .expect("None returned value")
+            .try_into()
+            .expect("Return value is not u32")
+    } else {
+        return Err("Failed to create contract".into());
+    };
+    println!(">> Counter: {counter}",);
+    println!();
+
+    Ok(())
+}
+
+// Polling the `get_transaction` until the transaction is found in Success or Failed
+async fn wait_success(
+    server: &Server,
+    response: SendTransactionResponse,
+) -> Option<GetTransactionResponse> {
+    if response.status != SendTransactionStatus::Error {
+        let mut count = 0;
+        loop {
+            let response = server.get_transaction(&response.hash).await;
+            if let Ok(tx_result) = response {
+                match tx_result.status {
+                    TransactionStatus::Success => {
+                        if let Some(ledger) = tx_result.ledger {
+                            println!(">> Confirmed in ledger: {}", ledger);
+                        }
+                        return Some(tx_result);
+                    }
+                    TransactionStatus::NotFound => {
+                        count += 1;
+
+                        if count > 6 {
+                            println!(
+                                ">> Waiting for transaction confirmation... Latest ledger: {}",
+                                tx_result.latest_ledger
+                            );
+                        }
+
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                    TransactionStatus::Failed => {
+                        if let Some(result) = tx_result.to_result() {
+                            eprintln!("Transaction failed with result: {:?}", result);
+                        } else {
+                            eprintln!("Transaction failed without result XDR");
+                        }
+                        return None;
+                    }
+                }
+            } else {
+                eprintln!("! Error getting transaction status: {:?}", response);
+            }
+        }
+    }
+    None
+}
+```
+
+</TabItem>
+</Tabs>

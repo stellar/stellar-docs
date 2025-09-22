@@ -1,0 +1,225 @@
+---
+title: Filtrar eventos de la transacción
+sidebar_position: 20
+---
+
+Este código demuestra una implementación práctica del filtrado de eventos usando la función `EventsFromTransaction` del Procesador de Transferencia de Tokens.
+
+El código procesa cada transacción individualmente llamando a ttp.EventsFromTransaction(tx), que devuelve una estructura TransactionEvents que contiene:
+
+- `FeeEvents`: Tarifas y reembolsos de la transacción
+- `OperationEvents`: Todos los eventos de transferencia de tokens generados por las operaciones de la transacción
+
+Los eventos de ambas categorías se combinan en una sola lista (allEvents) para un filtrado unificado, permitiéndote aplicar los mismos criterios de filtro a todos los tipos de eventos dentro de cada transacción.
+
+## Filtrado
+
+El sistema de filtrado usa tipos de datos Stellar del SDK Go de Stellar para una coincidencia precisa:
+
+- **Coincidencia de activos**: Convierte los criterios de filtro en objetos `xdr.Asset` y usa `assetPkg.NewProtoAsset()` para una comparación exacta de assets protobuf mediante `event.GetAsset().Equals(protoAsset)`
+- **Coincidencia por tipo de evento**: Usa las constantes reales del tipo de evento del paquete token_transfer (por ejemplo, `token_transfer.TransferEvent`)
+- **Filtrado por contrato**: Coincide con direcciones exactas de contrato de los metadatos del evento
+
+<CodeExample>
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"log"
+	"strings"
+
+	assetPkg "github.com/stellar/go/asset"
+	"github.com/stellar/go/ingest"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/processors/token_transfer"
+	"github.com/stellar/go/xdr"
+)
+
+// FilterOptions defines the filtering criteria
+type FilterOptions struct {
+	EventType  string // "transfer", "mint", "burn", "clawback", "fee", or "" for all
+	AssetCode  string // Asset code like "USDC", "XLM", or "" to ignore
+	Issuer     string // Issuer address or "" to ignore
+	ContractId string // Contract address or "" to ignore
+}
+
+// filterEvents processes a ledger and returns events matching the filter criteria
+func filterEvents(ledger xdr.LedgerCloseMeta, filter FilterOptions) {
+
+	ttp := token_transfer.NewEventsProcessor(network.PublicNetworkPassphrase)
+
+	// Create transaction reader
+	txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(
+		network.PublicNetworkPassphrase, ledger)
+	if err != nil {
+		log.Fatal("Error creating transaction reader:", err)
+	}
+
+	// Print filter configuration
+	fmt.Printf("Filtering ledger %d with criteria:\n", ledger.LedgerSequence())
+	if filter.EventType != "" {
+		fmt.Printf("  Event Type: %s\n", filter.EventType)
+	}
+	if filter.AssetCode != "" {
+		fmt.Printf("  Asset Code: %s\n", filter.AssetCode)
+	}
+	if filter.Issuer != "" {
+		fmt.Printf("  Issuer: %s\n", filter.Issuer)
+	}
+	if filter.ContractId != "" {
+		fmt.Printf("  Contract ID: %s\n", filter.ContractId)
+	}
+	fmt.Println()
+
+	var matchedEvents, totalEvents int
+
+	// Process each transaction
+	for {
+		tx, err := txReader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatal("Error reading transaction:", err)
+		}
+
+		// Save information about tx, if needed in DB
+
+		// Process events from this transaction
+		txEvents, err := ttp.EventsFromTransaction(tx)
+		if err != nil {
+			log.Printf("Error processing transaction: %v", err)
+			continue
+		}
+
+		// Combine all events from the transaction
+		allEvents := append(txEvents.FeeEvents, txEvents.OperationEvents...)
+		totalEvents += len(allEvents)
+
+		// Apply filter to each event
+		for _, event := range allEvents {
+			if matchesFilter(event, filter) {
+				printProtoEvent(event)
+				matchedEvents++
+			}
+		}
+	}
+
+	// Print summary
+	fmt.Printf("\n--- Filter Results ---\n")
+	fmt.Printf("Total events: %d\n", totalEvents)
+	fmt.Printf("Matched events: %d\n", matchedEvents)
+}
+
+// matchesFilter checks if an event matches the specified filter criteria
+func matchesFilter(event *token_transfer.TokenTransferEvent, filter FilterOptions) bool {
+	// Check event type filter
+	if filter.EventType != "" {
+		if !matchesEventType(event, filter.EventType) {
+			return false
+		}
+	}
+
+	// Check contract ID filter
+	if filter.ContractId != "" {
+		meta := event.GetMeta()
+		if meta.ContractAddress != filter.ContractId {
+			return false
+		}
+	}
+
+	// Check asset filters
+	if filter.AssetCode != "" || filter.Issuer != "" {
+		var asset xdr.Asset
+		if filter.AssetCode == "native" {
+			asset = xdr.MustNewNativeAsset()
+		} else {
+			asset = xdr.MustNewCreditAsset(filter.AssetCode, filter.Issuer)
+		}
+
+		if !matchesAsset(event, asset) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// matchesEventType checks if event matches the specified event type
+func matchesEventType(event *token_transfer.TokenTransferEvent, eventType string) bool {
+	switch strings.ToLower(eventType) {
+	case token_transfer.TransferEvent:
+		return event.GetTransfer() != nil
+	case token_transfer.MintEvent:
+		return event.GetMint() != nil
+	case token_transfer.BurnEvent:
+		return event.GetBurn() != nil
+	case token_transfer.ClawbackEvent:
+		return event.GetClawback() != nil
+	case token_transfer.FeeEvent:
+		return event.GetFee() != nil
+	default:
+		return false
+	}
+}
+
+// matchesAsset checks if xdr.Asset specified matches the protobuf asset
+func matchesAsset(event *token_transfer.TokenTransferEvent, asset xdr.Asset) bool {
+	protoAsset := assetPkg.NewProtoAsset(asset)
+	return event.GetAsset().Equals(protoAsset)
+}
+
+func main() {
+	ledgerSeq := uint32(58155263)
+
+	ledger := fetchLedgerFromRPC(ledgerSeq)
+
+	// Example 1: Filter by event type only
+	fmt.Println("=== Example 1: Only Transfer Events ===")
+	filterEvents(ledger, FilterOptions{
+		EventType: "transfer",
+	})
+
+	// Example 2: Filter by custom token (asset code + issuer)
+	fmt.Println("\n=== Example 2: Only USDC Events ===")
+	filterEvents(ledger, FilterOptions{
+		AssetCode: "USDC",
+		Issuer:    "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+	})
+
+	// Example 3: Filter by event type + contract ID
+	fmt.Println("\n=== Example 3: Transfer Events from Specific Contract (USDC in this case) ===")
+	filterEvents(ledger, FilterOptions{
+		EventType: "transfer",
+		// This is the SAC id for the USDC asset on pubnet
+		// https://stellar.expert/explorer/public/contract/CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+		ContractId: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+	})
+
+	// Example 4: Filter by event type + asset code + issuer
+	fmt.Println("\n=== Example 4: Only KALE mints ===")
+	filterEvents(ledger, FilterOptions{
+		EventType: "mint",
+		AssetCode: "KALE",
+		Issuer:    "GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE",
+	})
+
+	// Example 5: Filter by XLM events only
+	fmt.Println("\n=== Example 5: Only XLM Events ===")
+	filterEvents(ledger, FilterOptions{
+		AssetCode: "native",
+	})
+
+	// Example 6: Filter by fee events only
+	fmt.Println("\n=== Example 6: Only Fee Events ===")
+	filterEvents(ledger, FilterOptions{
+		EventType: "fee",
+	})
+}
+
+```
+
+</CodeExample>

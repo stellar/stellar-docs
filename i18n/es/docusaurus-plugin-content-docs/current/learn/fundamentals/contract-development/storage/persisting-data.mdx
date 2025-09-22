@@ -1,0 +1,98 @@
+---
+sidebar_position: 10
+title: Persistir datos
+description: Almacenar y acceder a datos de contratos inteligentes.
+---
+
+<head>
+  <title>Almacenar y acceder a datos de contratos inteligentes.</title>
+  <meta charSet="utf-8" />
+  <meta property="og:title" content="Almacenar y acceder a datos de contratos inteligentes." />
+  <meta
+    property="og:description"
+    content="Almacenar y acceder a datos de contratos inteligentes."
+  />
+</head>
+
+## Entradas del ledger
+
+Los contratos pueden acceder a las entradas del ledger del tipo `CONTRACT_DATA`. Se proporcionan funciones del host para sondear, leer, escribir y eliminar entradas del ledger de tipo `CONTRACT_DATA`.
+
+Cada entrada del ledger `CONTRACT_DATA` está identificada en el ledger por el ID del contrato que la posee, su tipo de almacenamiento (`Persistent`, `Temporary`, `Instance`) y un único valor elegido por el usuario, de tipo valor estándar. Esto significa que la clave elegida por el usuario puede ser un valor simple como un símbolo, número o bloque binario, o un valor estructurado más complejo como un vector o mapa con múltiples subvalores.
+
+Cada entrada del ledger `CONTRACT_DATA` también contiene (además de su clave) un único valor asociado con la clave. De nuevo, este valor puede ser simple como un símbolo o número, o complejo como un vector o mapa con muchos subvalores.
+
+No se requiere serialización ni deserialización en el código del contrato al acceder a entradas del ledger `CONTRACT_DATA`: el host serializa y deserializa automáticamente cualquier entrada del ledger accedida, intercambiándolas con el contrato como valores deserializados. Si un contrato desea usar un formato de serialización personalizado, puede almacenar una entrada del ledger `CONTRACT_DATA` con valor binario y proporcionar su propio código para serializar y deserializar, pero Soroban está diseñado para minimizar la necesidad de que los contratos hagan esto.
+
+## Control de acceso
+
+Los contratos sólo pueden leer y escribir entradas del ledger `CONTRACT_DATA` que sean propiedad del contrato: aquellas con el mismo ID de contrato que realiza la lectura o escritura. Intentar acceder a otras entradas del ledger `CONTRACT_DATA` causará que la transacción falle.
+
+No hay control de acceso para las operaciones de extensión TTL. Cualquier usuario puede invocar `ExtendFootprintTTLOp` en cualquier LedgerEntry.
+
+## Granularidad
+
+Una entrada del ledger `CONTRACT_DATA` se lee o escribe en su totalidad; no hay manera de leer o escribir "solo una parte" de una entrada `CONTRACT_DATA`. También existe un costo fijo para acceder a cualquier entrada del ledger `CONTRACT_DATA`. Por lo tanto, los contratos son responsables de dividir estructuras de datos "grandes" lógicamente en "piezas" con una granuralidad apropiada para la lectura y escritura. Si las piezas son demasiado grandes, se pagarán costos innecesarios por leer y escribir datos sin usar, así como contención innecesaria en la ejecución paralela; si son demasiado pequeñas, habrá costos innecesarios por la carga fija de cada entrada.
+
+## Huellas y contención paralela
+
+Los contratos sólo pueden acceder a las entradas del ledger especificadas en la huella de su transacción. Las transacciones con huellas superpuestas se dicen que compiten, y sólo se ejecutarán secuencialmente entre sí, en un solo hilo. Las transacciones con huellas no superpuestas pueden ejecutarse en paralelo. Esto significa que una granularidad más fina de las entradas del ledger `CONTRACT_DATA` puede reducir la contención artificial entre transacciones que usan un contrato y aumentar el paralelismo.
+
+## Buenas prácticas para datos de contrato
+
+### Estado de cuenta vs. estado compartido
+
+Aunque no existe distinción entre estado "de cuenta" y estado "compartido" a nivel de protocolo, puede ser útil pensar en los datos en estos términos al decidir qué tipo de almacenamiento y estrategia de extensión TTL usar para un caso concreto. Como guía, el estado de cuenta y el estado compartido se pueden describir así:
+
+- La mayoría del estado del contrato puede estar asociado a una cuenta específica o compartido entre múltiples personas interesadas (“bien público”).
+  - Estado específico de cuenta
+    - Saldos, posiciones, asignaciones, etc.
+  - Estado compartido
+    - Entrada de administrador, valores del pool, etc.
+- Hay dos subcategorías de estado compartido
+  - Estado "global" compartido por todos los usuarios del contrato
+    - Instancia de contrato, wasm del contrato o un administrador global
+  - Estado compartido solo por un subconjunto específico de usuarios
+    - Valores del pool AMM en un contrato monolítico AMM (estilo Uniswap V4)
+- Nota: A veces el estado de cuenta y el estado compartido pueden fusionarse cuando el ámbito del contrato es pequeño
+  - Es decir, billetera inteligente o un solo NFT, donde se genera una nueva instancia de contrato para cada cuenta
+
+### Contratos propiedad vs. contratos autónomos
+
+Además de los tipos de estado, también es útil considerar el tipo de instancia de contrato que se está usando. De nuevo, estos tipos no están impuestos a nivel de protocolo, pero pueden ser útiles.
+
+- Contratos propiedad
+  - Instancias de contratos que tienen un propietario claro
+    - Una billetera inteligente o un solo NFT, donde se genera una nueva instancia de contrato para cada cuenta
+    - Activos respaldados por reservas personalizadas (USDC, etc.)
+- Contratos autónomos
+  - Instancias de contratos que no tienen un propietario claro o tienen un grupo descentralizado de propietarios
+    - La mayoría de los protocolos DeFi, especialmente los no actualizables
+
+### Buenas prácticas
+
+- Preferir almacenamiento `Temporary` sobre `Persistent` e `Instance`
+  - Cualquier cosa que pueda tener un tiempo de espera debería ser `Temporary` con TTL configurado al tiempo de espera. Consulta la [tabla de límites de recursos](../../../../networks/resource-limits-fees.mdx) para el TTL/tiempo de espera máximo actual.
+  - Idealmente, las entradas `Temporary` deberían estar asociadas a un límite absoluto del ledger y por lo tanto no necesitar nunca una extensión TTL
+    - Ejemplo: las firmas Soroban Auth tienen un ledger de expiración absoluta, por lo que los nonces pueden almacenarse en entradas `Temporary` sin riesgos de seguridad
+    - Ejemplo: asignación SAC que solo vive hasta un ledger dado (para que una firma de asignación antigua no pueda usarse en el futuro si no se agota)
+- Todo el estado global que no pueda ser `Temporary` debería estar en almacenamiento `Instance`.
+  - Esto garantiza que el TTL de la instancia del contrato y todos los globals relevantes estén vinculados.
+  - Como se usa frecuentemente el estado global, esto asegura que el estado global nunca necesitará ser restaurado, conduciendo a invocaciones de contrato más baratas y eficientes.
+- Los contratos autónomos deberían extender el TTL de cualquier estado compartido tocado por una invocación vía la función host `extend_ttl()`.
+  - Dado que estos contratos no tienen propietarios, dejar las extensiones TTL a clientes benevolentes podría llevar a una situación de “tragedia de los comunes”.
+  - La mayoría de usuarios no extienden el TTL porque no es necesario, pero aún se benefician del cliente benevolente que sí extiende el TTL.
+- Los propietarios de contratos propiedad deberían subsidiar las tarifas de extensión de TTL del estado compartido enviando manualmente operaciones de extensión.
+  - Los propietarios deberían llevar un control de los TTLs para todo el estado compartido.
+  - Esto se podría implementar con algo como un trabajo cron donde se envíe periódicamente una `ExtendFootprintTTLOp` para todo el estado compartido relevante (por ejemplo, una vez al mes).
+  - Alternativamente, esto también se podría implementar mediante una función administrativa en un contrato inteligente llamada rutinariamente por el propietario.
+- Los clientes (carteras/Dapps) deberían identificar el estado que corresponde a su cuenta respectiva, presentar información de TTL a los usuarios y sugerir extensiones de TTL cuando sea necesario.
+- Nunca se debería depender de las extensiones TTL para funcionalidades o seguridad.
+  - Ejemplo inseguro: una entrada debe ser permanente, pero en lugar de usar almacenamiento `Persistent`, un contrato usa almacenamiento `Temporary` y extiende continuamente la entrada para que siempre esté activa.
+    - Como no existe interfaz automática para la extensión TTL, y cada extensión TTL debe provenir de una invocación de contrato inteligente o `ExtendFootprintTTLOp`, debe asumirse que el TTL de una entrada puede llegar a 0 y que la entrada puede ser eliminada.
+    - Las tarifas de extensión TTL son variables y podría volverse demasiado costoso extender el TTL de entradas `Temporary` pseudo “persistentes” si las tarifas aumentan inesperadamente.
+    - Si el proceso de extensión TTL es automático (es decir, un trabajo cron), la cuenta que envía automáticamente `ExtendFootprintTTLOps` podría quedarse sin fondos inesperadamente si las tarifas de extensión TTL aumentan, haciendo que la entrada `Temporary` agote su TTL y sea eliminada permanentemente.
+- No se debería depender del agotamiento del TTL de la entrada para funcionalidades o seguridad.
+  - Ejemplo inseguro: un nonce debe expirar en 7 días, por lo que un contrato crea una entrada `Temporary` y extiende el TTL a 7 días sin ninguna otra aplicación de tiempo de vida.
+  - Cualquiera puede enviar una operación de extensión TTL en cualquier entrada sin autorización, lo que significa que el nonce puede tener su TTL extendido indefinidamente por cualquier usuario.
+  - Si una entrada necesita ser invalidada tras cierto tiempo, esto debe implementarse manualmente en el contrato.

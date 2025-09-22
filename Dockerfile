@@ -14,18 +14,17 @@ RUN apt-get update && apt-get install --no-install-recommends -y gpg curl git ma
     apt-get update && apt-get install -y nodejs yarn && apt-get clean
 
 COPY . /app/
-ARG CROWDIN_PERSONAL_TOKEN
 ARG BUILD_TRANSLATIONS="False"
 
 RUN yarn cache clean --all
 RUN yarn install
 RUN du -sh /app/*
 RUN yarn rpcspec:build --no-minify
-RUN yarn stellar-cli:build --no-minify
+RUN yarn stellar-cli:build --no-minify --cli-ref=main
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
-    CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} yarn build:production --no-minify; \
+    yarn docusaurus build --no-minify; \
   else \
     # In the preview build, we only want to build for English. Much quicker
     yarn build --no-minify; \

@@ -1,0 +1,469 @@
+---
+hide_title: true
+description: Devuelve las entradas del ledger
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import { RpcMethod } from "@site/src/components/RpcMethod";
+import rpcSpec from "@site/static/stellar-rpc.openrpc.json";
+
+<RpcMethod
+  method={rpcSpec.methods.filter((meth) => meth.name === "getLedgerEntries")[0]}
+/>
+
+# Creando claves del ledger
+
+El ledger de Stellar es, en cierto modo, esencialmente un almacén de pares clave-valor. Las claves son instancias de [`LedgerKey`](https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-ledger-entries.x#L600) y los valores son instancias de [`LedgerEntry`](https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-ledger-entries.x#L560). Un producto interesante del diseño interno del almacén es que la clave es un _subconjunto_ de la entrada: más adelante veremos más sobre esto.
+
+El método `getLedgerEntries` devuelve los "valores" (o "entradas") para un conjunto dado de "claves". Las claves del ledger vienen en muchas formas, y repasaremos las más comúnmente utilizadas en esta página junto con tutoriales sobre cómo crear y usarlas.
+
+## Tipos de `LedgerKey`
+
+La fuente de verdad siempre debe ser el XDR definido en el protocolo. `LedgerKey` son un tipo de unión definido en [Stellar-ledger-entries.x](https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-ledger-entries.x#L600). Hay 10 formas diferentes que puede tomar una clave de ledger:
+
+1. **Cuenta:** define holísticamente una cuenta de Stellar, incluyendo su saldo, firmantes, etc. (ver [Cuentas](https://developers.stellar.org/docs/learn/fundamentals/stellar-data-structures/accounts))
+2. **Línea de confianza:** define una línea de saldo para un activo no nativo emitido en la red (ver [`changeTrustOp`](https://developers.stellar.org/docs/learn/fundamentals/transactions/list-of-operations#change-trust))
+3. **Oferta:** define una oferta hecha en el DEX de Stellar (ver [Liquidez en Stellar](https://developers.stellar.org/docs/learn/encyclopedia/sdex/liquidity-on-stellar-sdex-liquidity-pools))
+4. **Datos de Cuenta:** define entradas de datos clave-valor adjuntas a una cuenta (ver [`manageDataOp`](https://developers.stellar.org/docs/learn/fundamentals/transactions/list-of-operations#manage-data))
+5. **Saldo reclamable:** define un saldo que puede o no ser reclamable activamente (ver [Saldos Reclamables](https://developers.stellar.org/docs/learn/encyclopedia/transactions-specialized/claimable-balances))
+6. **Fondo de Liquidez:** define la configuración de un fondo de liquidez constante nativo entre dos activos (ver [Liquidez en Stellar](https://developers.stellar.org/docs/learn/encyclopedia/sdex/liquidity-on-stellar-sdex-liquidity-pools))
+7. **Datos de Contrato:** define un conjunto de datos que se almacena en un contrato bajo una clave
+8. **Código de Contrato:** define el bytecode Wasm de un contrato
+9. **Ajuste de Configuración:** define la configuración de red actualmente activa
+10. **TTL:** define el tiempo de vida de una entrada de datos de contrato o código asociada
+
+Nos enfocaremos en un subconjunto de estos para obtener el máximo valor, pero una vez que entiendas cómo crear y analizar algunas claves y entradas, puedes extrapolar a todas ellas.
+
+### Cuentas
+
+Para obtener una cuenta, todo lo que necesitas es su clave pública:
+
+<CodeExample>
+
+```typescript
+import { Keypair, xdr } from "@stellar/stellar-sdk";
+
+const publicKey = "GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO";
+const accountLedgerKey = xdr.LedgerKey.ledgerKeyAccount(
+  new xdr.LedgerKeyAccount({
+    accountId: Keypair.fromPublicKey(publicKey).xdrAccountId(),
+  }),
+);
+console.log(accountLedgerKey.toXDR("base64"));
+```
+
+```python
+from stellar_sdk import Keypair, xdr
+
+public_key = "GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO"
+account_ledger_key = xdr.LedgerKey(
+    type=xdr.LedgerEntryType.ACCOUNT,
+    account=xdr.LedgerKeyAccount(
+        account_id=Keypair.from_public_key(public_key).xdr_account_id()
+    ),
+)
+print(account_ledger_key.to_xdr())
+```
+
+</CodeExample>
+
+Esto te dará todos los detalles de la cuenta.
+
+<CodeExample>
+
+```typescript
+const accountEntryData = (
+  await s.getLedgerEntries(accountLedgerKey)
+).entries[0].account();
+```
+
+```python
+account_entry_data = xdr.LedgerEntryData.from_xdr(
+    server.get_ledger_entries([account_ledger_key]).entries[0].xdr
+).account
+```
+
+</CodeExample>
+
+Si solo quieres echar un vistazo a la estructura, puedes pasar el valor base64 en crudo que registramos anteriormente al [Laboratorio](https://lab.stellar.org/endpoints/rpc/get-ledger-entries?$=network$id=testnet&label=Testnet&horizonUrl=https:////horizon-testnet.stellar.org&rpcUrl=https:////soroban-testnet.stellar.org&passphrase=Test%20SDF%20Network%20/;%20September%202015;&endpoints$params$xdrFormat=json;;) (o mediante `curl` si pasas `"xdrFormat": "json"` como un parámetro adicional a `getLedgerEntries`) y ver todos los posibles campos. También puedes profundizar en ellos en el código, por supuesto:
+
+<CodeExample>
+
+```typescript
+console.log(
+  `Account ${publicKey} has ${accountEntryData
+    .balance()
+    .toString()} stroops of XLM and is on sequence number ${accountEntryData
+    .seqNum()
+    .toString()}`,
+);
+```
+
+```python
+print(
+    f"Account {public_key} has {account_entry_data.balance.int64} stroops of XLM and is on sequence number {account_entry_data.seq_num.sequence_number.int64}"
+)
+```
+
+</CodeExample>
+
+### Líneas de confianza
+
+Una trustline es una entrada de saldo para cualquier activo no nativo (como [USDC de Circle](https://stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN)). Para obtener una, necesitas el propietario de la línea de confianza (una clave pública como para [Cuentas](#accounts)) y el activo en cuestión:
+
+<CodeExample>
+
+```typescript
+const trustlineLedgerKey = xdr.LedgerKey.ledgerKeyTrustLine(
+  new xdr.LedgerKeyTrustLine({
+    accountId: Keypair.fromPublicKey(publicKey).xdrAccountId(),
+    asset: new Asset(
+      "USDC",
+      "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    ).toTrustLineXDRObject(),
+  }),
+);
+```
+
+```python
+trustline_ledger_key = xdr.LedgerKey(
+    type=xdr.LedgerEntryType.TRUSTLINE,
+    trust_line=xdr.LedgerKeyTrustLine(
+        account_id=Keypair.from_public_key(public_key).xdr_account_id(),
+        asset=Asset(
+            "USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+        ).to_trust_line_asset_xdr_object(),
+    ),
+)
+
+trustline_entry_data = xdr.LedgerEntryData.from_xdr(
+    server.get_ledger_entries([trustline_ledger_key]).entries[0].xdr
+).trust_line
+```
+
+</CodeExample>
+
+Al igual que una [cuenta](#accounts), la entrada resultante tiene un saldo, pero también tiene un límite y banderas para controlar cuánto de ese activo se puede mantener. El activo, sin embargo, puede ser un activo emitido o un fondo de liquidez:
+
+<CodeExample>
+
+```typescript
+let asset: string;
+let rawAsset = trustlineEntryData.asset();
+
+switch (rawAsset.switch().value) {
+  case AssetType.assetTypeCreditAlphanum4().value:
+    asset = Asset.fromOperation(
+      xdr.Asset.assetTypeCreditAlphanum4(rawAsset.alphaNum4()),
+    ).toString();
+    break;
+
+  case AssetType.assetTypeCreditAlphanum12().value:
+    asset = Asset.fromOperation(
+      xdr.Asset.assetTypeCreditAlphanum12(rawAsset.alphaNum12()),
+    ).toString();
+    break;
+
+  case AssetType.assetTypePoolShare().value:
+    asset = rawAsset.liquidityPoolId().toXDR("hex");
+    break;
+}
+
+console.log(
+  `Account ${publicKey} has ${trustlineEntryData
+    .balance()
+    .toString()} stroops of ${asset} with a limit of ${trustlineEntryData
+    .limit()
+    .toString()}`,
+);
+```
+
+```python
+raw_asset = trustline_entry_data.asset
+asset: str = ""
+
+if (
+    raw_asset.type == xdr.AssetType.ASSET_TYPE_CREDIT_ALPHANUM4
+    or raw_asset.type == xdr.AssetType.ASSET_TYPE_CREDIT_ALPHANUM12
+):
+    asset_obj = Asset.from_xdr_object(raw_asset)
+    asset = f"{asset_obj.code}:{asset_obj.issuer}"
+elif raw_asset.type == xdr.AssetType.ASSET_TYPE_POOL_SHARE:
+    asset_obj = LiquidityPoolId.from_xdr_object(raw_asset)
+    asset = f"{asset_obj.liquidity_pool_id}"
+else:
+    raise ValueError("Invalid asset type")
+
+print(
+    f"Account {public_key} has {trustline_entry_data.balance.int64} stroops of {asset} with a limit of {trustline_entry_data.limit.int64}"
+)
+```
+
+</CodeExample>
+
+### Datos del contrato
+
+Supongamos que hemos desplegado el [`increment` example contract] y queremos averiguar qué valor está almacenado en la clave de ledger `COUNTER`. Para crear la clave:
+
+<CodeExample>
+
+```typescript
+import { xdr, Address } from "@stellar/stellar-sdk";
+
+const getLedgerKeySymbol = (
+  contractId: string,
+  symbolText: string,
+): xdr.LedgerKey => {
+  return xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: new Address(contractId).toScAddress(),
+      key: xdr.ScVal.scvSymbol(symbolText),
+      // The increment contract stores its state in persistent storage,
+      // but other contracts may use temporary storage
+      // (xdr.ContractDataDurability.temporary()).
+      durability: xdr.ContractDataDurability.persistent(),
+    }),
+  );
+};
+
+const ledgerKey = getLedgerKeySymbol(
+  "CCPYZFKEAXHHS5VVW5J45TOU7S2EODJ7TZNJIA5LKDVL3PESCES6FNCI",
+  "COUNTER",
+);
+```
+
+```python
+from stellar_sdk import xdr, scval, Address
+
+def get_ledger_key_symbol(contract_id: str, symbol_text: str) -> str:
+    ledger_key = xdr.LedgerKey(
+        type=xdr.LedgerEntryType.CONTRACT_DATA,
+        contract_data=xdr.LedgerKeyContractData(
+            contract=Address(contract_id).to_xdr_sc_address(),
+            key=scval.to_symbol(symbol_text),
+            durability=xdr.ContractDataDurability.PERSISTENT
+        ),
+    )
+    return ledger_key.to_xdr()
+
+print(
+    get_ledger_key_symbol(
+        "CCPYZFKEAXHHS5VVW5J45TOU7S2EODJ7TZNJIA5LKDVL3PESCES6FNCI",
+        "COUNTER"
+    )
+)
+```
+
+</CodeExample>
+
+### Código Wasm del contrato
+
+Para entender esto, necesitamos comprender cómo funciona la implementación de contratos inteligentes:
+
+- Cuando despliegas un contrato, primero el código se "instala" (es decir, se sube a la blockchain), creando una `LedgerEntry` con el byte-código Wasm que se puede identificar de manera única por su hash (es decir, el hash del código subido).
+- Luego, cuando una _instancia_ de contrato se "instancia," creamos una `LedgerEntry` con una referencia al hash de ese código. Esto significa que muchos contratos pueden apuntar al mismo código Wasm.
+
+Por lo tanto, obtener el código del contrato es un proceso de dos pasos:
+
+1. Primero, buscamos el contrato en sí, para ver qué hash de código está referenciando.
+2. Luego, podemos buscar el código de bytes Wasm sin procesar usando ese hash.
+
+#### 1. Encuentra la clave del ledger para la instancia del contrato
+
+<CodeExample>
+
+```typescript
+import { Contract } from "@stellar/stellar-sdk";
+
+function getLedgerKeyContractCode(contractId): xdr.LedgerKey {
+  return new Contract(contractId).getFootprint();
+}
+
+console.log(
+  getLedgerKeyContractCode(
+    "CCPYZFKEAXHHS5VVW5J45TOU7S2EODJ7TZNJIA5LKDVL3PESCES6FNCI",
+  ),
+);
+```
+
+```python
+from stellar_sdk import xdr, Address
+
+def get_ledger_key_contract_code(contract_id: str) -> xdr.LedgerKey:
+  return xdr.LedgerKey(
+    type=xdr.LedgerEntryType.CONTRACT_DATA,
+    contract_data=xdr.LedgerKeyContractData(
+      contract=Address(contract_id).to_xdr_sc_address(),
+      key=xdr.SCVal(xdr.SCValType.SCV_LEDGER_KEY_CONTRACT_INSTANCE),
+      durability=xdr.ContractDataDurability.PERSISTENT
+    )
+  )
+
+print(get_ledger_key_contract_code(
+  "CCPYZFKEAXHHS5VVW5J45TOU7S2EODJ7TZNJIA5LKDVL3PESCES6FNCI"
+))
+```
+
+</CodeExample>
+
+Una vez que tengamos la entrada del ledger (a través de `getLedgerEntries`, ver [abajo](#actually-fetching-the-ledger-entry-data)), podemos extraer el hash de Wasm:
+
+#### 2. Solicita el `ContractCode` utilizando el `LedgerKey` recuperado
+
+Ahora toma el campo `xdr` del objeto `result` de la respuesta anterior y crea un `LedgerKey` a partir del hash contenido dentro.
+
+<CodeExample>
+
+```typescript
+import { xdr } from "@stellar/stellar-sdk";
+
+function getLedgerKeyWasmId(
+  contractData: xdr.ContractDataEntry,
+): xdr.LedgerKey {
+  const wasmHash = contractData.val().instance().executable().wasmHash();
+
+  return xdr.LedgerKey.contractCode(
+    new xdr.LedgerKeyContractCode({
+      hash: wasmHash,
+    }),
+  );
+}
+```
+
+```python
+from stellar_sdk import xdr
+
+def get_ledger_key_wasm_id(
+  # received from getLedgerEntries and decoded
+  contract_data: xdr.ContractDataEntry
+) -> xdr.LedgerKey:
+  # First, we dig the wasm_id hash out of the xdr we received from RPC
+  wasm_hash = contract_data.val.instance.executable.wasm_hash
+
+  # Now, we can create the `LedgerKey` as we've done in previous examples
+  ledger_key = xdr.LedgerKey(
+    type=xdr.LedgerEntryType.CONTRACT_CODE,
+    contract_code=xdr.LedgerKeyContractCode(
+      hash=wasm_hash
+    ),
+  )
+  return ledger_key
+```
+
+</CodeExample>
+
+Ahora, finalmente tenemos un `LedgerKey` que corresponde al código de bytes Wasm que ha sido implementado bajo el `contractId` con el que comenzamos hace tanto tiempo. Este `LedgerKey` puede ser utilizado en una solicitud final a `getLedgerEntries`. En esa respuesta obtendremos un `LedgerEntryData` correspondiente a un `ContractCodeEntry` que contendrá el código de bytes del contrato real implementado:
+
+<CodeExample>
+
+```typescript
+const theHashData: xdr.ContractDataEntry = await getLedgerEntries(
+  getLedgerKeyContractCode("C..."),
+).entries[0].contractData();
+
+const theCode: Buffer = await getLedgerEntries(getLedgerKeyWasmId(theHashData))
+  .entries[0].contractCode()
+  .code();
+```
+
+```python
+the_hash_data = xdr.LedgerEntryData.from_xdr(
+    server.get_ledger_entries([get_ledger_key_contract_code("C...")]).entries[0].xdr
+).contract_data
+
+the_code = xdr.LedgerEntryData.from_xdr(
+    server.get_ledger_entries([get_ledger_key_wasm_id(the_hash_data)]).entries[0].xdr
+).contract_code.code
+```
+
+</CodeExample>
+
+## Realmente obteniendo los datos de entrada del ledger
+
+Una vez que hemos aprendido a _crear_ y _analizar_ estos (lo cual ya hemos hecho anteriormente), el proceso para realmente obtenerlos es siempre idéntico. Si conoces el tipo de clave que has obtenido, aplicas el método de acceso correspondiente una vez que los has recibido del método `getLedgerEntries`:
+
+<CodeExample>
+
+```typescript
+const s = new Server("https://soroban-testnet.stellar.org");
+
+// assume key1 is an account, key2 is a trustline, and key3 is contract data
+const response = await s.getLedgerEntries(key1, key2, key3);
+
+const account = response.entries[0].account();
+const trustline = response.entries[1].trustline();
+const contractData = response.entries[2].contractData();
+```
+
+```python
+server = SorobanServer("https://soroban-testnet.stellar.org")
+
+# assume key1 is an account, key2 is a trustline, and key3 is contract data
+response = server.get_ledger_entries([key1, key2, key3])
+account = xdr.LedgerEntryData.from_xdr(response.entries[0].xdr).account
+trustline = xdr.LedgerEntryData.from_xdr(response.entries[1].xdr).trust_line
+contract_data = xdr.LedgerEntryData.from_xdr(response.entries[2].xdr).contract_data
+```
+
+</CodeExample>
+
+Ahora, finalmente tenemos un `LedgerKey` que corresponde al código de bytes Wasm que ha sido implementado bajo el `ContractId` con el que comenzamos hace tanto tiempo. Este `LedgerKey` puede ser usado en una solicitud final al punto final de Stellar-RPC.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 12345,
+  "method": "getLedgerEntries",
+  "params": {
+    "keys": [
+      "AAAAB+QzbW3JDhlUbDVW/C+1/5SIQDstqORuhpCyl73O1vH6",
+      "AAAABgAAAAGfjJVEBc55drW3U87N1Py0Rw0/nlqUA6tQ6r28khEl4gAAABQAAAAB"
+      "AAAABgAAAAAAAAABn4yVRAXOeXa1t1POzdT8tEcNP55alAOrUOq9vJIRJeIAAAAUAAAAAQAAABMAAAAA5DNtbckOGVRsNVb8L7X/lIhAOy2o5G6GkLKXvc7W8foAAAAA"
+    ]
+  }
+}
+```
+
+Luego puedes inspeccionarlos en consecuencia. Cada una de las entradas anteriores sigue el XDR para esa estructura `LedgerEntryData` con precisión. Por ejemplo, el `AccountEntry` está en [`Stellar-ledger-entries.x#L191`](https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-ledger-entries.x#L191) y puedes usar `.seqNum()` para acceder a su número de secuencia actual, como hemos mostrado. En JavaScript, puedes ver los métodos apropiados en la [definición de tipo](https://github.com/stellar/js-stellar-base/blob/6930a70d7fbde675514b5933baff605d97453ba7/types/curr.d.ts#L3034).
+
+## Ver y comprender XDR
+
+Si no quieres parsear el XDR programáticamente, también puedes aprovechar tanto el [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli) como el [Stellar Lab](https://lab.stellar.org/xdr/view) para obtener una vista legible por humanos de las claves y entradas del ledger. Por ejemplo,
+
+```bash
+echo 'AAAAAAAAAAAL76GC5jcgEGfLG9+nptaB9m+R44oweeN3EcqhstdzhQ==' | stellar xdr decode --type LedgerKey --output json-formatted
+{
+  "account": {
+    "account_id": "GAF67IMC4Y3SAEDHZMN57J5G22A7M34R4OFDA6PDO4I4VINS25ZYLBZZ"
+  }
+}
+```
+
+[contrato de ejemplo `increment`]: ../../../../../build/smart-contracts/getting-started/storing-data
+[Página de "Ver XDR" del Stellar Lab]: https://lab.stellar.org/xdr/view?$=network$id=testnet&label=Testnet&horizonUrl=https:////horizon-testnet.stellar.org&rpcUrl=https:////soroban-testnet.stellar.org&passphrase=Test%20SDF%20Network%20/;%20September%202015;;
+
+## Usar el Lab
+
+El método `getLedgerEntries` te permite **leer datos en vivo del ledger directamente** de la red. Esto incluye entradas como **cuentas**, **líneas de confianza**, **ofertas**, **datos**, **saldos reclamables**, **fondos de liquidez** y más.
+
+Es especialmente útil para inspeccionar el **estado actual** de un contrato, el **código desplegado** o cualquier otra entrada del ledger vinculada a tu aplicación. Este método es a menudo la **forma principal de recuperar datos relacionados con el contrato** que pueden no aparecer a través de eventos o `simulateTransaction`.
+
+Para recuperar el código de bytes WASM de un contrato, usa la clave de entrada del ledger `ContractCode`.
+
+👉 [Ver getLedgerEntries en el Lab](https://lab.stellar.org/endpoints/rpc/get-ledger-entries?$=network$id=testnet&label=Testnet&horizonUrl=https:////horizon-testnet.stellar.org&rpcUrl=https:////soroban-testnet.stellar.org&passphrase=Test%20SDF%20Network%20/;%20September%202015;;)
+
+Usando la [biblioteca Stellar XDR a JSON](https://github.com/stellar/js-stellar-xdr-json), el método `getLedgerEntries` puede generar dinámicamente campos de entrada basados en datos codificados en XDR. Por ejemplo, considera la siguiente cadena XDR:
+
+`AAAABgAAAAHMA/50/Q+w3Ni8UXWm/trxFBfAfl6De5kFttaMT0/ACwAAABAAAAABAAAAAgAAAA8AAAAHQ291bnRlcgAAAAASAAAAAAAAAAAg4dbAxsGAGICfBG3iT2cKGYQ6hK4sJWzZ6or1C5v6GAAAAAE=`
+
+Pruébalo en [el Lab](https://lab.stellar.org/endpoints/rpc/get-ledger-entries?$=network$id=testnet&label=Testnet&horizonUrl=https:////horizon-testnet.stellar.org&rpcUrl=https:////soroban-testnet.stellar.org&passphrase=Test%20SDF%20Network%20/;%20September%202015;&endpoints$params$ledgerKeyEntries=%5B%22AAAABgAAAAHMA//50//Q+w3Ni8UXWm//trxFBfAfl6De5kFttaMT0//ACwAAABAAAAABAAAAAgAAAA8AAAAHQ291bnRlcgAAAAASAAAAAAAAAAAg4dbAxsGAGICfBG3iT2cKGYQ6hK4sJWzZ6or1C5v6GAAAAAE=%22%5D;;)
+
+![Lab: getledgerentries](/assets/api/rpc/getledgerentries-01.gif)
+
+Vamos a enviar `getLedgerEntries` para la siguiente cadena XDR:
+
+`AAAABgAAAAGUvl2TPOjIsxuZgSyt3Lf0d6R2iNYu4rKDuULTaMKUSgAAABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAASAAAAAAAAAABdOuyYDwLteYrby3aOykd5c12LYrui/nhbXOgtejCSYAAAAAE=`
+
+Pruébalo en [el Lab](https://lab.stellar.org/endpoints/rpc/get-ledger-entries?$=network$id=testnet&label=Testnet&horizonUrl=https:////horizon-testnet.stellar.org&rpcUrl=https:////soroban-testnet.stellar.org&passphrase=Test%20SDF%20Network%20/;%20September%202015;&endpoints$params$ledgerKeyEntries=%5B%22AAAABgAAAAGUvl2TPOjIsxuZgSyt3Lf0d6R2iNYu4rKDuULTaMKUSgAAABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAASAAAAAAAAAABdOuyYDwLteYrby3aOykd5c12LYrui//nhbXOgtejCSYAAAAAE=%22%5D&xdrFormat=json;;)
+
+![Lab: getledgerentries-02](/assets/api/rpc/getledgerentries-02.gif)

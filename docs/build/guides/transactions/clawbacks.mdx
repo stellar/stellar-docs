@@ -46,7 +46,7 @@ Here we’ll cover the following approaches to clawing back an asset.
 - **[Example 2](#example-2-claimable-balances):** $\mathcal{B}$ creates a claimable balance for $\mathcal{C}$, and $\mathcal{A}$ claws back the new claimable balance.
 - **[Example 3](#example-3-selectively-enabling-clawback):** $\mathcal{A}$ issues a clawback-enabled asset to $\mathcal{B}$. Then, $\mathcal{A}$ claws back some of the asset from $\mathcal{B}$. Next, $\mathcal{A}$ removes the clawback enabled flag from the trustline and can no longer clawback the asset.
 
-### Preamble: Issuing a Clawback-able Asset
+### Preamble: Creating + Funding Accounts and Issuing a Clawback-able Asset
 
 First, we’ll set up an account to enable clawbacks and issue an asset accordingly. Properly issuing an asset with separate [issuer and distributor](../../../tokens/control-asset-access.mdx#issuer-and-distributor-accounts) accounts is a little more involved. We’ll start with a simpler method as an example.
 
@@ -128,51 +128,62 @@ def getBalance(account):
 ```
 
 ```js
-const sdk = require("stellar-sdk");
+import * as sdk from "@stellar/stellar-sdk";
 
-let server = new sdk.Server("https://horizon-testnet.stellar.org");
+let server = new sdk.rpc.Server("https://soroban-testnet.stellar.org");
 
-const A = sdk.Keypair.fromSecret(
-  "SAQLZCQA6AYUXK6JSKVPJ2MZ5K5IIABJOEQIG4RVBHX4PG2KMRKWXCHJ",
-);
-const B = sdk.Keypair.fromSecret(
-  "SAAY2H7SANIS3JLFBFPLJRTYNLUYH4UTROIKRVFI4FEYV4LDW5Y7HDZ4",
-);
-const C = sdk.Keypair.fromSecret(
-  "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4",
-);
+const A = sdk.Keypair.random();
+const B = sdk.Keypair.random();
+const C = sdk.Keypair.random();
+
+console.log("=== ACCOUNT SETUP ===");
+console.log(`Account A (Issuer): ${A.publicKey()}`);
+console.log(`Account B (Trustor): ${B.publicKey()}`);
+console.log(`Account C (Trustor): ${C.publicKey()}`);
+console.log();
 
 const AstroToken = new sdk.Asset("ClawbackCoin", A.publicKey());
 
 // Enables AuthClawbackEnabledFlag on an account.
 function enableClawback(account, keys) {
-  return server.submitTransaction(
+  console.log(
+    `Enabling clawback flags on account ${formatAccount(account.accountId())}`,
+  );
+  return submitAndPollTransaction(
     buildTx(account, keys, [
       sdk.Operation.setOptions({
         setFlags: sdk.AuthClawbackEnabledFlag | sdk.AuthRevocableFlag,
         // Also add `revocable` for control over who can hold the asset.
       }),
     ]),
+    "Enable Clawback Flags",
   );
 }
 
 // Establishes a trustline for `recipient` for AstroToken (from above).
 const establishTrustline = function (recipient, key) {
-  return server.submitTransaction(
+  console.log(
+    `${formatAccount(recipient.accountId())} establishing trustline for ${
+      ASSET.code
+    }`,
+  );
+  return submitAndPollTransaction(
     buildTx(recipient, key, [
       sdk.Operation.changeTrust({
         asset: AstroToken,
       }),
     ]),
+    `Establish Trustline (${formatAccount(recipient.accountId())})`,
   );
 };
 
 // Retrieves latest account info for all accounts.
+// Retrieves latest account info for all accounts.
 function getAccounts() {
   return Promise.all([
-    server.loadAccount(A.publicKey()),
-    server.loadAccount(B.publicKey()),
-    server.loadAccount(C.publicKey()),
+    server.getAccount(A.publicKey()),
+    server.getAccount(B.publicKey()),
+    server.getAccount(C.publicKey()),
   ]);
 }
 
@@ -190,11 +201,13 @@ function preamble() {
 }
 
 // Helps simplify creating & signing a transaction.
+// Helps simplify creating & signing a transaction.
 function buildTx(source, signer, ops) {
   var tx = new StellarSdk.TransactionBuilder(source, {
     fee: sdk.BASE_FEE,
     networkPassphrase: StellarSdk.Networks.TESTNET,
   });
+
   ops.forEach((op) => tx.addOperation(op));
   tx = tx.setTimeout(3600).build();
   tx.sign(signer);
@@ -481,7 +494,12 @@ def doClawback(byAccount, byKey, fromAccount, amount):
 ```js
 // Make a payment to `toAccount` from `fromAccount` for `amount`.
 function makePayment(toAccount, fromAccount, fromKey, amount) {
-  return server.submitTransaction(
+  console.log(
+    `\nPayment: ${formatAccount(fromAccount.accountId())} → ${formatAccount(
+      toAccount.accountId(),
+    )} (${amount} CLAW)`,
+  );
+  return submitAndPollTransaction(
     buildTx(fromAccount, fromKey, [
       sdk.Operation.payment({
         destination: toAccount.accountId(),
@@ -688,7 +706,12 @@ def clawbackClaimable(issuerAccount, issuerKey, balanceId):
 
 ```js
 function createClaimable(fromAccount, fromKey, toAccount, amount) {
-  return server.submitTransaction(
+  console.log(
+    `\nCreating claimable balance: ${formatAccount(
+      fromAccount.accountId(),
+    )} → ${formatAccount(toAccount.accountId())} (${amount} CLAW)`,
+  );
+  return submitAndPollTransaction(
     buildTx(fromAccount, fromKey, [
       sdk.Operation.createClaimableBalance({
         asset: AstroToken,
@@ -696,22 +719,26 @@ function createClaimable(fromAccount, fromKey, toAccount, amount) {
         claimants: [new sdk.Claimant(toAccount.accountId())],
       }),
     ]),
+    `Create Claimable Balance of ${amount} CLAW`,
   );
 }
 
 function getBalanceId(txResponse) {
-  const txResult = sdk.xdr.TransactionResult.fromXDR(
-    txResponse.result_xdr,
-    "base64",
-  );
+  const txResult = txResponse.resultXdr;
   const operationResult = txResult.result().results()[0];
 
   let creationResult = operationResult.value().createClaimableBalanceResult();
   return creationResult.balanceId().toXDR("hex");
 }
 
+// Clawback the claimable balance using its ID
 function clawbackClaimable(issuerAccount, issuerKey, balanceId) {
-  return server.submitTransaction(
+  console.log(
+    `\nClawback claimable balance: ${formatAccount(
+      issuerAccount.accountId(),
+    )} clawing back balance ${balanceId}`,
+  );
+  return submitAndPollTransaction(
     buildTx(issuerAccount, issuerKey, [
       sdk.Operation.clawbackClaimableBalance({ balanceId }),
     ]),
@@ -833,11 +860,13 @@ def exampleClaimableBalanceClawback():
 ```
 
 ```js
-function exampleClaimableBalanceClawback() {
+function examplePaymentAndThenClawback() {
+  console.log("\n=== PAYMENT AND CLAWBACK EXAMPLE ===");
   return getAccounts()
     .then(function (accounts) {
       let [accountA, accountB, accountC] = accounts;
 
+      // A issues 1000 CLAW to B
       return makePayment(accountB, accountA, A, "1000")
         .then(() => createClaimable(accountB, B, accountC, "500"))
         .then((txResp) => clawbackClaimable(accountA, A, getBalanceId(txResp)));
@@ -891,7 +920,7 @@ func exampleClaimableBalanceClawback() {
 
 </CodeExample>
 
-After running `preamble().then(examplePaymentClawback)`, we should see the balances reflect our flow:
+When you invoke `runExample1()`, you should see output similar to:
 
 ```
 A - GCIHA...72MJN: 0
@@ -1008,14 +1037,41 @@ function exampleSelectiveClawback() {
   return getAccounts()
     .then((accounts) => {
       let [accountA, accountB] = accounts;
-      return makePayment(accountB, accountA, A, "1000")
-        .then(getAccounts)
-        .then(showBalances)
-        .then(() => doClawback(accountA, A, accountB, "500"))
-        .then(getAccounts)
-        .then(showBalances)
-        .then(() => disableClawback(accountA, A, accountB))
-        .then(() => doClawback(accountA, A, accountB, "500"))
+
+      console.log("\n--- Initial CLAW balances ---");
+      return showCLAWBalances([accountA, accountB])
+        .then(() => {
+          // A pays 1000 CLAW to B
+          return makePayment(accountB, accountA, A, "1000");
+        })
+        .then(() => {
+          console.log("\n--- After A → B payment ---");
+          return getAccounts();
+        })
+        .then((refreshedAccounts) => {
+          [accountA, accountB] = refreshedAccounts;
+          return showCLAWBalances([accountA, accountB]);
+        })
+        .then(() => {
+          // A claws back 500 CLAW from B (should work)
+          return doClawback(accountA, A, accountB, "500");
+        })
+        .then(() => {
+          console.log("\n--- After first clawback ---");
+          return getAccounts();
+        })
+        .then((refreshedAccounts2) => {
+          [accountA, accountB] = refreshedAccounts2;
+          return showCLAWBalances([accountA, accountB]);
+        })
+        .then(() => {
+          // A disables clawback for B's trustline
+          return disableClawback(accountA, A, accountB);
+        })
+        .then(() => {
+          // Try to clawback again (should fail)
+          return doClawback(accountA, A, accountB, "250");
+        })
         .catch((err) => {
           if (err.response && err.response.data) {
             // This is a very specific way to check for errors,

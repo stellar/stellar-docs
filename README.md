@@ -1,5 +1,8 @@
 # Stellar Documentation and API Reference 🌌 <!-- omit in toc -->
 
+[![Apache 2.0 licensed](https://img.shields.io/badge/license-apache%202.0-blue.svg)](LICENSE)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/stellar/stellar-docs)
+
 Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
 
 ## Table of Contents <!-- omit in toc -->
