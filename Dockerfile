@@ -17,7 +17,7 @@ COPY . /app/
 ARG BUILD_TRANSLATIONS="False"
 
 RUN yarn cache clean --all
-RUN yarn install
+RUN yarn install --frozen-lockfile
 RUN du -sh /app/*
 RUN yarn rpcspec:build --no-minify
 RUN yarn stellar-cli:build --no-minify --cli-ref=main
