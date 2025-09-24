@@ -328,14 +328,14 @@ const config: Config = {
             },
             {
               to: '/docs/learn/fundamentals/lumens',
-              label: 'Lumens (XLM)',
+              label: 'Lumens',
               activeBasePath: 'docs/learn/fundamentals/lumens',
             },
             {
               to: '/docs/learn/fundamentals/stellar-consensus-protocol',
-              label: 'Stellar Consensus Protocol (SCP)',
+              label: 'Stellar Consensus Protocol',
               activeBasePath: 'docs/learn/fundamentals/stellar-consensus-protocol',
-            },   
+            },
             {
               to: '/docs/learn/fundamentals/stellar-data-structures',
               label: 'Data Structures',
@@ -355,7 +355,7 @@ const config: Config = {
             },
             {
               to: '/docs/learn/fundamentals/stellar-ecosystem-proposals',
-              label: 'Stellar Ecosystem Proposals (SEPs)',
+              label: 'Stellar Ecosystem Proposals',
               activeBasePath: 'docs/learn/fundamentals/stellar-ecosystem-proposals',
             },
             {
@@ -377,7 +377,7 @@ const config: Config = {
             },
             {
               to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
-              label: 'SDEX',
+              label: 'Stellar Decentralized Exchange',
               activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
             },
             {
