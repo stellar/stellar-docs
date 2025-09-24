@@ -335,7 +335,7 @@ const config: Config = {
               to: '/docs/learn/fundamentals/stellar-consensus-protocol',
               label: 'Stellar Consensus Protocol (SCP)',
               activeBasePath: 'docs/learn/fundamentals/stellar-consensus-protocol',
-            },   
+            },
             {
               to: '/docs/learn/fundamentals/stellar-data-structures',
               label: 'Data Structures',
@@ -642,11 +642,6 @@ const config: Config = {
           position: 'right',
         },
         {
-          to: '/meetings',
-          label: 'Meetings',
-          position: 'right',
-        },
-        {
           type: 'localeDropdown',
           position: 'right',
         },
@@ -655,12 +650,6 @@ const config: Config = {
           position: "right",
           className: "header-github-link",
           'aria-label': "GitHub",
-        },
-        {
-          href: "https://discord.gg/stellardev",
-          position: "right",
-          className: "header-discord-link",
-          'aria-label': "Discord",
         },
       ],
     },
@@ -717,7 +706,7 @@ const config: Config = {
             },
             {
               label: "All Tools",
-              href: "https://developers.stellar.org/docs/tools/developer-tools",
+              to: "/docs/tools",
             },
           ],
         },
@@ -731,6 +720,10 @@ const config: Config = {
             {
               label: "Developer Discord",
               href: "https://discord.gg/stellardev",
+            },
+            {
+              label: "Developer Meetings",
+              to: "/meetings",
             },
             {
               label: "Developer Google Group",
