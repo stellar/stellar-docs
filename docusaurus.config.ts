@@ -73,10 +73,10 @@ const config: Config = {
         blog: {
           path: 'meeting-notes',
           blogTitle: 'Meeting Notes',
-          blogDescription: 'Notes and recordings from the Soroban protocol & developers meetings',
+          blogDescription: 'Notes and recordings from the Stellar protocol & developers meetings',
           blogSidebarTitle: 'All meetings',
           blogSidebarCount: 'ALL',
-          postsPerPage: 'ALL',
+          postsPerPage: 12,
           routeBasePath: 'meetings',
           onUntruncatedBlogPosts: 'ignore',
         },
