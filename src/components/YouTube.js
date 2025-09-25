@@ -10,10 +10,10 @@ const YouTube = ({ ID }) => (
     marginBottom: "23px"
   }}>
     <iframe
-      src={`https://www.youtube-nocookie.com/embed/${ID}?controls=0`}
+      src={`https://www.youtube-nocookie.com/embed/${ID}?controls=0&rel=0&modestbranding=1`}
       title="Informational explainer"
       frameBorder="0"
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" // tilt screen
       allowFullScreen
       style={{
         position: "absolute",
