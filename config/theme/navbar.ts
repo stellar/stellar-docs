@@ -139,11 +139,6 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/guides/rpc',
     },
     {
-      to: '/docs/build/guides/cli',
-      label: 'CLI',
-      activeBasePath: 'docs/build/guides/cli',
-    },
-    {
       to: '/docs/build/guides/archival',
       label: 'State Archival',
       activeBasePath: 'docs/build/guides/archival',
