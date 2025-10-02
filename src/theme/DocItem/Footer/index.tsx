@@ -15,7 +15,7 @@ export default function FooterWrapper(props: Props): ReactNode {
   const { metadata } = useDoc();
 
   const canDisplayDocCardsOnGuide: boolean = (metadata.permalink?.includes('/docs/build/guides')
-    || metadata.permalink?.includes('/docs/tools/cli/cookbooks'));
+    || metadata.permalink?.includes('/docs/tools/cli/cookbook'));
   const isMainGuidesPage: boolean = metadata.id === 'build/guides/README';
 
   return (
