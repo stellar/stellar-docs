@@ -21,6 +21,7 @@ RUN yarn install --frozen-lockfile
 RUN du -sh /app/*
 RUN yarn rpcspec:build --no-minify
 RUN yarn stellar-cli:build --no-minify --cli-ref=main
+RUN yarn stellar-cli:fix-links
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
