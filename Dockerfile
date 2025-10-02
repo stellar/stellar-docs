@@ -31,7 +31,7 @@ RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
     yarn build --no-minify; \
   fi
 
-FROM nginx:1.27
+FROM nginx:1.29
 
 COPY --from=build /app/build/ /usr/share/nginx/html/
 COPY nginx /etc/nginx/
