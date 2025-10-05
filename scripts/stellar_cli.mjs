@@ -62,7 +62,7 @@ fs.writeFileSync(
 
 fs.writeFileSync("docs/tools/cli/stellar-cli.mdx", modifiedContent);
 
-fs.cpSync(path.join(localRepoPath, "cookbook"), "docs/build/guides/cli", {
+fs.cpSync(path.join(localRepoPath, "cookbook"), "docs/tools/cli/cookbook", {
   recursive: true,
 });
 
