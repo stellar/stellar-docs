@@ -410,9 +410,14 @@ const tools: NavbarItem = {
       activeBasePath: 'docs/tools/quickstart'
     },
     {
-      to: '/docs/tools/developer-tools/openzeppelin-contracts',
+      to: '/docs/tools/openzeppelin-contracts',
       label: 'OpenZeppelin Contracts',
-      activeBasePath: 'docs/tools/developer-tools/openzeppelin-contracts'
+      activeBasePath: 'docs/tools/openzeppelin-contracts'
+    },
+    {
+      to: '/docs/tools/scaffold-stellar',
+      label: 'Scaffold Stellar',
+      activeBasePath: 'docs/tools/scaffold-stellar'
     },
     {
       to: '/docs/tools/developer-tools',
