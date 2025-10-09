@@ -1,15 +1,13 @@
 import fs from "fs-extra";
 import https from "https";
 
-const allowedPlugins = [
-  "OpenZeppelin/stellar-upgrader-cli",
-  "lightsail-network/stellar-contract-bindings",
-  "theahaco/scaffold-stellar",
-];
+// In case there are plugins to exclude from the list, add them here.
+// E.g. "user/repo"
+const excludePlugins = [];
 
 function exportMDX(data) {
   const pluginsContent = data.items.reduce((buffer, item) => {
-    if (!allowedPlugins.includes(item.full_name)) {
+    if (excludePlugins.includes(item.full_name)) {
       return buffer;
     }
 
@@ -17,7 +15,7 @@ function exportMDX(data) {
 
 ${item.description || ""}
 
-[${item.html_url}](${item.html_url})
+<${item.html_url}>
 `;
 
     return buffer + plugin;
@@ -28,6 +26,8 @@ title: Plugins List
 description: See a list of published Stellar CLI plugin
 sidebar_position: 30
 ---
+
+This is a list of all plugins made available by the community, so please review with care before using them.
 
 ${pluginsContent}
 `;
