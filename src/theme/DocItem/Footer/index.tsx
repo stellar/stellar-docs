@@ -14,8 +14,9 @@ type Props = WrapperProps<typeof FooterType>;
 export default function FooterWrapper(props: Props): ReactNode {
   const { metadata } = useDoc();
 
-  const canDisplayDocCardsOnGuide = metadata.permalink?.includes('/docs/build/guides');
-  const isMainGuidesPage = metadata.id === 'build/guides/README'
+  const canDisplayDocCardsOnGuide: boolean = (metadata.permalink?.includes('/docs/build/guides')
+    || metadata.permalink?.includes('/docs/tools/cli/cookbook'));
+  const isMainGuidesPage: boolean = metadata.id === 'build/guides/README';
 
   return (
     <>
