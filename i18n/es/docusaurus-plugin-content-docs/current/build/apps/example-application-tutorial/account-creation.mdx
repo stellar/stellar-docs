@@ -1,0 +1,195 @@
+---
+title: Creación de cuenta
+sidebar_position: 20
+---
+
+Las cuentas son la estructura de datos central en Stellar y solo pueden existir con un keypair válido (una clave pública y una clave secreta) y el saldo mínimo requerido de XLM. Lee más en la [sección de cuentas].
+
+## Experiencia del usuario
+
+Para comenzar, haremos que nuestro usuario cree una cuenta. En BasicPay, la página de registro mostrará un keypair público y secreto aleatorizado que el usuario podrá seleccionar con la opción de elegir un nuevo conjunto si lo prefiere.
+
+:::info
+
+Dado que estamos desarrollando una [aplicación no custodia], la clave secreta encriptada solo vivirá en el navegador. Nunca se compartirá con un servidor ni con nadie más.
+
+:::
+
+![claves pública y privada](/assets/basic-pay/public-and-private-keys.png)
+
+A continuación, haremos que el usuario envíe un código PIN para encriptar su clave secreta antes de que se guarde en el `localStorage` de su navegador (esto es manejado por el [`js-stellar-wallets` SDK]). The user will need to remember their pincode for future logins and to submit transactions.
+
+With BasicPay, when the user clicks the “Signup” button, they will be asked to confirm their pincode. When they do, the `create_account` operation is triggered, and the user's account is automatically funded with XLM for the minimum balance (starting with 10,000 XLM).
+
+![cuenta financiada](/assets/basic-pay/funded-account.png)
+
+Cuando estés listo para mover la aplicación a Pubnet, las cuentas deberán ser financiadas con XLM real. Esto es algo que la aplicación puede cubrir depositando XLM en la cuenta del usuario, con el uso de [reservas patrocinadas], o el usuario puede cubrir el saldo requerido con su propio XLM.
+
+## Implementación del código
+
+Crearemos un `store` Svelte para interactuar con el keypair generado aleatoriamente de nuestro usuario. El store aprovechará algunas de las funciones del SDK `js-stellar-wallets` para encriptar/desencriptar el keypair, así como para firmar transacciones.
+
+### Creando el store `walletStore`
+
+Nuestro `walletStore` hará varias cosas posibles a lo largo de nuestra aplicación.
+
+1. Podemos "registrar" un keypair, que encripta el keypair, lo almacena en el almacenamiento del navegador y rastrea el `keyId` de ese keypair.
+2. We can "sign" transactions by providing the pincode to decrypt the keypair.
+3. We can "confirm" the pincode is valid for the stored keypair (or that it matches for signups).
+
+```js title="/src/lib/stores/walletStore.js"
+import { persisted } from "svelte-local-storage-store";
+import { KeyManager, KeyManagerPlugins, KeyType } from "@stellar/wallet-sdk";
+import { TransactionBuilder } from "stellar-sdk";
+import { error } from "@sveltejs/kit";
+import { get } from "svelte/store";
+
+// We are wrapping this store in its own function which will allow us to write
+// and customize our own store functions to maintain consistent behavior
+// wherever the actions need to take place.
+function createWalletStore() {
+  // Make a `persisted` store that will determine which `keyId` the
+  // `keyManager` should load, when the time comes.
+  const { subscribe, set } = persisted("bpa:walletStore", {
+    keyId: "",
+    publicKey: "",
+  });
+
+  return {
+    subscribe,
+
+    // Registers a user by storing their encrypted keypair in the browser's
+    // `localStorage`.
+    register: async ({ publicKey, secretKey, pincode }) => {
+      try {
+        // Get our `KeyManager` to interact with stored keypairs
+        const keyManager = setupKeyManager();
+
+        // Use the `keyManager` to store the key in the browser's local
+        // storage
+        let keyMetadata = await keyManager.storeKey({
+          key: {
+            type: KeyType.plaintextKey,
+            publicKey: publicKey,
+            privateKey: secretKey,
+          },
+          password: pincode,
+          encrypterName: KeyManagerPlugins.ScryptEncrypter.name,
+        });
+
+        // Set the `walletStore` fields for the `keyId` and `publicKey`
+        set({
+          keyId: keyMetadata.id,
+          publicKey: publicKey,
+          // Don't include this in a real-life production application.
+          // It's just here to make the secret key accessible in case
+          // we need to do some manual transactions or something.
+          devInfo: {
+            secretKey: secretKey,
+          },
+        });
+      } catch (err) {
+        console.error("Error saving key", err);
+        throw error(400, { message: err.toString() });
+      }
+    },
+
+    // Compares a submitted pincode to make sure it is valid for the stored, encrypted keypair.
+    confirmCorrectPincode: async ({
+      pincode,
+      firstPincode = "",
+      signup = false,
+    }) => {
+      // If we are not signing up, make sure the submitted pincode successfully
+      // decrypts and loads the stored keypair.
+      if (!signup) {
+        try {
+          const keyManager = setupKeyManager();
+          let { keyId } = get(walletStore);
+          await keyManager.loadKey(keyId, pincode);
+        } catch (err) {
+          throw error(400, { message: "invalid pincode" });
+        }
+        // If we are signing up for the first time (thus, there is no stored
+        // keypair), just make sure the first and second pincodes match.
+      } else {
+        if (pincode !== firstPincode) {
+          throw error(400, { message: "pincode mismatch" });
+        }
+      }
+    },
+
+    // Sign and return a Stellar transaction
+    sign: async ({ transactionXDR, network, pincode }) => {
+      try {
+        // Get our `keyManager` to interact with stored keypairs
+        const keyManager = setupKeyManager();
+
+        // Use the `keyManager` to sign the transaction with the
+        // encrypted keypair
+        let signedTransaction = await keyManager.signTransaction({
+          transaction: TransactionBuilder.fromXDR(transactionXDR, network),
+          id: get(walletStore).keyId,
+          password: pincode,
+        });
+        return signedTransaction;
+      } catch (err) {
+        console.error("Error signing transaction", err);
+        throw error(400, { message: err.toString() });
+      }
+    },
+  };
+}
+
+// We export `walletStore` as the variable that can be used to interact with the wallet store.
+export const walletStore = createWalletStore();
+
+// Configure a `KeyManager` for use with stored keypairs.
+const setupKeyManager = () => {
+  // We make a new `KeyStore`
+  const localKeyStore = new KeyManagerPlugins.LocalStorageKeyStore();
+
+  // Configure it to use `localStorage` and specify a(n optional) prefix
+  localKeyStore.configure({
+    prefix: "bpa",
+    storage: localStorage,
+  });
+
+  // Make a new `KeyManager`, that uses the previously configured `KeyStore`
+  const keyManager = new KeyManager({
+    keyStore: localKeyStore,
+  });
+
+  // Configure the `KeyManager` to use the `scrypt` encrypter
+  keyManager.registerEncrypter(KeyManagerPlugins.ScryptEncrypter);
+
+  // Return the `KeyManager` for use in other functions
+  return keyManager;
+};
+```
+
+**Fuente:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stores/walletStore.js
+
+### Creando la cuenta en la red Stellar
+
+Después de haber registrado al usuario, necesitamos financiar la cuenta en la red Stellar. Como se discutió anteriormente, hay múltiples maneras de lograr esta tarea, pero estamos utilizando Friendbot para asegurarnos de que el usuario tenga algo de XLM en Testnet para experimentar.
+
+```js title="/src/lib/stellar/horizonQueries.js"
+// Fund an account using the Friendbot utility on the Testnet.
+export async function fundWithFriendbot(publicKey) {
+  console.log(`i am requesting a friendbot funding for ${publicKey}`);
+  await server.friendbot(publicKey).call();
+}
+```
+
+Fuente: https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/horizonQueries.js
+
+### Usando el store `walletStore`
+
+Our `walletStore` is used in a ton of places in our application, especially in the confirmation modal when asking a user to input their pincode. Sigue leyendo para ver cómo lo hemos hecho.
+
+[sección de cuentas]: ../../../learn/fundamentals/stellar-data-structures/accounts.mdx
+[aplicación no custodia]: ../application-design-considerations.mdx#non-custodial-service
+[`js-stellar-wallets` sdk]: https://github.com/stellar/js-stellar-wallets
+[reservas patrocinadas]: ../../guides/transactions/sponsored-reserves.mdx
+[lista de contactos]: ./contacts-list

@@ -66,13 +66,67 @@ The layout of the page is quite similar to our contacts page. It has a table dis
   import { invalidateAll } from "$app/navigation";
 
   // We import some of our `$lib` functions
-  import { submit } from "$lib/stellar/horizonQueries";
   import { createChangeTrustTransaction } from "$lib/stellar/transactions";
   import { fetchAssets } from "$lib/utils/stellarExpert";
+
+  // We import the Server and API types from @stellar/stellar-sdk/rpc for transaction submission
+  import { Server, Api } from "@stellar/stellar-sdk/rpc";
+  import { xdr } from "@stellar/stellar-sdk";
+  import { decode } from "@stellar/stellar-xdr-json";
+  import { error } from "@sveltejs/kit";
 
   // The `open` Svelte context is used to open the confirmation modal
   import { getContext } from "svelte";
   const { open } = getContext("simple-modal");
+
+  // RPC server configuration for transaction submission
+  const rpcUrl = "https://soroban-testnet.stellar.org";
+  const server = new Server(rpcUrl);
+
+  // Local submit function to send transactions using RPC
+  const submit = async (transaction) => {
+    try {
+      // Send the transaction and get initial response
+      const sendTransactionResponse = await server.sendTransaction(transaction);
+
+      // Check if transaction was accepted for processing
+      if (sendTransactionResponse.status !== "PENDING") {
+        throw new Error(
+          `Failed to send transaction, status: ${sendTransactionResponse.status}`,
+        );
+      }
+
+      // Poll for the final transaction status
+      const finalResponse = await server.pollTransaction(
+        sendTransactionResponse.hash,
+      );
+
+      // Handle the final transaction status
+      switch (finalResponse.status) {
+        case Api.GetTransactionStatus.FAILED:
+          // Include decoded resultXdr for failed transactions
+          let errorDetails = `Transaction failed with status: ${finalResponse.status}`;
+          if (finalResponse.resultXdr) {
+            errorDetails += `\nResult XDR: ${finalResponse.resultXdr.toXDR("base64")}`;
+          }
+          throw new Error(errorDetails);
+        case Api.GetTransactionStatus.NOT_FOUND:
+          throw new Error(
+            `Transaction was not included in the ledger. Status: ${finalResponse.status}`,
+          );
+        case Api.GetTransactionStatus.SUCCESS:
+          return finalResponse;
+        default:
+          throw new Error(
+            `Unexpected transaction status: ${finalResponse.status}`,
+          );
+      }
+    } catch (err) {
+      throw error(400, {
+        message: err.message || `Transaction failed: ${err}`,
+      });
+    }
+  };
 
   // Define some component variables that will be used throughout the page
   let addAsset = "";
@@ -144,10 +198,10 @@ In the above page, we've made use of the `createChangeTrustTransaction` function
 import {
   TransactionBuilder,
   Networks,
-  Server,
   Operation,
   Asset,
-} from "stellar-sdk";
+} from "@stellar/stellar-sdk";
+import { Server } from "@stellar/stellar-sdk/rpc";
 import { error } from "@sveltejs/kit";
 
 // We are setting a very high maximum fee, which increases our transaction's
@@ -155,7 +209,7 @@ import { error } from "@sveltejs/kit";
 // change it on one place as and when recommendations and/or best practices
 // evolve. Current recommended fee is `100_000` stroops.
 const maxFeePerOperation = "100000";
-const horizonUrl = "https://horizon-testnet.stellar.org";
+const rpcUrl = "https://soroban-testnet.stellar.org";
 const networkPassphrase = Networks.TESTNET;
 const standardTimebounds = 300; // 5 minutes for the user to review/sign/submit
 
@@ -167,9 +221,9 @@ export async function createChangeTrustTransaction({ source, asset, limit }) {
   let trustAsset = new Asset(asset.split(":")[0], asset.split(":")[1]);
 
   // Next, we setup our transaction by loading the source account from the
-  // network, and initializing the TransactionBuilder.
-  let server = new Server(horizonUrl);
-  let sourceAccount = await server.loadAccount(source);
+  // network using RPC, and initializing the TransactionBuilder.
+  let server = new Server(rpcUrl);
+  let sourceAccount = await server.getAccount(source);
 
   // Chaning everything together from the `transaction` declaration means we
   // don't have to assign anything to `builtTransaction` later on. Either

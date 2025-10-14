@@ -1,0 +1,91 @@
+---
+title: Resumen
+sidebar_position: 10
+---
+
+Este tutorial describe cómo una aplicación puede aprovechar la [arquitectura CDP](https://stellar.org/blog/developers/composable-data-platform) para crear tuberías de datos de metadatos del ledger Stellar rápidas y ligeras utilizando varias selecciones de paquetes del repositorio Stellar Go [github.com/stellar/go](https://github.com/stellar/go/blob/master/) conocidos colectivamente como el SDK de 'Ingestión':
+
+## Los paquetes del SDK de Ingestión
+
+- `github.com/stellar/go/amount` paquete de utilidades para convertir precios de operaciones de transacciones de la red a cadena
+- `github.com/stellar/go/historyarchive` `github.com/stellar/go/support/datastore` `github.com/stellar/go/support/storage` paquete de utilidades con envoltorios convenientes para acceder a archivos de historial, y evitar aspectos de http de bajo nivel
+- `github.com/stellar/go/ingest` proporciona funcionalidad de análisis sobre los metadatos del ledger de la red, convierte a un modelo de `LedgerTransaction` más centrado en los desarrolladores
+- `github.com/stellar/go/network` proporciona configuraciones convenientes preconfiguradas para redes Testnet y Mainnet
+- `github.com/stellar/go/xdr` un enlace completo de Golang al modelo de datos de la red Stellar
+
+## Configuración del proyecto de Ingestión
+
+### Requisitos del proyecto
+
+Para usar este ejemplo de tubería CDP para datos de transacciones en vivo de la red Stellar, necesitarás:
+
+- Una estación de trabajo de desarrollador con el runtime del lenguaje de programación [Go](https://go.dev/learn/) instalado
+- Un IDE para editar código Go, [VSCode](https://code.visualstudio.com/download) es bueno si se necesita uno
+- Una carpeta de proyecto Go nueva e inicializada, vacía. `mkdir pipeline; cd pipeline; go mod init example/pipeline`
+- Alguna familiaridad con el [modelo de metadatos del Ledger Stellar](../../../learn/fundamentals/stellar-data-structures/README.mdx). Se define en un formato IDL expresado en [código XDR](https://github.com/stellar/stellar-xdr).
+- Docker
+- Cuenta de Google Cloud Platform:
+  - un bucket creado en Google Cloud Storage(GCS)
+  - GCP [credenciales en el entorno de la estación de trabajo](https://github.com/stellar/go/blob/master/services/galexie/README.md#set-up-gcp-credentials)
+
+Nuestra aplicación de ejemplo solo está interesada en un pequeño subconjunto del modelo de datos general de la red relacionado con las transferencias de activos desencadenadas por la operación de Pago y define su propio modelo de datos derivado como el objetivo del ejercicio:
+
+<CodeExample>
+
+```
+::AppPayment
+   Timestamp: uint
+   BuyerAccountId: string
+   SellerAccountId: string
+   AssetCode: string
+   Amount: string
+}
+```
+
+</CodeExample>
+
+La aplicación de ejemplo realizará ambas tuberías del CDP. Se requieren un mínimo de dos tuberías para una arquitectura CDP de extremo a extremo completa.
+
+![](/assets/ingest-sdk/cdp_pipelines.png)
+
+### Tubería de exportación de metadatos del Ledger
+
+Esta canalización debe iniciarse primero; es responsable de exportar la Metainformación del Stellar Ledger como archivos a un [CDP Datastore](https://github.com/stellar/go/blob/master/support/datastore/datastore.go).
+
+#### Determinar el Datastore
+
+El Datastore en CDP es una interfaz, que permite múltiples implementaciones que representan diferentes capas de almacenamiento físico que se pueden 'conectar' para exportar y consumir tuberías. Stellar proporciona el [Datastore de GCS] como la primera implementación de Datastore, y este ejemplo elige usar esta implementación existente.
+
+Habrá contribuciones de código abierto para implementaciones en otras capas de almacenamiento de las que elegir a medida que CDP crezca. Si no puedes encontrar una implementación para una capa de almacenamiento que te gustaría usar, también es posible desarrollar tu propia implementación de [Datastore](https://github.com/stellar/go/blob/master/support/datastore/datastore.go#L17), que está más allá del alcance de este ejemplo, ya que implica un ejercicio de aprendizaje separado por sí mismo, ¡pronto disponible!
+
+#### Exportando metadatos de la red al Datastore
+
+Usa Galexie, un nuevo programa de línea de comandos CDP para exportar metadatos de red a datastores.
+
+- Sigue los pasos de configuración de Galexie en la [Guía del Usuario de Galexie](https://github.com/stellar/go/blob/master/services/galexie/README.md#setup), para configurar detalles del bucket de GCS y la red de destino.
+
+- Sigue las [instrucciones de ejecución de docker de Galexie](https://github.com/stellar/go/blob/master/services/galexie/README.md#running-galexie) para iniciar la exportación.
+  - Para la exportación única de un rango histórico limitado de ledgers, usa `append --start <from_ledger> --end <to_ledger>`
+  - Para una exportación continua de los ledgers anteriores y todos los nuevos ledgers generados en la red, usa `append --start <from_ledger>`.
+
+### Tubería de consumidores de metadatos del Ledger
+
+Una tubería de consumidores recupera archivos del bucket de GCS y los usa como el origen de los metadatos del Ledger en una tubería de procesamiento de datos. Puede haber muchas tuberías de consumidores separadas accediendo a la misma Datastore al mismo tiempo. Cada tubería de consumidores típicamente desempeñará tres funciones distintas de procesadores de flujo:
+
+#### Adaptador de entrada
+
+La 'fuente de origen' de los metadatos del ledger en una tubería. Este procesador recupera archivos [LedgerCloseMeta](https://github.com/stellar/go/blob/master/xdr/xdr_generated.go) del GCS Datastore, extrae el `LedgerCloseMeta` de cada Ledger y lo publica en la canalización de mensajería.
+
+El SDK de go proporciona la función auxiliar para consumidores [ApplyLedgerMetadata](https://github.com/stellar/go/blob/master/ingest/producer.go) para la recuperación automatizada, eficiente y con buffer de archivos desde el datastore remoto; el código de la aplicación puede aprovechar esto para obtener datos puros de `LedgerCloseMeta` desde una función de retorno de llamada.
+
+#### Transformador
+
+Se suscribe en la tubería para recibir `LedgerCloseMeta`. Usa el paquete del SDK de Go [github.com/stellar/go/xdr](https://github.com/stellar/go/tree/master/xdr) para analizar el modelo de metadatos del ledger para operaciones de pago y convertirlas en una nueva instancia del modelo de datos de la aplicación `AppPayment`. Publica `AppPayment` en la tubería.
+
+#### Adaptador de salida
+
+Actúa como la terminación de la tubería, se suscribe para recibir `ApplicationPayment` y publica los datos fuera de la tubería y a un almacén de datos externo, un Socket Publicador de ZeroMQ, que es esencialmente un intermediario de mensajes.
+
+### Resumen
+
+Consulta la [Aplicación de Ejemplo de Tubería de Ingestión](./ingestion-pipeline-code.mdx) para un ejemplo completo de código de consumidor, que demuestra una tubería de streaming en vivo contra la red Stellar, procesando los metadatos de cada nuevo ledger a medida que se cierra en la red.
