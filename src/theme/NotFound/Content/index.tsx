@@ -1,15 +1,17 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, type ReactNode } from 'react';
 import clsx from 'clsx';
-import ReactTestUtils from "react-dom/test-utils";
 import Translate from '@docusaurus/Translate';
 import { useHistory } from '@docusaurus/router';
 import type { Props } from '@theme/NotFound/Content';
 import Heading from '@theme/Heading';
 import SearchPage from '@theme/SearchPage';
+import { useSearchQueryString } from '@docusaurus/theme-common';
 
 import styles from './styles.module.scss';
 
-export default function NotFoundContent({className}: Props): JSX.Element {
+export default function NotFoundContent({className}: Props): ReactNode {
+  const [_, setSearchQuery] = useSearchQueryString()
+
   const history = useHistory();
 
   const {
@@ -19,17 +21,14 @@ export default function NotFoundContent({className}: Props): JSX.Element {
   useEffect(() => {
     const parsedPath = pathname
       .split("/")
-      .filter((item) => item && item !== "docs")
+      .filter((item) => item && item !== "docs" && item !== "es")
       .map((item) => item.replace(/-/g, " "))
       .join(" ");
 
     const parsedHash = hash.substring(1).replace(/-/g, " ");
 
     const search = [parsedPath, parsedHash].filter((item) => item).join(" ");
-
-    const searchInput = document.querySelector('input[type="search"]');
-
-    ReactTestUtils.Simulate.change(searchInput, { target: { value: search } });
+    setSearchQuery(search);
   }, [pathname, hash]);
 
   return (

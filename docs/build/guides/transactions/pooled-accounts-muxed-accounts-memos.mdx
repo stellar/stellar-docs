@@ -1,0 +1,460 @@
+---
+title: "Pooled accounts: muxed accounts and memos"
+description: Use muxed accounts to differentiate between individual accounts in a pooled account.
+sidebar_position: 60
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+When building an application or service on Stellar, one of the first things you have to decide is how to handle user accounts.
+
+You can create a Stellar account for each user, but most custodial services, including cryptocurrency exchanges, choose to use a single pooled Stellar account to handle transactions on behalf of their users. In these cases, the muxed account feature can map transactions to individual accounts via an internal customer database.
+
+:::note
+
+We used memos in the past for this purpose, however, using muxed accounts is better in the long term. At this time, there isn't support for muxed accounts by all wallets, exchanges, and anchors, so you may want to support both memos and muxed accounts, at least for a while.
+
+:::
+
+## Pooled accounts
+
+A pooled account allows a single Stellar account ID to be shared across many users. Generally, services that use pooled accounts track their customers in a separate, internal database and use the muxed accounts feature to map an incoming and outgoing payment to the corresponding internal customer.
+
+The benefits of using a pooled account are lower costs – no base reserves are needed for each account – and lower key complexity – you only need to manage one account keypair. However, with a single pooled account, it is now your responsibility to manage all individual customer balances and payments. You can no longer rely on the Stellar ledger to accumulate value, handle errors and atomicity, or manage transactions on an account-by-account basis.
+
+## Muxed accounts
+
+Muxed accounts are embedded into the protocol for convenience and standardization. They distinguish individual accounts that all exist under a single, traditional Stellar account. They combine the familiar `GABC…` address with a 64-bit integer ID.
+
+Muxed accounts do not exist on the ledger, but their shared underlying `GABC…` account does.
+
+Muxed accounts are defined in [CAP-0027](https://stellar.org/protocol/cap-27), introduced in Protocol 13, and their string representation is described in [SEP-0023](https://stellar.org/protocol/sep-23).
+
+It is safe for all wallets to implement sending to muxed accounts.
+
+If you wish to receive deposits to muxed accounts please keep in mind that they are not yet supported by all wallets and exchanges.
+
+### Address format
+
+Muxed accounts have their own address format that starts with an M prefix. For example, from a traditional Stellar account address: `GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ`, we can create new muxed accounts with different IDs. The IDs are embedded into the address itself- when you parse the muxed account addresses, you get the G address from above plus another number.
+
+- `MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAAACJUQ` has the ID 0, while
+- `MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAABUTGI4` has the ID 420.
+
+Both of these addresses will act on the underlying `GA7Q…` address when used with one of the supported operations.
+
+### Supported operations
+
+Not all operations can be used with muxed accounts. Here is what you can use them for:
+
+- The source account of any operation or transaction;
+- The fee source of a fee-bump transaction;
+- The destination of all three types of payments:
+  - `Payment`,
+  - `PathPaymentStrictSend`, and
+  - `PathPaymentStrictReceive`;
+- The destination of an AccountMerge; and
+- The target of a `Clawback` operation (i.e. the from field).
+
+We will demonstrate some of these in the examples section.
+
+There’s no validation on IDs and as far as the Stellar network is concerned, all supported operations operate exactly as if you did not use a muxed account.
+
+## Examples
+
+The following examples demonstrate how muxed accounts work in practice, showing the three main payment scenarios: standard account-to-account, muxed-to-unmuxed, and muxed-to-muxed payments.
+
+**_Note:_** _The complete code implementation for all examples follows after this section. You can run individual examples using their respective functions or execute all three sequentially using the main function._
+
+Muxed accounts (M...) are a client-side abstraction that don't actually exist on the Stellar ledger — only the underlying G account lives on-chain. This means operations like loading account data must always use the base G account, while payment operations can still provide either M or G address. The code diverges only slightly to handle this distinction between the logical muxed account and the actual account.
+
+**Transaction Fees:** All transactions incur a fee (typically 100 stroops or 0.0000100 XLM). Since the custodian account is the source of all transactions in these examples, fees are always debited from the custodian's balance. You'll see this reflected in the before/after balance comparisons, where the custodian account decreases by both the payment amount and the transaction fee.
+
+### Example 1 - Basic Payment (G → G)
+
+This example establishes baseline behavior with a standard payment between two regular Stellar accounts. Both accounts exist directly on the ledger, demonstrating traditional Stellar payment flow without muxed account abstractions. The custodian account balance decreases by 10 XLM plus transaction fees, while the outsider account increases by exactly 10 XLM.
+
+### Example 2 - Muxed to Unmuxed Payment (M → G)
+
+This demonstrates a payment from a muxed account (representing a custodial customer) to a regular Stellar account. The underlying custodian account executes the payment, but the transaction includes the muxed address to identify which customer initiated it.
+
+The transaction is signed with custodian keys since muxed accounts have no secret keys. The custodian account balance decreases by 10 XLM plus fees.
+
+### Example 3 - Muxed to Muxed Payment (M → M)
+
+When two muxed accounts share the same underlying account, payments between them are essentially the account sending to itself. The payment amount (+10 XLM and -10 XLM) cancels out, but transaction fees are still charged since the operation is recorded on the ledger.
+
+The account balance decreases only by the transaction fee. You may want to detect these transactions in your application to avoid unnecessary fees. Note that payments between muxed accounts with different underlying accounts would behave like normal G-to-G payments.
+
+---
+
+## Code Implementation
+
+_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` or execute individual examples using their respective functions._
+
+<CodeExample>
+
+```js
+import * as sdk from "@stellar/stellar-sdk";
+
+const server = new sdk.rpc.Server("https://soroban-testnet.stellar.org");
+
+const custodian = sdk.Keypair.random();
+const outsider = sdk.Keypair.random();
+
+let custodianAcc, outsiderAcc, customers;
+
+// Setup function to fund accounts and create muxed customers
+async function preamble() {
+  console.log("=== FUNDING ACCOUNTS WITH XLM ===");
+  await Promise.all([
+    server.requestAirdrop(custodian.publicKey()),
+    server.requestAirdrop(outsider.publicKey()),
+  ]);
+  console.log("All accounts funded with XLM via airdrop");
+
+  [custodianAcc, outsiderAcc] = await Promise.all([
+    server.getAccount(custodian.publicKey()),
+    server.getAccount(outsider.publicKey()),
+  ]);
+
+  customers = ["1", "22", "333", "4444"].map(
+    (id) => new sdk.MuxedAccount(custodianAcc, id),
+  );
+
+  console.log("\n=== ACCOUNT SETUP ===");
+  console.log("Custodian:\n       ", custodian.publicKey());
+  console.log("Outsider:\n       ", outsider.publicKey());
+  console.log("Customers:");
+  customers.forEach((customer) => {
+    console.log(
+      " " + customer.id().padStart(4, " ") + ":",
+      customer.accountId(),
+    );
+  });
+}
+
+// Example 1: Basic payment between two G accounts
+async function runUnmuxedExample() {
+  console.log("=== BASIC PAYMENT EXAMPLE (G → G) ===");
+
+  console.log("=== INITIAL BALANCES ===");
+  await showBalance(custodianAcc);
+  await showBalance(outsiderAcc);
+
+  await makePayment(
+    custodianAcc,
+    outsiderAcc,
+    "Basic Payment from G to G address",
+  );
+
+  console.log("\n=== FINAL BALANCES ===");
+  const finalCustodianAcc = await server.getAccount(custodian.publicKey());
+  const finalOutsiderAcc = await server.getAccount(outsider.publicKey());
+  await showBalance(finalCustodianAcc);
+  await showBalance(finalOutsiderAcc);
+
+  console.log("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===");
+}
+
+// Example 2: Payment from M account to G account
+async function runMuxedToUnmuxedExample() {
+  console.log("=== MUXED TO UNMUXED PAYMENT EXAMPLE (M → G) ===");
+
+  console.log("=== INITIAL BALANCES ===");
+  await showBalance(custodianAcc);
+  await showBalance(outsiderAcc);
+  const src = customers[0];
+  console.log(
+    `Sending 10 XLM from Customer ${src.id()} to ${formatAccount(
+      outsiderAcc.accountId(),
+    )}.`,
+  );
+
+  await makePayment(src, outsiderAcc, "Payment from M to G address");
+
+  console.log("\n=== FINAL BALANCES ===");
+  const finalCustodianAcc = await server.getAccount(custodian.publicKey());
+  const finalOutsiderAcc = await server.getAccount(outsider.publicKey());
+  await showBalance(finalCustodianAcc);
+  await showBalance(finalOutsiderAcc);
+
+  console.log("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===");
+}
+
+// Example 3: Payment between two M accounts
+async function runMuxedToMuxedExample() {
+  console.log("=== MUXED TO MUXED PAYMENT EXAMPLE (M → M) ===");
+
+  console.log("=== INITIAL BALANCES ===");
+  await showBalance(custodianAcc);
+
+  const src = customers[1]; // Customer 22
+  const dest = customers[2]; // Customer 333
+
+  console.log(
+    `Sending 10 XLM from Customer ${src.id()} to Customer ${dest.id()}.`,
+  );
+
+  await makePayment(src, dest, "Payment from M to M address");
+
+  console.log("\n=== FINAL BALANCES ===");
+  const finalCustodianAcc = await server.getAccount(custodian.publicKey());
+  await showBalance(finalCustodianAcc);
+
+  console.log("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===");
+}
+
+// Main function that runs preamble once and then all three examples
+async function runAllMuxedExamples() {
+  try {
+    // Run setup/funding only once
+    await preamble();
+
+    // Show initial state
+    console.log("=== OVERALL INITIAL BALANCES ===");
+    await showBalance(custodianAcc);
+    await showBalance(outsiderAcc);
+    console.log("\n" + "=".repeat(60) + "\n");
+
+    // Run all three examples sequentially
+    await runUnmuxedExample();
+    console.log("\n" + "=".repeat(60) + "\n");
+
+    await runMuxedToUnmuxedExample();
+    console.log("\n" + "=".repeat(60) + "\n");
+
+    await runMuxedToMuxedExample();
+
+    console.log("\n=== ALL MUXED ACCOUNT EXAMPLES COMPLETED ===");
+  } catch (error) {
+    console.error("Error in examples:", error.message);
+  }
+}
+
+// Helper function to format account ID with label
+function formatAccount(accountId) {
+  const shortId = accountId.substring(0, 8);
+  if (accountId === custodian.publicKey()) {
+    return `${shortId} (Custodian)`;
+  } else if (accountId === outsider.publicKey()) {
+    return `${shortId} (Outsider)`;
+  }
+
+  // Check if it's a muxed account by finding the matching customer
+  const matchingCustomer = customers?.find(
+    (customer) => customer.accountId() === accountId,
+  );
+  if (matchingCustomer) {
+    return `${accountId.substring(0, 8)}...${accountId.slice(
+      -6,
+    )} (Customer ${matchingCustomer.id()})`;
+  }
+  return shortId;
+}
+
+function scaleAsset(x) {
+  return Number(x) / 10000000; // Preserves decimal precision
+}
+
+// Helper function to get XLM balance using RPC
+function getXLMBalance(accountId) {
+  return server
+    .getAccountEntry(accountId)
+    .then((accountEntry) => {
+      return scaleAsset(accountEntry.balance().toBigInt()).toFixed(7);
+    })
+    .catch(() => "0");
+}
+
+// Helper function to submit transaction and poll for completion using RPC
+function submitAndPollTransaction(transaction, description = "Transaction") {
+  return server.sendTransaction(transaction).then((submitResponse) => {
+    if (submitResponse.status !== "PENDING") {
+      throw new Error(
+        `Transaction submission failed: ${submitResponse.status}`,
+      );
+    }
+
+    console.log(`${description} submitted: ${submitResponse.hash}`);
+
+    return server.pollTransaction(submitResponse.hash).then((finalResponse) => {
+      if (finalResponse.status === "SUCCESS") {
+        console.log(`${description} completed successfully`);
+        return {
+          hash: submitResponse.hash,
+          status: finalResponse.status,
+          resultXdr: finalResponse.resultXdr,
+        };
+      } else {
+        throw new Error(`${description} failed: ${finalResponse.status}`);
+      }
+    });
+  });
+}
+
+function buildTx(source, signer, ops) {
+  var tx = new sdk.TransactionBuilder(source, {
+    fee: sdk.BASE_FEE,
+    networkPassphrase: sdk.Networks.TESTNET,
+  });
+
+  ops.forEach((op) => tx.addOperation(op));
+  tx = tx.setTimeout(30).build();
+  tx.sign(signer);
+  return tx;
+}
+
+// Helper function to load account, handling muxed accounts
+function loadAccount(account) {
+  if (sdk.StrKey.isValidMed25519PublicKey(account.accountId())) {
+    return loadAccount(account.baseAccount());
+  } else {
+    return server.getAccount(account.accountId());
+  }
+}
+
+// Helper function to display balance of an account
+async function showBalance(acc) {
+  const balance = await getXLMBalance(acc.accountId());
+  console.log(`${formatAccount(acc.accountId())}: ${balance} XLM`);
+}
+
+// Function to make a payment from source to destination account
+async function makePayment(source, dest, description = "Payment") {
+  console.log(
+    `\nPayment: ${formatAccount(source.accountId())} → ${formatAccount(
+      dest.accountId(),
+    )} (10 XLM)`,
+  );
+
+  const accountBeforePayment = await loadAccount(source);
+  console.log("Before payment:");
+  await showBalance(accountBeforePayment);
+
+  let payment = sdk.Operation.payment({
+    source: source.accountId(),
+    destination: dest.accountId(),
+    asset: sdk.Asset.native(),
+    amount: "10",
+  });
+
+  let tx = buildTx(accountBeforePayment, custodian, [payment]);
+
+  await submitAndPollTransaction(tx, description);
+
+  const accountAfterPayment = await loadAccount(source);
+  console.log("After payment:");
+  await showBalance(accountAfterPayment);
+}
+
+// Run the main function
+runAllMuxedExamples();
+```
+
+</CodeExample>
+
+### Running the Examples
+
+- **All Examples**: `runAllMuxedExamples()` - Runs setup once and executes all three examples
+- **Individual Examples**:
+- `runUnmuxedExample()` - Basic G→G payment
+- `runMuxedToUnmuxedExample()` - Muxed→Unmuxed payment
+- `runMuxedToMuxedExample()` - Muxed→Muxed payment
+
+**_Note:_** _When running individual examples, ensure you call `preamble()` first to set up and fund the accounts._
+
+### More Examples
+
+As is the case for most protocol-level features, you can find more usage examples and inspiration in the relevant test suite for your favorite SDK. For example, [here](https://github.com/stellar/js-stellar-base/blob/master/test/unit/muxed_account_test.js) are some of the JavaScript test cases.
+
+### FAQs
+
+**What happens if I pay a muxed address, but the recipient doesn’t support them?**
+
+In general, you should not send payments to muxed addresses on platforms that do not support them. These platforms will not be able to provide muxed destination addresses in the first place.
+
+Even still, if this does occur, parsing a transaction with a muxed parameter without handling them will lead to one of two things occurring:
+
+- If your SDK is out-of-date, parsing will error out. You should upgrade your SDK. For example, the JavaScript SDK will throw a helpful message:
+
+```
+
+“destination is invalid; did you forget to enable muxing?”
+
+```
+
+- If your SDK is up-to-date, you will see the muxed (`M...`) address parsed out. What happens next depends on your application.
+
+Note, however, that the operation will succeed on the network. In the case of payments, for example, the destination’s parent address will still receive the funds.
+
+**What happens if I want to pay a muxed account, but my platform does not support them?**
+
+In this case, do not use a muxed address. The platform will likely fail to create the operation. You probably want to use the legacy method of including a transaction memo, instead.
+
+**What do I do if I receive a transaction with muxed addresses and a memo ID?**
+
+In an ideal world, this situation would never happen. You can determine whether or not the underlying IDs are equal; if they aren’t, this is a malformed transaction and we recommend not submitting it to the network.
+
+**What happens if I get errors when using muxed accounts?**
+
+In up-to-date versions of Stellar SDKs, muxed accounts are natively supported by default. If you are using an older version of an SDK, however, they may still be hidden behind a feature flag.
+
+If you get errors when using muxed addresses on supported operations like: “destination is invalid; did you enable muxing?”
+
+We recommend upgrading to the latest version of any and all Stellar SDKs you use. However, if that’s not possible for some reason, you will need to enable the feature flag before interacting with muxed accounts. Consult your SDK’s documentation for details.
+
+**What happens if I pass a muxed address to an incompatible operation?**
+
+Only certain operations allow muxed accounts, as described above. Passing a muxed address to an incompatible parameter with an up-to-date SDK should result in a compilation or runtime error at the time of use.
+
+For example, when using the JavaScript SDK incorrectly:
+
+<CodeExample>
+
+```js
+const mAddress =
+  "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAABUTGI4";
+transactionBuilder.addOperation(
+  Operation.setTrustLineFlags({
+    trustor: mAddress, // wrong!
+    asset: someAsset,
+    flags: { clawbackEnabled: false },
+  }),
+);
+```
+
+</CodeExample>
+
+The runtime result would be:
+
+“Error: invalid version byte. expected 48, got 96”
+
+This error message indicates that the `trustor` failed to parse as a Stellar account ID (`G...`). In other words, your code will fail and the invalid operation will never reach the network.
+
+**How do I validate Stellar addresses?**
+
+You should use the validation methods provided by your SDK or carefully adhere to [SEP-23](https://stellar.org/protocol/sep-23). For example, the JavaScript SDK provides the following methods for validating Stellar addresses:
+
+```ts
+namespace StrKey {
+  function isValidEd25519PublicKey(publicKey: string): boolean;
+  function isValidMed25519PublicKey(publicKey: string): boolean;
+}
+```
+
+There are also abstractions for constructing and managing both muxed and regular accounts; consult your SDK documentation for details.
+
+## Memo - differentiated accounts
+
+Prior to the introduction of muxed accounts, products and services that relied on pooled accounts often used transaction memos to differentiate between users. Supporting muxed accounts is better in the long term, but for now you may want to support both memos and muxed accounts as all exchanges, anchors, and wallets may not support muxed accounts.
+
+To learn about what other purposes memos can be used for, see our [Memos section](../../../learn/fundamentals/transactions/operations-and-transactions.mdx#memo).
+
+## Why are muxed accounts better in the long term?
+
+Muxed accounts are a better approach to differentiating between individuals in a pooled account because they have better:
+
+- Shareability — rather than worrying about error-prone things like copy-pasting memo IDs, you can just share your M... address.
+- SDK support — the various SDKs support this abstraction natively, letting you create, manage, and work with muxed accounts easily. This means that you may see muxed addresses appear when parsing any of the fields that support them, so you should be ready to handle them. Refer to your SDK’s documentation for details; for example, [v7.0.0](https://github.com/stellar/js-stellar-base/releases/tag/v7.0.0) of the JavaScript SDK library stellar-base describes all of the fields and functions that relate to muxed accounts.
+- Efficiency — by combining related virtual accounts under a single account’s umbrella, you can avoid holding reserves and paying fees for all of them to exist in the ledger individually. You can also combine multiple payments to multiple destinations within a single transaction since you do not need the per-transaction memo field anymore.

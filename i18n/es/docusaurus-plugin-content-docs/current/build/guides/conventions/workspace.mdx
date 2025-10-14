@@ -1,0 +1,331 @@
+---
+title: Espacios de trabajo
+hide_table_of_contents: true
+description: Organizar contratos usando espacios de trabajo de Cargo
+---
+
+# Espacio de trabajo
+
+Usar la [función](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) de espacios de trabajo de Cargo facilita mucho la organización de tus contratos inteligentes en subdirectorios de la raíz de tu proyecto.
+
+Es muy simple comenzar a usar la CLI:
+
+```
+stellar contract init soroban-project --name add_contract
+```
+
+Ejecutar este comando creará un directorio raíz del proyecto (`soroban-project`) y luego inicializará un espacio de trabajo del proyecto con un único contrato llamado `add_contract`.
+
+Agregar un contrato plantilla más al proyecto se puede hacer usando el mismo comando:
+
+```
+stellar contract init soroban-project --name main_contract
+```
+
+El árbol del proyecto en el directorio `soroban-project` se verá así:
+
+```
+.
+├── Cargo.toml
+├── contracts
+│   ├── add-contract
+│   │   ├── Cargo.toml
+│   │   ├── Makefile
+│   │   └── src
+│   │       ├── lib.rs
+│   │       └── test.rs
+│   └── main-contract
+│       ├── Cargo.toml
+│       ├── Makefile
+│       └── src
+│           ├── lib.rs
+│           └── test.rs
+└── README.md
+```
+
+Ejecutar el comando `stellar contract init` creó un nuevo contrato, ubicado en `./contracts`, cada uno conteniendo:
+
+- Archivo Cargo.toml con la dependencia `soroban-sdk`
+- Directorio `src` con un contrato de ejemplo hello-world y una prueba.
+
+Desarrolla los contratos con el siguiente comando (no olvides cambiar el directorio de trabajo a `soroban-project` antes de ejecutarlo) y verifica el directorio de compilación `target/wasm32v1-none/release/` para los archivos `.wasm` compilados.
+
+```
+stellar contract build
+```
+
+### Integrar contratos en el mismo espacio de trabajo
+
+Con la estructura de proyecto dada, se pueden realizar fácilmente llamadas cruzadas de contrato. Comenzar modificando el contrato de ejemplo hello world en un contrato add:
+
+```rust title="contracts/add_contract/src/lib.rs"
+#![no_std]
+use soroban_sdk::{contract, contractimpl};
+
+#[contract]
+pub struct ContractAdd;
+
+#[contractimpl]
+impl ContractAdd {
+    pub fn add(x: u32, y: u32) -> u32 {
+        x.checked_add(y).expect("no overflow")
+    }
+}
+```
+
+:::tip
+
+En este tutorial usamos espacios de trabajo para importar el cliente del contrato. Sin embargo, también es posible usar el código compilado del contrato en su lugar (por ejemplo, si no tienes un código fuente para él). Consulta la guía sobre [hacer llamadas entre contratos](./cross-contract.mdx) para más información
+
+:::
+
+A continuación, para llamar a `ContractAdd` desde otro contrato, es necesario agregar una dependencia de espacio de trabajo:
+
+```toml title="./contracts/main_contract/Cargo.toml"
+# <...>
+[dependencies]
+soroban-sdk = { workspace = true }
+add_contract = { path = "../add_contract" }
+# <...>
+```
+
+`ContractAdd` ahora puede ser referenciado y utilizado desde otros contratos usando `ContractAddClient`:
+
+```rust title="contracts/main_contract/src/lib.rs"
+#![no_std]
+use add_contract::ContractAddClient;
+use soroban_sdk::{contract, contractimpl, Address, Env};
+
+#[contract]
+pub struct ContractMain;
+
+#[contractimpl]
+impl ContractMain {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        let client = ContractAddClient::new(&env, &contract);
+        client.add(&x, &y)
+    }
+}
+
+mod test;
+```
+
+Aquí, el contrato principal invocará la función `add` de `ContractAdd` para calcular la suma de 2 números. Es una buena idea actualizar las pruebas para nuestro contrato principal también:
+
+```rust title="contracts/main_contract/src/test.rs"
+#![cfg(test)]
+
+use crate::{ContractMain, ContractMainClient};
+use soroban_sdk::Env;
+use add_contract::ContractAdd;
+
+#[test]
+fn test_adding_cross_contract() {
+    let env = Env::default();
+
+    // Register add contract using the imported contract.
+    let contract_add_id = env.register(ContractAdd, ());
+
+    // Register main contract defined in this crate.
+    let contract_main_id = env.register(ContractMain, ());
+
+    // Create a client for calling main contract.
+    let client = ContractMainClient::new(&env, &contract_main_id);
+
+    // Invoke main contract via its client. Main contract will invoke add contract.
+    let sum = client.add_with(&contract_add_id, &5, &7);
+    assert_eq!(sum, 12);
+}
+```
+
+Los contratos ahora pueden volver a compilarse ejecutando el siguiente comando desde la raíz del proyecto:
+
+```
+stellar contract build
+```
+
+Y comprobar que la prueba esté funcionando correctamente, ejecutando pruebas en `contracts/main_contract`:
+
+```
+cargo test
+
+running 1 test
+test test::test_adding_cross_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+Finalmente, despleguemos estos contratos y llamemos a nuestro contrato principal usando CLI. Si aún no lo has hecho, configura una cuenta (alice) primero
+
+```bash
+stellar keys generate alice --fund --network testnet
+stellar keys use alice
+```
+
+El segundo paso es desplegar los contratos:
+
+```bash
+stellar contract deploy --network testnet --wasm target/wasm32v1-none/release/add_contract.wasm --alias add_contract
+stellar contract deploy --network testnet --wasm target/wasm32v1-none/release/main_contract.wasm --alias main_contract
+```
+
+Y finalmente llama al contrato principal:
+
+```
+$ stellar contract invoke --id main_contract --network testnet -- add_with --contract add_contract --x 9 --y 10
+ℹ️ Send skipped because simulation identified as read-only. Send by rerunning with `--send=yes`.
+19
+```
+
+### Agregando interfaces de contrato
+
+Como siguiente paso, podemos abstraer el contrato add y permitir que tenga múltiples implementaciones. El contrato principal utilizará a su vez la interfaz del contrato que no está vinculada a su implementación.
+
+```
+stellar contract init . --name adder_interface
+stellar contract init . --name add_extra_contract
+```
+
+Primero, creemos una interfaz y cambiemos nuestra implementación existente para usar esta interfaz:
+
+```rust title="contracts/adder_interface/src/lib.rs"
+#![no_std]
+
+use soroban_sdk::contractclient;
+
+#[contractclient(name = "ContractAClient")]
+pub trait ContractAInterface {
+    fn add(x: u32, y: u32) -> u32;
+}
+```
+
+Para utilizar la definición de interfaz, nuestros miembros del espacio de trabajo ahora tendrán un `adder_interface` como dependencia:
+
+```toml title="./Cargo.toml"
+# <...>
+[workspace.dependencies]
+soroban-sdk = "21.0.0"
+adder-interface = { path = "contracts/adder_interface" }
+# <...>
+```
+
+```toml title="./contracts/add_contract/Cargo.toml"
+# <...>
+[dependencies]
+soroban-sdk = { workspace = true }
+adder-interface = {workspace = true}
+# <...>
+```
+
+```toml title="./contracts/main_contract/Cargo.toml"
+# <...>
+[dependencies]
+soroban-sdk = { workspace = true }
+adder-interface = {workspace = true}
+add_contract = { path = "../add_contract" }
+# <...>
+```
+
+```toml title="./contracts/add_extra_contract/Cargo.toml"
+# <...>
+[dependencies]
+soroban-sdk = { workspace = true }
+adder-interface = {workspace = true}
+# <...>
+```
+
+Y cambiamos el tipo de lib del crate `adder_interface`:
+
+```toml title="./contracts/adder_interface/Cargo.toml"
+# <...>
+[lib]
+crate-type = ["rlib"]
+# <...>
+```
+
+```rust title="./contracts/adder_interface/src/lib.rs"
+#![no_std]
+
+use soroban_sdk::contractclient;
+
+#[contractclient(name = "AdderClient")]
+pub trait Adder {
+    fn add(x: u32, y: u32) -> u32;
+}
+
+```
+
+```rust title="contracts/add_contract/src/lib.rs"
+#![no_std]
+use soroban_sdk::{contract, contractimpl};
+use adder_interface::Adder;
+
+#[contract]
+pub struct ContractAdd;
+
+#[contractimpl]
+impl Adder for ContractAdd {
+    fn add(x: u32, y: u32) -> u32 {
+        x.checked_add(y).expect("no overflow")
+    }
+}
+
+```
+
+```rust title="contracts/main_contract/src/lib.rs"
+#![no_std]
+
+use soroban_sdk::{contract, contractimpl, Address, Env};
+use adder_interface::AdderClient;
+
+#[contract]
+pub struct ContractMain;
+
+#[contractimpl]
+impl ContractMain {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        let client = AdderClient::new(&env, &contract);
+        client.add(&x, &y)
+    }
+}
+
+mod test;
+```
+
+Como paso final, podemos crear una implementación alternativa de `Adder` que sume un extra 1:
+
+```rust title="contracts/add_extra_contract/src/lib.rs"
+#![no_std]
+use soroban_sdk::{contract, contractimpl};
+use adder_interface::Adder;
+
+#[contract]
+pub struct ContractAdd;
+
+#[contractimpl]
+impl Adder for ContractAdd {
+    fn add(x: u32, y: u32) -> u32 {
+        x.checked_add(y).expect("no overflow").checked_add(1).expect("no overflow")
+    }
+}
+```
+
+Ahora podemos desplegar estos contratos y probar el nuevo comportamiento:
+
+```bash
+stellar contract build
+stellar contract deploy --network testnet --wasm target/wasm32v1-none/release/add_contract.wasm --alias add_contract
+stellar contract deploy --network testnet --wasm target/wasm32v1-none/release/add_extra_contract.wasm --alias wrong_math_contract
+stellar contract deploy --network testnet --wasm target/wasm32v1-none/release/main_contract.wasm --alias main_contract
+```
+
+Ahora intentemos sumar 2 enteros sin signo provocando un desbordamiento:
+
+```
+$ stellar contract invoke --id main_contract --network testnet -- add_with --contract add_contract --x 2 --y 2
+ℹ️ Send skipped because simulation identified as read-only. Send by rerunning with `--send=yes`.
+4
+$ stellar contract invoke --id main_contract --network testnet -- add_with --contract wrong_math_contract --x 2 --y 2
+ℹ️ Send skipped because simulation identified as read-only. Send by rerunning with `--send=yes`.
+5
+```

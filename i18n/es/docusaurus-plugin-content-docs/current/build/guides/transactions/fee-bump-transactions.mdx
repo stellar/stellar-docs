@@ -1,0 +1,144 @@
+---
+title: Transacciones de suplemento de tarifa
+description: Usa transacciones fee-bump para pagar las comisiones de transacción en nombre de otra cuenta sin volver a firmar la transacción.
+sidebar_position: 40
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Las transacciones de suplemento de tarifa fueron introducidas en [CAP-0015](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0015.md) y permiten que una cuenta pague las tarifas de una transacción existente sin necesidad de volver a firmar la transacción ni gestionar números de secuencia.
+
+Una transacción fee-bump está compuesta por dos partes:
+
+1. Un sobre de transacción interno con su(s) firma(s)
+2. Un sobre de transacción externo con la transacción de suplemento de tarifa y la firma de la cuenta de tarifa
+
+## Casos de uso comunes
+
+Deberías considerar usar fee bumps cuando:
+
+- Estás construyendo un servicio donde quieres cubrir las tarifas de los usuarios
+- Quieres aumentar la tarifa en una transacción existente para que tenga más posibilidades de llegar al libro mayor durante precios elevados
+- Necesitas ajustar la comisión en una transacción preautorizada para que pueda entrar en el ledger si las comisiones mínimas de la red han aumentado
+
+:::note
+
+Usa la [Calculadora de Patrocinio de Billeteras Stellar](../../../tools/developer-tools/wallets.mdx#stellar-wallet-sponsorship-calculator) para estimar los requisitos de XLM para billeteras que buscan usar reservas patrocinadas y transacciones fee-bump para cubrir la creación de cuentas, comisiones de transacción, líneas de confianza y más.
+
+:::
+
+## Atributos
+
+### Sobre de transacción existente (transacción interna)
+
+Antes de crear una transacción fee-bump, primero debes tener una transacción envuelta con sus firmas en un sobre de transacción. Llamaremos a esta transacción la transacción interna.
+
+### Cuenta de comisión
+
+La cuenta que pagará la tarifa por la transacción de suplemento de tarifa. Esta cuenta incurrirá en la tarifa en lugar de la cuenta origen especificada en la transacción interna. Sin embargo, el número de secuencia aún se toma de la cuenta origen.
+
+### Comisión
+
+La comisión máxima por operación que estás dispuesto a pagar por la transacción fee-bump. La transacción de suplemento de tarifa es una operación. Por lo tanto, el número total de operaciones es igual al número de operaciones en la transacción interna más una.
+
+Lee más sobre las tarifas de transacción en nuestra [sección de Tarifas](../../../learn/fundamentals/fees-resource-limits-metering.mdx).
+
+### Reemplazar por comisión
+
+Puedes aplicar una transacción de suplemento de tarifa para aumentar una tarifa originada desde tu propia cuenta. Sin embargo, si envías dos transacciones distintas con la misma cuenta origen y número de secuencia, siendo la segunda una transacción fee-bump, la segunda transacción reemplazará a la primera en la cola solo si la comisión ofrecida en la segunda transacción es 10 veces la comisión ofrecida en la primera. Este número puede parecer aleatorio, pero es una decisión de diseño deliberada para limitar ataques DOS sin introducir demasiada complejidad al protocolo.
+
+### Sobre de transacción fee-bump
+
+Cuando una transacción de suplemento de tarifa está lista para ser firmada, se envuelve en un sobre de transacción. Este sobre contiene la transacción fee-bump y la firma de la cuenta de comisión especificada.
+
+## Validez de una transacción fee-bump
+
+Una transacción de suplemento de tarifa pasa por una serie de comprobaciones en su ciclo de vida para determinar su validez. Se deben cumplir las siguientes condiciones:
+
+- **Cuenta de tarifa** — la cuenta de tarifa para la transacción de suplemento de tarifa debe existir en el libro mayor.
+- **Tarifa**
+  - La tarifa debe ser mayor o igual a la tarifa mínima de red para el número de operaciones en la transacción interna, más uno por el suplemento de tarifa.
+  - La comisión también debe ser mayor o igual a la comisión especificada en la transacción interna.
+  - Si la transacción fee-bump aprovecha el reemplazo por comisión, la comisión debe ser 10 veces mayor que la de la primera transacción.
+- **Firma de la cuenta de tarifa** — el sobre de la transacción de suplemento de tarifa debe contener una firma válida para la cuenta de tarifa. Además, el peso de esa firma debe alcanzar el umbral bajo para la cuenta de comisión, y la frase de acceso de red adecuada debe formar parte del hash de la transacción firmado por la cuenta de comisión.
+- **Saldo de la cuenta de tarifa** — la cuenta de tarifa debe tener un saldo suficiente de XLM para cubrir la tarifa
+- **Transacción interna** — la transacción interna debe ser válida, lo que significa que debe cumplir con los requisitos descritos en la [sección de Validez de una Transacción](../../../learn/fundamentals/transactions/operations-and-transactions.mdx#transaction-and-operation-validity). Si la validación de la transacción interna es exitosa, el resultado es `FEE_BUMP_INNER_SUCCESS`, y los resultados de validación de la transacción interna aparecen en el resultado interno. Si la transacción interna es inválida, el resultado es `FEE_BUMP_INNER_FAILED`, y la transacción fee-bump es inválida porque la transacción interna es inválida.
+
+## Aplicación
+
+El único propósito de una transacción fee-bump es incluir una transacción interna en un conjunto de transacciones. Dado que la transacción fee-bump no tiene efectos secundarios aparte de pagar una comisión — y en el momento en que se paga la comisión la transacción externa debe haber sido válida (de lo contrario los nodos no la hubieran votado) — no hay razón para verificar la validez de la transacción fee-bump en el momento de su aplicación. Por lo tanto, el número de secuencia de la transacción interna siempre se consume al aplicar. Sin embargo, la transacción interna seguirá siendo verificada en cuanto a su validez al aplicar.
+
+Cada resultado de transacción fee-bump contiene un resultado completo de la transacción interna. Este resultado de la transacción interna es exactamente lo que se hubiera producido si no hubiera existido la transacción de suplemento de tarifa, excepto que la tarifa interna siempre será 0.
+
+## Ejemplo: implementar una transacción de suplemento de tarifa
+
+Este ejemplo muestra cómo crear y enviar una transacción de suplemento de tarifa en la red Stellar. Reemplaza los valores clave secret, `SECREY_KEY_1` y `SECREY_KEY_2` de los keypairs que elijas. Este no es un ejemplo para producción, y debes tener cuidado de no exponer tus claves secretas en la web.
+
+<CodeExample>
+
+```js
+import * as StellarSdk from "@stellar/stellar-sdk";
+
+// Define the network passphrase (use 'Testnet' for testing and 'Public Global Stellar Network ; September 2015' for production)
+const networkPassphrase = StellarSdk.Networks.TESTNET;
+
+// Create keypairs for the source account and the fee account
+const sourceKeypair = StellarSdk.Keypair.fromSecret("SECREY_KEY_1");
+const feeKeypair = StellarSdk.Keypair.fromSecret("SECREY_KEY_2");
+
+// Load the source account (this requires network interaction)
+const server = new StellarSdk.rpc.Server("https://soroban-testnet.stellar.org");
+const sourceAccount = await server.getAccount(sourceKeypair.publicKey());
+
+// Construct the inner transaction, just a example tx, to transfer 10 XLM to a destination account
+const innerTransaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+  fee: StellarSdk.BASE_FEE,
+  networkPassphrase,
+})
+  .addOperation(
+    StellarSdk.Operation.payment({
+      destination: "GDWH3P3MNTCMOY42CA7RVEACUUAUPZ73XDYKPYUL3TWOFRF37FD6OVM6",
+      asset: StellarSdk.Asset.native(),
+      amount: "10",
+    }),
+  )
+  .setTimeout(30)
+  .build();
+
+// Sign the inner transaction with the source account
+innerTransaction.sign(sourceKeypair);
+
+// Build the fee-bump transaction
+const feeBumpTransaction =
+  StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
+    feeKeypair,
+    StellarSdk.BASE_FEE * 2,
+    innerTransaction,
+    networkPassphrase,
+  );
+
+// Sign the fee-bump transaction with the fee account
+feeBumpTransaction.sign(feeKeypair);
+
+// Submit the fee-bump transaction to the Stellar network
+server
+  .sendTransaction(feeBumpTransaction)
+  .then((response) => {
+    if (response.status !== "PENDING") {
+      throw response;
+    }
+
+    return server.pollTransaction(response.hash, {
+      sleepStrategy: StellarSdk.rpc.LinearSleepStrategy,
+      attempts: 5,
+    });
+  })
+  .then((response) => {
+    console.log("transaction response:", response);
+  })
+  .catch((error) => {
+    console.error("Something went wrong!", error);
+  });
+```
+
+</CodeExample>

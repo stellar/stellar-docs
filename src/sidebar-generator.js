@@ -34,62 +34,68 @@ module.exports = async ({ defaultSidebarItemsGenerator, ...args }) => {
     });
   }
 
-  const apiReference = sidebarItems.find(
-    (item) => item.type === "category" && item.label.toLowerCase() === "api reference",
+  const horizonCategory = sidebarItems.find(
+    (item) => item.type === "category" && item.label.toLowerCase() === "horizon",
   );
-
-  if (apiReference) {
-    const resources = apiReference.items.find(
-      (item) =>
-        item.type === "category" && item.label.toLowerCase() === "resources",
-    );
-    const aggregations = apiReference.items.find(
-      (item) =>
-        item.type === "category" && item.label.toLowerCase() === "aggregations"
-    )
-
-    const sidebarPath = path.join(
-      args.version.contentPath,
-      args.item.dirName,
-      "./api-reference/sidebar.ts",
+  
+  if (horizonCategory) {
+    const apiReference = horizonCategory.items.find(
+      (item) => item.type === "category" && item.label.toLowerCase() === "api reference",
     );
 
-    if (resources && fs.existsSync(sidebarPath)) {
-      const generatedApiSidebar = require(sidebarPath)[0];
+    if (apiReference) {
+      const resources = apiReference.items.find(
+        (item) =>
+          item.type === "category" && item.label.toLowerCase() === "resources",
+      );
+      const aggregations = apiReference.items.find(
+        (item) =>
+          item.type === "category" && item.label.toLowerCase() === "aggregations"
+      )
 
-      const categories = resources.items.filter(
-        (item) => item.type === "category",
+      const sidebarPath = path.join(
+        args.version.contentPath,
+        args.item.dirName,
+        "./horizon/api-reference/sidebar.ts",
       );
 
-      categories.forEach((category) => {
-        const generatedCategory = generatedApiSidebar.items.find(
-          (item) => item.type === "category" && item.label === category.label,
+      if (resources && fs.existsSync(sidebarPath)) {
+        const generatedApiSidebar = require(sidebarPath)[0];
+
+        const categories = resources.items.filter(
+          (item) => item.type === "category",
         );
 
-        if (generatedCategory) {
-          category.items = [...category.items, ...generatedCategory.items];
-        }
-      });
-    }
+        categories.forEach((category) => {
+          const generatedCategory = generatedApiSidebar.items.find(
+            (item) => item.type === "category" && item.label === category.label,
+          );
 
-    if (aggregations && fs.existsSync(sidebarPath)) {
-      const generatedApiSidebar = require(sidebarPath)[1];
+          if (generatedCategory) {
+            category.items = [...category.items, ...generatedCategory.items];
+          }
+        });
+      }
 
-      const categories = aggregations.items.filter(
-        (item) => item.type === "category",
-      );
+      if (aggregations && fs.existsSync(sidebarPath)) {
+        const generatedApiSidebar = require(sidebarPath)[1];
 
-      categories.forEach((category) => {
-        const generatedCategory = generatedApiSidebar.items.find(
-          (item) => item.type === "category" && item.label === category.label,
+        const categories = aggregations.items.filter(
+          (item) => item.type === "category",
         );
 
-        if (generatedCategory) {
-          category.items = [...category.items, ...generatedCategory.items];
-        }
-      });
-    }
+        categories.forEach((category) => {
+          const generatedCategory = generatedApiSidebar.items.find(
+            (item) => item.type === "category" && item.label === category.label,
+          );
 
+          if (generatedCategory) {
+            category.items = [...category.items, ...generatedCategory.items];
+          }
+        });
+      }
+
+    }
   }
 
   // return the sidebar items

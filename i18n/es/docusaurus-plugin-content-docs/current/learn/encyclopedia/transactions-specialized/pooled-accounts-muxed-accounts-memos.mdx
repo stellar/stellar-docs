@@ -1,0 +1,348 @@
+---
+title: "Cuentas agrupadas: cuentas muxed y memos"
+sidebar_position: 70
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Al crear una aplicación o servicio en Stellar, una de las primeras cosas que debes decidir es cómo manejar las cuentas de usuario.
+
+Puedes crear una cuenta Stellar para cada usuario, pero la mayoría de los servicios de custodia, incluidos los exchanges de criptomonedas, eligen usar una sola cuenta Stellar agrupada para manejar las transacciones en nombre de sus usuarios. En estos casos, la función de cuenta muxed puede asignar transacciones a cuentas individuales a través de una base de datos interna de clientes.
+
+:::note
+
+En el pasado, utilizamos memorandos para este propósito; sin embargo, usar cuentas muxed es mejor a largo plazo. En este momento, no hay soporte para cuentas muxed por todas las billeteras, exchanges y anchors, por lo que puede que quieras admitir tanto memorandos como cuentas muxed, al menos por un tiempo.
+
+:::
+
+## Cuentas agrupadas
+
+Una cuenta agrupada permite que un solo ID de cuenta Stellar sea compartido entre muchos usuarios. Generalmente, los servicios que utilizan cuentas agrupadas rastrean a sus clientes en una base de datos interna separada y usan la función de cuentas muxed para mapear un pago entrante y saliente al cliente interno correspondiente.
+
+Los beneficios de usar una cuenta agrupada son costos más bajos – no se requieren reservas base por cada cuenta – y menor complejidad de keys – solo necesitas gestionar una keypair. Sin embargo, con una sola cuenta agrupada, ahora es tu responsabilidad gestionar todos los saldos y pagos de los clientes individuales. Ya no puedes depender del ledger de Stellar para acumular valor, manejar errores y atomicidad, o gestionar transacciones de manera individual por cuenta.
+
+## Cuentas muxed
+
+Las cuentas muxed están incrustadas en el protocolo para conveniencia y estandarización. Distinguen cuentas individuales que todos existen bajo una sola cuenta Stellar tradicional. Combinan la dirección familiar `GABC…` con un ID entero de 64 bits.
+
+Las cuentas muxed no existen en el ledger, pero su cuenta subyacente compartida `GABC…` sí existe.
+
+Las cuentas muxed están definidas en [CAP-0027](https://stellar.org/protocol/cap-27), introducidas en el Protocolo 13, y su representación de cadena se describe en [SEP-0023](https://stellar.org/protocol/sep-23).
+
+Es seguro que todas las billeteras implementen el envío a cuentas muxed.
+
+Si deseas recibir depósitos a cuentas muxed, ten en cuenta que aún no son admitidas por todas las billeteras y exchanges.
+
+### Formato de dirección
+
+Las cuentas muxed tienen su propio formato de dirección que comienza con un prefijo M. Por ejemplo, a partir de una dirección de cuenta Stellar tradicional: `GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ`, podemos crear nuevas cuentas muxed con diferentes IDs. Los IDs están incrustados en la dirección misma: cuando analizas las direcciones de cuentas muxed, obtienes la dirección G de arriba más otro número.
+
+- `MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAAACJUQ` tiene el ID 0, mientras que
+- `MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAABUTGI4` tiene el ID 420.
+
+Ambas direcciones actuarán en relación a la dirección subyacente `GA7Q…` al usarse con una de las operaciones admitidas.
+
+### Operaciones admitidas
+
+No todas las operaciones se pueden usar con cuentas muxed. Aquí está lo que puedes usar:
+
+- La cuenta fuente de cualquier operación o transacción;
+- La fuente de tarifas de una transacción de aumento de tarifa;
+- El destino de los tres tipos de pagos:
+  - `Pago`,
+  - `PathPaymentStrictSend`, y
+  - `PathPaymentStrictReceive`;
+- El destino de un AccountMerge; y
+- El objetivo de una operación `Clawback` (es decir, el campo from).
+
+Demostraremos algunos de estos en la sección de ejemplos.
+
+No hay validación en los IDs y, en lo que respecta a la red Stellar, todas las operaciones admitidas funcionan exactamente como si no usaras una cuenta muxed. Por ejemplo, si realizas dos pagos de dos cuentas muxed que comparten una cuenta Stellar subyacente (misma dirección G… dirección pero diferentes M… direcciones), esto es exactamente lo mismo que si esa cuenta Stellar única enviara dos pagos según lo indique el ledger. A pesar de que solo la cuenta subyacente `G…` existe realmente en el ledger de Stellar, la API de Horizon hará un esfuerzo por interpretar y rastrear las cuentas muxed responsables de ciertas acciones.
+
+### Ejemplos
+
+En esta sección, demostraremos cómo crear cuentas muxed y cómo se interfazan con sus operaciones admitidas. Dado que los métodos de trabajo de cuentas custodiales basados en memorandos de transacción ya no son necesarios, usaremos eso como esqueleto para nuestra estructura de ejemplo.
+
+Después de preparar algo de código de soporte, demostraremos tres ejemplos:
+
+Ejemplo 1: Pagos normales, "completos" de cuentas Stellar (es decir, G a G)\
+Ejemplo 2: Pagos mezclados (es decir, M a G)\
+Ejemplo 3: Pagos completamente muxed (es decir, M a M)
+
+Pero utiliza una función compartida para todos ellos que hace el trabajo real, destacando la facilidad de implementar soporte para cuentas muxed.
+
+#### Preámbulo
+
+Primero, vamos a crear dos cuentas y luego un puñado de cuentas virtuales que representan "clientes custodiales" que la cuenta principal gestiona:
+
+<CodeExample>
+
+```js
+const sdk = require("stellar-sdk");
+
+const passphrase = "Test SDF Network ; September 2015";
+const url = "https://horizon-testnet.stellar.org";
+let server = new sdk.Server(url);
+
+const custodian = sdk.Keypair.fromSecret(
+  "SAQLZCQA6AYUXK6JSKVPJ2MZ5K5IIABJOEQIG4RVBHX4PG2KMRKWXCHJ",
+);
+const outsider = sdk.Keypair.fromSecret(
+  "SAAY2H7SANIS3JLFBFPLJRTYNLUYH4UTROIKRVFI4FEYV4LDW5Y7HDZ4",
+);
+
+async function preamble() {
+  [custodianAcc, outsiderAcc] = await Promise.all([
+    server.loadAccount(custodian.publicKey()),
+    server.loadAccount(outsider.publicKey()),
+  ]);
+
+  customers = ["1", "22", "333", "4444"].map(
+    (id) => new sdk.MuxedAccount(custodianAcc, id),
+  );
+
+  console.log("Custodian:\n       ", custodian.publicKey());
+  console.log("Customers:");
+  customers.forEach((customer) => {
+    console.log(
+      " " + customer.id().padStart(4, " ") + ":",
+      customer.accountId(),
+    );
+  });
+  console.log();
+}
+```
+
+</CodeExample>
+
+Asumimos que estas cuentas existen en el testnet; puedes reemplazarlas con tus propias claves y usar friendbot si lo deseas.
+
+Cuando ejecutemos esta función, veremos la similitud en las direcciones de cuentas muxed entre los clientes, destacando el hecho de que comparten una clave pública:
+
+```
+Custodian:
+       GCIHAQVWZH2AB5BB5NP63FBSIREG77LQZZNUVKD2LN2IOCLOT6N72MJN
+Customers:
+    1: MCIHAQVWZH2AB5BB5NP63FBSIREG77LQZZNUVKD2LN2IOCLOT6N72AAAAAAAAAAAAEDB4
+   22: MCIHAQVWZH2AB5BB5NP63FBSIREG77LQZZNUVKD2LN2IOCLOT6N72AAAAAAAAAAAC3IHY
+  333: MCIHAQVWZH2AB5BB5NP63FBSIREG77LQZZNUVKD2LN2IOCLOT6N72AAAAAAAAAABJV72I
+ 4444: MCIHAQVWZH2AB5BB5NP63FBSIREG77LQZZNUVKD2LN2IOCLOT6N72AAAAAAAAAARLQOKK
+```
+
+Con las cuentas fuera del camino, veamos cómo podemos gestionar la diferencia entre cuentas Stellar tradicionales (G...) y estas cuentas muxed virtuales (M...).
+
+#### Modelo de operaciones muxed
+
+La introducción de direcciones muxed como una abstracción de alto nivel—y su naturaleza experimental, optativa—significa que hay ramas de código ligeramente divergentes dependiendo de si la fuente es una cuenta muxed o no. Todavía necesitamos, por ejemplo, cargar cuentas por su dirección subyacente, porque las versiones muxed no existen realmente en el ledger de Stellar:
+
+<CodeExample>
+
+```js
+function loadAccount(account) {
+  if (StellarSdk.StrKey.isValidMed25519Address(account.accountId())) {
+    return loadAccount(account.baseAccount());
+  } else {
+    return server.loadAccount(account.accountId());
+  }
+}
+
+function showBalance(acc) {
+  console.log(`${acc.accountId().substring(0, 5)}: ${acc.balances[0].balance}`);
+}
+```
+
+</CodeExample>
+
+Para los pagos—nuestro enfoque para este conjunto de ejemplos—la divergencia solo importa porque queremos mostrar los saldos de la cuenta custodial.
+
+#### Pagos
+
+El código real para crear pagos es prácticamente el mismo que sería sin la situación muxed:
+
+<CodeExample>
+
+```js
+function doPayment(source, dest) {
+  return loadAccount(source)
+    .then((accountBeforePayment) => {
+      showBalance(accountBeforePayment);
+
+      let payment = sdk.Operation.payment({
+        source: source.accountId(),
+        destination: dest.accountId(),
+        asset: sdk.Asset.native(),
+        amount: "10",
+      });
+
+      let tx = new sdk.TransactionBuilder(accountBeforePayment, {
+        networkPassphrase: StellarSdk.Networks.TESTNET,
+        fee: StellarSdk.BASE_FEE,
+      })
+        .addOperation(payment)
+        .setTimeout(30)
+        .build();
+
+      tx.sign(custodian);
+      return server.submitTransaction(tx);
+    })
+    .then(() => loadAccount(source))
+    .then(showBalance);
+}
+```
+
+</CodeExample>
+
+Podemos usar este bloque para hacer un pago entre cuentas Stellar normales con facilidad: doPayment("GCIHA...", "GDS5N..."). La principal divergencia del código de pagos estándar, aparte de los stubs para mostrar los saldos de XLM antes y después, es la inclusión de la opción con el flag de muxing optativo.
+
+#### Muxed a Unmuxed
+
+El bloque de código anterior cubre todas las operaciones de pago, abstraiendo cualquier necesidad de diferenciar entre muxed (M...) y no demuxido (G...) direcciones. Desde un nivel alto, entonces, sigue siendo trivial hacer pagos entre uno de nuestros “clientes” y alguien fuera de la organización del “custodio”.
+
+<CodeExample>
+
+```js
+preamble.then(() => {
+  const src = customers[0];
+  console.log(
+    `Sending 10 XLM from Customer ${src.id()} to ${outsiderAcc
+      .accountId()
+      .substring(0, 5)}.`,
+  );
+  return doPayment(src, outsiderAcc);
+});
+```
+
+</CodeExample>
+
+Ten en cuenta que todavía firmamos la transacción con las claves del custodio, porque las cuentas muxed no tienen un concepto de clave secreta. En última instancia, todo sigue pasando por la cuenta principal, así que deberíamos ver disminuir el saldo de la cuenta principal en 10 XLM en consecuencia:
+
+```
+Sending 10 XLM from Customer 1 to GDS5N.
+GCIHA: 9519.9997700 XLM
+GCIHA: 9509.9997600 XLM
+```
+
+Por supuesto, también hay una tarifa cobrada por la transacción en sí.
+
+#### Muxed a Muxed
+
+Como hemos mencionado, las acciones de cuentas muxed no están representadas explícitamente en el ledger de Stellar. Cuando dos cuentas muxed que comparten una cuenta Stellar subyacente se comunican, es como si la cuenta subyacente se estuviera hablando a sí misma. Un pago entre dos cuentas de este tipo, entonces, es esencialmente un no-op.
+
+<CodeExample>
+
+```js
+preamble().then(() => {
+  const [src, dst] = customers.slice(0, 2);
+  console.log(
+    `Sending 10 XLM from Customer ${src.id()} to Customer ${dst.id()}.`,
+  );
+  return doPayment(src, dst);
+});
+```
+
+</CodeExample>
+
+La salida debería ser algo como lo siguiente:
+
+```
+Sending 10 XLM from Customer 1 to Customer 22.
+GCIHA: 9579.9999800 XLM
+GCIHA: 9579.9999700 XLM
+```
+
+Ten en cuenta que el saldo de la cuenta está esencialmente sin cambios, sin embargo se le cobró una tarifa ya que esta transacción sigue estando registrada en el ledger (a pesar de no hacer casi nada). Es posible que desees detectar este tipo de transacciones en tu aplicación para evitar pagar tarifas de transacción innecesarias.
+
+Si hiciéramos un pago entre dos cuentas muxed que tuvieran diferentes cuentas Stellar subyacentes, esto sería equivalente a un pago entre esas dos respectivas G... cuentas.
+
+#### Más ejemplos
+
+Como ocurre con la mayoría de las funciones a nivel de protocolo, puedes encontrar más ejemplos de uso e inspiración en la suite de pruebas relevante para tu SDK favorito. Por ejemplo, [aquí](https://github.com/stellar/js-stellar-base/blob/master/test/unit/muxed_account_test.js) hay algunos de los casos de prueba de JavaScript.
+
+### Preguntas frecuentes
+
+**¿Qué pasa si pago una dirección muxed, pero el destinatario no las admite?**
+
+En general, no debes enviar pagos a direcciones muxed en plataformas que no las admitan. Estas plataformas no podrán proporcionar direcciones destino muxed en primer lugar.
+
+Aun así, si esto ocurre, parsear una transacción con un parámetro muxed sin manejarlos llevará a una de dos cosas:
+
+- Si tu SDK está desactualizado, el parsing fallará. Debes actualizar tu SDK. Por ejemplo, el SDK de JavaScript mostrará un mensaje útil:
+
+```
+“destination is invalid; did you forget to enable muxing?”
+```
+
+- Si tu SDK está actualizado, verás la dirección muxed (`M...`) parseada. Lo que pase después depende de tu aplicación.
+
+Ten en cuenta, sin embargo, que la operación tendrá éxito en la red. En el caso de pagos, por ejemplo, la dirección principal del destinatario seguirá recibiendo los fondos.
+
+**¿Qué pasa si quiero pagar una cuenta muxed, pero mi plataforma no las admite?**
+
+En este caso, no uses una dirección muxed. Es probable que la plataforma falle al crear la operación. Probablemente quieras usar el método legado de incluir un memo de transacción, en su lugar.
+
+**¿Qué debo hacer si recibo una transacción con direcciones muxed y un ID de memo?**
+
+En un mundo ideal, esta situación nunca debería ocurrir. Puedes determinar si los IDs subyacentes son iguales o no; si no lo son, esta es una transacción malformada y recomendamos no enviarla a la red.
+
+**¿Qué pasa si obtengo errores al usar cuentas muxed?**
+
+En las versiones actualizadas de los SDK de Stellar, las cuentas muxed son admitidas de forma nativa por defecto. Sin embargo, si estás usando una versión antigua de un SDK, es posible que aún estén ocultas detrás de una bandera de función.
+
+Si obtienes errores al usar direcciones muxed en operaciones admitidas como: “¿el destino es inválido; ¿has habilitado el muxing?
+
+Recomendamos actualizar a la última versión de todos los SDK de Stellar que uses. Sin embargo, si eso no es posible por alguna razón, necesitarás habilitar la bandera de función antes de interactuar con cuentas muxed. Consulta la documentación de tu SDK para más detalles.
+
+**¿Qué pasa si paso una dirección muxed a una operación incompatible?**
+
+Solo ciertas operaciones permiten cuentas muxed, como se describe arriba. Pasar una dirección muxed a un parámetro incompatible con un SDK actualizado debería resultar en un error de compilación o en tiempo de ejecución en el momento de su uso.
+
+Por ejemplo, al usar incorrectamente el SDK de JavaScript:
+
+<CodeExample>
+
+```js
+const mAddress =
+  "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAABUTGI4";
+transactionBuilder.addOperation(
+  Operation.setTrustLineFlags({
+    trustor: mAddress, // wrong!
+    asset: someAsset,
+    flags: { clawbackEnabled: false },
+  }),
+);
+```
+
+</CodeExample>
+
+El resultado en tiempo de ejecución sería:
+
+“Error: byte de versión inválido. se esperaba 48, se obtuvo 96”
+
+Este mensaje de error indica que el `trustor` no se pudo parsear como un ID de cuenta Stellar (`G...`). En otras palabras, tu código fallará y la operación inválida nunca alcanzará la red.
+
+**¿Cómo valido direcciones Stellar?**
+
+Debes usar los métodos de validación proporcionados por tu SDK o adherirte cuidadosamente a [SEP-23](https://stellar.org/protocol/sep-23). Por ejemplo, el SDK de JavaScript proporciona los siguientes métodos para validar direcciones Stellar:
+
+```ts
+namespace StrKey {
+  function isValidEd25519PublicKey(publicKey: string): boolean;
+  function isValidMed25519PublicKey(publicKey: string): boolean;
+}
+```
+
+También hay abstracciones para construir y gestionar cuentas tanto muxed como regulares; consulta la documentación de tu SDK para más detalles.
+
+## Memo - cuentas diferenciadas
+
+Antes de la introducción de cuentas muxed, los productos y servicios que dependían de cuentas agrupadas a menudo usaban memos de transacción para diferenciar entre usuarios. Admitir cuentas muxed es mejor a largo plazo, pero por ahora puedes querer admitir tanto memos como cuentas muxed, ya que no todos los exchanges, anchors y billeteras pueden admitir cuentas muxed.
+
+Para aprender sobre otros propósitos para los que se pueden usar memos, consulta nuestra [Entrada de Enciclopedia de Memos](./memos.mdx).
+
+## ¿Por qué son mejores las cuentas muxed a largo plazo?
+
+Las cuentas muxed son un mejor enfoque para diferenciar entre individuos en una cuenta agrupada porque tienen mejor:
+
+- Compartibilidad: en lugar de preocuparte por cosas propensas a errores como copiar y pegar IDs de memos, simplemente puedes compartir tu M... dirección.
+- Soporte del SDK: los diversos SDK admiten esta abstracción de forma nativa, lo que te permite crear, gestionar y trabajar con cuentas muxed fácilmente. Esto significa que puedes ver aparecer direcciones muxed al parsear cualquiera de los campos que las admiten, así que deberías estar listo para manejarlas. Consulta la documentación de tu SDK para más detalles; por ejemplo, [v7.0.0](https://github.com/stellar/js-stellar-base/releases/tag/v7.0.0) de la biblioteca de SDK de JavaScript stellar-base describe todos los campos y funciones que se relacionan con cuentas muxed.
+- Eficiencia: al combinar cuentas virtuales relacionadas bajo el mismo paraguas de una sola cuenta, puedes evitar mantener reservas y pagar tarifas por todas ellas para que existan en el ledger individualmente. También puedes combinar múltiples pagos a múltiples destinos dentro de una única transacción ya que ya no necesitas el campo de memo por transacción.

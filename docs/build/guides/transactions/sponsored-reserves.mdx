@@ -1,0 +1,597 @@
+---
+title: Sponsored reserves
+description: Use sponsored reserves to pay for base reserves on behalf of another account.
+sidebar_position: 50
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import Details from "@theme/Details";
+
+Sponsored reserves were introduced in [CAP-0033](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0033.md) and allow an account (sponsoring account) to pay the base reserves for another account (sponsored account). While this relationship exists, base reserve requirements that would normally accumulate on the sponsored account now accumulate on the sponsoring account.
+
+Both the Begin Sponsoring Future Reserves and the End Sponsoring Future Reserves operations must appear in the sponsorship transaction, guaranteeing that both accounts agree to the sponsorship.
+
+Anything that increases the minimum balance can be sponsored (account creation, offers, trustlines, data entries, signers, claimable balances).
+
+To learn about base reserves, see our section on [Lumens](../../../learn/fundamentals/lumens.mdx#base-reserves).
+
+:::note
+
+Use the [Stellar Wallet Sponsorship Calculator](../../../tools/developer-tools/wallets.mdx#stellar-wallet-sponsorship-calculator) to estimate the XLM requirements for wallets looking to use sponsored reserves and fee-bump transactions to cover account creation, transaction fees, trustlines, and more.
+
+:::
+
+## Sponsored reserves operations
+
+### Begin and end sponsorships
+
+To create a sponsored reserve, you have to use a sandwich transaction that includes three operations.
+
+- The first operation: Begin Sponsoring Future Reserves initiates the sponsorship and requires the sponsoring account's signature.
+- The second operation: specifies what is being sponsored.
+- The third operation: End Sponsoring Future Reserves, allows the sponsored account to accept the sponsorship and requires the sponsored account’s signature.
+
+Begin Sponsoring Future Reserves establishes the is-sponsoring-future-reserves-for relationship where the sponsoring account is the source account of the operation. The account specified in the operation is the sponsored account.
+
+End Sponsoring Future Reserves ends the current is-sponsoring-future-reserves-for relationship for the source account of the operation.
+
+At the end of any transaction, there must be no ongoing is-sponsoring-future-reserves-for relationships, which is why these two operations must be used together in a single transaction.
+
+View operation details in our [List of Operations section](../../../learn/fundamentals/transactions/list-of-operations.mdx).
+
+### Revoke sponsorship
+
+Allows the sponsoring account to remove or transfer sponsorships of existing ledgerEntries and signers. If the ledgerEntry or signer is not sponsored, the owner of the ledgerEntry or signer can establish a sponsorship if it is the beneficiary of an is-sponsoring-future-reserves-for relationship.
+
+Operation logic
+
+- Entry/signer is sponsored
+  - Source account is currently the beneficiary of a is-sponsoring-future-reserves-for relationship
+    - Transfer sponsorship of entry/signer from source account to the account that is-sponsoring-future-reserves-for source account
+  - Source account is not the beneficiary of a is-sponsoring-future-reserves-for relationship
+    - Remove the sponsorship from the entry/signer
+- Entry/signer is not sponsored
+  - Source account is currently the beneficiary of a is-sponsoring-future-reserves-for relationship
+    - Establish sponsorship between entry/signer and the account that is-sponsoring-future-reserves-for source account
+  - Source account is not the beneficiary of a is-sponsoring-future-reserves-for relationship
+    - No-Op
+
+View operation details in our [List of Operations section](../../../learn/fundamentals/transactions/list-of-operations.mdx#begin-sponsoring-future-reserves).
+
+## Effect on minimum balance
+
+Once sponsorships are introduced, the minimum balance calculation is: (2 base reserves + `numSubEntries` + `numSponsoring` - `numSponsored`) \* `baseReserve` + `liabilities.selling`.
+
+When account A is sponsoring future reserves for account B, any reserve requirements that would normally accumulate on B will instead accumulate on A, shown in `numSponsoring`. The fact that these reserves are being provided by another account will be reflected on B in `numSponsored`, which cancels out the increase in `numSubEntries`, keeping the minimum balance unchanged for B.
+
+When a sponsored entry or subentry is removed, `numSponsoring` is decreased on the sponsoring account and `numSponsored` is decreased on the sponsored account.
+
+To learn more about minimum balance requirements, see our section on [Lumens](../../../learn/fundamentals/lumens.mdx#minimum-balance).
+
+## Effect on claimable balances
+
+All claimable balances are sponsored through built-in logic in the claimable balance operations. The account that creates the claimable balance pays the base reserve to get the claimable balance on the ledger. When the claimable balance is claimed by the claimant(s), the claimable balance is removed from the ledger, and the account that created it gets the base reserve back.
+
+Read more about claimable balances in our [Claimable Balances Encyclopedia Entry](./claimable-balances.mdx).
+
+## Examples
+
+Each of the following examples builds on itself, referencing variables from previous snippets. The following examples will demonstrate:
+
+1. [Sponsor trustline creation](#1-sponsoring-trustlines) for another account
+2. [Transfer the sponsorship](#2-transferring-sponsorship) responsibility from one account to another
+3. [Revoke the sponsorship](#3-sponsorship-revocation) by an account entirely
+
+For brevity in the Golang examples, we’ll assume the existence of a `SignAndSend`(...) method (defined below) which creates and submits a transaction with the proper parameters and basic error-checking.
+
+### Preamble
+
+We’ll start by including the boilerplate of account and asset creation.
+
+<CodeExample>
+
+```js
+import {
+  Keypair,
+  Asset,
+  TransactionBuilder,
+  Operation,
+  Networks,
+  BASE_FEE,
+} from "@stellar/stellar-sdk";
+import { Server } from "@stellar/stellar-sdk/rpc";
+
+let server = new Server("https://soroban-testnet.stellar.org");
+
+async function main() {
+  // Create & fund the new accounts.
+  let keypairs = [Keypair.random(), Keypair.random(), Keypair.random()];
+
+  for (const keypair of keypairs) {
+    console.log(`Funding:\n ${keypair.secret()}\n ${keypair.publicKey()}`);
+    await server
+      .requestAirdrop(keypair.publicKey())
+      .catch((err) => console.error("  failed:", err));
+  }
+
+  // Arbitrary assets to sponsor trustlines for. Let's assume they make sense.
+  let S1 = keypairs[0],
+    A = keypairs[1],
+    S2 = keypairs[2];
+  let assets = [
+    new Asset("ABCD", S1.publicKey()),
+    new Asset("EFGH", S1.publicKey()),
+    new Asset("IJKL", S2.publicKey()),
+  ];
+
+  // ...
+```
+
+```go
+package main
+
+import (
+  "context"
+  "fmt"
+  "net/http"
+  "strings"
+  "time"
+
+  "github.com/stellar/go/keypair"
+  "github.com/stellar/go/network"
+  "github.com/stellar/go/txnbuild"
+  sdk "github.com/stellar/stellar-rpc/client"
+  protocol "github.com/stellar/stellar-rpc/protocol"
+)
+
+func main() {
+  client := sdk.NewClient("https://soroban-testnet.stellar.org", nil)
+
+  // Both S1 and S2 will be sponsors for A at various points in time.
+  S1, A, S2 := keypair.MustRandom(), keypair.MustRandom(), keypair.MustRandom()
+  addressA := A.Address()
+
+  for _, pair := range []*keypair.Full{S1, A, S2} {
+    resp, err := http.Get("https://friendbot.stellar.org/?addr=" + pair.Address())
+    check(err)
+    resp.Body.Close()
+    fmt.Println("Funded", pair.Address())
+  }
+
+  // Load the corresponding account for both A and C.
+  ctx := context.Background()
+  s1Account, err := client.LoadAccount(ctx, S1.Address())
+  check(err)
+  aAccount, err := client.LoadAccount(ctx, addressA)
+  check(err)
+  s2Account, err := client.LoadAccount(ctx, S2.Address())
+  check(err)
+
+  // Arbitrary assets to sponsor trustlines for. Let's assume they make sense.
+  assets := []txnbuild.CreditAsset{
+    {Code: "ABCD", Issuer: S1.Address()},
+    {Code: "EFGH", Issuer: S1.Address()},
+    {Code: "IJKL", Issuer: S2.Address()},
+  }
+
+  // ...
+```
+
+</CodeExample>
+
+### 1. Sponsoring trustlines
+
+Now, let’s sponsor trustlines for Account A. Notice how the `CHANGE_TRUST` operation is sandwiched between the begin and end sponsoring operations and that all relevant accounts need to sign the transaction.
+
+<Details summary="Sponsoring a single trustline">
+<CodeExample>
+
+```js
+//
+// 1. S1 will sponsor a trustline for Account A.
+//
+let s1Account = await server.getAccount(S1.publicKey()).catch(accountFail);
+let tx = new TransactionBuilder(s1Account, { fee: BASE_FEE })
+  .addOperation(
+    Operation.beginSponsoringFutureReserves({
+      sponsoredId: A.publicKey(),
+    }),
+  )
+  .addOperation(
+    Operation.changeTrust({
+      source: A.publicKey(),
+      asset: assets[0],
+      limit: "1000", // This limit can vary according with your application;
+      // if left empty, it defaults to the max limit.
+    }),
+  )
+  .addOperation(
+    Operation.endSponsoringFutureReserves({
+      source: A.publicKey(),
+    }),
+  )
+  .setNetworkPassphrase(Networks.TESTNET)
+  .setTimeout(180)
+  .build();
+
+// Note that while either can submit this transaction, both must sign it.
+tx.sign(S1, A);
+let txResponse = await sendTransaction(tx);
+if (!txResponse) {
+  return;
+}
+
+console.log("Sponsored a trustline of", A.publicKey());
+```
+
+```go
+  //
+  // 1. S1 will sponsor a trustline for Account A.
+  //
+  sponsorTrustline := []txnbuild.Operation{
+    &txnbuild.BeginSponsoringFutureReserves{
+      SourceAccount: s1Account.GetAccountID(),
+      SponsoredID:   addressA,
+    },
+    &txnbuild.ChangeTrust{
+      Line:  assets[0].MustToChangeTrustAsset(),
+      Limit: txnbuild.MaxTrustlineLimit,
+    },
+    &txnbuild.EndSponsoringFutureReserves{},
+  }
+
+  // Note that while A can submit this transaction, both sign it.
+  SignAndSend(client, aAccount, []*keypair.Full{S1, A}, sponsorTrustline...)
+  fmt.Println("Sponsored a trustline of", A.Address())
+```
+
+</CodeExample>
+</Details>
+
+<Details summary="Two accounts sponsoring different assets for a single account">
+<CodeExample>
+
+```js
+//
+// 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
+//
+let aAccount = await server.getAccount(A.publicKey()).catch(accountFail);
+tx = new TransactionBuilder(aAccount, { fee: BASE_FEE })
+  .addOperation(
+    Operation.beginSponsoringFutureReserves({
+      source: S1.publicKey(),
+      sponsoredId: A.publicKey(),
+    }),
+  )
+  .addOperation(
+    Operation.changeTrust({
+      asset: assets[1],
+      limit: "5000",
+    }),
+  )
+  .addOperation(Operation.endSponsoringFutureReserves())
+  .addOperation(
+    Operation.beginSponsoringFutureReserves({
+      source: S2.publicKey(),
+      sponsoredId: A.publicKey(),
+    }),
+  )
+  .addOperation(
+    Operation.changeTrust({
+      asset: assets[2],
+      limit: "2500",
+    }),
+  )
+  .addOperation(Operation.endSponsoringFutureReserves())
+  .setNetworkPassphrase(Networks.TESTNET)
+  .setTimeout(180)
+  .build();
+
+// Note that all 3 accounts must approve/sign this transaction.
+tx.sign(S1, S2, A);
+txResponse = await sendTransaction(tx);
+if (!txResponse) {
+  return;
+}
+
+console.log("Sponsored two trustlines of", A.publicKey());
+```
+
+```go
+  //
+  // 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
+  //
+  sponsorTrustline = []txnbuild.Operation{
+    &txnbuild.BeginSponsoringFutureReserves{
+      SourceAccount: s1Account.GetAccountID(),
+      SponsoredID:   addressA,
+    },
+    &txnbuild.ChangeTrust{
+      Line:  assets[1].MustToChangeTrustAsset(),
+      Limit: txnbuild.MaxTrustlineLimit,
+    },
+    &txnbuild.EndSponsoringFutureReserves{},
+
+    &txnbuild.BeginSponsoringFutureReserves{
+      SourceAccount: s2Account.GetAccountID(),
+      SponsoredID:   addressA,
+    },
+    &txnbuild.ChangeTrust{
+      Line:  assets[2].MustToChangeTrustAsset(),
+      Limit: txnbuild.MaxTrustlineLimit,
+    },
+    &txnbuild.EndSponsoringFutureReserves{},
+  }
+
+  // Note that all 3 accounts must approve/sign this transaction.
+  SignAndSend(client, aAccount, []*keypair.Full{S1, S2, A}, sponsorTrustline...)
+  fmt.Println("Sponsored two trustlines of", A.Address())
+```
+
+</CodeExample>
+</Details>
+
+### 2. Transferring sponsorship
+
+Suppose that now Signer 1 wants to transfer the responsibility of sponsoring reserves for the trustline to Sponsor 2. This is accomplished by sandwiching the transfer between the `BEGIN/END_SPONSORING_FUTURE_RESERVES` operations. Both of the participants must sign the transaction, though either can submit it.
+
+An intuitive way to think of a sponsorship transfer is that the very act of sponsorship is being sponsored by a new account. That is, the new sponsor takes over the responsibilities of the old sponsor by sponsoring a revocation.
+
+<CodeExample>
+
+```js
+//
+// 3. Transfer sponsorship of B's second trustline from S1 to S2.
+//
+tx = new TransactionBuilder(s1Account, { fee: BASE_FEE })
+  .addOperation(
+    Operation.beginSponsoringFutureReserves({
+      source: S2.publicKey(),
+      sponsoredId: S1.publicKey(),
+    }),
+  )
+  .addOperation(
+    Operation.revokeTrustlineSponsorship({
+      account: A.publicKey(),
+      asset: assets[1],
+    }),
+  )
+  .addOperation(Operation.endSponsoringFutureReserves())
+  .setNetworkPassphrase(Networks.TESTNET)
+  .setTimeout(180)
+  .build();
+
+// Notice that while the old sponsor *sends* the transaction, both sponsors
+// must *approve* the transfer.
+tx.sign(S1, S2);
+txResponse = await sendTransaction(tx);
+if (!txResponse) {
+  return;
+}
+
+console.log("Transferred sponsorship for", A.publicKey());
+```
+
+```go
+  //
+  // 3. Transfer sponsorship of B's second trustline from S1 to S2.
+  //
+  transferOps := []txnbuild.Operation{
+    &txnbuild.BeginSponsoringFutureReserves{
+      SourceAccount: s2Account.GetAccountID(),
+      SponsoredID:   S1.Address(),
+    },
+    &txnbuild.RevokeSponsorship{
+      SponsorshipType: txnbuild.RevokeSponsorshipTypeTrustLine,
+      Account:         &addressA,
+      TrustLine: &txnbuild.TrustLineID{
+        Account: addressA,
+        Asset:   assets[1].MustToTrustLineAsset(),
+      },
+    },
+    &txnbuild.EndSponsoringFutureReserves{},
+  }
+
+  // Notice that while the old sponsor *sends* the transaction (in this case),
+  // both sponsors must *approve* the transfer.
+  SignAndSend(client, s1Account, []*keypair.Full{S1, S2}, transferOps...)
+  fmt.Println("Transferred sponsorship for", A.Address())
+```
+
+</CodeExample>
+
+At this point, Signer 1 is only sponsoring the first asset (arbitrarily coded as ABCD), while Signer 2 is sponsoring the other two assets. (Recall that initially Signer 1 was also sponsoring EFGH.)
+
+### 3. Sponsorship revocation
+
+Finally, we can demonstrate complete revocation of sponsorships. Below, Signer 2 removes themselves from all responsibility over the two asset trustlines. Notice that Account A is not involved at all, since revocation should be performable purely at the sponsor’s discretion.
+
+<CodeExample>
+
+```js
+  //
+  // 4. S2 revokes sponsorship of B's trustlines entirely.
+  //
+  let s2Account = await server.getAccount(S2.publicKey()).catch(accountFail);
+  tx = new TransactionBuilder(s2Account, { fee: BASE_FEE })
+    .addOperation(
+      Operation.revokeTrustlineSponsorship({
+        account: A.publicKey(),
+        asset: assets[1],
+      }),
+    )
+    .addOperation(
+      Operation.revokeTrustlineSponsorship({
+        account: A.publicKey(),
+        asset: assets[2],
+      }),
+    )
+    .setNetworkPassphrase(Networks.TESTNET)
+    .setTimeout(180)
+    .build();
+
+  tx.sign(S2);
+  txResponse = await sendTransaction(tx);
+  if (!txResponse) {
+    return;
+  }
+
+  console.log("Revoked sponsorship for", A.publicKey());
+} // ends main()
+```
+
+```go
+  //
+  // 4. S2 revokes sponsorship of B's trustlines entirely.
+  //
+  revokeOps := []txnbuild.Operation{
+    &txnbuild.RevokeSponsorship{
+      SponsorshipType: txnbuild.RevokeSponsorshipTypeTrustLine,
+      Account:         &addressA,
+      TrustLine: &txnbuild.TrustLineID{
+        Account: addressA,
+        Asset:   assets[1].MustToTrustLineAsset(),
+      },
+    },
+    &txnbuild.RevokeSponsorship{
+      SponsorshipType: txnbuild.RevokeSponsorshipTypeTrustLine,
+      Account:         &addressA,
+      TrustLine: &txnbuild.TrustLineID{
+        Account: addressA,
+        Asset:   assets[2].MustToTrustLineAsset(),
+      },
+    },
+  }
+
+  SignAndSend(client, s2Account, []*keypair.Full{S2}, revokeOps...)
+  fmt.Println("Revoked sponsorship for", A.Address())
+} // ends main()
+```
+
+</CodeExample>
+
+### Sponsorship Source Accounts
+
+When it comes to the SourceAccount fields of the sponsorship sandwich, it's important to refer to the wisdom of [CAP-33](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0033.md#abstract):
+
+> This relation is initiated by `BeginSponsoringFutureReservesOp`, where the sponsoring account is the source account, and is terminated by `EndSponsoringFutureReserveOp`, where the sponsored account is the source account.
+
+Since the source account defaults to the transaction submitter when omitted, this field needs always needs to be set for either the `Begin` or the `End`.
+
+For example, the following is an identical expression of the earlier Golang example of sponsoring a trustline, just submitted by the sponsor (Sponsor 1) rather than the sponsored account (Account A). Notice the differences in where `SourceAccount` is set:
+
+<CodeExample>
+
+```go
+    sponsorTrustline := []txnbuild.Operation{
+        &txnbuild.BeginSponsoringFutureReserves{
+            SponsoredID: addressA,
+        },
+        &txnbuild.ChangeTrust{
+            SourceAccount: aAccount.AccountID,
+            Line:          &assets[0],
+            Limit:         txnbuild.MaxTrustlineLimit,
+        },
+        &txnbuild.EndSponsoringFutureReserves{
+            SourceAccount: aAccount.AccountID,
+        },
+    }
+
+    // Again, both participants must still sign the transaction: the sponsored
+    // account must consent to the sponsorship.
+    SignAndSend(client, s1Account.AccountID, []*keypair.Full{S1, A}, sponsorTrustline...)
+```
+
+</CodeExample>
+
+### Other examples
+
+If you’d like other examples or want to view a more-generic pseudo-code breakdown of these sponsorship scenarios, you can refer to [CAP-0033](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0033.md#example-revoke-sponsorship) directly.
+
+### Footnote
+
+For the above examples, an implementation of `SignAndSend` (Golang) and some (very) rudimentary error checking code (all languages) might look something like this:
+
+<CodeExample>
+
+```js
+async function sendTransaction(tx) {
+  const sendResp = await server.sendTransaction(tx);
+  if (sendResp.status !== "PENDING") throw sendResp;
+
+  const getResp = await server.pollTransaction(sendResp.hash);
+  if (getResp.status !== "SUCCESS") throw getResp;
+
+  return getResp;
+}
+
+function accountFail(err) {
+  console.error(" Failed to load account:", err);
+}
+```
+
+```go
+
+// Builds a transaction containing `operations...`, signed (by `signers`), and
+// submitted using the given `client` on behalf of `account`.
+func SignAndSend(
+  client *sdk.Client,
+  account txnbuild.Account,
+  signers []*keypair.Full,
+  operations ...txnbuild.Operation,
+) protocol.GetTransactionResponse {
+  // Build, sign, and submit the transaction
+  tx, err := txnbuild.NewTransaction(
+    txnbuild.TransactionParams{
+      SourceAccount:        account,
+      IncrementSequenceNum: true,
+      BaseFee:              txnbuild.MinBaseFee,
+      Preconditions: txnbuild.Preconditions{
+        TimeBounds: txnbuild.NewInfiniteTimeout(),
+      },
+      Operations: operations,
+    },
+  )
+  check(err)
+
+  for _, signer := range signers {
+    tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+    check(err)
+  }
+
+  txnB64, err := tx.Base64()
+  check(err)
+
+  txSendResp, err := client.SendTransaction(context.Background(),
+    protocol.SendTransactionRequest{Transaction: txnB64})
+  check(err)
+
+  for i := range 5 {
+    txResp, err := client.GetTransaction(context.Background(),
+      protocol.GetTransactionRequest{Hash: txSendResp.Hash})
+    check(err)
+
+    switch txResp.Status {
+    case "NOT_FOUND":
+    case "SUCCESS":
+      return txResp
+    case "FAILED":
+      panic(fmt.Errorf("transaction failed: %s",
+        strings.Join(txResp.DiagnosticEventsXDR, "\n")))
+    }
+
+    // Increase delay for each polling request
+    time.Sleep(time.Duration(i) * time.Second)
+  }
+
+  panic(fmt.Errorf("transaction never found: %s", txSendResp.Hash))
+}
+
+func check(err error) {
+  if err != nil {
+    panic(err)
+  }
+}
+```
+
+</CodeExample>

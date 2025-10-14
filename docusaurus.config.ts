@@ -5,21 +5,26 @@ import { themes as prismThemes } from 'prism-react-renderer';
 import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
 import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
 import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
+import navbarItems from './config/theme/navbar';
+import footerColumns from './config/theme/footer';
 
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
+  // future: {
+  //   experimental_faster: true,
+  // },
   title: "Stellar Docs",
   tagline:
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
   url: "https://developers.stellar.org",
   baseUrl: "/",
   trailingSlash: false,
-  onBrokenAnchors: "warn",
+  onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
-  favicon: "img/favicon-96x96.png",
+  favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   i18n: {
@@ -42,7 +47,7 @@ const config: Config = {
         config: {
           horizon: {
             specPath: "openapi/horizon/bundled.yml",
-            outputDir: "docs/data/horizon/api-reference",
+            outputDir: "docs/data/apis/horizon/api-reference",
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
@@ -54,6 +59,7 @@ const config: Config = {
     ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
+    require("./src/route-export-plugin"),
   ],
   markdown: {
     mermaid: true,
@@ -69,11 +75,12 @@ const config: Config = {
         blog: {
           path: 'meeting-notes',
           blogTitle: 'Meeting Notes',
-          blogDescription: 'Notes and recordings from the Soroban protocol & developers meetings',
+          blogDescription: 'Notes and recordings from the Stellar protocol & developers meetings',
           blogSidebarTitle: 'All meetings',
           blogSidebarCount: 'ALL',
-          postsPerPage: 'ALL',
+          postsPerPage: 12,
           routeBasePath: 'meetings',
+          onUntruncatedBlogPosts: 'ignore',
         },
         docs: {
           showLastUpdateTime: true,
@@ -122,123 +129,26 @@ const config: Config = {
         autoCollapseCategories: false,
       },
     },
-    image: 'img/dev-docs-preview.png',
+    image: 'img/docusaurus/dev-docs-preview.png',
     navbar: {
       logo: {
         width: 100,
-        src: "img/stellar-logo.svg",
-        srcDark: "img/stellar-logo-dark.svg",
+        src: "img/docusaurus/stellar-logo.svg",
+        srcDark: "img/docusaurus/stellar-logo-dark.svg",
         href: "/",
       },
       items: [
-        {
-          type: 'docSidebar',
-          sidebarId: 'build',
-          label: 'Build',
-          position: 'left',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'learn',
-          label: 'Learn',
-          position: 'left',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'tokens',
-          label: 'Tokens',
-          position: 'left',
-        },
-        {
-          type: "dropdown",
-          label: "Data",
-          position: "left",
-          to: '/docs/data',
-          items: [
-            {
-              type: 'doc',
-              docId: "data/rpc/README",
-              label: "RPC",
-            },
-            {
-              type: 'doc',
-              docId: "data/hubble/README",
-              label: "Hubble",
-            },
-            {
-              type: 'doc',
-              docId: "data/horizon/README",
-              label: "Horizon",
-            },
-            {
-              type: 'doc',
-              docId: "data/galexie/README",
-              label: "Galexie",
-            },
-            {
-              type: 'doc',
-              docId: "data/data-indexers/README",
-              label: "Data Indexers",
-            },
-            {
-              type: 'doc',
-              docId: "data/oracles/README",
-              label: "Oracles",
-            }
-          ]
-        },
-        {
-          type: 'dropdown',
-          label: 'Tools',
-          position: 'left',
-          to: '/docs/tools',
-          activeBaseRegex: `(docs/tools|platforms)`,
-          items: [
-            {
-              to: '/docs/tools/sdks/library',
-              label: 'SDKs',
-              activeBasePath: 'docs/tools/sdks'
-            },
-            {
-              to: '/docs/tools/developer-tools',
-              label: 'Developer Tools'
-            },
-            {
-              type: 'html',
-              value: '<hr><small>SDF Platforms</small>',
-              className: 'subtitle',
-            },
-            {
-              to: "/platforms/anchor-platform",
-              label: "Anchor Platform",
-            },
-            {
-              to: "/platforms/stellar-disbursement-platform",
-              label: "Stellar Disbursement Platform",
-            },
-          ]
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'networks',
-          label: 'Networks',
-          position: 'left',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'validators',
-          label: 'Validators',
-          position: 'left',
-        },
+        navbarItems.build,
+        navbarItems.learn,
+        navbarItems.tokens,
+        navbarItems.data,
+        navbarItems.tools,
+        navbarItems.networks,
+        navbarItems.validators,
         {
           type: 'docsVersionDropdown',
           docsPluginId: 'ap',
           dropdownActiveClassDisabled: true,
-          position: 'right',
-        },
-        {
-          to: '/meetings',
-          label: 'Meetings',
           position: 'right',
         },
         {
@@ -251,12 +161,6 @@ const config: Config = {
           className: "header-github-link",
           'aria-label': "GitHub",
         },
-        {
-          href: "https://discord.gg/stellardev",
-          position: "right",
-          className: "header-discord-link",
-          'aria-label': "Discord",
-        },
       ],
     },
     algolia: {
@@ -266,102 +170,10 @@ const config: Config = {
     },
     footer: {
       links: [
-        {
-          title: "Resources",
-          items: [
-            {
-              label: "Developer Blog",
-              href: "https://www.stellar.org/developers-blog",
-            },
-            {
-              label: "Stellar Quest",
-              href: "https://quest.stellar.org/",
-            },
-            {
-              label: "Soroban Quest",
-              href: "https://fastcheapandoutofcontrol.com/tutorial",
-            },
-            {
-              label: "YouTube",
-              href: "https://www.youtube.com/@StellarDevelopmentFoundation",
-            },
-            {
-              label: "Twitch",
-              href: "https://m.twitch.tv/stellarorg/home",
-            },
-          ],
-        },
-        {
-          title: "Tools",
-          items: [
-            {
-              label: "Explorer",
-              href: "https://stellar.expert",
-            },
-            {
-              label: "Lab",
-              href: "https://lab.stellar.org",
-            },
-            {
-              label: "Status",
-              href: "https://status.stellar.org/",
-            },
-            {
-              label: "Dashboard",
-              href: "https://dashboard.stellar.org/",
-            },
-            {
-              label: "All Tools",
-              href: "https://developers.stellar.org/docs/tools/developer-tools",
-            },
-          ],
-        },
-        {
-          title: "Community",
-          items: [
-            {
-              label: "Contribute to Docs",
-              href: "https://github.com/stellar/stellar-docs?tab=readme-ov-file#contributing",
-            },
-            {
-              label: "Developer Discord",
-              href: "https://discord.gg/stellardev",
-            },
-            {
-              label: "Developer Google Group",
-              href: "https://groups.google.com/g/stellar-dev",
-            },
-            {
-              label: "Stack Exchange",
-              href: "https://stellar.stackexchange.com/",
-            },
-            {
-              label: "Stellar Community Fund",
-              href: "https://communityfund.stellar.org/",
-            },
-         ],
-        },
-        {
-          title: "About",
-          items: [
-            {
-              label: "About SDF",
-              href: "https://stellar.org/foundation",
-            },
-            {
-              label: "Careers",
-              href: "https://stellar.org/foundation/careers",
-            },
-            {
-              label: "Events",
-              href: "https://stellar.org/events",
-            },
-            {
-              label: "Grants & Funding",
-              href: "https://stellar.org/foundation/grants-and-funding",
-            },
-          ],
-        },
+        footerColumns.resources,
+        footerColumns.tools,
+        footerColumns.community,
+        footerColumns.about,
       ],
     },
     prism: {

@@ -1,0 +1,85 @@
+---
+sidebar_position: 6
+title: Contract Rust Dialect
+description: Differences between Soroban Rust and typical Rust programming.
+---
+
+Contract development occurs in the Rust programming language, but several features of the Rust language are either unavailable in the deployment guest environment, or not recommended because their use would incur unacceptable costs at runtime.
+
+For this reason it makes sense to consider code written for contracts to be a _dialect_ or special variant of the Rust programming language, with certain unusual constraints and priorities, such as determinism and code size.
+
+These constraints and priorities are _similar_ to those encountered when writing Rust code for "embedded systems", and the tools, libraries and techniques used in the "contract dialect" are frequently borrowed from the [Rust embedded systems community](https://docs.rust-embedded.org/book/index.html), and by default contracts are recommended to be built with the [`#[no_std]` mode](https://docs.rust-embedded.org/book/intro/no-std.html) that excludes the Rust standard library entirely, relying on the smaller underlying `core` library instead.
+
+Note: these constraints and priorities are **not enforced when building in local-testing mode**, and in fact local contract tests will _frequently_ use facilities -- to generate test input, inspect test output, and guide testing -- that are not supported in the deployment guest environment. Developers **must understand** the difference between code that is compiled-in to Wasm modules for deployment and code that is conditionally compiled for testing. See [debugging contracts](./errors-and-debugging/debugging.mdx) for more details.
+
+The "contract dialect" has the following characteristics:
+
+## No floating point
+
+Floating-point arithmetic in the guest is completely prohibited. Floating-point operations in Wasm have a few nondeterministic or platform-specific aspects: mainly NaN bit patterns, as well as floating-point environment settings such as rounding mode.
+
+While it is theoretically possible to force all floating-point code into deterministic behavior across Wasm implementations, doing so on some Wasm implementations may be difficult, costly, or error-prone. To avoid the complexity, all floating-point code is rejected at instantiation time.
+
+This restriction may be revisited in a future version.
+
+## Limited (ideally zero) dynamic memory allocation
+
+Dynamic memory allocation within the guest is **strongly** discouraged, but not completely prohibited.
+
+The host object and host function repertoire has been designed to relieve the guest from having to perform dynamic allocation within its own linear memory; instead, the guest is expected and intended to allocate dynamic structures _within host objects_ and interact with them using lightweight handles.
+
+Using host objects instead of data structures in guest memory carries numerous benefits: much higher performance, much smaller code size, interoperability between contracts, shared host support for serialization, debugging and data structure introspection.
+
+The guest does, however, have a small linear memory available to it in cases where dynamic memory allocation is necessary. Using this memory carries costs: the guest must include in its code a full copy of a memory allocator, and must pay the runtime cost of executing the allocator's code inside the VM.
+
+This restriction is due to the limited ability of Wasm to support code-sharing: there is no standard way for the Wasm sandbox to provide shared "standard library" code within a guest, such as a memory allocator, nor does the host have adequate insight into the contents of the guest's memory to provide an allocator itself. Every contract that wishes to use dynamic allocation must therefore carry its own copy of an allocator.
+
+Many instances where dynamic memory allocation might _seem_ to be required can also be addressed just as well with a library such as [heapless](https://docs.rs/heapless/latest/heapless/). This library (and others of its kind) provide data structures with familiar APIs that _appear_ dynamic, but are actually implemented in terms of a single stack or static allocation, with a fixed maximum size established at construction: attempts to grow the dynamic size beyond the maximum size simply fail. In the context of a contract, this can sometimes be preferable behavior, and avoids the question of dynamic allocation entirely.
+
+## Non-standard I/O
+
+All standard I/O facilities and access to the operating system that a typical Rust program would expect to perform using the Rust standard library is prohibited; programs that try to import such functions from the host through (for example) the WASI interface will fail to instantiate, since they refer to functions not provided by the host.
+
+No operating system, nor any simulation thereof, is present in the contract sandbox. Again, the repertoire of host objects and host functions is intended to replace and largely obviate the need for such facilities from the standard library.
+
+This restriction arises from the fact that contracts need to run with _stronger_ guarantees than those made by typical operating-system APIs. Specifically contracts must perform I/O with all-or-nothing, transactional semantics (relative to their successful execution or failure) as well as serializable consistency. This eliminates most APIs that would relate to typical file I/O. Furthermore contracts must be isolated from all sources of nondeterminism such as networking or process control, which eliminates most of the remaining APIs. Once files, networking and process control are gone, there simply isn't enough left in the standard operating system I/O facilities to bother trying to provide them.
+
+## No multithreading
+
+Multithreading is not available. As with I/O functions, attempting to import any APIs from the host related to multithreading will fail at instantiation time.
+
+This restriction is similarly based on the need for contracts to run in an environment with strong determinism and serializable consistency guarantees.
+
+## Immediate panic
+
+The Rust `panic!()` facility for unrecoverable errors will trap the Wasm virtual machine immediately, halting execution at the instruction that traps rather than unwinding. This means that `Drop` code in Rust types will not run during a panic. This behavior is similar to the `panic = "abort"` profile that Rust code can (and often is) compiled with.
+
+This is not a hard restriction enforced by the host, but a soft configuration made through a mixture of SDK functions and flags used when compiling, in the interest of minimizing code size and limiting execution costs. It can be bypassed with some effort if unwinding and `Drop` code is desired, at the cost of greatly increased code size.
+
+## Pure-functional collections
+
+Host objects have significantly different semantics than typical Rust data structures, especially those implementing _collections_ such as maps and vectors.
+
+In particular: host objects are **immutable**, and any "modification" to a host object returns a **full new copy** of the object, leaving the initial one unchanged. For the most part this distinction is hidden through wrappers in the SDK, such that objects like `Map` or `Vec` appear to the contract programmer to be uniquely owned mutable values similar to Rust's standard library types, but the underlying host objects are immutable, so have different performance characteristics. Specifically: cloning such an object is O(1), whereas any modification is O(N). Since most host objects are typically very small, the O(N) cost of modification is typically cheaper than any alternative implementation involving shared substructures.
+
+:::note
+
+These container types `Vec` and `Map` should _not_ be used for managing large or unbounded collections of data. For such cases, contracts should store data in multiple separate ledger entries, each with its own unique contract-defined key. Doing so also limits the IO cost of a contract to only the entries it accesses, and furthermore allows concurrent modification of entries with separate keys from separate transactions.
+
+:::
+
+## Limited WebAssembly features
+
+The WebAssembly specification has grown significantly since its initial introduction and now supports many _features_ that may or may not be available on a given implementation of WebAssembly.
+
+Soroban intentionally limits which WebAssembly features it supports, to minimize the security-critical surface area and retain flexibility in choice of WebAssembly implementations. As of Rust 1.84, a new target `wasm32v1-none` was added to Rust that intentionally restricts itself to the "WebAssembly 1.0" subset of features, all of which Soroban supports.
+
+New Soroban contracts should be built with Rust `v1.84.0` or later, and use the `wasm32v1-none` target.
+
+:::note
+
+The `wasm32v1-none` target does not, by default, ship with a version of the `std` library at all. When adding the `wasm32v1-none` target, it was decided that these sorts of stubs were not of any benefit to users.
+
+The `wasm32v1-none` target _does_ include a copy of the `alloc` crate, which contains most of the _containers_ (such as vectors and maps) that are re-exported by `std`. For example, rather than using `std::vec::Vec` one can use `alloc::vec::Vec`, which is the same code under a different name. But as mentioned above in the section on dynamic memory allocation, generally Soroban contracts should avoid `alloc` as well: a crate like `heapless` will usually perform better.
+
+:::

@@ -1,11 +1,13 @@
 import React from "react";
 import BrowserOnly from '@docusaurus/BrowserOnly';
 import {useColorMode} from '@docusaurus/theme-common';
-import Kotlin from '@site/static/img/kt.png';
-import KotlinDark from '@site/static/img/kt-dark.png';
-import Typescript from '@site/static/img/ts.png';
-import Flutter from '@site/static/img/flutter.png';
-import FlutterDark from '@site/static/img/flutter-dark.png';
+import Kotlin from '@site/static/img/docusaurus/kt.png';
+import KotlinDark from '@site/static/img/docusaurus/kt-dark.png';
+import Typescript from '@site/static/img/docusaurus/ts.png';
+import Flutter from '@site/static/img/docusaurus/flutter.png';
+import FlutterDark from '@site/static/img/docusaurus/flutter-dark.png';
+import Swift from '@site/static/img/docusaurus/swift.png';
+import SwiftDark from '@site/static/img/docusaurus/swift-dark.png';
 
 export const LanguageButtons = () => {
     const {colorMode} = useColorMode();
@@ -18,6 +20,7 @@ export const LanguageButtons = () => {
                     <img src={Typescript} onClick={() => setCookie("ts")}  style={{maxHeight: "1.2rem", cursor: "pointer"}}/>
                     <img src={isDark ? KotlinDark : Kotlin} onClick={() => setCookie("kt")} style={{maxHeight: "1.1rem", cursor: "pointer"}}/>
                     <img src={isDark ? FlutterDark : Flutter} onClick={() => setCookie("dart")} style={{maxHeight: "1.2rem", cursor: "pointer"}}/>
+                    <img src={isDark ? SwiftDark : Swift} onClick={() => setCookie("swift")} style={{maxHeight: "1.2rem", cursor: "pointer"}}/>
                 </div>
             }
         </BrowserOnly>

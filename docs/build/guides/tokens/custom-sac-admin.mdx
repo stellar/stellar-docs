@@ -1,0 +1,157 @@
+---
+title: Set a custom admin account for a Stellar Asset Contract (SAC)
+hide_table_of_contents: true
+description: Set a custom administrator account on a deployed SAC
+---
+
+The [Stellar Asset Contract (SAC)](../../../tokens/stellar-asset-contract.mdx) includes functionality to set a custom administration account on the contract itself. This can allow for flexible arrangements of asset administration, which can be configured to suit many distinct use-cases.
+
+For example, you can set a custom SAC admin, and then lock the issuer account, allowing for token administration to be _exclusively_ performed through the SAC contract. Or, you could set a custom SAC admin and still keep the issuer account unlocked, allowing for a hybrid approach to token administration.
+
+:::info
+
+It should be understood that an asset's issuer account can have a distinct set of signatures and weights, and these are unrelated to the SAC admin address.
+
+:::
+
+## Considerations
+
+To effectively utilize the SAC admin functionality, you should be aware of a few things first:
+
+- When a SAC is initially enabled for an issued asset, the `Admin` address on the contract defaults to the issuer account.
+- A SAC `Admin` address can be either a regular Stellar account (`G...`), or it can be a smart contract (`C...`) address. The use-cases requiring a smart contract to act as a SAC `Admin` tend to be more common. This opens up the possibility of programmatically minting and taking other administrative actions for an asset by way of a smart contract invocation.
+- Changing a SAC `Admin` address requires authorization from the asset's _current_ `Admin` address, which will be the issuer account the first time the action is performed.
+
+Depending on the use-case, it can be beneficial for asset issuers to mint an entire supply of tokens up front, and then lock down the issuer account. This would keep the total token supply capped forever. You can learn more about this practice on the [asset design considerations](../../../tokens/control-asset-access.mdx#limiting-the-supply-of-an-asset) page. However, since the issuer account and a SAC `Admin` address act independently, there are some interesting points to make that might seem counterintuitive at first glance.
+
+- If an asset's issuer account is locked while the SAC `Admin` address has not been changed, it will _never_ be possible to change the SAC `Admin` address. This is because the issuer account can no longer authorize the first `set_admin` invocation.
+- If an asset's issuer account is locked after the SAC `Admin` address has been changed, tokens will still be mint-able and/or clawback-able (if enabled) from the SAC as long as it's authorized by the _current_ `Admin` address.
+
+:::danger
+
+When changing a SAC `Admin` address, the new admin address provided is not validated at that time. This means you can lock down administration from the SAC **forever**. Consider your choice of SAC `Admin` address carefully and thoroughly.
+
+:::
+
+## Example
+
+The following example will create a new Stellar asset, `STAR:GCS5NEHKJALCSVJAKIORXXVS554QQV5FNDLBK33CCAH6UIRYPXYZFC34`. Then, we will create a simple contract to regulate a hypothetical airdrop for the token. This contract will be configured as the SAC `Admin` address for the `STAR` asset, and it will be able to perform any administrative functions we want.
+
+:::note
+
+We will not demonstrate setting a new `G...` account as a SAC admin in this guide. Any use-case that needs asset administration delegated to another `G...` account will likely be better served by taking advantage of the existing [multisig capabilities](../../../learn/fundamentals/transactions/signatures-multisig.mdx) of Stellar accounts.
+
+:::
+
+### Enable the built-in SAC contract
+
+First, we'll enable the SAC contract using the Stellar CLI:
+
+```shell
+stellar contract asset deploy \
+    --source-account starIssuer --network testnet \
+    --asset STAR:GCS5NEHKJALCSVJAKIORXXVS554QQV5FNDLBK33CCAH6UIRYPXYZFC34
+# CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF
+```
+
+This gives us the SAC address of `CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF`.
+
+:::note
+
+We're using the asset's issuer account here to enable the SAC on the Testnet network, but this action can be performed using _any_ account.
+
+:::
+
+### Check the initial `Admin` address
+
+Now that we have the SAC deployed to the network, we can invoke the `admin` function to find out what its current `Admin` address is:
+
+```shell
+stellar contract invoke \
+    --source-account starIssuer --network testnet \
+    --id CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF \
+    -- \
+    admin
+# GCS5NEHKJALCSVJAKIORXXVS554QQV5FNDLBK33CCAH6UIRYPXYZFC34
+```
+
+Unsurprisingly, it's set to the issuer's `GCS5...` account. Let's change that.
+
+### Set the `Admin` address to some contract `C...` address
+
+For this part of the example, we'll use a simple "airdrop" contract as the `Admin` address. It has a very simple implementation, and only one main function, `claim_airdrop`. Whenever someone invokes that function, 12.3456789 `STAR` will be minted to their account.
+
+```rust
+#[contractimpl]
+impl Contract {
+    pub fn __constructor(env: Env, sac_address: Address) {
+        env.storage().instance().set(&symbol_short!("SAC_ADDR"), &sac_address);
+    }
+
+    pub fn claim_airdrop(env: Env, receiver: Address) {
+        if env.storage().persistent().has(&receiver) {
+            panic!("receiver has already claimed")
+        }
+
+        receiver.require_auth();
+        let amount: i128 = 123456789;
+        env.storage().persistent().set(&receiver, &amount);
+
+        let sac_address: Address = env.storage().instance().get(&symbol_short!("SAC_ADDR")).unwrap();
+        let token_client = token::StellarAssetClient::new(&env, &sac_address);
+        token_client.mint(&receiver, &amount);
+    }
+}
+```
+
+This contract gets deployed, and the address might be (for example) `CBCGKTU6CD25S2E7SEMJ72MQUL4XEGAXAJ43GQE3HSYOZKZ4C4LOH756`. We can now set the SAC `Admin` address to this contract:
+
+```sh
+stellar contract invoke \
+    --source-account starIssuer --network testnet \
+    --id CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF \
+    -- \
+    set_admin --new_admin CBCGKTU6CD25S2E7SEMJ72MQUL4XEGAXAJ43GQE3HSYOZKZ4C4LOH756
+```
+
+Double-checking our work with the `admin` function of the SAC, we'll see that our airdrop contract is now the `Admin` address:
+
+```shell
+stellar contract invoke \
+    --source-account starIssuer --network testnet \
+    --id CBVYF2KJ72BRPLVPCUL3PGWDO5RK2XP4AJDHKX7GDDBJW42L2C6VT3SF \
+    -- \
+    admin
+# CBCGKTU6CD25S2E7SEMJ72MQUL4XEGAXAJ43GQE3HSYOZKZ4C4LOH756
+```
+
+Now, since the airdrop contract is the administrator of the SAC, we can invoke its `claim_airdrop` function from any account we like. (Reminder: if you're using a `G...` address as a destination for the `mint` function of a SAC, it will need a trustline created for the asset beforehand.)
+
+```sh
+stellar contract invoke \
+    --source-account randomStarHolder --network testnet \
+    --id CBCGKTU6CD25S2E7SEMJ72MQUL4XEGAXAJ43GQE3HSYOZKZ4C4LOH756 \
+    -- \
+    claim_airdrop --receiver randomStarHolder
+```
+
+Now, this `randomStarHolder` account will have a balance of 12.3456789 `STAR`, and the token minting was executed by the airdrop contract itself.
+
+### Making a `payment` operation from the issuer account
+
+Since we haven't locked down the signer(s) of our issuer account, it's still entirely possible for the `GCS5...` issuer account to create and submit to the network any `payment` operations it wants. This means tokens could still be minted with a `payment` operation, or burned with a `clawback` operation, or trustline flags modified, etc. all using the original asset issuer's account. The `Admin` address of the SAC and the signing permissions of the issuer account operate and function independently of one another.
+
+## In the wild
+
+A fun example of a project utilizing a custom administrator address on a SAC can be found with the [`KALE` Project](https://github.com/kalepail/KALE-sc). The KALE issuer is `GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE`, but you can see the `Admin` address for the SAC is set to another contract:
+
+```sh
+stellar contract invoke \
+    --source-account S...ECRETKEY --network mainnet \
+    --id CB23WRDQWGSP6YPMY4UV5C4OW5CBTXKYN3XEATG7KJEZCXMJBYEHOUOV \
+    -- \
+    admin
+# CDL74RF5BLYR2YBLCCI7F5FB6TPSCLKEJUBSD2RSVWZ4YHF3VMFAIGWA
+```
+
+This [`CDL7...` contract](https://stellar.expert/explorer/public/contract/CDL74RF5BLYR2YBLCCI7F5FB6TPSCLKEJUBSD2RSVWZ4YHF3VMFAIGWA) is the "homestead" contract created to facilitate the minting/burning/mining of the `KALE` asset.

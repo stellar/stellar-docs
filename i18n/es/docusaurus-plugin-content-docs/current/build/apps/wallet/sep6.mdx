@@ -1,0 +1,596 @@
+---
+title: Depósito y Retirada Programática
+sidebar_position: 60
+---
+
+import { LanguageSpecific } from "@site/src/components/LanguageSpecific";
+
+import { WalletCodeExample as CodeExample } from "@site/src/components/WalletCodeExample";
+import Header from "./component/header.mdx";
+
+<Header WIPLangs={["kotlin"]} />
+
+El estándar [SEP-6] define una forma en que los anchors y billeteras pueden interactuar en nombre de los usuarios. Las billeteras utilizan este estándar para facilitar intercambios entre activos on-chain (como stablecoins) y activos off-chain (como fiat, u otros activos de red como BTC).
+
+Por favor, nota que esto es para depósitos y retiradas _programáticas_. Para depósitos y retiradas alojados, donde el anchor interactúa con billeteras de manera interactiva usando un popup, por favor consulta [Depósito y Retirada Alojados](./sep24.mdx).
+
+## Obtener Información del Anchor
+
+Comencemos creando un objeto sep6, que usaremos para todas las interacciones SEP-6:
+
+<CodeExample>
+
+```typescript
+const sep6 = anchor.sep6();
+```
+
+```dart
+var sep6 = anchor.sep6();
+```
+
+```swift
+let sep6 = anchor.sep6
+```
+
+</CodeExample>
+
+Primero, obtengamos información sobre el soporte del ancla para [SEP-6]. Esta solicitud no requiere autenticación y devolverá información genérica, como las monedas admitidas y las funciones admitidas por el ancla. Puedes obtener una lista completa de campos devueltos en la [especificación SEP-6](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0006.md#info).
+
+<CodeExample>
+
+```typescript
+const info = await sep6.info();
+```
+
+```dart
+var info = await sep6.info();
+```
+
+```swift
+let info = try await sep6.info()
+```
+
+</CodeExample>
+
+## Iniciar un depósito
+
+Antes de comenzar, asegúrate de haberte conectado al ancla y de haber recibido un token de autenticación, como se describe en la guía de billeteras de [Autenticación Stellar]. Usaremos `authToken` en los ejemplos a continuación como el token de autenticación [SEP-10], obtenido anteriormente.
+
+Para iniciar una operación, necesitamos conocer un activo. Puedes codificar esto de forma fija. Asegúrate de que sea uno que esté incluido en la respuesta de información anterior.
+
+:::info
+
+Antes de comenzar con el flujo de depósito, asegúrate de que la cuenta del usuario haya [establecido una línea de confianza](./stellar.mdx#modify-assets-trustlines) para el activo con el que estás trabajando.
+
+:::
+
+Comencemos con un depósito básico. Usaremos `account` para representar la clave pública de nuestra cuenta.
+
+<CodeExample>
+
+```typescript
+const deposit = await sep6.deposit({
+  authToken,
+  params: {
+    asset_code,
+    account,
+  },
+});
+```
+
+```dart
+var deposit = await anchor.sep6().deposit(
+  Sep6DepositParams(assetCode: assetCode, account: accountId),
+  authToken,
+);
+```
+
+```swift
+let params = Sep6DepositParams(assetCode: assetCode, account: account)
+let depositResponse = try await anchor.sep6.deposit(params: params, authToken: authToken)
+
+switch depositResponse {
+case .depositSuccess(let how, let id, let eta, let minAmount, let maxAmount, let feeFixed, let feePercent, let extraInfo, let instructions):
+ // ...
+}
+```
+
+</CodeExample>
+
+Hay varios tipos de respuestas, dependiendo de si el ancla necesita más información. Todos los depósitos y retiros tendrán estos mismos tipos de respuesta:
+
+### 1. Respuesta exitosa
+
+Si la respuesta es exitosa (HTTP 200), entonces el ancla está procesando el depósito. Si necesita información adicional, la comunicará al proporcionar la [información de la transacción](#getting-transaction-info).
+
+### 2. Aún procesando o denegado
+
+Si se devuelve un HTTP 403 con datos: `customer_info_status`, significa que la acción aún se está procesando o no ha sido aceptada. En este caso, el campo `more_info_url` debería tener un enlace que describa los próximos pasos.
+
+Un ejemplo de respuesta:
+
+```
+{
+  "type": "customer_info_status",
+  "status": "denied",
+  "more_info_url": "https://api.example.com/kycstatus?account=GACW7NONV43MZIFHCOKCQJAKSJSISSICFVUJ2C6EZIW5773OU3HD64VI"
+}
+```
+
+### 3. Necesita más información KYC
+
+Otra respuesta común es un HTTP 403, con la respuesta: `non_interactive_customer_info_needed`. En este caso, el ancla necesita más información KYC a través de [SEP-12].
+
+Un ejemplo de respuesta:
+
+```
+{
+  "type": "non_interactive_customer_info_needed",
+  "fields" : ["family_name", "given_name", "address", "tax_id"]
+}
+```
+
+Mostremos cómo una billetera puede manejar esta situación. Primero, obtenemos el objeto de respuesta del depósito. Si la respuesta incluye este error, entonces podemos ver qué campos faltantes está requiriendo el ancla.
+
+<CodeExample>
+
+```typescript
+if (deposit.type === "non_interactive_customer_info_needed") {
+  // handle displaying the missing fields to the user
+  console.log(deposit.fields);
+}
+```
+
+```dart
+if (deposit is Sep6MissingKYC) {
+  print(deposit.fields);
+}
+```
+
+```swift
+switch depositResponse {
+case .missingKYC(let fields):
+   //...
+}
+```
+
+</CodeExample>
+
+La billetera tendrá que manejar la visualización al usuario sobre qué campos están faltando. Y luego, para agregar esos campos, podemos usar la clase sep12 así:
+
+<CodeExample>
+
+```typescript
+const sep12 = await anchor.sep12(authToken);
+
+// adding the missing kyc info (sample data)
+await sep12.add({
+  sep9Info: {
+    family_name: "smith",
+    given_name: "john",
+    address: "123 street",
+    tax_id: "123",
+  },
+});
+```
+
+```dart
+var sep12 = await anchor.sep12(authToken);
+
+// adding the missing kyc info (sample data)
+var sep9Info = {
+  'family_name': 'smith',
+  'given_name': 'john',
+  'address': '123 street',
+  'tax_id': '123',
+};
+
+var addResponse = await sep12.add(sep9Info);
+```
+
+```swift
+let sep12 = try await anchor.sep12(authToken: authToken)
+
+// adding the missing kyc info (sample data)
+let sep9Info = [
+ "family_name" : "smith",
+ "given_name" : "john",
+ "address" : "123 street",
+ "tax_id": "123",
+]
+
+let addResponse = try await sep12.add(sep9Info: sep9Info)
+```
+
+</CodeExample>
+
+Luego, podemos volver a llamar al método de depósito como antes y debería ser exitoso.
+
+Más información sobre el envío de información KYC utilizando [SEP-12] se puede encontrar en [Proporcionar información KYC](#providing-kyc-info).
+
+## Proporcionar información KYC
+
+Un ancla puede responder a una solicitud de depósito o retiro diciendo que necesita información KYC adicional. Para facilitar esto, [SEP-6] admite agregar información KYC del cliente a través de [SEP-12]. El usuario puede enviar la información requerida utilizando el objeto sep12 como se muestra a continuación.
+
+Vamos a agregar algo de información KYC para nuestra cuenta utilizando datos de ejemplo. Los datos binarios (por ejemplo, datos de imagen) deben enviarse en un campo separado. Los campos permitidos que se pueden enviar al ancla se describen en [SEP-9].
+
+<CodeExample>
+
+```typescript
+const sep12 = await anchor.sep12(authToken);
+
+await sep12.add({
+  sep9Info: {
+    first_name: "john",
+    last_name: "smith",
+    email_address: "123@gmail.com",
+    bank_number: "12345",
+    bank_account_number: "12345",
+  },
+  sep9BinaryInfo: {
+    photo_id_front: Buffer.from("./path/to/image/front"),
+    photo_id_back: Buffer.from("./path/to/image/back"),
+  },
+});
+```
+
+```dart
+var sep12 = await anchor.sep12(authToken);
+
+var sep9Info = {
+  'first_name': 'john',
+  'last_name': 'smith',
+  'email_address': '123@gmail.com',
+  'bank_number': '12345',
+  'bank_account_number': '12345',
+};
+
+var photoIdFront = await Util.readFile('./path/to/image/front');
+var photoIdBack = await Util.readFile('./path/to/image/back');
+
+var sep9Files = {
+  'photo_id_front': photoIdFront,
+  'photo_id_back': photoIdBack,
+};
+
+await sep12.add(sep9Info, sep9Files: sep9Files);
+```
+
+```swift
+let sep12 = try await anchor.sep12(authToken: authToken)
+
+let sep9Info = [
+    "first_name" : "john",
+    "last_name" : "smith",
+    "email_address" : "123@gmail.com",
+    "bank_number" : "12345",
+    "bank_account_number" : "12345",
+]
+
+let photoIdFront:Data = // ...
+let photoIdBack:Data = // ...
+
+let sep9Files = [
+  "photo_id_front": photoIdFront,
+  "photo_id_back": photoIdBack,
+]
+
+let addResponse = try await sep12.add(sep9Info: sep9Info, sep9Files: sep9Files)
+```
+
+</CodeExample>
+
+## Iniciar un retiro
+
+Iniciar un retiro es similar a un depósito y tiene los mismos tipos de respuesta que se describieron anteriormente.
+
+<CodeExample>
+
+```typescript
+const resp = await sep6.withdraw({
+  authToken,
+  params: {
+    asset_code: "SRT",
+    account: accountKp.publicKey,
+    type: "bank_account",
+    dest: "123",
+    dest_extra: "12345",
+  },
+});
+```
+
+```dart
+var params = Sep6WithdrawParams(
+    assetCode: 'SRT',
+    account: accountId,
+    type: 'bank_account',
+    dest: '123',
+    destExtra: '12345',
+);
+
+var resp = await anchor.sep6().withdraw(params, authToken);
+```
+
+```swift
+let params = Sep6WithdrawParams(
+  assetCode: "SRT",
+  account: accountId,
+  type: "bank_account",
+  dest: "123",
+  destExtra: "12345")
+
+let resp = try await anchor.sep6.withdraw(params: withdrawParams,
+                                          authToken: authToken)
+```
+
+</CodeExample>
+
+## Obtener información de intercambio
+
+Si el ancla admite cotizaciones de [SEP-38], puede admitir depósitos que hagan un puente entre activos no equivalentes. Por ejemplo, un ancla recibe BRL a través de transferencias bancarias y a cambio envía USDC (de valor equivalente menos tarifas) al usuario en Stellar.
+
+Las funciones de intercambio sep6 permiten a un usuario iniciar un depósito o retiro de intercambio con el ancla, y el ancla puede comunicar los próximos pasos al usuario.
+
+Primero, comencemos un depósito de intercambio con datos de ejemplo. Los activos se describen utilizando el esquema [SEP-38].
+
+<CodeExample>
+
+```typescript
+const resp = await sep6.depositExchange({
+  authToken,
+  params: {
+    destination_asset:
+      "stellar:SRT:GCDNJUBQSX7AJWLJACMJ7I4BC3Z47BQUTMHEICZLE6MU4KQBRYG5JY6B",
+    source_asset: "iso4217:USD",
+    amount: "10",
+  },
+});
+```
+
+```dart
+var params = Sep6DepositExchangeParams(
+    destinationAssetCode: 'SRT',
+    sourceAssetId: FiatAssetId('USD'),
+    amount: '10',
+);
+
+var resp = await anchor.sep6().depositExchange(params, authToken);
+```
+
+```swift
+let params = Sep6DepositExchangeParams(
+  destinationAssetCode: "SRT",
+  sourceAssetId: FiatAssetId(id: "USD"),
+  amount: "10")
+
+let resp = try await anchor.sep6.depositExchange(params: params,
+                                                 authToken: authToken)
+```
+
+</CodeExample>
+
+La respuesta sigue los mismos tipos que todos los depósitos y retiros de SEP-6.
+
+Ahora vamos a crear un retiro de intercambio, que sigue el mismo formato que el depósito de intercambio. También especificamos que es un retiro de cuenta bancaria utilizando el campo `type`.
+
+<CodeExample>
+
+```typescript
+const resp = await sep6.withdrawExchange({
+  authToken,
+  params: {
+    destination_asset: "iso4217:USD",
+    source_asset:
+      "stellar:SRT:GCDNJUBQSX7AJWLJACMJ7I4BC3Z47BQUTMHEICZLE6MU4KQBRYG5JY6B",
+    amount: "10",
+    type: "bank_account",
+  },
+});
+```
+
+```dart
+var params = Sep6WithdrawExchangeParams(
+    sourceAssetCode: 'SRT',
+    destinationAssetId: FiatAssetId('USD'),
+    amount: '10',
+    type: 'bank_account',
+);
+
+var resp = await anchor.sep6().withdrawExchange(params, authToken);
+```
+
+```swift
+let params = Sep6WithdrawExchangeParams(
+  sourceAssetCode: "SRT",
+  destinationAssetId: FiatAssetId("USD"),
+  amount: "10",
+  type: "bank_account")
+
+let resp = try await anchor.sep6.withdrawExchange(params: params,
+                                                  authToken: authToken)
+```
+
+</CodeExample>
+
+La respuesta sigue los mismos tipos que todos los depósitos y retiros de SEP-6.
+
+## Obteniendo información de transacción
+
+En el flujo típico, la billetera obtendría datos de transacción para notificar a los usuarios sobre actualizaciones de estado. Esto se hace a través del [SEP-6] `GET /transaction` y `GET /transactions` endpoint.
+
+### Seguimiento de transacción
+
+Veamos cómo usar el sdk para rastrear los cambios en el estado de la transacción. Usaremos la clase `Watcher` para este propósito. Primero, inicialízala y comienza a rastrear una transacción.
+
+<CodeExample>
+
+```typescript
+const watcher = anchor.sep6().watcher();
+
+const { stop, refresh } = watcher.watchOneTransaction({
+  authToken,
+  assetCode,
+  id: txId,
+  onSuccess,
+  onMessage,
+  onError,
+});
+```
+
+```dart
+var watcher = anchor.sep6.watcher();
+var result = watcher.watchOneTransaction(authToken, 'transaction id');
+
+result.controller.stream.listen(
+  (event) {
+    if (event is StatusChange) {
+      print('Status changed to ${event.status}. Transaction: ${event.transaction.id}');
+    } else if (event is ExceptionHandlerExit) {
+      print('Exception handler exited the job');
+    } else if (event is StreamControllerClosed) {
+      print('Stream controller closed. Job is done');
+    }
+  }
+);
+```
+
+```swift
+let watcher = anchor.sep6.watcher()
+let result = watcher.watchOneTransaction(authToken: token,
+                                         id: "transaction id")
+
+NotificationCenter.default.addObserver(self,
+                                       selector: #selector(handleEvent(_:)),
+                                       name: result.notificationName,
+                                       object: nil)
+
+/// ...
+@objc public func handleEvent(_ notification: Notification) {
+    if let statusChange = notification.object as? StatusChange {
+        print("Status change to \(statusChange.status.rawValue). Transaction: \(statusChange.transaction.id)")
+    } else if let _ = notification.object as? ExceptionHandlerExit {
+        print("Exception handler exited the job")
+    } else if let _ = notification.object as? NotificationsClosed {
+        print("Notifications closed. Job is done")
+    }
+}
+```
+
+</CodeExample>
+
+Alternativamente, podemos rastrear múltiples transacciones para el mismo activo.
+
+<CodeExample>
+
+```typescript
+const watcher = anchor.sep6().watcher();
+
+const { stop, refresh } = watcher.watchAllTransactions({
+  authToken,
+  assetCode,
+  onMessage,
+  onError,
+});
+```
+
+```dart
+var watcher = anchor.sep6.watcher();
+var result = watcher.watchAsset(authToken, asset);
+
+result.controller.stream.listen(
+  (event) {
+    if (event is StatusChange) {
+      print('Status changed to ${event.status}. Transaction: ${event.transaction.id}');
+    } else if (event is ExceptionHandlerExit) {
+      print('Exception handler exited the job');
+    } else if (event is StreamControllerClosed) {
+      print('Stream controller closed. Job is done');
+    }
+  }
+);
+```
+
+```swift
+let watcher = anchor.sep6.watcher()
+let result = watcher.watchAsset(authToken: token,
+                                asset: asset)
+
+NotificationCenter.default.addObserver(self,
+                                       selector: #selector(handleEvent(_:)),
+                                       name: result.notificationName,
+                                       object: nil)
+
+/// ...
+@objc public func handleEvent(_ notification: Notification) {
+    if let statusChange = notification.object as? StatusChange {
+        print("Status change to \(statusChange.status.rawValue). Transaction: \(statusChange.transaction.id)")
+    } else if let _ = notification.object as? ExceptionHandlerExit {
+        print("Exception handler exited the job")
+    } else if let _ = notification.object as? NotificationsClosed {
+        print("Notifications closed. Job is done")
+    }
+}
+```
+
+</CodeExample>
+
+### Obteniendo transacción
+
+Mientras que la clase `Watcher` ofrece potentes capacidades de seguimiento, a veces es necesario simplemente obtener una transacción (o transacciones) una vez. La clase `Anchor` te permite obtener una transacción por ID, ID de transacción Stellar o ID de transacción externa:
+
+<CodeExample>
+
+```typescript
+const transaction = await anchor
+  .sep6()
+  .getTransactionBy({ authToken, id: transactionId });
+```
+
+```dart
+var transaction = await anchor.sep6().getTransactionBy(
+    authToken: authToken,
+    id: transactionId,
+);
+```
+
+```swift
+let transaction = try await anchor.sep6.getTransactionBy(
+  authToken: authToken,
+  transactionId:transactionId)
+```
+
+</CodeExample>
+
+También es posible obtener transacciones por el activo.
+
+<CodeExample>
+
+```typescript
+const transactions = await anchor.sep6().getTransactionsForAsset({
+  authToken,
+  assetCode,
+});
+```
+
+```dart
+var transactions = await anchor.sep6().getTransactionsForAsset(
+  authToken: authToken,
+  assetCode: assetCode,
+);
+```
+
+```swift
+let transactions = try await anchor.sep6.getTransactionsForAsset(
+  authToken: authToken,
+  assetCode: assetCode)
+
+```
+
+</CodeExample>
+
+[sep-6]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0006.md
+[sep-9]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0009.md
+[sep-10]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md
+[sep-12]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0012.md
+[sep-38]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0038.md
+[autenticación stellar]: ./sep10.mdx
