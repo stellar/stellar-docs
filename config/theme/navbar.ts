@@ -182,11 +182,6 @@ const learn: NavbarItem = {
       activeBasePath: 'docs/learn/fundamentals/stellar-stack',
     },
     {
-      to: '/docs/learn/fundamentals/networks',
-      label: 'Networks',
-      activeBasePath: 'docs/learn/fundamentals/networks',
-    },
-    {
       to: '/docs/learn/fundamentals/lumens',
       label: 'Lumens (XLM)',
       activeBasePath: 'docs/learn/fundamentals/lumens',
@@ -469,7 +464,7 @@ const networks: NavbarItem = {
   items: [
     {
       to: '/docs/networks',
-      label: 'Network Configuration',
+      label: 'Networks Overview',
       exact: true,
     },
     {
