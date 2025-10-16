@@ -17,10 +17,11 @@ COPY . /app/
 ARG BUILD_TRANSLATIONS="False"
 
 RUN yarn cache clean --all
-RUN yarn install
+RUN yarn install --frozen-lockfile
 RUN du -sh /app/*
 RUN yarn rpcspec:build --no-minify
 RUN yarn stellar-cli:build --no-minify --cli-ref=main
+RUN yarn stellar-cli:fix-links
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
@@ -30,7 +31,7 @@ RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
     yarn build --no-minify; \
   fi
 
-FROM nginx:1.27
+FROM nginx:1.29
 
 COPY --from=build /app/build/ /usr/share/nginx/html/
 COPY nginx /etc/nginx/

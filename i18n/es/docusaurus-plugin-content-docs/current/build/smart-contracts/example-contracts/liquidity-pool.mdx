@@ -39,15 +39,15 @@ La red Stellar ya tiene funcionalidad de fondo de liquidez integrada en el proto
 
 [open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
 [open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
-[ejemplo de fondo de liquidez]: https://github.com/stellar/soroban-examples/tree/v22.0.1/liquidity_pool
-[código fuente]: https://github.com/stellar/soroban-examples/blob/v22.0.1/liquidity_pool/src/lib.rs#L143
+[ejemplo de fondo de liquidez]: https://github.com/stellar/soroban-examples/tree/v23.0.0/liquidity_pool
+[código fuente]: https://github.com/stellar/soroban-examples/tree/v23.0.0/liquidity_pool/src/lib.rs#L143
 
 ## Ejecutar el Ejemplo
 
-Primero, pasa por el proceso de [Configuración] para configurar tu entorno de desarrollo, luego clona la etiqueta `v22.0.1` del repositorio `soroban-examples`:
+Primero realiza el proceso de [Configuración] para preparar tu entorno de desarrollo, luego clona la etiqueta `v23.0.0` del repositorio `soroban-examples`:
 
 ```sh
-git clone -b v22.0.1 https://github.com/stellar/soroban-examples
+git clone -b v23.0.0 https://github.com/stellar/soroban-examples
 ```
 
 O, omite la configuración del entorno de desarrollo y abre este ejemplo en [GitHub Codespaces][open-in-github-codespaces] o [Code Anywhere][open-in-code-anywhere].
@@ -61,7 +61,7 @@ cargo test
 
 Deberías ver la salida:
 
-```sh
+```text
 running 3 tests
 test test::deposit_amount_zero_should_panic - should panic ... ok
 test test::swap_reserve_one_nonzero_other_zero - should panic ... ok
@@ -72,45 +72,23 @@ test test::test ... ok
 
 ## Código
 
-:::info
-
-Dado que nuestro fondo de liquidez emitirá su propio token para establecer el número de acciones que tiene el fondo, hemos creado un módulo `token.rs` en este proyecto para contener la lógica que controla el contrato del token para esas acciones.
-
-:::
-
-<Tabs>
-<TabItem value="lib.rs" default>
-
-```rust title=liquidity_pool/src/lib.rs
-#![no_std]
+```rust title="liquidity_pool/src/lib.rs"
 #![no_std]
 
 mod test;
-mod token;
 
 use num_integer::Roots;
-use soroban_sdk::{
-    contract, contractimpl, contractmeta, Address, BytesN, ConversionError, Env, TryFromVal, Val,
-};
-use token::create_share_token;
+use soroban_sdk::{contract, contractimpl, contractmeta, contracttype, token, Address, Env};
 
-#[derive(Clone, Copy)]
-#[repr(u32)]
+#[derive(Clone)]
+#[contracttype]
 pub enum DataKey {
-    TokenA = 0,
-    TokenB = 1,
-    TokenShare = 2,
-    TotalShares = 3,
-    ReserveA = 4,
-    ReserveB = 5,
-}
-
-impl TryFromVal<Env, DataKey> for Val {
-    type Error = ConversionError;
-
-    fn try_from_val(_env: &Env, v: &DataKey) -> Result<Self, Self::Error> {
-        Ok((*v as u32).into())
-    }
+    TokenA,
+    TokenB,
+    TotalShares,
+    ReserveA,
+    ReserveB,
+    Shares(Address),
 }
 
 fn get_token_a(e: &Env) -> Address {
@@ -119,10 +97,6 @@ fn get_token_a(e: &Env) -> Address {
 
 fn get_token_b(e: &Env) -> Address {
     e.storage().instance().get(&DataKey::TokenB).unwrap()
-}
-
-fn get_token_share(e: &Env) -> Address {
-    e.storage().instance().get(&DataKey::TokenShare).unwrap()
 }
 
 fn get_total_shares(e: &Env) -> i128 {
@@ -149,8 +123,17 @@ fn get_balance_b(e: &Env) -> i128 {
     get_balance(e, get_token_b(e))
 }
 
-fn get_balance_shares(e: &Env) -> i128 {
-    get_balance(e, get_token_share(e))
+fn get_shares(e: &Env, user: &Address) -> i128 {
+    e.storage()
+        .persistent()
+        .get(&DataKey::Shares(user.clone()))
+        .unwrap_or(0)
+}
+
+fn put_shares(e: &Env, user: &Address, amount: i128) {
+    e.storage()
+        .persistent()
+        .set(&DataKey::Shares(user.clone()), &amount);
 }
 
 fn put_token_a(e: &Env, contract: Address) {
@@ -159,10 +142,6 @@ fn put_token_a(e: &Env, contract: Address) {
 
 fn put_token_b(e: &Env, contract: Address) {
     e.storage().instance().set(&DataKey::TokenB, &contract);
-}
-
-fn put_token_share(e: &Env, contract: Address) {
-    e.storage().instance().set(&DataKey::TokenShare, &contract);
 }
 
 fn put_total_shares(e: &Env, amount: i128) {
@@ -177,20 +156,20 @@ fn put_reserve_b(e: &Env, amount: i128) {
     e.storage().instance().set(&DataKey::ReserveB, &amount)
 }
 
-fn burn_shares(e: &Env, amount: i128) {
+fn burn_shares(e: &Env, from: &Address, amount: i128) {
+    let current_shares = get_shares(e, from);
+    if current_shares < amount {
+        panic!("insufficient shares");
+    }
     let total = get_total_shares(e);
-    let share_contract = get_token_share(e);
-
-    token::Client::new(e, &share_contract).burn(&e.current_contract_address(), &amount);
+    put_shares(e, from, current_shares - amount);
     put_total_shares(e, total - amount);
 }
 
-fn mint_shares(e: &Env, to: Address, amount: i128) {
+fn mint_shares(e: &Env, to: &Address, amount: i128) {
+    let current_shares = get_shares(e, to);
     let total = get_total_shares(e);
-    let share_contract_id = get_token_share(e);
-
-    token::Client::new(e, &share_contract_id).mint(&to, &amount);
-
+    put_shares(e, to, current_shares + amount);
     put_total_shares(e, total + amount);
 }
 
@@ -244,29 +223,22 @@ struct LiquidityPool;
 
 #[contractimpl]
 impl LiquidityPool {
-    pub fn __constructor(e: Env, token_wasm_hash: BytesN<32>, token_a: Address, token_b: Address) {
+    pub fn __constructor(e: Env, token_a: Address, token_b: Address) {
         if token_a >= token_b {
             panic!("token_a must be less than token_b");
         }
 
-        let share_contract = create_share_token(&e, token_wasm_hash, &token_a, &token_b);
-
         put_token_a(&e, token_a);
         put_token_b(&e, token_b);
-        put_token_share(&e, share_contract);
         put_total_shares(&e, 0);
         put_reserve_a(&e, 0);
         put_reserve_b(&e, 0);
     }
 
-    // Returns the token contract address for the pool share token
-    pub fn share_id(e: Env) -> Address {
-        get_token_share(&e)
+    pub fn balance_shares(e: Env, user: Address) -> i128 {
+        get_shares(&e, &user)
     }
 
-    // Deposits token_a and token_b. Also mints pool shares for the "to" Identifier. The amount minted
-    // is determined based on the difference between the reserves stored by this contract, and
-    // the actual balance of token_a and token_b for this contract.
     pub fn deposit(
         e: Env,
         to: Address,
@@ -309,7 +281,7 @@ impl LiquidityPool {
             (balance_a * balance_b).sqrt()
         };
 
-        mint_shares(&e, to, new_total_shares - total_shares);
+        mint_shares(&e, &to, new_total_shares - total_shares);
         put_reserve_a(&e, balance_a);
         put_reserve_b(&e, balance_b);
     }
@@ -406,24 +378,23 @@ impl LiquidityPool {
     ) -> (i128, i128) {
         to.require_auth();
 
-        // First transfer the pool shares that need to be redeemed
-        let share_token_client = token::Client::new(&e, &get_token_share(&e));
-        share_token_client.transfer(&to, &e.current_contract_address(), &share_amount);
+        let current_shares = get_shares(&e, &to);
+        if current_shares < share_amount {
+            panic!("insufficient shares");
+        }
 
         let (balance_a, balance_b) = (get_balance_a(&e), get_balance_b(&e));
-        let balance_shares = get_balance_shares(&e);
-
         let total_shares = get_total_shares(&e);
 
-        // Now calculate the withdraw amounts
-        let out_a = (balance_a * balance_shares) / total_shares;
-        let out_b = (balance_b * balance_shares) / total_shares;
+        // Calculate withdrawal amounts
+        let out_a = (balance_a * share_amount) / total_shares;
+        let out_b = (balance_b * share_amount) / total_shares;
 
         if out_a < min_a || out_b < min_b {
             panic!("min not satisfied");
         }
 
-        burn_shares(&e, balance_shares);
+        burn_shares(&e, &to, share_amount);
         transfer_a(&e, to.clone(), out_a);
         transfer_b(&e, to, out_b);
         put_reserve_a(&e, balance_a - out_a);
@@ -438,82 +409,41 @@ impl LiquidityPool {
 }
 ```
 
-</TabItem>
-<TabItem value="token.rs">
-
-```rust title=liquidity_pool/src/token.rs
-#![allow(unused)]
-use soroban_sdk::{symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, FromVal, String, Symbol};
-
-soroban_sdk::contractimport!(
-    file = "../token/target/wasm32v1-none/release/soroban_token_contract.wasm"
-);
-
-pub fn create_share_token(
-    e: &Env,
-    token_wasm_hash: BytesN<32>,
-    token_a: &Address,
-    token_b: &Address,
-) -> Address {
-    let mut salt = Bytes::new(e);
-    salt.append(&token_a.to_xdr(e));
-    salt.append(&token_b.to_xdr(e));
-    let salt = e.crypto().sha256(&salt);
-    e.deployer().with_current_contract(salt).deploy_v2(
-        token_wasm_hash,
-        (
-            e.current_contract_address(),
-            7u32,
-            String::from_val(e, &"Pool Share Token"),
-            String::from_val(e, &"POOL"),
-        ),
-    )
-}
-```
-
-</TabItem>
-</Tabs>
-
-Ref: https://github.com/stellar/soroban-examples/tree/v22.0.1/liquidity_pool
+Ref: https://github.com/stellar/soroban-examples/tree/v23.0.0/liquidity_pool
 
 ## Cómo Funciona
 
-Cada activo creado en Stellar comienza con cero liquidez. Lo mismo es cierto para los tokens creados en Soroban (a menos que un activo de Stellar con un token de liquidez existente sea "envuelto" para su uso en Soroban). En términos simples, "liquidez" significa cuántos de un activo en un mercado están disponibles para ser comprados o vendidos. En los "viejos tiempos," podías generar liquidez en un mercado creando órdenes de compra/venta en un libro de órdenes.
+Cada activo creado en Stellar comienza con cero liquidez. Lo mismo ocurre con los tokens creados en Soroban (a menos que un activo Stellar con un token de liquidez existente tenga desplegado su [Contrato de Activo Stellar (SAC)](../../../tokens/stellar-asset-contract.mdx) para su uso en Soroban). En términos simples, "liquidez" significa cuántos de un activo en un mercado están disponibles para ser comprados o vendidos. En los "viejos tiempos," podías generar liquidez en un mercado creando órdenes de compra/venta en un libro de órdenes.
 
 Los fondos de liquidez automatizan este proceso sustituyendo las órdenes con matemáticas. Los depositantes en el fondo de liquidez ganan tarifas de las transacciones de `swap`. ¡No se requieren órdenes!
 
-Abre el archivo `liquidity_pool/src/lib.rs` o consulta el código anterior para seguir adelante.
+Abre el archivo [`liquidity_pool/src/lib.rs`](https://github.com/stellar/soroban-examples/blob/v23.0.0/liquidity_pool/src/lib.rs) o consulta el código anterior para seguir el ejemplo.
 
 ### Inicializar el Contrato
 
-Cuando este contrato esté desplegado, el constructor se llamará automáticamente, por lo que los siguientes argumentos deben ser pasados como int:
+Cuando se despliegue este contrato, la función `__constructor` se invocará de forma automática y atómica, por lo que deben pasarse los siguientes argumentos:
 
-- **`token_wasm_hash`:** El contrato terminará [creando su propio token `POOL`] así como [interactuando con los contratos para `token_a` y `token_b`]. La forma en que funciona este ejemplo es usando el [contrato de ejemplo `token`] para ambos trabajos. Cuando se inicializa nuestro contrato de fondo de liquidez, desea que le pasemos el hash wasm del contrato de token **ya instalado**. Luego desplegará un contrato que ejecutará el bytecode WASM almacenado en ese hash como un nuevo contrato token para los tokens `POOL`.
 - **`token_a`:** La `Dirección` del contrato para un token **ya desplegado** (o envuelto) que se mantendrá en reserva por el fondo de liquidez.
 - **`token_b`:** La `Dirección` del contrato para un token **ya desplegado** (o envuelto) que se mantendrá en reserva por el fondo de liquidez.
 
 Ten en cuenta que cuál token es `token_a` y cuál es `token_b` no es una distinción arbitraria. De acuerdo con los fondos de liquidez integrados en Stellar, este contrato puede hacer únicamente un fondo de liquidez para un conjunto dado de tokens. Por lo tanto, las direcciones de los tokens deben proporcionarse en [orden lexicográfico] en el momento de la inicialización.
 
-```rust title=liquidity_pool/src/lib.rs
-pub fn __constructor(e: Env, token_wasm_hash: BytesN<32>, token_a: Address, token_b: Address) {
+```rust title="liquidity_pool/src/lib.rs"
+pub fn __constructor(e: Env, token_a: Address, token_b: Address) {
     if token_a >= token_b {
         panic!("token_a must be less than token_b");
     }
 
-    let share_contract = create_share_token(&e, token_wasm_hash, &token_a, &token_b);
-
     put_token_a(&e, token_a);
     put_token_b(&e, token_b);
-    put_token_share(&e, share_contract);
     put_total_shares(&e, 0);
     put_reserve_a(&e, 0);
     put_reserve_b(&e, 0);
 }
 ```
 
-[creando su propio token `pool`]: #creating-a-custom-pool-token-for-lp-shares
+[creando su propio token `pool`]: #minting-and-burning-lp-shares
 [interactuando con contratos para `token_a` y `token_b`]: #token-transfers-tofrom-the-lp-contract
-[`token` ejemplo de contrato]: ./tokens.mdx
 [orden lexicográfico]: ../../../learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools.mdx#liquidity-pool-participation
 
 ### Un Fondo de Liquidez de "Producto Constante"
@@ -524,8 +454,8 @@ Durante un intercambio, lo que debe tenerse en cuenta es que por cada retiro del
 
 Dentro de la función `swap`, la matemática se hace así (sin embargo, esta es una versión simplificada):
 
-```rust title=liquidity_pool/src/lib.rs
-fn swap(e: Env, to: Address, buy_a: bool, out: i128, in_max: i128) {
+```rust title="liquidity_pool/src/lib.rs"
+pub fn swap(e: Env, to: Address, buy_a: bool, out: i128, in_max: i128) {
     // Get the current balances of both tokens in the liquidity pool
     let (reserve_sell, reserve_buy) = (get_reserve_a(&e), get_reserve_b(&e));
 
@@ -544,49 +474,30 @@ Tenemos información mucho más detallada sobre cómo funciona este tipo de fond
 
 Este contrato de fondo de liquidez funcionará con un total de tres tokens diferentes de Soroban:
 
-- **`POOL`:** Este token es un token único que se otorga a los depositantes de activos a cambio de su depósito. Estos tokens son "cambiados" por el usuario cuando retira alguna cantidad de su depósito original (más cualquier tarifa de intercambio obtenida). Este contrato de ejemplo implementa el mismo [contrato de ejemplo `token`] para este token.
+- **Participaciones del pool:** Este ejemplo usa un token de participación muy simple entregado a los depositantes de activos a cambio de su depósito. Estos tokens son "cambiados" por el usuario cuando retira alguna cantidad de su depósito original (más cualquier tarifa de intercambio obtenida). En este sistema simplificado, las participaciones simplemente se suman o restan cada vez que un usuario deposita o retira los activos subyacentes. No se utilizará un _contrato de token_ distinto para estas participaciones.
 - **`token_a`** y **`token_b`**: Serán los dos "tokens en reserva" que los usuarios depositarán en el fondo. Estos podrían ser tokens "envueltos" de activos de Stellar preexistentes, o podrían ser tokens nativos de Soroban. A este contrato realmente no le importa, siempre que las funciones que necesita de la [Interfaz de Token] común estén disponibles en el contrato del token.
 
 [interfaz de token]: ../../../tokens/token-interface.mdx
 
-#### Creating a Contract `POOL` Token for LP Shares
+#### Creación y destrucción de participaciones LP
 
-Estamos utilizando el contrato de ejemplo `token` compilado como nuestro contrato de activo para el token `POOL`. Esto significa que sigue todas las convenciones de la [Interfaz de Token], y puede ser tratado igual que cualquier otro token. Podrían ser transferidos, quemados, acuñados, etc. También significa que el desarrollador de LP _podría_ aprovechar las características administrativas como la recuperación, autorización y más.
+Estamos creando y destruyendo participaciones LP dentro de la lógica del contrato principal, en lugar de usar un contrato de token distinto. Se han creado algunas funciones "auxiliares" para facilitar esta funcionalidad. Estas funciones se utilizan cuando un usuario realiza cualquier acción de depósito o retiro.
 
-El archivo `token.rs` contiene una función `create_share_token` que utilizaremos para desplegar este contrato de token en particular.
-
-```rust title="src/token.rs"
-pub fn create_share_token(
-    e: &Env,
-    token_wasm_hash: BytesN<32>,
-    token_a: &Address,
-    token_b: &Address,
-) -> Address {
-    let mut salt = Bytes::new(e);
-    salt.append(&token_a.to_xdr(e));
-    salt.append(&token_b.to_xdr(e));
-    let salt = e.crypto().sha256(&salt);
-    e.deployer().with_current_contract(salt).deploy_v2(
-        token_wasm_hash,
-        (
-            e.current_contract_address(),
-            7u32,
-            String::from_val(e, &"Pool Share Token"),
-            String::from_val(e, &"POOL"),
-        ),
-    )
-}
-```
-
-Luego, durante un `deposito`, una cantidad calculada de tokens `POOL` son `mint`ed a la dirección depositante.
-
-```rust title=liquidity_pool/src/lib.rs
-fn mint_shares(e: &Env, to: Address, amount: i128) {
+```rust title="liquidity_pool/src/lib.rs"
+fn burn_shares(e: &Env, from: &Address, amount: i128) {
+    let current_shares = get_shares(e, from);
+    if current_shares < amount {
+        panic!("insufficient shares");
+    }
     let total = get_total_shares(e);
-    let share_contract_id = get_token_share(e);
+    put_shares(e, from, current_shares - amount);
+    put_total_shares(e, total - amount);
+}
 
-    token::Client::new(e, &share_contract_id).mint(&to, &amount);
-
+fn mint_shares(e: &Env, to: &Address, amount: i128) {
+    let current_shares = get_shares(e, to);
+    let total = get_total_shares(e);
+    put_shares(e, to, current_shares + amount);
     put_total_shares(e, total + amount);
 }
 ```
@@ -617,7 +528,7 @@ Como ya hemos discutido, el contrato de fondo de liquidez utilizará la [Interfa
 
 Lo que sucede es que, a medida que un usuario deposita tokens en el fondo, el contrato invoca la función `transfer` para mover los tokens de la dirección `to` (el depositante) para ser mantenidos por la dirección del contrato. Los tokens `POOL` son luego acuñados al depositante (ver sección anterior). ¡Bastante simple, verdad!?
 
-```rust title=liquidity_pool/src/lib.rs
+```rust title="liquidity_pool/src/lib.rs"
 fn deposit(e: Env, to: Address, desired_a: i128, min_a: i128, desired_b: i128, min_b: i128) {
     // Depositor needs to authorize the deposit
     to.require_auth();
@@ -625,27 +536,31 @@ fn deposit(e: Env, to: Address, desired_a: i128, min_a: i128, desired_b: i128, m
     let token_a_client = token::Client::new(&e, &get_token_a(&e));
     let token_b_client = token::Client::new(&e, &get_token_b(&e));
 
-    token_a_client.transfer(&to, &e.current_contract_address(), &amounts.0);
-    token_b_client.transfer(&to, &e.current_contract_address(), &amounts.1);
+    token_a_client.transfer(&to, &e.current_contract_address(), &amount_a);
+    token_b_client.transfer(&to, &e.current_contract_address(), &amount_b);
 
     mint_shares(&e, to, new_total_shares - total_shares);
 }
 ```
 
-En contraste, cuando un usuario retira sus tokens depositados, es un poco más complejo, y ocurre el siguiente procedimiento.
+En cambio, cuando un usuario retira sus tokens depositados, es un proceso un poco más complejo y ocurre el siguiente procedimiento.
 
-1. Se transfiere una cierta cantidad del token `POOL` del depositante a la dirección del contrato. Esta es una forma temporal de rastrear cuántos tokens `POOL` están siendo canjeados. El contrato no mantendrá este saldo de `POOL` por mucho tiempo.
-2. Los montos a retirar para los tokens en reserva se calculan en base al saldo actual de tokens `POOL` del contrato.
-3. Los tokens `POOL` son destruidos ahora que se han calculado los montos a retirar, y ya no se necesitan.
+1. Se verifica que el número de participaciones que el usuario "canjea" coincida con la cantidad _real_ de participaciones que posee el usuario.
+2. Se calculan los importes de retiro para los tokens de reserva basándose en la cantidad de tokens de participación que se canjean.
+3. Los tokens de participación se destruyen ahora que se han calculado los importes de retiro y ya no son necesarios.
 4. Las cantidades respectivas de `token_a` y `token_b` se transfieren _desde_ la dirección del contrato a la dirección `to` (el depositante).
 
-```rust title=liquidity_pool/src/lib.rs
+```rust title="liquidity_pool/src/lib.rs"
 fn withdraw(e: Env, to: Address, share_amount: i128, min_a: i128, min_b: i128) -> (i128, i128) {
     to.require_auth();
 
-    // First transfer the pool shares that need to be redeemed
-    let share_token_client = token::Client::new(&e, &get_token_share(&e));
-    share_token_client.transfer(&to, &e.current_contract_address(), &share_amount);
+    // First calculate the specified pool shares are available to the user
+    let current_shares = get_shares(&e, &to);
+    if current_shares < share_amount {
+        panic!("insufficient shares");
+    }
+
+    // ... balances of pool shares and underlying assets are retrieved
 
     // Now calculate the withdraw amounts
     let out_a = (balance_a * balance_shares) / total_shares;
@@ -663,46 +578,35 @@ Notarás que al mantener el saldo de `token_a` y `token_b` en el contrato de fon
 
 Abre el archivo [`liquidity_pool/src/test.rs`] para seguir adelante.
 
-```rust title=liquidity_pool/src/test.rs
+```rust title="liquidity_pool/src/test.rs"
 #![cfg(test)]
 extern crate std;
 
-use crate::{token, LiquidityPoolClient};
+use crate::LiquidityPoolClient;
 
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
-    Address, BytesN, Env, IntoVal,
+    token, Address, Env, IntoVal,
 };
 
-fn create_token_contract<'a>(e: &Env, admin: &Address) -> token::Client<'a> {
-    token::Client::new(
-        e,
-        &e.register_stellar_asset_contract_v2(admin.clone())
-            .address(),
+fn create_token_contract<'a>(
+    e: &Env,
+    admin: &Address,
+) -> (token::Client<'a>, token::StellarAssetClient<'a>) {
+    let sac = e.register_stellar_asset_contract_v2(admin.clone());
+    (
+        token::Client::new(e, &sac.address()),
+        token::StellarAssetClient::new(e, &sac.address()),
     )
 }
 
 fn create_liqpool_contract<'a>(
     e: &Env,
-    token_wasm_hash: &BytesN<32>,
     token_a: &Address,
     token_b: &Address,
 ) -> LiquidityPoolClient<'a> {
-    LiquidityPoolClient::new(
-        e,
-        &e.register(
-            crate::LiquidityPool {},
-            (token_wasm_hash.clone(), token_a, token_b),
-        ),
-    )
-}
-
-fn install_token_wasm(e: &Env) -> BytesN<32> {
-    soroban_sdk::contractimport!(
-        file = "../token/target/wasm32v1-none/release/soroban_token_contract.wasm"
-    );
-    e.deployer().upload_contract_wasm(WASM)
+    LiquidityPoolClient::new(e, &e.register(crate::LiquidityPool {}, (token_a, token_b)))
 }
 
 #[test]
@@ -710,29 +614,19 @@ fn test() {
     let e = Env::default();
     e.mock_all_auths();
 
-    let mut admin1 = Address::generate(&e);
-    let mut admin2 = Address::generate(&e);
+    let admin1 = Address::generate(&e);
+    let admin2 = Address::generate(&e);
 
-    let mut token1 = create_token_contract(&e, &admin1);
-    let mut token2 = create_token_contract(&e, &admin2);
-    if &token2.address < &token1.address {
-        std::mem::swap(&mut token1, &mut token2);
-        std::mem::swap(&mut admin1, &mut admin2);
-    }
+    let (token1, token1_admin) = create_token_contract(&e, &admin1);
+    let (token2, token2_admin) = create_token_contract(&e, &admin2);
     let user1 = Address::generate(&e);
-    let liqpool = create_liqpool_contract(
-        &e,
-        &install_token_wasm(&e),
-        &token1.address,
-        &token2.address,
-    );
 
-    let token_share = token::Client::new(&e, &liqpool.share_id());
+    let liqpool = create_liqpool_contract(&e, &token1.address, &token2.address);
 
-    token1.mint(&user1, &1000);
+    token1_admin.mint(&user1, &1000);
     assert_eq!(token1.balance(&user1), 1000);
 
-    token2.mint(&user1, &1000);
+    token2_admin.mint(&user1, &1000);
     assert_eq!(token2.balance(&user1), 1000);
 
     liqpool.deposit(&user1, &100, &100, &100, &100);
@@ -768,8 +662,7 @@ fn test() {
         )]
     );
 
-    assert_eq!(token_share.balance(&user1), 100);
-    assert_eq!(token_share.balance(&liqpool.address), 0);
+    assert_eq!(liqpool.balance_shares(&user1), 100);
     assert_eq!(token1.balance(&user1), 900);
     assert_eq!(token1.balance(&liqpool.address), 100);
     assert_eq!(token2.balance(&user1), 900);
@@ -803,7 +696,7 @@ fn test() {
     assert_eq!(token2.balance(&user1), 949);
     assert_eq!(token2.balance(&liqpool.address), 51);
 
-    e.budget().reset_unlimited();
+    e.cost_estimate().budget().reset_unlimited();
     liqpool.withdraw(&user1, &100, &197, &51);
 
     assert_eq!(
@@ -816,24 +709,16 @@ fn test() {
                     symbol_short!("withdraw"),
                     (&user1, 100_i128, 197_i128, 51_i128).into_val(&e)
                 )),
-                sub_invocations: std::vec![AuthorizedInvocation {
-                    function: AuthorizedFunction::Contract((
-                        token_share.address.clone(),
-                        symbol_short!("transfer"),
-                        (&user1, &liqpool.address, 100_i128).into_val(&e)
-                    )),
-                    sub_invocations: std::vec![]
-                }]
+                sub_invocations: std::vec![]
             }
         )]
     );
 
     assert_eq!(token1.balance(&user1), 1000);
     assert_eq!(token2.balance(&user1), 1000);
-    assert_eq!(token_share.balance(&user1), 0);
+    assert_eq!(liqpool.balance_shares(&user1), 0);
     assert_eq!(token1.balance(&liqpool.address), 0);
     assert_eq!(token2.balance(&liqpool.address), 0);
-    assert_eq!(token_share.balance(&liqpool.address), 0);
 }
 
 #[test]
@@ -843,30 +728,21 @@ fn deposit_amount_zero_should_panic() {
     e.mock_all_auths();
 
     // Create contracts
-    let mut admin1 = Address::generate(&e);
-    let mut admin2 = Address::generate(&e);
+    let admin1 = Address::generate(&e);
+    let admin2 = Address::generate(&e);
 
-    let mut token_a = create_token_contract(&e, &admin1);
-    let mut token_b = create_token_contract(&e, &admin2);
-    if &token_b.address < &token_a.address {
-        std::mem::swap(&mut token_a, &mut token_b);
-        std::mem::swap(&mut admin1, &mut admin2);
-    }
-    let liqpool = create_liqpool_contract(
-        &e,
-        &install_token_wasm(&e),
-        &token_a.address,
-        &token_b.address,
-    );
+    let (token1, token1_admin) = create_token_contract(&e, &admin1);
+    let (token2, token2_admin) = create_token_contract(&e, &admin2);
+    let liqpool = create_liqpool_contract(&e, &token1.address, &token2.address);
 
     // Create a user
     let user1 = Address::generate(&e);
 
-    token_a.mint(&user1, &1000);
-    assert_eq!(token_a.balance(&user1), 1000);
+    token1_admin.mint(&user1, &1000);
+    assert_eq!(token1.balance(&user1), 1000);
 
-    token_b.mint(&user1, &1000);
-    assert_eq!(token_b.balance(&user1), 1000);
+    token2_admin.mint(&user1, &1000);
+    assert_eq!(token2.balance(&user1), 1000);
 
     liqpool.deposit(&user1, &1, &0, &0, &0);
 }
@@ -878,83 +754,64 @@ fn swap_reserve_one_nonzero_other_zero() {
     e.mock_all_auths();
 
     // Create contracts
-    let mut admin1 = Address::generate(&e);
-    let mut admin2 = Address::generate(&e);
+    let admin1 = Address::generate(&e);
+    let admin2 = Address::generate(&e);
 
-    let mut token_a = create_token_contract(&e, &admin1);
-    let mut token_b = create_token_contract(&e, &admin2);
-    if &token_b.address < &token_a.address {
-        std::mem::swap(&mut token_a, &mut token_b);
-        std::mem::swap(&mut admin1, &mut admin2);
-    }
-    let liqpool = create_liqpool_contract(
-        &e,
-        &install_token_wasm(&e),
-        &token_a.address,
-        &token_b.address,
-    );
+    let (token1, token1_admin) = create_token_contract(&e, &admin1);
+    let (token2, token2_admin) = create_token_contract(&e, &admin2);
+
+    let liqpool = create_liqpool_contract(&e, &token1.address, &token2.address);
 
     // Create a user
     let user1 = Address::generate(&e);
 
-    token_a.mint(&user1, &1000);
-    assert_eq!(token_a.balance(&user1), 1000);
+    token1_admin.mint(&user1, &1000);
+    assert_eq!(token1.balance(&user1), 1000);
 
-    token_b.mint(&user1, &1000);
-    assert_eq!(token_b.balance(&user1), 1000);
+    token2_admin.mint(&user1, &1000);
+    assert_eq!(token2.balance(&user1), 1000);
 
     // Try to get to a situation where the reserves are 1 and 0.
     // It shouldn't be possible.
-    token_b.transfer(&user1, &liqpool.address, &1);
+    token2.transfer(&user1, &liqpool.address, &1);
     liqpool.swap(&user1, &false, &1, &1);
 }
 ```
 
-[`liquidity_pool/src/test.rs`]: https://github.com/stellar/soroban-examples/blob/v22.0.1/liquidity_pool/src/test.rs
+[`liquidity_pool/src/test.rs`]: https://github.com/stellar/soroban-examples/tree/v23.0.0/liquidity_pool/src/test.rs
 
-En cualquier prueba, lo primero que siempre se requiere es un `Env`, que es el entorno Soroban en el que se ejecutará el contrato.
+En cualquier prueba, lo primero que siempre se requiere es un `Env`, que es el entorno Soroban donde se ejecutará el contrato.
 
-```rust title=liquidity_pool/src/test.rs
+```rust title="liquidity_pool/src/test.rs"
 let e = Env::default();
 ```
 
 Simulamos cheques de autenticación en las pruebas, lo que permite que las pruebas avancen como si todos los usuarios/direcciones/contratos, etc. se hubieran autenticado con éxito.
 
-```rust title=liquidity_pool/src/test.rs
+```rust title="liquidity_pool/src/test.rs"
 e.mock_all_auths();
 ```
 
-Hemos abstraído en algunas funciones las tareas de creación de contratos de tokens, desplegar un contrato de fondo de liquidez, e instalar el bytecode WASM de ejemplo de token en nuestro entorno de prueba. Cada una se utiliza luego dentro de la prueba.
+Hemos abstraído en un par de funciones las tareas de crear contratos de tokens y desplegar un contrato de pool de liquidez. Cada una se utiliza luego dentro de la prueba.
 
-```rust title=liquidity_pool/src/test.rs
-fn create_token_contract<'a>(e: &Env, admin: &Address) -> token::Client<'a> {
-    token::Client::new(
-        e,
-        &e.register_stellar_asset_contract_v2(admin.clone())
-            .address(),
+```rust title="liquidity_pool/src/test.rs"
+fn create_token_contract<'a>(
+    e: &Env,
+    admin: &Address,
+) -> (token::Client<'a>, token::StellarAssetClient<'a>) {
+    let sac = e.register_stellar_asset_contract_v2(admin.clone());
+    (
+        token::Client::new(e, &sac.address()),
+        token::StellarAssetClient::new(e, &sac.address()),
     )
 }
 
 fn create_liqpool_contract<'a>(
     e: &Env,
-    token_wasm_hash: &BytesN<32>,
     token_a: &Address,
     token_b: &Address,
 ) -> LiquidityPoolClient<'a> {
-    LiquidityPoolClient::new(
-        e,
-        &e.register(
-            crate::LiquidityPool {},
-            (token_wasm_hash.clone(), token_a, token_b),
-        ),
-    )
-}
-
-fn install_token_wasm(e: &Env) -> BytesN<32> {
-    soroban_sdk::contractimport!(
-        file = "../token/target/wasm32v1-none/release/soroban_token_contract.wasm"
-    );
-    e.deployer().upload_contract_wasm(WASM)
+    LiquidityPoolClient::new(e, &e.register(crate::LiquidityPool {}, (token_a, token_b)))
 }
 ```
 
@@ -979,7 +836,7 @@ stellar contract build
 
 Un archivo `.wasm` debería ser generado en el directorio `target`:
 
-```sh
+```
 target/wasm32v1-none/release/soroban_liquidity_pool_contract.wasm
 ```
 
@@ -988,7 +845,6 @@ target/wasm32v1-none/release/soroban_liquidity_pool_contract.wasm
 Si tienes [`stellar-cli`] instalado, puedes invocar funciones del contrato usándolo.
 
 <Tabs groupId="platform" defaultValue={getPlatform()}>
-
 <TabItem value="unix" label="macOS/Linux">
 
 ```sh
@@ -1005,7 +861,6 @@ stellar contract invoke \
 ```
 
 </TabItem>
-
 <TabItem value="windows" label="Windows (PowerShell)">
 
 ```powershell
@@ -1022,7 +877,6 @@ stellar contract invoke `
 ```
 
 </TabItem>
-
 </Tabs>
 
 [`stellar-cli`]: ../../../tools/cli/stellar-cli.mdx
