@@ -340,11 +340,6 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/apis/migrate-from-horizon-to-rpc'
     },
     {
-      to: '/docs/data/apis/api-providers',
-      label: 'Providers',
-      activeBasePath: 'docs/data/apis/api-providers'
-    },
-    {
       type: 'html',
       value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
       className:'subtitle'
