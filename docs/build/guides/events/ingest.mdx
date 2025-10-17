@@ -6,37 +6,34 @@ description: Use Stellar RPC's getEvents method for querying events, with a 7 da
 import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
 
-Soroban RPC provides a `getEvents` method which allows you to query events from a smart contract. However, the data retention window for these events is 7 days at most. If you need access to a longer-lived record of these events you'll want to "ingest" the events as they are published, maintaining your own record or database as events are ingested.
+Stellar RPC provides a [`getEvents` method] which allows you to query events from a smart contract. However, the data retention window for these events is 7 days at most. If you need access to a longer-lived record of these events you'll want to "ingest" the events as they are published, maintaining your own record or database as events are ingested.
 
-There are many strategies you can use to ingest and keep the events published by a smart contract. Among the simplest might be using a community-developed tool such as [Mercury](https://mercurydata.app) which will take all the infrastructure work off your plate for a low subscription fee.
+There are many strategies you can use to ingest and keep the events published by a smart contract. Among the simplest might be using a community-developed tool such as [Mercury](https://mercurydata.app) which will take all the infrastructure work off your plate for a low subscription fee. Or, [indexers](../../../data/indexers/README.mdx) can provide ingested event data for affordable prices.
 
 Another approach we'll explore here is using a cron job to query Stellar RPC periodically and store the relevant events in a locally stored SQLite database. We are going to use an Object Relational Mapper (ORM), allowing us to write database query directly in Python or JavaScript.
 
 ## Setup
 
 <Tabs groupId="language" defaultValue="python">
-
 <TabItem value="python" label="Python">
 
 In a [virtual environment](https://docs.python.org/3/tutorial/venv.html), install the Python dependencies:
 
-```bash
+```sh
 pip install sqlalchemy stellar-sdk
 ```
 
 </TabItem>
-
 </Tabs>
 
 ## Setup the Database Client
 
 <Tabs groupId="language" defaultValue="python">
-
 <TabItem value="python" label="Python">
 
 To access the database, we will use [SQLAlchemy](https://www.sqlalchemy.org), which is a frequently used Python library to query database.
 
-We are going to ingest events in a table named `SorobanEvent`. In SQLAlchemy, this translates into a class, also called a database model:
+We are going to ingest events in a table named `StellarEvent`. In SQLAlchemy, this translates into a class, also called a database model:
 
 ```python
 from typing import Any
@@ -51,7 +48,7 @@ class Base(orm.DeclarativeBase):
 
 
 class Event(Base):
-    __tablename__ = "SorobanEvent"
+    __tablename__ = "StellarEvent"
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True)
     contract_id: orm.Mapped[str]
@@ -78,11 +75,11 @@ By setting `echo=True` we can understand what is happening on the database. Crea
 
 ```text
 BEGIN (implicit)
-PRAGMA main.table_info("SorobanEvent")
+PRAGMA main.table_info("StellarEvent")
 ...
-PRAGMA temp.table_info("SorobanEvent")
+PRAGMA temp.table_info("StellarEvent")
 ...
-CREATE TABLE SorobanEvent (
+CREATE TABLE StellarEvent (
 	id INTEGER NOT NULL,
     contract_id VARCHAR NOT NULL,
     ledger INTEGER NOT NULL,
@@ -95,14 +92,14 @@ COMMIT
 ```
 
 </TabItem>
-
 <TabItem value="js" label="JavaScript">
 
 The finer details of choosing a Prisma configuration are beyond the scope of this document. You can get a lot more information in the [Prisma quickstart](https://www.prisma.io/docs/getting-started/quickstart). Here is our Prisma schema's model:
 
 ```text
-model SorobanEvent {
+model StellarEvent {
   id          String @id
+  type        String
   ledger      Int
   contract_id String
   topic_1     String?
@@ -114,7 +111,6 @@ model SorobanEvent {
 ```
 
 </TabItem>
-
 </Tabs>
 
 :::info
@@ -127,7 +123,7 @@ We'll use this model to create and query for the events stored in our database.
 
 ## Query Events from Stellar RPC
 
-First, we'll need to query the events from Stellar RPC. This simple example makes an RPC request using the `getEvents` method, filtering for all `transfer` events that are emitted by the native XLM contract.
+First, we'll need to query the events from Stellar RPC. This simple example makes an RPC request using the [`getEvents` method], filtering for all `transfer` events that are emitted by the native XLM contract.
 
 :::note
 
@@ -136,7 +132,6 @@ We are making some assumptions here. We'll assume that your contract sees enough
 :::
 
 <Tabs groupId="language" defaultValue="python">
-
 <TabItem value="python" label="Python">
 
 If we start from scratch, there is no known ledger so we can try to ingest roughly the last 7 days assuming a ledger closes every 6s.
@@ -144,8 +139,8 @@ If we start from scratch, there is no known ledger so we can try to ingest rough
 ```python
 import stellar_sdk
 
-soroban_server = stellar_sdk.SorobanServer()
-ledger = soroban_server.get_latest_ledger().sequence-int(3600 / 6 * 24 * 7)
+soroban_server = stellar_sdk.SorobanServer("https://soroban-testnet.stellar.org")
+ledger = soroban_server.get_latest_ledger().sequence - int(3600 / 6 * 24 * 7)
 ```
 
 Later on, we will be able to start from the latest ingested ledger by making a query to our DB.
@@ -155,7 +150,10 @@ with orm.Session(engine) as session:
     stmt = sqlalchemy.select(Event.ledger).where(
         Event.contract_id == contract_id
     ).order_by(Event.ledger.desc())
-    ledger = session.scalars(stmt).first()
+    ingested_ledger = session.scalars(stmt).first()
+
+    if ingested_ledger:
+      ledger = ingested_ledger
 ```
 
 Let's get events from Stellar RPC!
@@ -169,7 +167,7 @@ res = soroban_server.get_events(
     ledger,
     filters=[
         EventFilter(
-            event_type=EventFilterType.CONTRACT,
+            type=EventFilterType.CONTRACT,
             contract_ids=[contract_id],
             topics=[["AAAADwAAAAh0cmFuc2Zlcg==", "*", "*", "*"]],
         )
@@ -179,19 +177,18 @@ events = res.events
 ```
 
 </TabItem>
-
 <TabItem value="js" label="JavaScript">
 
 We use the `@stellar/stellar-sdk` library:
 
 ```javascript
-import { rpc as StellarRpc } from "@stellar/stellar-sdk";
+import { Server } from "@stellar/stellar-sdk/rpc";
 import { PrismaClient } from "@prisma/client";
 
-const server = new StellarRpc.Server("https://soroban-testnet.stellar.org");
+const server = new Server("https://soroban-testnet.stellar.org");
 const prisma = new PrismaClient();
 
-let latestEventIngested = await prisma.sorobanEvent.findFirst({
+let latestEventIngested = await prisma.stellarEvent.findFirst({
   orderBy: [
     {
       ledger: "desc",
@@ -199,7 +196,7 @@ let latestEventIngested = await prisma.sorobanEvent.findFirst({
   ],
 });
 
-let events = await server.getEvents({
+let { events } = await server.getEvents({
   startLedger: latestEventIngested.ledger,
   filters: [
     {
@@ -212,7 +209,6 @@ let events = await server.getEvents({
 ```
 
 </TabItem>
-
 </Tabs>
 
 ## Store Events in the Database
@@ -220,12 +216,11 @@ let events = await server.getEvents({
 Now, we'll check if the `events` object contains any new events we should store, and we do exactly that. We're storing the event's topics and values as base64-encoded strings here, but you could decode the necessary topics and values into the appropriate data types for your use-case.
 
 <Tabs groupId="language" defaultValue="python">
-
 <TabItem value="python" label="Python">
 
 :::tip
 
-Make your life easier with a SQLAlchemy [sessionmaker](https://docs.sqlalchemy.org/en/20/orm/session_basics.html#using-a-sessionmaker) when making transactions (e.g. add records.)
+Make your life easier with a SQLAlchemy [`sessionmaker`](https://docs.sqlalchemy.org/en/20/orm/session_basics.html#using-a-sessionmaker) when making transactions (e.g. add more than one record in a single database call.)
 
 :::
 
@@ -238,8 +233,7 @@ with Session.begin() as session:
     events_ = []
     for event in events:
         topic_ = event.topic
-        value = event.value
-        events_.append(Event(contract_id=contract_id, ledger=event.ledger, topics=topic_, value=value))
+        events_.append(Event(contract_id=contract_id, ledger=event.ledger, topics=topic_, value=event.value))
     session.add_all(events_)
 ```
 
@@ -247,32 +241,31 @@ with Session.begin() as session:
 BEGIN (implicit)
 INFO sqlalchemy.engine.Engine COMMIT
 INFO sqlalchemy.engine.Engine BEGIN (implicit)
-INFO sqlalchemy.engine.Engine INSERT INTO "SorobanEvent" (contract_id, ledger, topics, value) VALUES (?, ?, ?, ?) RETURNING id
+INFO sqlalchemy.engine.Engine INSERT INTO "StellarEvent" (contract_id, ledger, topics, value) VALUES (?, ?, ?, ?) RETURNING id
 INFO sqlalchemy.engine.Engine [...] ('CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC', 3311, '["AAAADwAAAAh0cmFuc2Zlcg==", "AAAAEgAAAAAAAAAAJY16rJOcKxQayCR7ayNA80hW5q1U4ypIGOY7NktBfKU=", "AAAAEgAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQ==", "AAAADgAAAAZuYXRpdmUAAA=="]', 'AAAACgAAAAAAAAAAAAAAAAAAAGQ=')
-INFO sqlalchemy.engine.Engine INSERT INTO "SorobanEvent" (contract_id, ledger, topics, value) VALUES (?, ?, ?, ?) RETURNING id
+INFO sqlalchemy.engine.Engine INSERT INTO "StellarEvent" (contract_id, ledger, topics, value) VALUES (?, ?, ?, ?) RETURNING id
 INFO sqlalchemy.engine.Engine [...] ('CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC', 3325, '["AAAADwAAAAh0cmFuc2Zlcg==", "AAAAEgAAAAAAAAAAJY16rJOcKxQayCR7ayNA80hW5q1U4ypIGOY7NktBfKU=", "AAAAEgAAAAHXkotywnA8z+r365/0701QSlWouXn8m0UOoshCtNHOYQ==", "AAAADgAAAAZuYXRpdmUAAA=="]', 'AAAACgAAAAAAAAAAAAAAAAAAAGQ=')
 ...
 COMMIT
 ```
 
 </TabItem>
-
 <TabItem value="js" label="JavaScript">
 
 ```javascript
-if (events.events?.length) {
-  events.events.forEach(async (event) => {
-    await prisma.sorobanEvent.create({
+if (events?.length) {
+  events.forEach(async (event) => {
+    await prisma.stellarEvent.create({
       data: {
         id: event.id,
         type: event.type,
         ledger: event.ledger,
-        contract_id: event.contractId.toString(),
-        topic_1: event.topic[0].toXDR("base64") || null,
-        topic_2: event.topic[1].toXDR("base64") || null,
-        topic_3: event.topic[2].toXDR("base64") || null,
-        topic_4: event.topic[3].toXDR("base64") || null,
-        value: event.value.toXDR("base64"),
+        contract_id: event.contractId!.toString(),
+        topic_1: event.topic[0]?.toXDR('base64') || null,
+        topic_2: event.topic[1]?.toXDR('base64') || null,
+        topic_3: event.topic[2]?.toXDR('base64') || null,
+        topic_4: event.topic[3]?.toXDR('base64') || null,
+        value: event.value.toXDR('base64')
       },
     });
   });
@@ -280,7 +273,6 @@ if (events.events?.length) {
 ```
 
 </TabItem>
-
 </Tabs>
 
 ## Run the Script with Cron
@@ -288,33 +280,39 @@ if (events.events?.length) {
 A cron entry is an excellent way to automate this script to gather and ingest events every so often. You could configure this script to run as (in)frequently as you want or need. This example would run the script every 24 hours at 1:14 pm:
 
 <Tabs groupId="language" defaultValue="python">
-
 <TabItem value="python" label="Python">
 
-```bash
+```sh
 14 13 * * * python /absolute/path/to/script.py
 ```
 
+</TabItem>
+<TabItem value="js" label="JavaScript">
+
+```sh
+14 13 * * * node /absolute/path/to/script.js
+```
+
+</TabItem>
+</Tabs>
+
 Here's another example that will run the script every 30 minutes:
 
-```bash
+<Tabs groupId="language" defaultValue="python">
+<TabItem value="python" label="Python">
+
+```sh
 30 * * * * python /absolute/path/to/script.py
 ```
 
 </TabItem>
-
 <TabItem value="js" label="JavaScript">
 
-```bash
-14 13 * * * node /absolute/path/to/script.js
-```
-
-Here's another example that will run the script every 30 minutes:
-
-```bash
+```sh
 30 * * * * node /absolute/path/to/script.js
 ```
 
 </TabItem>
-
 </Tabs>
+
+[`getEvents` method]: ../../../data/apis/rpc/api-reference/methods/getEvents.mdx
