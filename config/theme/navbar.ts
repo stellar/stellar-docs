@@ -49,6 +49,11 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/apps/application-design-considerations',
     },
     {
+      to: '/docs/build/apps/tutorials',
+      label: 'End-to-End Tutorials',
+      activeBasePath: 'docs/build/apps/tutorials',
+    },
+    {
       to: '/docs/build/apps/wallet/overview',
       label: 'Tutorial: Wallet SDK',
       activeBasePath: 'docs/build/apps/wallet/overview',
@@ -72,11 +77,6 @@ const build: NavbarItem = {
       to: '/docs/build/apps/guestbook/overview',
       label: 'Tutorial: Passkey Dapp',
       activeBasePath: 'docs/build/apps/guestbook/overview',
-    },
-    {
-      to: '/docs/build/apps/dapp-frontend',
-      label: 'Tutorial: Dapp Frontend',
-      activeBasePath: 'docs/build/apps/dapp-frontend',
     },
     {
       to: '/docs/build/apps/smart-wallets',
