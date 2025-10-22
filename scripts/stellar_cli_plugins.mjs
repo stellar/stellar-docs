@@ -15,7 +15,7 @@ function exportMDX(data) {
 
 ${item.description || ""}
 
-<${item.html_url}>
+[${item.html_url}](${item.html_url})
 `;
 
     return buffer + plugin;
