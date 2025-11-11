@@ -1,0 +1,158 @@
+---
+title: Rellenar utilizando JS UDF
+sidebar_position: 0
+---
+
+Este documento describe métodos para extraer los campos requeridos del XDR de datos en bruto.
+
+Casos de Uso:
+
+- Corrección para un arreglo de errores
+- Corrección para una nueva columna añadida
+- Extracción temporal de campos no analizados por stellar-etl
+
+Tomaremos el ejemplo de extraer el campo `fee_account_muxed` de un sobre de transacción (`tx_meta` XDR). Sin embargo, este método se puede adaptar a otros campos también. Vale la pena mencionar que la mayoría de los usuarios no necesitarán levantar y ejecutar su propio Hubble. La Stellar Development Foundation proporciona acceso público a los datos a través de los conjuntos de datos y tablas públicos en GCP BigQuery. Las instrucciones sobre cómo acceder a estos datos se pueden encontrar en la sección [Conectar](../../developer-guide/connecting-to-bigquery/README.mdx).
+
+Utilizaremos la biblioteca [js-stellar-base](https://github.com/stellar/js-stellar-base) para analizar el XDR y emplear UDFs de JavaScript (Funciones Definidas por el Usuario) en BigQuery para aplicar la transformación al conjunto de datos.
+
+Para una comprensión más profunda, consulta el [artículo de Medium](https://medium.com/analytics-vidhya/using-npm-library-in-google-bigquery-udf-8aef01b868f4) sobre el uso de bibliotecas de NPM en UDFs de Google BigQuery.
+
+## Paso 1: Configurar JS UDF en BigQuery
+
+Para configurar el JS UDF en BigQuery, sigue estos pasos:
+
+### 1. Clona el repositorio `js-stellar-base`
+
+Primero, clona el repositorio en tu máquina local e instala las dependencias:
+
+```bash
+git clone https://github.com/stellar/js-stellar-base.git
+cd js-stellar-base
+yarn
+yarn build:prod
+```
+
+Este proceso generará el siguiente archivo en el directorio js-stellar-base/dist/:
+
+- stellar-base.min.js
+
+### 2. Sube el archivo JS a Google Cloud Storage (GCS)
+
+Una vez completado el proceso de construcción, sube el archivo stellar-base.min.js a un bucket de Google Cloud Storage para ser utilizado en el UDF.
+
+## Paso 2: Escribir la Función en JavaScript
+
+Aquí hay un ejemplo de función en JavaScript para extraer el campo fee_account_muxed del sobre de transacción (tx_meta):
+
+```JavaScript
+let tx_meta =
+  "AAAABQAAAQAAABYMYQ4r9W/uB9X6q6VU6feQhS2kQoRy9CjvwtYXdPRSih2hZeSSAAAAAAAAAZAAAAACAAAAAJwLL0Ul/CyRZdXuenmdXrzVyX9X56m4kYPYmgppVIj8AAAAZAAF9PwAAAABAAAAAAAAAAAAAAABAAAAAQAAAQAAAFj7+8N85JwLL0Ul/CyRZdXuenmdXrzVyX9X56m4kYPYmgppVIj8AAAAAAAAAADN5igtu93OKhkj2NrSHuPEJktU+0gJ0LiNavJirLAmRwAAAAAF9eEAAAAAAAAAAAFpVIj8AAAAQElnt70S4sGicHyhsN1S29DEREZ7i2HU96+8DfyshlFLCoQudDIxThnVEg2KQDrW61R19M7Ms9IAsznURc5y3wIAAAAAAAAAAaFl5JIAAABAIf9/ecA3id1mbHzJ2S9W5bRVqrjQr/c2+jHEuDNZevt3LDVSc+DmRMYie0eQ+vE7B3D+fRPb9yFzpfx4meTfBg==";
+
+let txe = StellarBase.xdr.TransactionEnvelope.fromXDR(tx_meta, "base64");
+let tx = txe.feeBump();
+let sourceAccount = StellarBase.encodeMuxedAccountToAddress(
+  tx.tx().feeSource(),
+);
+console.log(sourceAccount);
+```
+
+Este script devolverá el valor de `fee_account_muxed`: `MBX64B6V7KV2KVHJ66IIKLNEIKCHF5BI57BNMF3U6RJIUHNBMXSJEAAACYGGCDRL6UFO2`
+
+## Paso 3: Envolver la Función de JavaScript como un UDF
+
+```sql
+CREATE TEMP FUNCTION getFeeBumpAccountIfExists(tx_meta STRING)
+RETURNS STRING
+LANGUAGE js
+OPTIONS (
+  library=["gs://stellar-test-js-udf/stellar-base.min.js"]  -- Path to JS library in GCS
+)
+AS r"""
+    return StellarBase.encodeMuxedAccountToAddress(
+        StellarBase.xdr.TransactionEnvelope.fromXDR(tx_meta, 'base64')
+          .feeBump()
+          .tx()
+          .feeSource()
+    );
+""";
+
+WITH fee_bump_transactions AS (
+    SELECT batch_run_date, transaction_hash, tx_envelope AS tx_meta
+    FROM `test_crypto_stellar.history_transactions`
+    WHERE batch_run_date BETWEEN DATETIME("2024-07-01") AND DATETIME_ADD("2024-07-20", INTERVAL 1 MONTH)
+    AND inner_transaction_hash IS NOT NULL -- filter in fee bump transactions
+),
+calculated_fee_account AS (
+    SELECT batch_run_date, transaction_hash, getFeeBumpAccountIfExists(tx_meta) AS fee_account
+    FROM fee_bump_transactions
+),
+calculated_fee_muxed_account AS (
+    SELECT batch_run_date, transaction_hash, fee_account
+    FROM calculated_fee_account
+    WHERE fee_account LIKE 'M%' -- muxed accounts
+)
+SELECT batch_run_date, transaction_hash, fee_account AS fee_account_muxed
+FROM calculated_fee_muxed_account
+```
+
+### Salida de ejemplo para el JS UDF
+
+Después de ejecutar la consulta anterior, deberías recibir una salida similar a la siguiente:
+
+| Fila | transaction_hash                                                 | fee_account_muxed                                                     |
+| ---- | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 1    | f5f5b0aaf758896ef8c5b4807f41c77d15c11977eecf2b0e4769d777324a2d11 | MCBD54KAHHA4AK4DOZWOSX5O5OZ4OI54N24QITDSFLPD7EG2WY2AMAAACYGGCDRL6UBUA |
+| 2    | a9e49dff6202663633b83f3645fbf8c2cfeb915db99b2b884a86791b9f8eae2f | MBX64B6V7KV2KVHJ66IIKLNEIKCHF5BI57BNMF3U6RJIUHNBMXSJEAAACYGGCDRL6UFO2 |
+| 3    | 00dba50c8689477e6990103338a0eb326725e07a7b7ff187359abf11c23c582a | MC5BEU3DCIMHOHRQDVDAPEPZGMBBALPJ3IQY23VTXC3454SQMNWVSAAACYGGCDRL6UX42 |
+| 4    | 2e1c53a9fe1d48ddc493febe467178994e669e3eebf3a4cca646b3cb666616de | MAMYAUW45TC54C3QORQP7OOFYKOXCJTXOG2WIV5LP2HDMR67MWP6IAAACYGGCDRL6VCZM |
+
+## Paso 4: Actualizando Valores de Columna Usando UDF
+
+También puedes usar este UDF para actualizar valores en una tabla de BigQuery. Aquí tienes un ejemplo de cómo hacerlo:
+
+```sql
+CREATE TEMP FUNCTION getFeeBumpAccountIfExists(tx_meta STRING)
+RETURNS STRING
+LANGUAGE js
+OPTIONS (
+  library=["gs://stellar-test-js-udf/stellar-base.min.js"]
+)
+AS r"""
+    let txe = StellarBase.xdr.TransactionEnvelope.fromXDR(tx_meta, 'base64');
+    let tx = txe.feeBump();
+    let sourceAccount = StellarBase.encodeMuxedAccountToAddress(tx.tx().feeSource());
+    return sourceAccount
+""";
+
+MERGE `crypto_stellar.history_transactions` AS target
+USING (
+  WITH fee_bump_transactions AS (
+    SELECT batch_run_date, transaction_hash, tx_envelope AS tx_meta
+    FROM `crypto_stellar.history_transactions`
+    WHERE batch_run_date > '2020-08-03'
+      AND batch_run_date < '2020-08-05'
+      AND inner_transaction_hash IS NOT NULL
+  ),
+  calculated_fee_account AS (
+    SELECT batch_run_date, transaction_hash, getFeeBumpAccountIfExists(tx_meta) AS fee_account
+    FROM fee_bump_transactions
+  ),
+  calculated_fee_muxed_account AS (
+    SELECT batch_run_date, transaction_hash, fee_account
+    FROM calculated_fee_account
+    WHERE fee_account LIKE 'M%' -- muxed accounts
+  )
+  SELECT batch_run_date, transaction_hash, fee_account AS fee_account_muxed
+  FROM calculated_fee_muxed_account
+) AS source
+ON target.batch_run_date = source.batch_run_date
+   AND target.transaction_hash = source.transaction_hash
+WHEN MATCHED THEN
+  UPDATE SET target.fee_account_muxed = source.fee_account_muxed;
+```
+
+Esta consulta actualizará el campo `fee_account_muxed` en la tabla crypto_stellar.history_transactions utilizando valores calculados desde el UDF.
+
+## Conclusión
+
+Al seguir estos pasos, podrás extraer y manipular efectivamente los campos de datos XDR en BigQuery utilizando UDFs de JavaScript, facilitando el procesamiento y análisis de los datos de tu red Stellar. También puedes aplicar la corrección para el conjunto de datos existente.

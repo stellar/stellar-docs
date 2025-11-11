@@ -13,7 +13,7 @@ BUILD_TRANSLATIONS ?= "False"
 
 # the app label is used by the pipelines to prune docker dangling images on the jenkins build hosts
 docker-build:
-	$(SUDO) docker build -m 8g --no-cache --pull --label app="stellar-docs" --label org.opencontainers.image.created="$(BUILD_DATE)" -t $(TAG) . --build-arg CROWDIN_PERSONAL_TOKEN=${CROWDIN_PERSONAL_TOKEN} --build-arg BUILD_TRANSLATIONS=${BUILD_TRANSLATIONS}
+	$(SUDO) docker build -m 8g --no-cache --pull --label app="stellar-docs" --label org.opencontainers.image.created="$(BUILD_DATE)" -t $(TAG) . --build-arg BUILD_TRANSLATIONS=${BUILD_TRANSLATIONS}
 
 docker-push:
 	$(SUDO) docker push $(TAG)

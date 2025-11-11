@@ -1,0 +1,304 @@
+---
+title: Actualizando el bytecode de Wasm para un contrato desplegado
+description: Actualizar el bytecode de Wasm para un contrato desplegado
+---
+
+<head>
+  <title>Actualizando el Bytecode de Wasm para un Contrato Desplegado</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Actualizando el Bytecode de Wasm para un Contrato Desplegado"
+  />
+  <meta
+    property="og:description"
+    content="Actualizando el Bytecode de Wasm para un Contrato Desplegado"
+  />
+</head>
+
+## Introducción
+
+Actualizar un contrato inteligente te permite mejorar o modificar tu contrato sin cambiar su dirección. Esta guía te llevará a través del proceso de actualizar un contrato de bytecode de WebAssembly (Wasm) usando el Soroban SDK.
+
+### Requisitos previos:
+
+- Entendimiento básico del [lenguaje de programación Rust]. Para ponerte al día con Rust, revisa [Rustlings](https://github.com/rust-lang/rustlings) o [El libro de Rust](https://doc.rust-lang.org/book/).
+- Familiaridad con [contratos inteligentes de Stellar](../../smart-contracts/getting-started/hello-world.mdx)
+- Tener instalado [Stellar CLI](../../smart-contracts/getting-started/setup.mdx#install-the-stellar-cli) y Soroban SDK
+
+### Descargar el ejemplo de contrato actualizable
+
+El [ejemplo de contrato actualizable] demuestra cómo actualizar un contrato de Wasm.
+
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
+[ejemplo de contrato actualizable]: https://github.com/stellar/soroban-examples/tree/v23.0.0/upgradeable_contract
+[lenguaje de programación Rust]: https://www.rust-lang.org/
+
+### Código
+
+El ejemplo contiene tanto un contrato "viejo" como uno "nuevo", donde actualizamos de "viejo" a "nuevo". El código a continuación es para el contrato "viejo".
+
+```rust title="upgradeable_contract/old_contract/src/lib.rs"
+#![no_std]
+
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
+
+#[contracttype]
+#[derive(Clone)]
+enum DataKey {
+    Admin,
+}
+
+#[contract]
+pub struct UpgradeableContract;
+
+#[contractimpl]
+impl UpgradeableContract {
+    pub fn __constructor(env: Env, admin: Address) {
+        env.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    pub fn version() -> u32 {
+        1
+    }
+
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+}
+
+mod test;
+```
+
+Fuente: https://github.com/stellar/soroban-examples/blob/v23.0.0/upgradeable_contract/old_contract/src/lib.rs
+
+## Cómo funciona
+
+Al actualizar un contrato, la función clave utilizada es `env.deployer().update_current_contract_wasm`, que toma el hash Wasm del nuevo contrato como parámetro. Aquí tienes un desglose paso a paso de cómo funciona este proceso:
+
+1. **No hay cambio en la dirección del contrato**: La dirección del contrato permanece igual después de la actualización. Esto asegura que todas las referencias al contrato permanezcan intactas.
+
+2. **El ejecutable Wasm debe estar ya cargado**: La actualización depende de que el ejecutable compilado (identificado por el `new_wasm_hash`) esté cargado y disponible en la blockchain. Esto debe hacerse _antes_ de invocar la función `upgrade(...)` del contrato.
+
+3. **Autorización del administrador**: Antes de actualizar, el contrato verifica si la acción está autorizada por la dirección `Admin`. Esto es crucial para prevenir actualizaciones no autorizadas. Solo alguien con derechos de administrador puede realizar la actualización.
+
+4. **La función de actualización**: A continuación se muestra la función que maneja el proceso de actualización:
+
+   ```rust
+   pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+       let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+       admin.require_auth();
+
+       env.deployer().update_current_contract_wasm(new_wasm_hash);
+   }
+   ```
+
+   - `env: Env`: El objeto de entorno que representa el estado actual de la blockchain.
+   - `new_wasm_hash: BytesN<32>`: El hash del nuevo código Wasm para el contrato. El bytecode de Wasm debe ya estar instalado/presente en el ledger.
+   - La función primero recupera la dirección del administrador del almacenamiento del contrato.
+   - Luego requiere la autorización del administrador (`admin.require_auth()`) para proceder.
+   - Finalmente, actualiza el contrato con el nuevo bytecode Wasm (`env.deployer().update_current_contract_wasm(new_wasm_hash)`).
+
+5. La función de host `update_current_contract_wasm` también emitirá un [evento] de contrato `SYSTEM` que contiene la referencia de wasm antigua y nueva, permitiendo a los usuarios posteriores ser notificados cuando un contrato que utilizan se actualiza. La estructura del evento tendrá `topics = ["executable_update", old_executable: ContractExecutable, old_executable: ContractExecutable]` y `data = []`.
+
+[evento]: ../../../learn/fundamentals/stellar-data-structures/events.mdx#event-types
+
+## Pruebas
+
+Abre el archivo `upgradeable_contract/old_contract/src/test.rs` para seguir.
+
+```rust title="upgradeable_contract/old_contract/src/test.rs"
+#![cfg(test)]
+
+extern crate std;
+
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
+    Address, BytesN, Env, IntoVal,
+};
+
+use crate::{UpgradeableContract, UpgradeableContractClient};
+
+mod new_contract {
+    soroban_sdk::contractimport!(
+        file = "../new_contract/target/wasm32v1-none/release/soroban_upgradeable_contract_new_contract.wasm"
+    );
+}
+
+fn install_new_wasm(env: &Env) -> BytesN<32> {
+    env.deployer().upload_contract_wasm(new_contract::WASM)
+}
+
+#[test]
+fn test() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register(UpgradeableContract, (&admin,));
+
+    let client = UpgradeableContractClient::new(&env, &contract_id);
+
+    assert_eq!(1, client.version());
+
+    let new_wasm_hash = install_new_wasm(&env);
+
+    client.upgrade(&new_wasm_hash);
+    assert_eq!(2, client.version());
+
+    // new_v2_fn was added in the new contract, so the existing
+    // client is out of date. Generate a new one.
+    let client = new_contract::Client::new(&env, &contract_id);
+    assert_eq!(1010101, client.new_v2_fn());
+
+    // New contract version requires the `NewAdmin` key to be initialized, but since the constructor
+    // hasn't been called, it is not initialized, thus calling try_upgrade won't work.
+    let new_update_result = client.try_upgrade(&new_wasm_hash);
+    assert!(new_update_result.is_err());
+
+    // `handle_upgrade` sets the `NewAdmin` key properly.
+    client.handle_upgrade();
+
+    // Now upgrade should succeed (though we are not actually changing the Wasm).
+    client.upgrade(&new_wasm_hash);
+    // The new admin is the same as the old admin, so the authorization is still performed for
+    // the `admin` address.
+    assert_eq!(
+        env.auths(),
+        std::vec![(
+            admin,
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    contract_id.clone(),
+                    symbol_short!("upgrade"),
+                    (new_wasm_hash,).into_val(&env),
+                )),
+                sub_invocations: std::vec![]
+            }
+        )]
+    )
+}
+```
+
+Fuente: https://github.com/stellar/soroban-examples/blob/v23.0.0/upgradeable_contract/old_contract/src/test.rs
+
+Primero importamos el archivo Wasm compilado para el nuevo contrato:
+
+```rust
+mod new_contract {
+    soroban_sdk::contractimport!(
+        file = "../new_contract/target/wasm32v1-none/release/soroban_upgradeable_contract_new_contract.wasm"
+    );
+}
+```
+
+Registramos el contrato antiguo, lo inicializamos con un administrador y verificamos la versión que devuelve. La nota en el código a continuación es importante:
+
+```rust
+let admin = Address::generate(&env);
+let contract_id = env.register(UpgradeableContract, (&admin,));
+
+let client = UpgradeableContractClient::new(&env, &contract_id);
+
+assert_eq!(1, client.version());
+```
+
+Instalamos el Wasm del nuevo contrato:
+
+```rust
+let new_wasm_hash = install_new_wasm(&env);
+```
+
+Luego ejecutamos la actualización y verificamos que la actualización funcionó:
+
+```rust
+client.upgrade(&new_wasm_hash);
+assert_eq!(2, client.version());
+```
+
+## Crear el contrato
+
+Para crear los archivos `.wasm` del contrato, ejecuta `stellar contract build` en `upgradeable_contract/old_contract` y `upgradeable_contract/new_contract` en ese orden. Ambos archivos `.wasm` deberían encontrarse en ambos directorios `target` del contrato después de construir ambos contratos:
+
+```
+target/wasm32v1-none/release/soroban_upgradeable_contract_old_contract.wasm
+```
+
+```
+target/wasm32v1-none/release/soroban_upgradeable_contract_new_contract.wasm
+```
+
+## Ejecutar el contrato
+
+Si tienes [`stellar-cli`] instalado, puedes invocar funciones del contrato. Despliega el contrato viejo e instala el Wasm para el nuevo contrato.
+
+Primero, navega al directorio `upgradeable_contract/old_contract` y despliega una instancia del contrato antiguo. Estamos proporcionando la identidad `alice` a la función `__constructor`, por lo que será la dirección `Admin` del contrato. Crea y proporciona tus propias [identidades], cuando sea necesario.
+
+Este comando mostrará la dirección del contrato en la que fue desplegado.
+
+```sh
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/soroban_upgradeable_contract_old_contract.wasm \
+  --source-account alice  \
+  --network testnet \
+  -- --admin alice
+# CAS6FKBXGVXFGU2SPPPJJOIULJNPMPR6NVKWLOQP24SZJPMB76TGH7Y3
+```
+
+Luego, navega a `upgradeable_contract/new_contract` y sube el archivo ejecutable compilado para el nuevo contrato. Este comando mostrará el hash Sha256 del ejecutable, que se usará más adelante para el parámetro `new_wasm_hash`.
+
+```sh
+stellar contract upload \
+  --source-account alice \
+  --wasm target/wasm32v1-none/release/soroban_upgradeable_contract_new_contract.wasm \
+  --network testnet
+# aa24c81289997ad815489b29db337b53f284cca5aba86e9a8ae5cef7d31842c2
+```
+
+Nuestra dirección de `old_contract` desplegada es `CAS6FKBXGVXFGU2SPPPJJOIULJNPMPR6NVKWLOQP24SZJPMB76TGH7Y3`. Es posible que necesites reemplazar este valor por el tuyo. Invoca la función `version` del contrato para ver la versión actual desplegada.
+
+```sh
+stellar contract invoke \
+  --id CAS6FKBXGVXFGU2SPPPJJOIULJNPMPR6NVKWLOQP24SZJPMB76TGH7Y3 \
+  --source-account alice \
+  --network testnet \
+  -- version
+# 1
+```
+
+Ahora actualiza el contrato. Nota que la opción `--source-account` debe ser el nombre de la identidad que igualarán la dirección pasada a la función `__constructor` cuando se desplegó el contrato.
+
+```sh
+stellar contract invoke \
+  --id CAS6FKBXGVXFGU2SPPPJJOIULJNPMPR6NVKWLOQP24SZJPMB76TGH7Y3 \
+  --source-account alice \
+  --network testnet \
+  -- \
+  upgrade \
+  --new_wasm_hash aa24c81289997ad815489b29db337b53f284cca5aba86e9a8ae5cef7d31842c2
+```
+
+Invoca la función `version` nuevamente. Ahora que el contrato fue actualizado, verás una nueva versión.
+
+```sh
+stellar contract invoke \
+  --id CAS6FKBXGVXFGU2SPPPJJOIULJNPMPR6NVKWLOQP24SZJPMB76TGH7Y3 \
+  --source-account alice \
+  --network testnet \
+  -- version
+# 2
+```
+
+¡Hurra, nuestro contrato ha sido actualizado!
+
+[`stellar-cli`]: ../../smart-contracts/getting-started/setup.mdx#install-the-stellar-cli
+[identidades]: ../../smart-contracts/getting-started/setup.mdx#configure-an-identity

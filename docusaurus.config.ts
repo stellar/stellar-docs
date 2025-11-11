@@ -5,6 +5,8 @@ import { themes as prismThemes } from 'prism-react-renderer';
 import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
 import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
 import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
+import navbarItems from './config/theme/navbar';
+import footerColumns from './config/theme/footer';
 
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
@@ -73,10 +75,10 @@ const config: Config = {
         blog: {
           path: 'meeting-notes',
           blogTitle: 'Meeting Notes',
-          blogDescription: 'Notes and recordings from the Soroban protocol & developers meetings',
+          blogDescription: 'Notes and recordings from the Stellar protocol & developers meetings',
           blogSidebarTitle: 'All meetings',
           blogSidebarCount: 'ALL',
-          postsPerPage: 'ALL',
+          postsPerPage: 12,
           routeBasePath: 'meetings',
           onUntruncatedBlogPosts: 'ignore',
         },
@@ -136,174 +138,17 @@ const config: Config = {
         href: "/",
       },
       items: [
-        {
-          type: 'docSidebar',
-          sidebarId: 'build',
-          label: 'Build',
-          position: 'left',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'learn',
-          label: 'Learn',
-          position: 'left',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'tokens',
-          label: 'Tokens',
-          position: 'left',
-        },
-        {
-          type: "dropdown",
-          label: "Data",
-          position: "left",
-          to: '/docs/data',
-          items: [
-            {
-              type: 'doc',
-              docId: "data/README",
-              label: "Overview",
-            },
-            {
-              type: 'html',
-              value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small>',
-              className:'subtitle'
-            },
-            {
-              to: '/docs/data/analytics/hubble',
-              label: 'Hubble',
-              activeBasePath: 'docs/data/analytics/hubble'
-            },
-            {
-              to: '/docs/data/analytics/analytics-providers',
-              label: 'Providers',
-              activeBasePath: 'docs/data/analytics/analytics-providers'
-            },
-            {
-              type: 'html',
-              value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small>',
-              className:'subtitle'
-            },
-            {
-              to: '/docs/data/apis/rpc',
-              label: 'RPC',
-              activeBasePath: 'docs/data/apis/rpc'
-            },
-            {
-              to: '/docs/data/apis/horizon',
-              label: 'Horizon',
-              activeBasePath: 'docs/data/apis/horizon'
-            },
-            {
-              to: '/docs/data/apis/migrate-from-horizon-to-rpc',
-              label: 'Migrate Horizon to RPC',
-              activeBasePath: 'docs/data/apis/migrate-from-horizon-to-rpc'
-            },
-            {
-              to: '/docs/data/apis/api-providers',
-              label: 'Providers',
-              activeBasePath: 'docs/data/apis/api-providers'
-            },
-            {
-              type: 'html',
-              value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
-              className:'subtitle'
-            },
-            {
-              to: '/docs/data/indexers/build-your-own',
-              label: 'Build Your Own',
-              activeBasePath: 'docs/data/indexers/build-your-own'
-            },
-            {
-              to: '/docs/data/indexers/indexer-providers',
-              label: 'Providers',
-              activeBasePath: 'docs/data/indexers/indexer-providers'
-            },
-            {
-              type: 'html',
-              value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
-              className:'subtitle'
-            },
-            {
-              to: '/docs/data/oracles',
-              label: 'Providers',
-              activeBasePath: 'docs/data/oracles'
-            },
-          ]
-        },
-        {
-          type: 'dropdown',
-          label: 'Tools',
-          position: 'left',
-          to: '/docs/tools',
-          activeBaseRegex: `(docs/tools|platforms)`,
-          items: [
-            {
-              type: 'html',
-              value: '<hr><small>Developer Tools</small>',
-              className: 'subtitle',
-            },
-            {
-              to: '/docs/tools/sdks',
-              label: 'SDKs',
-              activeBasePath: 'docs/tools/sdks'
-            },
-            {
-              to: '/docs/tools/cli',
-              label: 'Stellar CLI',
-              activeBasePath: 'docs/tools/cli'
-            },
-            {
-              to: '/docs/tools/lab',
-              label: 'Lab',
-              activeBasePath: 'docs/tools/lab'
-            },
-            {
-              to: '/docs/tools/quickstart',
-              label: 'Quickstart',
-              activeBasePath: 'docs/tools/quickstart'
-            },
-            {
-              to: '/docs/tools/developer-tools',
-              label: 'More Developer Tools'
-            },
-            {
-              type: 'html',
-              value: '<hr><small>SDF Platforms</small>',
-              className: 'subtitle',
-            },
-            {
-              to: "/platforms/anchor-platform",
-              label: "Anchor Platform",
-            },
-            {
-              to: "/platforms/stellar-disbursement-platform",
-              label: "Stellar Disbursement Platform",
-            },
-          ]
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'networks',
-          label: 'Networks',
-          position: 'left',
-        },
-        {
-          type: 'docSidebar',
-          sidebarId: 'validators',
-          label: 'Validators',
-          position: 'left',
-        },
+        navbarItems.build,
+        navbarItems.learn,
+        navbarItems.tokens,
+        navbarItems.data,
+        navbarItems.tools,
+        navbarItems.networks,
+        navbarItems.validators,
         {
           type: 'docsVersionDropdown',
           docsPluginId: 'ap',
           dropdownActiveClassDisabled: true,
-          position: 'right',
-        },
-        {
-          to: '/meetings',
-          label: 'Meetings',
           position: 'right',
         },
         {
@@ -316,12 +161,6 @@ const config: Config = {
           className: "header-github-link",
           'aria-label': "GitHub",
         },
-        {
-          href: "https://discord.gg/stellardev",
-          position: "right",
-          className: "header-discord-link",
-          'aria-label': "Discord",
-        },
       ],
     },
     algolia: {
@@ -331,102 +170,10 @@ const config: Config = {
     },
     footer: {
       links: [
-        {
-          title: "Resources",
-          items: [
-            {
-              label: "Developer Blog",
-              href: "https://www.stellar.org/developers-blog",
-            },
-            {
-              label: "Stellar Quest",
-              href: "https://quest.stellar.org/",
-            },
-            {
-              label: "Soroban Quest",
-              href: "https://fastcheapandoutofcontrol.com/tutorial",
-            },
-            {
-              label: "YouTube",
-              href: "https://www.youtube.com/@StellarDevelopmentFoundation",
-            },
-            {
-              label: "Twitch",
-              href: "https://m.twitch.tv/stellarorg/home",
-            },
-          ],
-        },
-        {
-          title: "Tools",
-          items: [
-            {
-              label: "Explorer",
-              href: "https://stellar.expert",
-            },
-            {
-              label: "Lab",
-              href: "https://lab.stellar.org",
-            },
-            {
-              label: "Status",
-              href: "https://status.stellar.org/",
-            },
-            {
-              label: "Dashboard",
-              href: "https://dashboard.stellar.org/",
-            },
-            {
-              label: "All Tools",
-              href: "https://developers.stellar.org/docs/tools/developer-tools",
-            },
-          ],
-        },
-        {
-          title: "Community",
-          items: [
-            {
-              label: "Contribute to Docs",
-              href: "https://github.com/stellar/stellar-docs?tab=readme-ov-file#contributing",
-            },
-            {
-              label: "Developer Discord",
-              href: "https://discord.gg/stellardev",
-            },
-            {
-              label: "Developer Google Group",
-              href: "https://groups.google.com/g/stellar-dev",
-            },
-            {
-              label: "Stack Exchange",
-              href: "https://stellar.stackexchange.com/",
-            },
-            {
-              label: "Stellar Community Fund",
-              href: "https://communityfund.stellar.org/",
-            },
-         ],
-        },
-        {
-          title: "About",
-          items: [
-            {
-              label: "About SDF",
-              href: "https://stellar.org/foundation",
-            },
-            {
-              label: "Careers",
-              href: "https://stellar.org/foundation/careers",
-            },
-            {
-              label: "Events",
-              href: "https://stellar.org/events",
-            },
-            {
-              label: "Grants & Funding",
-              href: "https://stellar.org/foundation/grants-and-funding",
-            },
-          ],
-        },
+        footerColumns.resources,
+        footerColumns.tools,
+        footerColumns.community,
+        footerColumns.about,
       ],
     },
     prism: {

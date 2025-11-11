@@ -1,0 +1,481 @@
+---
+title: Smart contract authorization starter guide
+hide_table_of_contents: true
+description: Learn about smart contract auth on Stellar
+---
+
+## Intro to smart contract authorization
+
+Smart contracts can be invoked without any caller authorization by default. The functionality of the smart contract can either justify, or even require, authorization. Let’s say we want to read or write sensitive information: then access to the contract should be restricted through authorization. Authorization is required if the contract signs transactions.
+
+For a deeper understanding of how authorization works, see the [Security](https://developers.stellar.org/docs/learn/fundamentals/contract-development/authorization) section.
+
+### Address-based authorization
+
+Stellar smart contracts use addresses as identifiers for authorization. There are two different types of addresses: account addresses (G-addresses) and contract addresses (C-addresses), but they provide the same interface. This means that developers do not need to consider the type of address used for authorization; the authorization methods treat the two address types the same, from a developer's point of view.
+
+## 1. Basic authorization
+
+Stellar smart contracts have authorization methods built-in, `require_auth()` and `require_auth_for_args()`. These two methods provide an easy way to authenticate and authorize users in contract functions.
+
+### `require_auth()`
+
+The `require_auth()` method authenticates and authorizes a user invoking a smart contract function. To determine if a user has authorized the function invocation, simply call `require_auth()` on the user’s address. The contract function doesn’t need to consider signatures or other authorization processes.
+
+To check if a user is authorized to invoke a function, call `require_auth()` on the user address:
+
+`<user_address>.require_auth()`
+
+Let’s examine how authorization can be added to a simple function, in this case, an `increment()` function. The increment function takes two arguments, a user (secret address) and a value, which is used to increment the current count value.
+
+The function will call `require_auth()` on the user when the function is invoked.
+
+```rust
+   pub fn increment(env: Env, user: Address, value: u32) -> u32 {
+      user.require_auth();
+
+      let mut count: u32 = env.storage().instance().get(&user).unwrap_or(0);
+      count += value;
+      env.storage().persistent().set(&user, &count);
+
+      count
+   }
+```
+
+The function will first check if the user is authorized, then get the current `count` value (or 0 if there’s no value stored). Then `count` is incremented by adding the argument `value` to the current `count`. The incremented count is stored and returned. The `user` address is used as the storage key to get and set the `count` value in storage.
+
+Run the following command to invoke the contract function with the user’s secret key to authorize the user:
+
+```rust
+stellar contract invoke \
+  --id CACDYF3CYMJEJTIVFESQYZTN67GO2R5D5IUABTCUG3HXQSRXCSOROBAN \
+  --source-account alice \
+  --network testnet \
+  -- \
+  increment \
+  --user SDWDUC7IIZPRIDUZIK44UHUD2KOG6A5XWUGVZBQG2RM3J2L5DSOROBAN \
+  --value 10
+```
+
+The function call should return the following output:
+
+```rust
+10
+```
+
+If the authorization doesn’t pass, the function will cause a contract panic.
+
+This example is based on the auth contract example in the [Soroban examples repository](https://github.com/stellar/soroban-examples/tree/main/auth).
+
+#### Test
+
+Contract functions using `require_auth()` for authorization can be tested with `cargo test` by mocking the authorization. Again, we use the auth example in the [Soroban examples repository](https://github.com/stellar/soroban-examples/tree/main/auth) to illustrate how to test the authorization.
+
+First, we instruct the environment to mock all authorizations and let all `require_auth()` calls to succeed using `env.mock_all_auths()`. Next, we generate a user with `Address::generate(&env)` and insert it as the user parameter in the `increment()` contract function, along with the value parameter. The test has two assertions: the first test will invoke the `increment()` function with the generated user and value as parameters, then checks if the returned value is incremented as expected.
+
+The second test will check if the expected authorization happened and only the expected authorization happened.
+
+```rust
+fn test() {
+   let env = Env::default();
+   let contract_id = env.register(IncrementContract, {});
+   let client = IncrementContractClient::new(&env, &contract_id);
+
+   env.mock_all_auths();
+   let user = Address::generate(&env);
+   let value = 10;
+
+   assert_eq!(client.increment(&user, &value), 10);
+
+   Let expected_auth = AuthorizedInvocation {
+      function: AuthorizedFunction::Contract((
+         contract_id.clone(),
+         symbol_short!("increment"),
+         (user.clone(), value.clone()).into_val(&env),
+      )),
+      sub_invocations: std::vec![]
+   };
+
+   assert_eq!(env.auths(), std::vec![(user.clone(), expected_auth)]);
+}
+```
+
+Before going into testing authorization, we can run the test:
+
+```rust
+cargo test
+```
+
+You should see the output:
+
+```rust
+running 1 test
+test test::test ... ok
+```
+
+**Testing authorization**
+
+When testing authorized contract invocations, we check the authorization details by examining `env.auths()`. It will contain details of all the authorizations that happened, so by comparing the content of `env.auths()` to what we expect to see, we can check if the authorization was successful. And just as important, since `env.auths()` contains details of all authorizations that happened during the contract invocation, testing against what we expect to see will also ensure no unexpected authorizations happened.
+
+The expected content of `env.auths()` looks like this:
+
+```rust
+[(
+  Contract(CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4),
+  AuthorizedInvocation {
+    function: Contract((
+      Contract(CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM),
+      Symbol(increment),
+      Vec(Ok(Address(obj#75)))
+    )),
+    sub_invocations: []
+  }
+)]
+```
+
+The content of env.auths() is an array of an authorized user address and the associated contract invocation details.
+
+### `require_auth_for_args()`
+
+The `require_auth_for_args()` method allows you to explicitly specify the contract call arguments you want to be authorized, where `require_auth()` automatically passes all the contract call arguments into the authorization payload.
+
+Let’s use the same example as we did in the `require_auth()` section; the only difference is that we explicitly want to authorize the `value` argument.
+
+```rust
+   pub fn increment(env: Env, user: Address, value: u32) -> u32 {
+      user.require_auth_for_args((value.clone(),).into_val(&env));
+
+      let mut count: u32 = env.storage().instance().get(&user).unwrap_or(0);
+      count += value.clone();
+      env.storage().persistent().set(&user, &count);
+
+      count
+   }
+```
+
+`require_auth_for_args()` is called on the `user`. In this case, we authorize the `value` argument, and as in the `require_auth()` example, the user address is used as the key in the key-value storage. The `value` argument is the value by which the current `count` is incremented when the function is called. The function returns the current count value.
+
+Run the following command to invoke the contract function with the user’s address for user authorization:
+
+```rust
+stellar contract invoke \
+  --id CACDYF3CYMJEJTIVFESQYZTN67GO2R5D5IUABTCUG3HXQSRXCSOROBAN \
+  --source-account alice \
+  --network testnet \
+  -- \
+  increment \
+  --user SDWDUC7IIZPRIDUZIK44UHUD2KOG6A5XWUGVZBQG2RM3J2L5DSOROBAN \
+  --value 10
+```
+
+The following output should appear:
+
+```rust
+10
+```
+
+If the authorization doesn’t pass, the function will not reach the return line of the code.
+
+#### Test
+
+Contract functions using `require_auth_for_args()` for authorization can be tested with `cargo test` by mocking the authorization. The test is very similar to the test used in the `require_auth()` section, where the testing is done in two parts.
+
+First, a test of the contract function is performed, where the authorization is mocked, followed by a test of the authorization itself.
+
+```rust
+fn test() {
+   let env = Env::default();
+   let contract_id = env.register(IncrementContract, {});
+   let client = IncrementContractClient::new(&env, &contract_id);
+
+   env.mock_all_auths();
+   let user = Address::generate(&env);
+   let value = 10;
+
+   assert_eq!(client.increment(&user, &value), 10);
+
+   Let expected_auth = AuthorizedInvocation {
+      function: AuthorizedFunction::Contract((
+         contract_id.clone(),
+         symbol_short!("increment"),
+         (user.clone(), value.clone()).into_val(&env),
+      )),
+      sub_invocations: std::vec![]
+   };
+
+   assert_eq!(env.auths(), std::vec![(user.clone(), expected_auth)]);
+}
+```
+
+Similar to how authorization is tested in the `require_auth()` section, we check if the authorization is working as expected by comparing the content of env.auths() to the expected authorization details.
+
+The expected content of `env.auths()` looks like this:
+
+```rust
+[(
+  Contract(CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4),
+  AuthorizedInvocation {
+    function: Contract((
+      Contract(CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM),
+      Symbol(increment),
+      Vec(Ok(String(obj#43), Ok(I32(10)))
+    )),
+    sub_invocations: []
+  }
+)]
+```
+
+The content of `env.auths()` is an array of an authorized user address and the associated contract invocation details.
+
+Now run the test:
+
+```rust
+cargo test
+```
+
+You should see the output:
+
+```rust
+running 1 test
+test test::test ... ok
+```
+
+## 2. Cross-contract authorization
+
+Smart contracts can invoke functions in other contracts (called cross-contract calls). These direct calls are implicitly authorized by the invoker and do not need to be authorized. However, the contract function being invoked may require authorization from a user other than the contract itself. An example could be a transfer function, where an external user may have to authorize the transfer to the current contract.
+
+To illustrate how to add authorization to a simple cross-contract invocation, we use the [Cross Contract Calls example contract](https://developers.stellar.org/docs/build/smart-contracts/example-contracts/cross-contract-call), which consists of two separate contracts, one that has a simple addition contract function, and another contract to invoke the first one.
+
+### Invoking contract
+
+The invoking contract in the mentioned example contract creates a client for invoking the `add()` function in the addition contract. Let’s say we want the `add()` contract to be authorized by a user. Then, we need to pass the user to the `add()` contract function from the invoking function.
+
+Even though the invoking function may not require the user’s authorization, the `add()` function will panic if it encounters authorization not tied to the root/top contract invocation. Therefore, we need to use `require_auth()` on the user in the invoking function.
+
+This is how the function looks:
+
+```rust
+#[contractimpl]
+impl ContractB {
+   pub fn add_with(env: Env, x: u32, y: u32, contract: Address, user: Address) -> u32 {
+       user.require_auth();
+
+       let client = contract_a::Client::new(&env, &contract);
+       client.add(&user, &x, &y)
+   }
+}
+```
+
+The `add_with()` function takes four parameters. The parameters x and y are the two numbers to add, the contract is the contract ID of the contract with the `add()` function, and user is the user that will authorize the `add()` execution.
+
+### Addition contract
+
+The addition contract function is very simple. In its original form in the example contract, it simply takes numbers to add (x and y). All we need to do here is add the `user` address as a parameter and then call `require_auth()` on the user to authorize the invocation.
+
+```rust
+   pub fn add(user: Address, x: u32, y: u32) -> u32 {
+       user.require_auth();
+       x.checked_add(y).expect("no overflow")
+   }
+```
+
+### Invoker auth
+
+In the `add_with()` function above, a user is passed as an argument to the function, and the user is authorized in the invoked function `add()`. Let’s say we don’t need the invocation authorized by an external user, but will allow the invocation to be authorized by the invoker. This can be done by passing the invoker’s address as the user, like this:
+
+```rust
+#[contractimpl]
+impl ContractB {
+   pub fn add_with(env: Env, x: u32, y: u32, contract: Address, user: Address) -> u32 {
+      user.require_auth();
+
+      let current_contract_address = env.current_contract_address();
+      let client = contract_a::Client::new(&env, &contract);
+      client.add(&current_contract_address, &x, &y)
+   }
+}
+```
+
+By using `env.current_contract_address()`, we can get the invoker's address and pass it to the `add()` function.
+
+## 3. Contract account authorization
+
+Custom account contracts are contracts that implement a special reserved function for validating externally provided signatures within the respective authorization context. The custom account contracts are essentially regular contracts, with an added capability to verify externally provided authorization.
+
+### `__check_auth()`
+
+A contract that implements the `CustomAccountInterface` for authorizing calls becomes a custom account contract. The interface contains a single function called `__check_auth()`. The function is a reserved function, and it is invoked automatically by the Host when a contract authorizes a transaction. It cannot be called manually.
+
+The function `__check_auth()` may be invoked for a given contract if two conditions are met. The first condition is when `require_auth()` or `require_auth_for_args()` are called. The second condition occurs when an account contract has not provided invoker authorization, for example, by calling a function that requires authorization directly.
+
+#### How it works
+
+The `__check_auth()` function can implement the appropriate checks, such as signature verification, transfer allowance, or balance checks. The [Simple Account example code](https://github.com/stellar/soroban-examples/tree/main/simple_account) shows a very simple implementation of `__check_auth()`.
+
+```rust
+   pub fn __check_auth(
+      env: Env,
+      signature_payload: BytesN<32>,
+      signature: BytesN<64>,
+      _auth_context: Vec<Context>,
+   ) {
+      let public_key: BytesN<32> = env
+         .storage()
+         .instance()
+         .get::<_, BytesN<32>>(&DataKey::Owner)
+         .unwrap();
+
+      env.crypto().ed25519_verify(&public_key, &signature_payload.into(), &signature);
+   }
+```
+
+The Simple Account example has an `init()` function, which is used to store the owner’s ed25591 public key. When `require_auth()` is called, `__check_auth()` will check if the payload is signed by the owner.
+
+#### Authorization logic
+
+The authorization logic inside `__check_auth()` can be written to fit the purpose of the check. Some examples of common checks are:
+
+- All required signers have signed
+- Authorizing cross-contract calls
+- Conditions such as spend limits, user restrictions, etc.
+
+View the smart contract examples to see how `__check_auth()` could be implemented. The [custom account example](https://github.com/stellar/soroban-examples/tree/main/account) is a good starting point.
+
+### How to test
+
+As shown in previous examples, authorization can be mocked in tests by adding env.mock_all_auths(). However, the `check_auth()` function will not be called by the test when mocking authorization. This doesn’t mean we can’t test the `check_auth()` function; there are two different methods of testing authorization, including the `check_auth()` function. `try_invoke_contract_check_auth()` The easiest way to test `check_auth()` is to use the try_invoke_contract_check_auth testing utility, which emulates a host call of the `__check_auth()` function, and tests it by treating it as a regular function.
+
+The [simple account example](https://github.com/stellar/soroban-examples/tree/main/simple_account) shows a very basic implementation on `try_invoke_contract_check_auth`. Let’s first take a look at the `__check_auth()` function:
+
+```rust
+   #[allow(non_snake_case)]
+   pub fn __check_auth(
+      env: Env,
+      signature_payload: BytesN<32>,
+      signature: BytesN<64>,
+      _auth_context: Vec<Context>,
+   ) {
+      let public_key: BytesN<32> = env
+         .storage()
+         .instance()
+         .get::<_, BytesN<32>>(&DataKey::Owner)
+         .unwrap();
+
+      env.crypto()
+         .ed25519_verify(&public_key, &signature_payload.into(),
+            &signature);
+    }
+```
+
+If we look at the `__check_auth()` function, a payload, a signature, and context are required; so we need to provide the same parameters in `try_invoke_contract_check_auth`, along with the contract address.
+
+```rust
+   #[test]
+   fn test_account() {
+      let env = Env::default();
+      let signer = generate_keypair();
+      let payload = BytesN::random(&env);
+
+
+      ...
+
+      account_contract.init(&signer.public.to_bytes().into_val(&env));
+
+      env.try_invoke_contract_check_auth::<Error>(
+         &account_contract.address,
+         &payload,
+         sign(&env, &signer, &payload),
+         &vec![&env],
+      )
+      .unwrap();
+   }
+```
+
+The test script creates a signer and a random payload. The contract function `init()` is called with the signer as an argument. The purpose of the `init()` function is to store the signer’s public key as the contract owner, so the `__check_auth()` function can verify if the signer is the contract owner, set by the `init()`.
+
+As this test case shows, `testing __check_auth()` is very simple using `try_invoke_contract_check_auth`, and it’s the recommended method of testing authorization `with __check_auth()`. See the simple account example for the full test code.
+
+#### `set_auths()`
+
+:::note
+
+`set_auths()` may not be relevant for most developers.
+
+:::
+
+Another method is to use `set_auths()`, which will `call __check_auth()` when the contract function is called, similar to how the host will `call __check_auth()` on Testnet or Mainnet. This method is more complex, and provides a lower-level control over the authorization process in tests.
+
+To show how to use `set_auths()` for testing authorization, let’s use a very simple contract function `fn1()` and a very simple `__check_auth()` function. This simply calls `require_auth()` and returns an integer. The `__check_auth()` will pass without doing any verification. The example is based on the [Soroban SDK’s auth test cases](https://github.com/stellar/rs-soroban-sdk/blob/35ff7aaecedd38056a131843a7a657b1ddc9e684/tests/auth/src/lib.rs).
+
+```rust
+   #[contract]
+   pub struct ContractA;
+
+   #[contractimpl]
+   impl ContractA {
+      pub fn fn1(a: Address) -> u64 {
+         a.require_auth();
+         2
+      }
+
+      #[allow(non_snake_case)]
+      pub fn __check_auth(
+         _signature_payload: Val,
+         _signatures: Val,
+         _auth_context: Vec<Context>,
+      ) {}
+   }
+```
+
+First, a client instance is created, and the contract ID and address are retrieved by registering the contract. Then the function `fn1()` is called by using the client, with the authorization details set, and finally the returned value of `fn1()` is compared to the expected value with `assert_eq!()`.
+
+```rust
+   #[test]
+   fn test_with_real_contract_auth_approve() {
+      let e = Env::default();
+      let contract_id = e.register(ContractA, ());
+      let client = ContractAClient::new(&e, &contract_id);
+
+      let a = e.register(ContractA, ());
+      let a_xdr: ScAddress = (&a).try_into().unwrap();
+
+      let r = client
+         .set_auths(&[SorobanAuthorizationEntry {
+            credentials: SorobanCredentials::Address(
+               SorobanAddressCredentials {
+                  address: a_xdr.clone(),
+                  nonce: 123,
+                  signature_expiration_ledger: 100,
+                  signature: ScVal::Void,
+               }
+            ),
+            root_invocation: SorobanAuthorizedInvocation {
+              function: SorobanAuthorizedFunction::ContractFn(
+                 InvokeContractArgs {
+                    contract_address: contract_id
+                       .clone()
+                       .try_into()
+                       .unwrap(),
+                    function_name: StringM::try_from("fn1")
+                       .unwrap().into(),
+                    args: std::vec![ScVal::Address(
+                       a_xdr.clone())]
+                          .try_into().unwrap(),
+                 }
+              ),
+              sub_invocations: VecM::default(),
+            },
+         }])
+        .fn1(&a);
+
+      assert_eq!(r, 2);
+   }
+```
+
+Similar to how the host executes authorization on Testnet and Mainnet, `set_auths()` method also uses a list of `SorobanAuthorizationEntry` entries to verify authorization during contract function execution.
+
+A `SorobanAuthorizationEntry` contains authorization credentials and contract invocation details. The credentials part specifies the contract address of `the __check_auth()` function, and relevant authorization data. The root invocation part specifies the contract ID, the name of the function being tested, and the function’s arguments.
+
+For more information about authorization details provided in `set_auths()`, see the [Stellar Transactions](https://developers.stellar.org/docs/learn/fundamentals/contract-development/contract-interactions/stellar-transaction) documentation.
+
+Testing using `set_auths()` is more complex than testing using `try_invoke_contract_check_auth`, but in return, it allows for more advanced testing scenarios. If more advanced testing, e.g., testing specific authorization edge cases, is required, `set_auths()` might be a good choice. Otherwise, `try_invoke_contract_check_auth` generally is the recommended method for testing.

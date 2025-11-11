@@ -1,0 +1,333 @@
+---
+title: Verify Trustlines
+sidebar_position: 40
+description: Learn to verify trustlines before sending transactions to Stellar.
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import { Alert } from "@site/src/components/Alert";
+
+When performing payments on Stellar for [Stellar Assets](../../../tokens/README.mdx) other than XLM, it is important to ensure that the receiving account has a trustline established for the asset being sent. This one-pager provides a quick overview of how to verify trustlines before sending transactions, ensuring that payments are processed smoothly and allowing for application to appropriately handle cases where trustlines are not established or invalid.
+
+## Why Verify Trustlines?
+
+In Stellar, trustlines are used to establish a relationship between an account and a Stellar Asset. They indicate that the account is willing to hold and transact with that asset. If a trustline is not established for an asset, the account cannot receive payments in that asset, leading to transaction failures.
+
+Furthermore, asset issuers may enforce specific requirements through trustlines, such as maximum balances an account can hold or granular authorization to receive/send the asset or to maintain liabilities. See the [Asset Design Considerations](../../../tokens/control-asset-access.mdx) for more details on how control flags and trustlines can be used to customize these behaviors.
+
+Verifying trustlines before sending transactions helps ensure that the receiving account meets the requirements and can successfully receive the asset. This allows for the application to handle cases where trustlines are not established or invalid, providing clear feedback and a smooth user experience while preventing failed transactions.
+
+## Checking a Trustline through the Stellar RPC
+
+To check if a trustline exists for a specific asset, you can use the Stellar RPC API to directly retrieve the ledger entry for the trustline and validate its state. The following code snippet demonstrates how to check if a trustline exists for a specific asset using the `getLedgerEntries` method from Stellar RPC API:
+
+<CodeExample>
+
+```js
+import { Asset, StrKey, xdr } from "stellar-sdk";
+import { Server } from "stellar-sdk/rpc";
+
+// Initialize Soroban RPC server for testnet
+const rpc = new Server("https://soroban-testnet.stellar.org");
+
+// Define the receiver account ID
+// This is the account that will receive the payment and for which we will check the trustline.
+const receiver = "GCLNZP3WX3GG4D2HC3L2VVXNYBSVHO2OPGGTDQ4YGBQOUXHHTM3FSBNH";
+
+// First, check to make sure that the destination account exists.
+try {
+  await rpc.getAccount(receiver);
+} catch (error) {
+  console.error("Error checking destination account:", error);
+  throw error;
+}
+
+// Now we defined which asset we want to check the trustline for.
+// In this case, we are checking for USDC issued in testnet.
+const USDC = new Asset(
+  "USDC",
+  "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+);
+
+// This is the amount we want to send.
+const sendingAmount = "1";
+
+// We then conver the receiver's public key to the XDR format.
+// This is necessary to create the ledger key for the trustline.
+const publicKeyXdr = xdr.PublicKey.publicKeyTypeEd25519(
+  StrKey.decodeEd25519PublicKey(receiver),
+);
+
+// Now we create the trustline ledger key using the public key and the asset.
+// The trustline ledger key is used to retrieve the trustline entry from the ledger.
+const trustlineKeyXdr = new xdr.LedgerKeyTrustLine({
+  accountId: publicKeyXdr,
+  asset: USDC.toTrustLineXDRObject(),
+});
+
+// We then create the ledger key based on the trustline key XDR.
+// This key is used to query the ledger for the trustline entry.
+// The ledger key is a unique identifier for the trustline in the Stellar network.
+// It combines the account ID and the asset to form a deterministic unique key for the trustline entry
+const key = xdr.LedgerKey.trustline(trustlineKeyXdr);
+
+// Now we query the ledger through the RPC for the trustline entry using the ledger key.
+// The `_getLedgerEntries` method retrieves the ledger entries for the specified key.
+// This will return the trustline entry if it exists, or an empty array if it does not.
+const response = await rpc._getLedgerEntries(key);
+
+// If the trustline entry is not found, we log an error and throw an exception.
+// This indicates that the account does not have a trustline set up for the specified asset.
+if (!response.entries || response.entries.length === 0) {
+  console.error(
+    `Trustline for asset ${USDC.code} issued by ${USDC.issuer} not found for account ${receiver}.`,
+  );
+  throw new Error("Trustline not found");
+}
+
+// If the trustline entry is found, we parse the XDR data from the response.
+// The response contains an array of entries, and we take the first one.
+// This is because we are querying for a specific trustline, so there should only be one entry.
+const ledgerData = response.entries[0];
+
+// We then convert the XDR data to a LedgerEntryData object.
+// This object contains the trustline data, which includes the asset, account ID, limit,
+// balance, and flags.
+const trustlineData = xdr.LedgerEntryData.fromXDR(
+  ledgerData.xdr,
+  "base64",
+).trustLine();
+
+// At this point, since the trustline is found, we check if it is authorized.
+// An authorized trustline means that the account is allowed to receive payments.
+// Here the authorization is indicated by the flags field in the trustline entry.
+if (trustlineData.flags() !== 1) {
+  console.error(
+    `Trustline for asset ${USDC.code} issued by ${USDC.issuer} is not authorized for account ${receiver}.`,
+  );
+  throw new Error("Trustline not authorized");
+}
+
+// Before checking the values, we parse the limit and balance from the
+// trustline data from stroops (1 XLM = 10,000,000 stroops).
+const limit = Number(trustlineData.limit().toBigInt()) / 10 ** 7;
+const balance = Number(trustlineData.balance().toBigInt()) / 10 ** 7;
+
+// Finally, we check if the trustline has enough limit to receive the payment.
+// We compare the trustline's limit minus its current balance with the amount we want to send.
+// Attempting to send an amount that exceeds the available limit will result in a failed transaction,
+// therefore, if the limit is insufficient, we log an error and throw an exception.
+if (limit - balance < parseFloat(sendingAmount)) {
+  console.error(
+    `Insufficient limit for asset ${USDC.code} issued by ${USDC.issuer} in account ${receiver}.`,
+  );
+  throw new Error("Insufficient limit for asset");
+}
+
+// If all checks pass, we log that the trustline is valid and ready for payment.
+console.log(
+  `Trustline for asset ${USDC.code} issued by ${USDC.issuer} is valid for account ${receiver}.`,
+);
+
+// Proceed with sending the payment...
+```
+
+</CodeExample>
+
+## Checking a Trustline through the Horizon API
+
+Given a receiver address, the following code snippet demonstrates how to check if a trustline exists for a specific asset using the Horizon API:
+
+<CodeExample>
+
+```js
+import * as StellarSdk from "stellar-sdk";
+
+// Initialize Horizon server for testnet
+const server = new StellarSdk.Horizon.Server(
+  "https://horizon-testnet.stellar.org"
+);
+
+// Define the receiver account ID
+// This is the account that will receive the payment and for which we will check the trustline.
+const receiver = "GCLNZP3WX3GG4D2HC3L2VVXNYBSVHO2OPGGTDQ4YGBQOUXHHTM3FSBNH";
+
+// First, check to make sure that the destination account exists.
+try {
+  await server.loadAccount(receiver);
+} catch (error) {
+  console.error("Error checking destination account:", error);
+  throw error;
+}
+
+// Now we defined which asset we want to check the trustline for.
+// In this case, we are checking for USDC issued in testnet.
+const assetCode = "USDC";
+const assetIssuer = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+
+// This is the amount we want to send.
+const sendingAmount = "1";
+
+// We then load the account data for the receiver to check if the trustline exists.
+// This will also include other balances and trustlines for the account.
+const accountData = await server.accounts().accountId(receiver).call();
+
+// Now we check if the trustline for the specified asset exists in the account data.
+// We are looking for a trustline that matches the asset code and issuer.
+const trustline = accountData.balances.find(
+  (balance) =>
+    balance.asset_type === "credit_alphanum4" &&
+    balance.asset_code === assetCode &&
+    balance.asset_issuer === assetIssuer
+) as StellarSdk.Horizon.HorizonApi.BalanceLineAsset<StellarSdk.AssetType.credit4>;
+
+// If the trustline is not found, we log an error and throw an exception.
+// This indicates that the account does not have a trustline set up for the specified asset.
+if (!trustline) {
+  console.error(
+    `Trustline for asset ${assetCode} issued by ${assetIssuer} not found for account ${receiver}.`
+  );
+  throw new Error("Trustline not found");
+}
+
+// If the trustline is found, we check if it is authorized.
+// An authorized trustline means that the account is allowed to receive payments.
+if (trustline.is_authorized === false) {
+  console.error(
+    `Trustline for asset ${assetCode} issued by ${assetIssuer} is not authorized for account ${receiver}.`
+  );
+  throw new Error("Trustline not authorized");
+}
+
+// Finally, we check if the trustline has enough limit to receive the payment.
+// We compare the trustline's limit minus its current balance with the amount we want to send.
+// Attempting to send an amount that exceeds the available limit will result in a failed transaction,
+// therefore, if the limit is insufficient, we log an error and throw an exception.
+if (
+  Number(trustline.limit) - Number(trustline.balance) <
+  parseFloat(sendingAmount)
+) {
+  console.error(
+    `Insufficient limit for asset ${assetCode} issued by ${assetIssuer} in account ${receiver}.`
+  );
+  throw new Error("Insufficient limit for asset");
+}
+
+// If all checks pass, we log that the trustline is valid and ready for payment.
+console.log(
+  `Trustline for asset ${assetCode} issued by ${assetIssuer} is valid for account ${receiver}.`
+);
+
+// Proceed with sending the payment...
+```
+
+</CodeExample>
+
+## Checking a Trustline through the Stellar Asset Contract (SAC)
+
+All Stellar assets, including the native asset (XLM), can be managed with smart contract transactions through Stellar Asset Contracts (SAC). SACs provide a smart contract interface for handling assets, allowing for more complex interactions and programmability. This means that it includes certain functions to help developers manage assets, such as verifying trustlines and sending payments, in a more flexible way than classic operations.
+
+For this example, we'll be using SAC as a smart contract interface for the testnet USDC asset. A contract invocation transaction will be made to call the function `authorized`, which checks if a trustline exists for a given account and returns a boolean indicating whether the trustline is authorized.
+
+This function can be accessed directly in a smart contract invocation as the example below demonstrates, or it can also be invoked by another contract, allowing for more complex interactions and programmability to be built in smart contracts.
+
+<Alert>
+  To use the RPC example below you should first generate the contract bindings so the
+  client can be used accordingly. This can be achieved through the [Stellar
+  CLI](../../../tools/cli/README.mdx).
+
+E.g.: Generating the typescript bindings for the `sac` contract of a given asset:
+
+```bash
+ stellar contract bindings typescript --network=testnet --contract-id=CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA --output-dir=./bindings
+```
+
+</Alert>
+
+Given a receiver addresss, the following code snippet demonstrates how to simulate a transaction to check if a trustline exists for a specific asset:
+
+<CodeExample>
+
+```js
+import { Asset, Networks } from "stellar-sdk";
+import { Client } from "sac";
+import { Server } from "stellar-sdk/rpc";
+
+// Initialize Soroban RPC server for testnet
+const rpc = new Server("https://soroban-testnet.stellar.org");
+
+// Define the receiver account ID
+// This is the account that will receive the payment and for which we will check the trustline.
+const receiver = "GCLNZP3WX3GG4D2HC3L2VVXNYBSVHO2OPGGTDQ4YGBQOUXHHTM3FSBNH";
+
+// First, check to make sure that the destination account exists.
+try {
+  await rpc.getAccount(receiver);
+} catch (error) {
+  console.error("Error checking destination account:", error);
+  throw error;
+}
+
+// Now we defined which asset we want to check the trustline for.
+// In this case, we are checking for USDC issued in testnet.
+const USDC = new Asset(
+  "USDC",
+  "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+);
+
+// Now we initialize the Stellar Asset Contract (SAC) client.
+// The client needs the RPC endpoint, network passphrase, contract ID for the asset,
+// and your account's public key. Since we are only going to simulate the transaction,
+// we do not need to provide a signing function.
+const usdcClient = new Client({
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  networkPassphrase: Networks.TESTNET,
+  contractId: USDC.contractId(Networks.TESTNET),
+  publicKey: receiver,
+});
+
+// Now, using the client, we assemble a soroban transaction to invoke the transfer
+// function of the USDC asset contract. The cient will automatically
+// bundle the operation and simulate the transaction before providing us
+// with an assembled transaction object. This object contains the result of the simulation,
+// which we can check to see if the trustline is authorized or not.
+let assembledTx;
+try {
+  assembledTx = await usdcClient.authorized({
+    id: receiver,
+  });
+
+  // The result parameter contains the return value of the contract function.
+  // If the trustline is authorized, it will return true; otherwise, it will return false.
+  const result = assembledTx.result;
+
+  // If the trustline is not authorized, we log an error and throw an exception.
+  // This indicates that the account does not have a trustline set up for the specified asset and
+  // any attempt to send USDC to this account will fail.
+  if (result === false) {
+    console.error(
+      `Trustline for asset ${USDC.code} issued by ${USDC.issuer} not authorized for account ${receiver}.`,
+    );
+    throw new Error("Trustline not authorized");
+  }
+
+  // If the trustline is authorized, we log a success message.
+  // This means that the account is allowed to receive payments in USDC.
+  console.log(
+    `Trustline for asset ${USDC.code} issued by ${USDC.issuer} is authorized for account ${receiver}.`,
+  );
+
+  // assembledTx = await xlmClient.transfer({
+  //   to: destinationId,
+  //   amount: BigInt(10_0000000), // Amount in stroops (1 XLM = 10,000,000 stroops)
+  //   from: sourceKeys.publicKey(),
+  // });
+} catch (error) {
+  console.error("Error assembling and simulating the transaction:", error);
+  throw error;
+}
+
+// If the trustline is authorized, we can proceed with sending the payment...
+```
+
+</CodeExample>

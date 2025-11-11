@@ -1,0 +1,626 @@
+---
+sidebar_position: 30
+title: Stellar Transaction
+description: Invoke and deploy smart contracts with the InvokeHostFunctionOp operation.
+toc_max_heading_level: 4
+---
+
+<head>
+  <title>
+    {`Invoke and deploy smart contracts with the InvokeHostFunctionOp operation.`}
+  </title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Invoke and deploy smart contracts with the InvokeHostFunctionOp operation."
+  />
+  <meta
+    property="og:description"
+    content="Invoke and deploy smart contracts with the InvokeHostFunctionOp operation."
+  />
+</head>
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+
+## Example SDK Usage
+
+Some (but not all yet) of the Stellar SDKs have functions built-in to handle most of the process of building a Stellar transaction to interact with a Soroban smart contract. Below, we demonstrate in JavaScript and Python how to build and submit a Stellar transaction that will invoke an instance of the [increment example](../../../../build/smart-contracts/getting-started/storing-data.mdx) smart contract.
+
+<Tabs>
+<TabItem value="js" label="JavaScript">
+
+:::tip
+
+The existing [JavaScript SDK](https://github.com/stellar/js-stellar-sdk) now incorporates all of the elements needed for Soroban. All you need to do is install it using your preferred package manager.
+
+```bash
+npm install --save @stellar/stellar-sdk
+```
+
+:::
+
+```js
+(async () => {
+  const {
+    Keypair,
+    Contract,
+    rpc as StellarRpc,
+    TransactionBuilder,
+    Networks,
+    BASE_FEE,
+  } = require("@stellar/stellar-sdk");
+
+  // The source account will be used to sign and send the transaction.
+  // GCWY3M4VRW4NXJRI7IVAU3CC7XOPN6PRBG6I5M7TAOQNKZXLT3KAH362
+  const sourceKeypair = Keypair.fromSecret(
+    "SCQN3XGRO65BHNSWLSHYIR4B65AHLDUQ7YLHGIWQ4677AZFRS77TCZRB",
+  );
+
+  // Configure the SDK to use the `stellar-rpc` instance of your choosing.
+  const server = new StellarRpc.Server(
+    "https://soroban-testnet.stellar.org:443",
+  );
+
+  // Here we will use a deployed instance of the `increment` example contract.
+  const contractAddress =
+    "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+  const contract = new Contract(contractAddress);
+
+  // Transactions require a valid sequence number (which varies from one
+  // account to another). We fetch this sequence number from the RPC server.
+  const sourceAccount = await server.getAccount(sourceKeypair.publicKey());
+
+  // The transaction begins as pretty standard. The source account, minimum
+  // fee, and network passphrase are provided.
+  let builtTransaction = new TransactionBuilder(sourceAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    // The invocation of the `increment` function of our contract is added
+    // to the transaction. Note: `increment` doesn't require any parameters,
+    // but many contract functions do. You would need to provide those here.
+    .addOperation(contract.call("increment"))
+    // This transaction will be valid for the next 30 seconds
+    .setTimeout(30)
+    .build();
+
+  // We use the RPC server to "prepare" the transaction. This simulating the
+  // transaction, discovering the storage footprint, and updating the
+  // transaction to include that footprint. If you know the footprint ahead of
+  // time, you could manually use `addFootprint` and skip this step.
+  let preparedTransaction = await server.prepareTransaction(builtTransaction);
+
+  // Sign the transaction with the source account's keypair.
+  preparedTransaction.sign(sourceKeypair);
+
+  // Let's see the base64-encoded XDR of the transaction we just built.
+  console.log(
+    `Signed prepared transaction XDR: ${preparedTransaction
+      .toEnvelope()
+      .toXDR("base64")}`,
+  );
+
+  // Submit the transaction to the Stellar-RPC server. The RPC server will
+  // then submit the transaction into the network for us. Then we will have to
+  // wait, polling `getTransaction` until the transaction completes.
+  try {
+    let sendResponse = await server.sendTransaction(preparedTransaction);
+    console.log(`Sent transaction: ${JSON.stringify(sendResponse)}`);
+
+    if (sendResponse.status === "PENDING") {
+      let getResponse = await server.getTransaction(sendResponse.hash);
+      // Poll `getTransaction` until the status is not "NOT_FOUND"
+      while (getResponse.status === "NOT_FOUND") {
+        console.log("Waiting for transaction confirmation...");
+        // See if the transaction is complete
+        getResponse = await server.getTransaction(sendResponse.hash);
+        // Wait one second
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      console.log(`getTransaction response: ${JSON.stringify(getResponse)}`);
+
+      if (getResponse.status === "SUCCESS") {
+        // Make sure the transaction's resultMetaXDR is not empty
+        if (!getResponse.resultMetaXdr) {
+          throw "Empty resultMetaXDR in getTransaction response";
+        }
+        // Find the return value from the contract and return it
+        let transactionMeta = getResponse.resultMetaXdr;
+        let returnValue = getResponse.returnValue;
+        console.log(`Transaction result: ${returnValue.value()}`);
+      } else {
+        throw `Transaction failed: ${getResponse.resultXdr}`;
+      }
+    } else {
+      throw sendResponse.errorResultXdr;
+    }
+  } catch (err) {
+    // Catch and report any errors we've thrown
+    console.log("Sending transaction failed");
+    console.log(JSON.stringify(err));
+  }
+})();
+```
+
+</TabItem>
+<TabItem value="py" label="Python">
+
+:::tip
+
+The [`py-stellar-base`](https://stellar-sdk.readthedocs.io/en/soroban/) Python SDK has stable support for interacting with Soroban smart contracts as of [v9.0.0](https://github.com/StellarCN/py-stellar-base/releases/tag/9.0.0).
+
+```bash
+pip install stellar-sdk
+```
+
+:::
+
+```py
+from typing import Optional, Union
+
+from stellar_sdk import scval, MuxedAccount, Keypair, Network
+from stellar_sdk.contract import AssembledTransaction, ContractClient
+
+
+# `IncrementContractClient` is automatically generated by stellar-contract-bindings, and you do not need to write it manually.
+# See https://github.com/lightsail-network/stellar-contract-bindings
+# stellar-contract-bindings python --contract-id CDMARRPKAZEZMASLYONRI4LJI6X3QLDJQ647YGQANG2PDCP746BD5U73 --rpc-url https://soroban-testnet.stellar.org
+class IncrementContractClient(ContractClient):
+    def increment(
+            self,
+            source: Union[str, MuxedAccount],
+            signer: Optional[Keypair] = None,
+            base_fee: int = 100,
+            transaction_timeout: int = 300,
+            submit_timeout: int = 30,
+            simulate: bool = True,
+            restore: bool = True,
+    ) -> AssembledTransaction[int]:
+        """Increment increments an internal counter, and returns the value."""
+        return self.invoke(
+            "increment",
+            [],
+            parse_result_xdr_fn=lambda v: scval.from_uint32(v),
+            source=source,
+            signer=signer,
+            base_fee=base_fee,
+            transaction_timeout=transaction_timeout,
+            submit_timeout=submit_timeout,
+            simulate=simulate,
+            restore=restore,
+        )
+
+
+# The source account will be used to sign and send the transaction.
+# GCWY3M4VRW4NXJRI7IVAU3CC7XOPN6PRBG6I5M7TAOQNKZXLT3KAH362
+source_keypair = Keypair.from_secret('SCQN3XGRO65BHNSWLSHYIR4B65AHLDUQ7YLHGIWQ4677AZFRS77TCZRB')
+
+rpc_server_url = "https://soroban-testnet.stellar.org:443"
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+contract_address = 'CDMARRPKAZEZMASLYONRI4LJI6X3QLDJQ647YGQANG2PDCP746BD5U73'
+
+client = IncrementContractClient(contract_address, rpc_server_url, network_passphrase)
+result = client.increment(source_keypair.public_key).sign_and_submit(source_keypair)
+print(result)
+```
+
+</TabItem>
+<TabItem value="java" label="Java">
+
+:::tip
+
+[java-stellar-sdk](https://github.com/stellar/java-stellar-sdk) provides support for Soroban, please visit the project homepage for more information.
+
+:::
+
+```java
+import java.io.IOException;
+import org.stellar.sdk.AccountNotFoundException;
+import org.stellar.sdk.InvokeHostFunctionOperation;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.PrepareTransactionException;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.requests.sorobanrpc.SorobanRpcErrorResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.TransactionMeta;
+
+public class SorobanExample {
+  public static void main(String[] args)
+      throws SorobanRpcErrorResponse, IOException, InterruptedException {
+
+    // The source account will be used to sign and send the transaction.
+    KeyPair sourceKeypair =
+        KeyPair.fromSecretSeed("SCQN3XGRO65BHNSWLSHYIR4B65AHLDUQ7YLHGIWQ4677AZFRS77TCZRB");
+
+    // Configure SorobanClient to use the `stellar-rpc` instance of your choosing.
+    SorobanServer sorobanServer = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    // Here we will use a deployed instance of the `increment` example contract.
+    String contractAddress = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+
+    // Transactions require a valid sequence number (which varies from one account to
+    // another). We fetch this sequence number from the RPC server.
+    TransactionBuilderAccount sourceAccount = null;
+    try {
+      sourceAccount = sorobanServer.getAccount(sourceKeypair.getAccountId());
+    } catch (AccountNotFoundException e) {
+      throw new RuntimeException("Account not found, please activate it first");
+    }
+
+    // The invocation of the `increment` function of our contract is added to the
+    // transaction. Note: `increment` doesn't require any parameters, but many
+    // contract functions do. You would need to provide those here.
+    InvokeHostFunctionOperation operation =
+        InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+                contractAddress, "increment", null)
+            .build();
+
+    // Create a transaction with the source account and the operation we want to invoke.
+    Transaction transaction =
+        new TransactionBuilder(sourceAccount, Network.TESTNET)
+            .addOperation(operation)
+            .setTimeout(30) // This transaction will be valid for the next 30 seconds
+            .setBaseFee(100) // The base fee is 100 stroops (0.00001 XLM)
+            .build();
+
+    // We use the RPC server to "prepare" the transaction. This simulating the
+    // transaction, discovering the storage footprint, and updating the transaction
+    // to include that footprint. If you know the footprint ahead of time, you could
+    // manually use `addFootprint` and skip this step.
+    try {
+      transaction = sorobanServer.prepareTransaction(transaction);
+    } catch (PrepareTransactionException e) {
+      // You should handle the error here
+      throw new RuntimeException(e);
+    }
+
+    // Sign the transaction with the source account's keypair.
+    transaction.sign(sourceKeypair);
+
+    // Let's see the base64-encoded XDR of the transaction we just built.
+    System.out.println("Signed prepared transaction XDR: " + transaction.toEnvelopeXdrBase64());
+
+    // Submit the transaction to the Stellar-RPC server. The RPC server will then
+    // submit the transaction into the network for us. Then we will have to wait,
+    // polling `getTransaction` until the transaction completes.
+    SendTransactionResponse response = sorobanServer.sendTransaction(transaction);
+    if (!SendTransactionResponse.SendTransactionStatus.PENDING.equals(response.getStatus())) {
+      throw new RuntimeException("Sending transaction failed");
+    }
+
+    // Poll `getTransaction` until the status is not "NOT_FOUND"
+    GetTransactionResponse getTransactionResponse;
+    while (true) {
+      System.out.println("Waiting for transaction confirmation...");
+      // See if the transaction is complete
+      getTransactionResponse = sorobanServer.getTransaction(response.getHash());
+      if (!GetTransactionResponse.GetTransactionStatus.NOT_FOUND.equals(
+          getTransactionResponse.getStatus())) {
+        break;
+      }
+      // Wait one second
+      Thread.sleep(1000);
+    }
+
+    System.out.println("get_transaction response: " + getTransactionResponse);
+
+    if (GetTransactionResponse.GetTransactionStatus.SUCCESS.equals(
+        getTransactionResponse.getStatus())) {
+      // Find the return value from the contract and return it
+      TransactionMeta transactionMeta =
+          TransactionMeta.fromXdrBase64(getTransactionResponse.getResultMetaXdr());
+      long returnValue = Scv.fromUint32(transactionMeta.getV3().getSorobanMeta().getReturnValue());
+      System.out.println("Transaction result: " + returnValue);
+    } else {
+      System.out.println("Transaction failed: " + getTransactionResponse.getResultXdr());
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## XDR Usage
+
+Stellar supports invoking and deploying contracts with a new operation named `InvokeHostFunctionOp`. The [`stellar-cli`] abstracts these details away from the user, but not all SDKs do yet. If you're building a dapp you'll probably find yourself building the XDR transaction to submit to the network.
+
+The `InvokeHostFunctionOp` can be used to perform the following Soroban operations:
+
+- Invoke contract functions.
+- Upload Wasm of the new contracts.
+- Deploy new contracts using the uploaded Wasm or built-in implementations (this currently includes only the [token contract](../../../../tokens/stellar-asset-contract.mdx)).
+
+[`stellar-cli`]: ../../../../build/smart-contracts/getting-started/setup.mdx#install-the-stellar-cli
+
+There is only a single `InvokeHostFunctionOp` allowed per transaction. Contracts should be used to perform multiple actions atomically, for example, to deploy a new contract and initialize it atomically.
+
+### InvokeHostFunctionOp
+
+The XDR of `HostFunction` and `InvokeHostFunctionOp` below can be found [here][xdr].
+
+[xdr]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L581
+
+```cpp
+union HostFunction switch (HostFunctionType type)
+{
+case HOST_FUNCTION_TYPE_INVOKE_CONTRACT:
+    InvokeContractArgs invokeContract;
+case HOST_FUNCTION_TYPE_CREATE_CONTRACT:
+    CreateContractArgs createContract;
+case HOST_FUNCTION_TYPE_UPLOAD_CONTRACT_WASM:
+    opaque wasm<>;
+};
+
+struct InvokeHostFunctionOp
+{
+    // Host function to invoke.
+    HostFunction hostFunction;
+    // Per-address authorizations for this host function.
+    SorobanAuthorizationEntry auth<>;
+};
+```
+
+#### Function
+
+The `hostFunction` in `InvokeHostFunctionOp` will be executed by the Soroban host environment. The supported functions are:
+
+1. `HOST_FUNCTION_TYPE_INVOKE_CONTRACT`
+   - This will invoke a function of the deployed contract with arguments specified in `invokeContract` struct.
+
+   ```cpp
+   struct InvokeContractArgs {
+    SCAddress contractAddress;
+    SCSymbol functionName;
+    SCVal args<>;
+   };
+   ```
+
+   `contractAddress` is the address of the contract to invoke, `functionName` is the name of the function to invoke and `args` are the arguments to pass to that function.
+
+2. `HOST_FUNCTION_TYPE_UPLOAD_CONTRACT_WASM`
+   - This will upload the contract Wasm using the provided `wasm` blob.
+   - Uploaded Wasm can be identified by the SHA-256 hash of the uploaded Wasm.
+3. `HOST_FUNCTION_TYPE_CREATE_CONTRACT`
+   - This will deploy a contract instance to the network using the specified `executable`. The 32-byte contract identifier is based on `contractIDPreimage` value and the network identifier (so every network has a separate contract identifier namespace).
+
+   ```cpp
+   struct CreateContractArgs
+   {
+       ContractIDPreimage contractIDPreimage;
+       ContractExecutable executable;
+   };
+   ```
+
+   - `executable` can be either a SHA-256 hash of the previously uploaded Wasm or it can specify that a built-in contract has to be used:
+
+   ```cpp
+   enum ContractExecutableType
+   {
+       CONTRACT_EXECUTABLE_WASM = 0,
+       CONTRACT_EXECUTABLE_TOKEN = 1
+   };
+
+   union ContractExecutable switch (ContractExecutableType type)
+   {
+   case CONTRACT_EXECUTABLE_WASM:
+       Hash wasm_hash;
+   case CONTRACT_EXECUTABLE_TOKEN:
+       void;
+   };
+   ```
+
+   - `contractIDPreimage` is defined as following:
+
+     ```cpp
+     union ContractIDPreimage switch (ContractIDPreimageType type)
+     {
+     case CONTRACT_ID_PREIMAGE_FROM_ADDRESS:
+         struct
+         {
+             SCAddress address;
+             uint256 salt;
+         } fromAddress;
+     case CONTRACT_ID_PREIMAGE_FROM_ASSET:
+         Asset fromAsset;
+     };
+     ```
+
+     - The final contract identifier is created by computing SHA-256 of this together with the network identifier as a part of [`HashIDPreimage`]:
+
+     [`hashidpreimage`]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L697
+
+     ```cpp
+     union HashIDPreimage switch (EnvelopeType type)
+     {
+     ...
+     case ENVELOPE_TYPE_CONTRACT_ID:
+         struct
+         {
+             Hash networkID;
+             ContractIDPreimage contractIDPreimage;
+         } contractID;
+     ...
+     ```
+
+     - `CONTRACT_ID_PREIMAGE_FROM_ADDRESS` specifies that the contract will be created using the provided address and salt. This operation has to be authorized by `address` (see the following section for details).
+     - `CONTRACT_ID_FROM_ASSET` specifies that the contract will be created using the Stellar asset. This is only supported when `executable == CONTRACT_EXECUTABLE_TOKEN`. Note, that the asset doesn't need to exist when this is applied, however the issuer of the asset will be the initial token administrator. Anyone can deploy asset contracts.
+
+##### JavaScript Usage
+
+Each of these variations of host function invocation has convenience methods in the [JavaScript SDK](../../../../tools/sdks/client-sdks.mdx#javascript-sdk):
+
+- [`Operation.invokeHostFunction`](https://stellar.github.io/js-stellar-sdk/Operation.html#.invokeHostFunction) is the lowest-level method that corresponds directly to the XDR.
+- [`Operation.invokeContractFunction`](https://stellar.github.io/js-stellar-sdk/Operation.html#.invokeContractFunction) is an abstraction to invoke the method of a particular contract, similar to [`Contract.call`](https://stellar.github.io/js-stellar-sdk/Contract.html#call).
+- [`Operation.createStellarAssetContract`](https://stellar.github.io/js-stellar-sdk/Operation.html#.createStellarAssetContract) and [`Operation.createCustomContract`](https://stellar.github.io/js-stellar-sdk/Operation.html#.createCustomContract) are abstractions to instantiate contracts: the former is for wrapping an existing [Stellar asset](../../../../tokens/how-to-issue-an-asset.mdx) into a smart contract and the latter is for deploying your own contract.
+- [`Operation.uploadContractWasm`](https://stellar.github.io/js-stellar-sdk/Operation.html#.uploadContractWasm) corresponds to the above `HOST_FUNCTION_TYPE_UPLOAD_CONTRACT_WASM` variant, letting you upload the raw WASM buffer to the ledger.
+
+#### Authorization Data
+
+Soroban's [authorization framework](../authorization.mdx) provides a standardized way for passing authorization data to the contract invocations via `SorobanAuthorizationEntry` structures.
+
+```cpp
+struct SorobanAuthorizationEntry
+{
+    SorobanCredentials credentials;
+    SorobanAuthorizedInvocation rootInvocation;
+};
+
+union SorobanCredentials switch (SorobanCredentialsType type)
+{
+case SOROBAN_CREDENTIALS_SOURCE_ACCOUNT:
+    void;
+case SOROBAN_CREDENTIALS_ADDRESS:
+    SorobanAddressCredentials address;
+};
+```
+
+`SorobanAuthorizationEntry` contains a tree of invocations with `rootInvocation` as a root. This tree is authorized by a user specified in `credentials`.
+
+`SorobanAddressCredentials` have two options:
+
+- `SOROBAN_CREDENTIALS_SOURCE_ACCOUNT` - this simply uses the signature of the transaction (or operation, if any) source account and hence doesn't require any additional payload.
+- `SOROBAN_CREDENTIALS_ADDRESS` - contains `SorobanAddressCredentials` with the following structure:
+  ```cpp
+  struct SorobanAddressCredentials
+  {
+      SCAddress address;
+      int64 nonce;
+      uint32 signatureExpirationLedger;
+      SCVal signature;
+  };
+  ```
+  The fields of this structure have the following semantics:
+  - When `address` is the address that authorizes invocation.
+  - `signatureExpirationLedger` the ledger sequence number on which the signature expires. Signature is still considered valid on `signatureExpirationLedger`, but it is no longer valid on `signatureExpirationLedger + 1`. It is recommended to keep this as small as viable, as it makes the transaction cheaper.
+  - `nonce` is an arbitrary value that is unique for all the signatures performed by `address` until `signatureExpirationLedger`. A good approach to generating this is to just use a random value.
+  - `signature` is a structure containing the signature (or multiple signatures) that signed the 32-byte, SHA-256 hash of the `ENVELOPE_TYPE_SOROBAN_AUTHORIZATION` preimage ([XDR][envelope-xdr]). The signature structure is defined by the account contract corresponding to the `Address` (see below for the Stellar account signature structure).
+
+`SorobanAuthorizedInvocation` defines a node in the authorized invocation tree:
+
+```cpp
+struct SorobanAuthorizedInvocation
+{
+    SorobanAuthorizedFunction function;
+    SorobanAuthorizedInvocation subInvocations<>;
+};
+
+union SorobanAuthorizedFunction switch (SorobanAuthorizedFunctionType type)
+{
+case SOROBAN_AUTHORIZED_FUNCTION_TYPE_CONTRACT_FN:
+    SorobanAuthorizedContractFunction contractFn;
+case SOROBAN_AUTHORIZED_FUNCTION_TYPE_CREATE_CONTRACT_HOST_FN:
+    CreateContractArgs createContractHostFn;
+};
+
+struct SorobanAuthorizedContractFunction
+{
+    SCAddress contractAddress;
+    SCSymbol functionName;
+    SCVec args;
+};
+```
+
+`SorobanAuthorizedInvocation` consists of the `function` that is being authorized (either contract function or a host function) and the authorized sub-invocations that `function` performs (if any).
+
+`SorobanAuthorizedFunction` has two variants:
+
+- `SOROBAN_AUTHORIZED_FUNCTION_TYPE_CONTRACT_FN` is a contract function that includes the address of the contract, name of the function being invoked, and arguments of the `require_auth`/`require_auth_for_args` call performed on behalf of the address. Note, that if `require_auth[_for_args]` wasn't called, there shouldn't be a `SorobanAuthorizedInvocation` entry in the transaction.
+- `SOROBAN_AUTHORIZED_FUNCTION_TYPE_CREATE_CONTRACT_HOST_FN` is authorization for `HOST_FUNCTION_TYPE_CREATE_CONTRACT` or for `create_contract` host function called from a contract. It only contains the `CreateContractArgs` XDR structure corresponding to the created contract.
+
+Building `SorobanAuthorizedInvocation` trees may be simplified by using the recording auth mode in Soroban's `simulateTransaction` mechanism (see the [docs][simulate-transaction-doc] for more details).
+
+[envelope-xdr]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L703
+[simulate-transaction-doc]: transaction-simulation.mdx#authorization
+
+##### Stellar Account Signatures
+
+`signatureArgs` format is user-defined for the [custom accounts], but it is protocol-defined for the Stellar accounts.
+
+The signatures for the Stellar account are a vector of the following Soroban [structures] in the Soroban SDK format:
+
+```rust
+#[contracttype]
+pub struct AccountEd25519Signature {
+    pub public_key: BytesN<32>,
+    pub signature: BytesN<64>,
+}
+```
+
+[structures]: https://github.com/stellar/rs-soroban-env/blob/99d8c92cdc7e5cd0f5311df8f88d04658ecde7d2/soroban-env-host/src/native_contract/account_contract.rs#L51
+[custom accounts]: ../authorization.mdx#account-abstraction
+
+##### JavaScript Usage
+
+There are a couple of helpful methods in the SDK to make dealing with authorization easier:
+
+- Once you've gotten the authorization entries from [`simulateTransaction`](https://soroban.stellar.org/api/methods/simulateTransaction), you can use the [`authorizeEntry`](https://stellar.github.io/js-stellar-sdk/global.html#authorizeEntry) helper to "fill out" the empty entry accordingly. You will, of course, need the appropriate signer for each of the entries if you are in a multi-party situation.
+
+```typescript
+const signedEntries = simTx.auth.map(async (entry) =>
+  // In this case, you can authorize by signing the transaction with the
+  // corresponding source account.
+  entry.switch() ===
+  xdr.SorobanCredentialsType.sorobanCredentialsSourceAccount()
+    ? entry
+    : await authorizeEntry(
+        entry,
+        // The `signer` here will be unique for each entry, perhaps reaching out
+        // to a separate entity.
+        signer,
+        currentLedger + 1000,
+        Networks.TESTNET,
+      ),
+);
+```
+
+- If you, instead, want to _build_ an authorization entry from scratch rather than relying on simulation, you can use [`authorizeInvocation`](https://stellar.github.io/js-stellar-sdk/global.html#authorizeInvocation), which will build the structure with the appropriate fields.
+
+### Transaction resources
+
+Every Soroban transaction has to have a `SorobanTransactionData` transaction [extension] populated. This is needed to compute the [Soroban resource fee](../../../fundamentals/fees-resource-limits-metering.mdx).
+
+[extension]: https://github.com/stellar/stellar-xdr/blob/c2e702c70951ff59a1eff257f08cf38d47210e5f/Stellar-transaction.x#L874
+
+The Soroban transaction data is defined as follows:
+
+```cpp
+struct SorobanResources
+{
+    // The ledger footprint of the transaction.
+    LedgerFootprint footprint;
+    // The maximum number of instructions this transaction can use
+    uint32 instructions;
+
+    // The maximum number of bytes this transaction can read from ledger
+    uint32 readBytes;
+    // The maximum number of bytes this transaction can write to ledger
+    uint32 writeBytes;
+};
+
+struct SorobanTransactionData
+{
+    SorobanResources resources;
+    // Portion of transaction `fee` allocated to refundable fees.
+    int64 refundableFee;
+    ExtensionPoint ext;
+};
+```
+
+This data comprises two parts: Soroban resources and the `refundableFee`. The `refundableFee` is the portion of the transaction fee eligible for refund. It includes the fees for the contract events emitted by the transaction, the return value of the host function invocation, and fees for the [ledger space rent](../storage/state-archival.mdx).
+
+The `SorobanResources` structure includes the ledger footprint and the resource values, which together determine the resource consumption limit and the resource fee. The footprint must contain the `LedgerKey`s that will be read and/or written.
+
+The simplest method to determine the values in `SorobanResources` and `refundableFee` is to use the [`simulateTransaction` mechanism](transaction-simulation.mdx).
+
+#### JavaScript Usage
+
+You can use the [`SorobanDataBuilder`](https://stellar.github.io/js-stellar-sdk/SorobanDataBuilder.html) to leverage the [builder pattern](https://en.wikipedia.org/wiki/Builder_pattern) and get/set all of the above resources accordingly. Then, you call `.build()` and pass the resulting structure to the [`setSorobanData`](https://stellar.github.io/js-stellar-sdk/TransactionBuilder.html#setSorobanData) method of the corresponding [`TransactionBuilder`](https://stellar.github.io/js-stellar-sdk/TransactionBuilder.html).

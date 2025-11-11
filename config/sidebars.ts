@@ -37,8 +37,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'ref', id: 'data/apis/rpc/README', label: 'RPC' },
         { type: 'ref', id: 'data/apis/horizon/README', label: 'Horizon' },
-        { type: 'ref', id: 'data/apis/migrate-from-horizon-to-rpc/migrate-from-horizon-to-rpc', label: 'Migrate Horizon to RPC' },
-        { type: 'ref', id: 'data/apis/api-providers', label: 'API Providers' }
+        { type: 'ref', id: 'data/apis/migrate-from-horizon-to-rpc', label: 'Migrate Horizon to RPC' },
       ]
     },
     {

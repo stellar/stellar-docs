@@ -1,0 +1,223 @@
+---
+title: Cómo elegir el tipo de almacenamiento adecuado para tu caso de uso
+hide_table_of_contents: true
+description: Esta guía te lleva a elegir el tipo de almacenamiento más adecuado para tu caso de uso y cómo implementarlo
+---
+
+## Tipos de almacenamiento
+
+Los contratos inteligentes pueden persistir datos en el ledger Stellar utilizando la interfaz de almacenamiento (`env.storage()` en el SDK de Soroban). Hay tres tipos de almacenamiento disponibles en la red Stellar:
+
+| Tipo de almacenamiento | API del SDK                  | Costo         | Comportamiento cuando caduca el TTL | Número de claves                            |
+| ---------------------- | ---------------------------- | ------------- | ----------------------------------- | ------------------------------------------- |
+| Persistente            | `env.storage().persistent()` | Más caro      | Los datos se archivan               | Ilimitado                                   |
+| Temporal               | `env.storage().temporary()`  | Menos costoso | Los datos se eliminan para siempre  | Ilimitado                                   |
+| Instancia              | `env.storage().instance()`   | Más costoso   | Los datos se archivan               | Limitado por el límite de tamaño de entrada |
+
+Cada tipo de almacenamiento puede considerarse como un mapa de claves arbitrarias a valores arbitrarios. Los datos se almacenan físicamente en el ledger Stellar.
+
+Cada 'mapa' de almacenamiento es completamente independiente de cada otro 'mapa' de almacenamiento. Es posible almacenar diferentes datos para la misma clave en cada almacenamiento. Por ejemplo, en almacenamiento temporal, la clave `123_u32` puede tener un valor de `100_u32`, mientras que en almacenamiento persistente la misma clave `123_u32` puede tener un valor de `abcd`.
+
+Todos los tipos de almacenamiento tienen casi exactamente la misma funcionalidad, además de las diferencias destacadas en la tabla anterior, específicamente el costo, el comportamiento cuando caduca el TTL y el límite para el número de claves almacenadas por contrato.
+
+### Una nota sobre el TTL
+
+Si te preguntas qué significa 'TTL', aquí hay una breve introducción sobre los TTL y el archivo de estado en Stellar.
+
+El archivo de estado es un mecanismo especial definido por el protocolo Stellar que garantiza que el tamaño del estado del ledger activo no crezca indefinidamente. En términos simples, cada entrada de datos de contrato almacenada, así como la entrada de código de contrato (Wasm), tiene asignado un cierto 'tiempo de vida' (TTL). El TTL es solo un número de ledgers por el cual la entrada se considera 'activa', y después de ese número de ledgers, se considera que el TTL ha caducado y, por lo tanto, ya no está activa. Diferentes tipos de almacenamiento manejan la expiración del TTL de manera diferente: los datos se moverán a los archivos ('fríos', almacenamiento off-chain) o se eliminarán automáticamente del ledger (en caso de almacenamiento temporal). Los datos almacenados en el archivo pueden ser restaurados on-chain más tarde y, por lo tanto, volverse activos nuevamente.
+
+El TTL también puede extenderse tantas veces como sea necesario, por una tarifa.
+
+Lee más sobre el archivo de estados [aquí](../../../learn/fundamentals/contract-development/storage/state-archival.mdx).
+
+## Almacenamiento persistente
+
+Este tipo de almacenamiento se utiliza para almacenar datos en la red durante un período de tiempo indefinido.
+
+Para el almacenamiento persistente, cuando el TTL alcanza cero, la entrada se mueve al almacenamiento archivado. Luego, se puede restaurar cuando sea necesario utilizando la operación `RestoreFootprintOp`.
+
+El almacenamiento persistente es el tipo de almacenamiento predeterminado en términos de casos de uso. El almacenamiento de instancia y temporal solo son útiles para los casos de uso específicos descritos en las secciones respectivas. El protocolo Stellar también utiliza almacenamiento persistente para almacenar los contratos y sus ejecutables en Wasm, de modo que siempre puedan ser accedidos o restaurados.
+
+Ejemplos de datos que pueden ser almacenados en almacenamiento persistente incluyen saldos de usuario, metadatos de token, decisiones de votación y gobernanza, y todos los datos que deben permanecer accesibles para siempre o hasta que se eliminen explícitamente.
+
+Veamos un contrato para un sistema de puntos de lealtad donde los usuarios pueden acumular puntos y canjearlos por recompensas. El saldo de puntos de cada usuario se almacenará en almacenamiento persistente.
+
+```rust
+use soroban_sdk::{contractimpl, contracttype, Address, Env};
+
+#[contracttype]
+pub enum DataKey {
+    Points(Address),
+}
+
+#[contract]
+pub struct LoyaltyPointsContract;
+
+#[contractimpl]
+impl LoyaltyPointsContract {
+    // This function redeems points according to the user's balance
+    pub fn redeem_points(env: Env, user: Address, points: u64) -> bool {
+        user.require_auth();
+        let key = DataKey::Points(user.clone());
+        let current_points: u64 = env.storage().persistent().get(&key).unwrap_or(0);
+
+        if current_points >= points {
+            let new_points = current_points - points;
+            env.storage().persistent().set(&key, &new_points);
+            true
+        } else {
+            false
+        }
+    }
+
+    // This function retrieves the user's points balance
+    pub fn get_points(env: Env, user: Address) -> u64 {
+        let key = DataKey::Points(user);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    // ...
+    // This example omits functions that add points to the users, see the next
+    // section for these.
+}
+```
+
+## Almacenamiento de instancia
+
+El almacenamiento de instancia es un mapa pequeño y de tamaño limitado adjunto a la instancia del contrato. Se almacena físicamente en la misma entrada de ledger que el contrato mismo y comparte el TTL con él.
+
+Al igual que el almacenamiento persistente, el almacenamiento de instancia almacena datos de forma permanente. Sin embargo, tiene algunos pros y contras en comparación con él:
+
+- Pro: Data TTL is tied to the contract instance, thus making state archival behavior much easier
+- Pro/Con: Data is loaded automatically together with the contract, thus reducing the transaction footprint size, but increasing the number of bytes read every time the contract is loaded (_usually_ this still will result in a lower fee)
+- Con: El tamaño total de todas las claves y valores en el almacenamiento de instancia está limitado por el límite de tamaño de entrada del ledger. Consulta el valor actual del límite [aquí](../../../networks/resource-limits-fees.mdx). El número total de claves admitidas está en el orden de decenas a cientos dependiendo del tamaño de los datos subyacentes y el límite actual de la red. Ten en cuenta que el límite de la red nunca puede disminuir, por lo que la instancia nunca puede volverse no válida.
+
+El almacenamiento de instancia es más adecuado para datos que tienen un límite de tamaño bien conocido y que son muy pequeños o son necesarios para cada invocación del contrato. Por ejemplo, la entrada del administrador del contrato (pequeña y debería mantenerse junto con la instancia del contrato), o un par de tokens para un fondo de liquidez (necesario para casi toda operación en un fondo de liquidez).
+
+Veamos funciones adicionales para el contrato de puntos de lealtad de la sección anterior, específicamente las funciones que definen al administrador del contrato y agregan puntos a los usuarios:
+
+```rust
+use soroban_sdk::{contractimpl, Address,  Env};
+
+#[contracttype]
+pub enum DataKey {
+    Points(Address),
+    Admin
+}
+
+#[contractimpl]
+impl LoyaltyPointsContract {
+    // Initialize a contract with the administrator address.
+    // Note, that since protocol 22 this should be `__constructor` instead.
+    pub fn init(env: Env, admin: Address) {
+        env.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    pub fn add_points(env: Env, user: Address, points: u64) {
+        // Load the admin from the instance storage and make sure it has
+        // authorized this invocation.
+        let admin: Address =
+             env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let key = DataKey::Points(user.clone());
+        let current_points: u64 = env.storage().persistent().get(&key).unwrap_or(0);
+
+        let new_points = current_points + points;
+        env.storage().persistent().set(&key, &new_points);
+    }
+}
+```
+
+## Almacenamiento temporal
+
+Como indica el nombre, el almacenamiento temporal almacena datos solo por un cierto período de tiempo, y luego los descarta automáticamente cuando caduca el TTL. **Las entradas temporales desaparecen para siempre cuando caduca su TTL**.
+
+El beneficio del almacenamiento temporal es el costo más bajo y la capacidad de establecer un TTL muy bajo, ambos resultan en tarifas de renta más bajas en comparación con el almacenamiento persistente. Consulta la información actual sobre los tiempos de vida mínimos y tarifas de renta [aquí](../../../networks/resource-limits-fees.mdx).
+
+El almacenamiento temporal es adecuado para datos que son solo necesarios por un período de tiempo relativamente corto y bien definido. 'Bien definido' aquí significa que al crear una entrada, el contrato debería poder definir su TTL máximo necesario.
+
+:::caution
+
+Mientras que el TTL para los datos temporales se puede extender, no es seguro depender de las extensiones para preservar datos. Siempre existe el riesgo de perder datos temporales. Solo la extensión de TTL realizada cuando se crea la entrada está garantizada.
+
+:::
+
+:::caution
+
+Tampoco es seguro depender de una entrada que caduque, ya que puede ser extendida por cualquiera. Cuando se tiene que hacer cumplir un límite de tiempo, inclúyelo siempre en los datos también.
+
+**El almacenamiento temporal es una optimización de costos, no es un mecanismo para hacer cumplir invariantes basados en el tiempo.**
+
+:::
+
+El almacenamiento temporal es más adecuado para datos fácilmente reemplazables o datos que son solo relevantes dentro de un cierto período de tiempo. Por ejemplo, datos de feeds de precios de oráculos que solo son relevantes por unos minutos, o autorizaciones de tiempo limitadas como asignaciones de tokens, tokens de sesión, subastas, bloqueos de tiempo, etc. Los nonces para las firmas de Soroban también se almacenan en la memoria temporal, al menos hasta que la firma misma caduca.
+
+Veamos cómo se puede implementar el almacenamiento temporal en un contrato que realiza subastas periódicamente y los usuarios pueden realizar ofertas que son válidas solo hasta algún punto de tiempo definido por el usuario:
+
+```rust
+use soroban_sdk::{contracttype, contractimpl, Env, Address};
+
+#[contracttype]
+pub enum DataKey {
+    Bid(Address),
+}
+
+#[contracttype]
+pub struct Bid {
+    value: i128,
+    // The bid is no longer valid after this ledger sequence number. It's
+    // important to store this value alongside the entry, as the entry may live
+    // longer than expected.
+    expiration_ledger_seq: u32,
+}
+
+#[contractimpl]
+impl AuctionContract {
+    // This function lets a user place a bid that lives only until the auction ends.
+    pub fn place_bid(env: Env, user: Address, bid: i128, bid_expiration_ledger_seq: u32) {
+        user.require_auth();
+        let bid_key = DataKey::Bid(user.clone());
+
+        // Store the bid in the temporary storage.
+        env.storage().temporary().set(&bid_key, &Bid {
+            value: bid,
+            expiration_ledger_seq: bid_expiration_ledger_seq,
+        });
+        // Compute the TTL that the bid requires.
+        let bid_ttl = bid_expiration_ledger_seq
+            .checked_sub(e.ledger().sequence())
+            .unwrap();
+        // Extend the TTL for the bid, such that it's guaranteed to live at
+        // least until the `bid_expiration_ledger_seq` that the user has
+        // requested. This operation is will fail in
+        // case if extension is longer than the protocol allows, so there is
+        // no need to further validate `bid_ttl`.
+        env.storage().temporary().extend_ttl(&bid_key, bid_ttl, bid_ttl);
+    }
+
+    // This function returns a user's bid (0 if it has expired).
+    pub fn get_bid(env: Env, user: Symbol) -> i64 {
+        let maybe_bid: Bid = env.storage().temporary().get(&DataKey::Bid(user));
+        if let Some(bid) = maybe_bid {
+            if bid.expiration_ledger_seq <= e.ledger().sequence() {
+                bid.value
+            } else {
+                // Even though the entry is still in the storage, it has
+                // logically expired. Somebody must have extended the entry in
+                // order to trick our contract, so return 0.
+                0
+            }
+
+        } else {
+            // There is no bid for the user - it either hasn't existed at all,
+            // or has been removed from the temporary storage. In either case,
+            // just return 0.
+            0
+        }
+    }
+
+    // ...
+    // The functions that initialize and run the auctions are omitted.
+}
+```

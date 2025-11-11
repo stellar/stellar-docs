@@ -1,0 +1,169 @@
+---
+title: Autorización
+sidebar_position: 30
+---
+
+La autorización es el proceso de juzgar qué operaciones "deben" o "no deben" permitirse; se trata de juzgar el _permiso_.
+
+La autorización difiere de la _autenticación_, que es el problema más específico de juzgar si una persona "es quien dice ser" o si un mensaje que afirma provenir de una persona "realmente" vino de ella.
+
+La autorización a menudo usa autenticación criptográfica (a través de firmas) para respaldar sus juicios, pero es un proceso más amplio y general.
+
+Consulta la [guía inicial de autorización](../../../build/guides/auth/contract-authorization.mdx) para aprender más sobre la autorización de contratos inteligentes en Stellar.
+
+## Marco de Autorización Soroban
+
+Soroban tiene como objetivo proporcionar un marco liviano, pero flexible y extensible que permita a los contratos implementar reglas de autorización arbitrariamente complejas, mientras ofrece una implementación integrada para algunas tareas comunes (como la prevención de reproducción). El marco consta de los siguientes componentes:
+
+- Autorización específica de contratos: reglas de autorización personalizadas implementadas por contratos usando el almacenamiento privado del contrato y cuentas abstractas.
+- Abstracción de cuentas: permite a los usuarios personalizar sus reglas de autenticación y definir políticas universales de autorización mediante contratos personalizados de cuenta (esto incluye el soporte integrado para las cuentas Stellar).
+- Biblioteca de autorización basada en el host: garantiza la integridad entre las cuentas personalizadas y los contratos regulares. También define el formato estructurado de la carga útil de la firma, asegura la prevención de reproducción y se encarga de proporcionar los contextos de firma correctos.
+
+El host Soroban también proporciona algunas funciones criptográficas (verificación de firmas, hashing) que pueden ser útiles para la implementación de cuentas personalizadas.
+
+Los contratos que usan el marco de autorización Soroban son interoperables entre sí. Además, es más fácil para las aplicaciones cliente escribir código genérico para interactuar con el marco de autorización Soroban. Por ejemplo, las billeteras pueden implementar una forma generalizada de presentar y firmar cargas útiles Soroban.
+
+Somos conscientes de que no es posible cubrir todos los casos, pero esperamos que la gran mayoría de los contratos puedan operar dentro del marco y así contribuir a construir un ecosistema más cohesivo. Todavía es posible implementar marcos de autorización personalizados, pero no se recomienda (a menos que no haya alternativas).
+
+### Autorización Específica de Contratos
+
+#### Almacenamiento de Contratos
+
+Los contratos tienen acceso exclusivo de lectura y escritura a su [almacenamiento](../../../build/smart-contracts/getting-started/storing-data.mdx) en el libro mayor. Esto permite que los contratos controlen y gestionen de forma segura el acceso de los usuarios a sus datos. Por ejemplo, un contrato de tokens puede asegurarse de que sólo el administrador pueda acuñar más tokens almacenando la identidad del administrador en su almacenamiento. De manera similar, puede asegurarse de que sólo un propietario del saldo pueda transferir ese saldo.
+
+#### `Address`
+
+El enfoque basado en almacenamiento descrito en la sección anterior requiere una manera de representar las identidades de usuario y de autenticarlas. El tipo `Address` es un tipo gestionado por el host que realiza estas funciones.
+
+Desde la perspectiva del contrato, `Address` es un tipo de identificador opaco. La lógica del contrato no necesita depender de la representación interna de `Address` (ver sección [Abstracción de cuenta](#account-abstraction) abajo para más detalles).
+
+El tipo `Address` tiene dos métodos similares en Soroban SDK: `require_auth` y `require_auth_for_args` (estos métodos llaman a la función respectiva del host Soroban). La única diferencia entre las funciones es la capacidad de personalizar los argumentos de invocación. Consulta el [ejemplo de autorización] que demuestra cómo usar estas funciones.
+
+Ambas funciones aseguran que el `Address` haya autorizado la llamada de la función actual dentro del contexto actual (donde contexto está definido por llamadas a `require_auth` en la pila de llamadas actual; ver definición más formal en la [sección abajo](#require_auth-implementation-details)). Las reglas de autenticación para esta autorización están definidas por el `Address` y son aplicadas por el host Soroban. La protección contra reproducción también está implementada en el host, es decir, normalmente no hay necesidad de que un contrato gestione sus propios nonces.
+
+[ejemplo de autorización]: ../../../build/smart-contracts/example-contracts/auth.mdx
+
+#### Autorizar llamadas a sub-contratos
+
+Una de las características clave del Marco de Autorización Soroban es la capacidad de realizar fácilmente llamadas autorizadas a sub-contratos. Por ejemplo, es posible que un contrato llame a `require_auth` para un `Address` y luego llame a `token.xfer` autorizado para el mismo `Address` (ver el [ejemplo de timelock] que demuestra este patrón).
+
+Los contratos no necesitan hacer nada especial para beneficiarse de esta función. Simplemente llamar a un sub-contrato que llame a `require_auth` asegurará que la llamada al sub-contrato haya sido correctamente autorizada.
+
+[ejemplo de timelock]: ../../../build/smart-contracts/example-contracts/timelock.mdx
+
+#### Cuándo usar `require_auth`
+
+La decisión principal relacionada con la autorización que el desarrollador de un contrato debe tomar para cualquier `Address` dado es si necesita llamar a `require_auth` para él. Aunque la decisión debe tomarse caso por caso, aquí hay algunas reglas generales:
+
+- Si el acceso a los datos de la `Address` en este contrato es sólo de lectura, entonces probablemente no se necesita `require_auth`.
+- Si los datos del `Address` en este contrato se están modificando de una manera que no es estrictamente beneficiosa para el usuario, entonces probablemente se necesita `require_auth` (por ejemplo, reducir el saldo de un usuario de tokens necesita autorización, mientras que aumentarlo no necesita autorización).
+- Si un contrato llama a otro contrato que llamará `require_auth` para el `Address` (por ejemplo, `token.xfer`), entonces añadir `require_auth` en el llamador aseguraría que la autorización para la llamada interna no pueda reutilizarse fuera de tu contrato. Por ejemplo, si quieres hacer algo positivo para el usuario, pero solo cuando hayan transferido algún token a tu contrato, entonces la llamada al contrato misma debe `require_auth`.
+
+#### Autorizar Múltiples `Address`es
+
+No hay ninguna restricción explícita sobre cuántas entidades `Address` usa el contrato y cuántos `Address`es han llamado `require_auth`.  Eso significa que es posible autorizar una llamada a contrato en nombre de varios usuarios, que pueden incluso tener diferentes contextos de autorización (personalizados a través de argumentos en `require_auth_for_args`). [Atomic swap] es un ejemplo que trata con la autorización de dos `Address`es.
+
+[intercambio atómico]: ../../../build/smart-contracts/example-contracts/atomic-swap.mdx
+
+Ten en cuenta que los contratos que manejan múltiples `Address`es autorizados necesitan un soporte un poco más complejo en el lado del cliente (para recolectar y adjuntar las firmas adecuadas).
+
+### Abstracción de cuenta
+
+La abstracción de cuenta es una forma de desacoplar la lógica de autenticación de las reglas de autorización específicas del contrato. El `Address` definido arriba es en realidad un identificador de una cuenta 'abstracta'. Es decir, los contratos conocen el `Address` y pueden exigir autorización de éste, pero no saben cómo está implementado exactamente.
+
+Por ejemplo, imagina un contrato de tokens. Sus responsabilidades son gestionar los saldos de múltiples usuarios (transferir, acuñar, quemar, etc.). Realmente no hay nada en estas responsabilidades que tenga que ver con _cómo exactamente_ el usuario autorizó la transacción que modifica el saldo. Los usuarios pueden querer usar alguna clave hardware que soporte una nueva generación de algoritmos criptográficos (que ni siquiera tienen que existir hoy) o pueden querer tener un esquema multisig personalizado y nada de esto realmente tiene que ver con la lógica del token.
+
+La abstracción de cuenta proporciona un punto de extensión conveniente para cada contrato que usa `Address` para autorización. No resuelve todos los problemas automáticamente: las herramientas del lado del cliente todavía pueden necesitar adaptarse para soportar diferentes esquemas de autenticación o diferentes billeteras. Pero el estado en cadena no necesita ser modificado, y modificar el estado en cadena es un problema mucho más difícil.
+
+#### Tipos de Implementaciones de Cuenta
+
+Conceptualmente, cada cuenta abstracta es un contrato especial que define reglas de autenticación y potencialmente algunas políticas adicionales de autorización específicas de cuenta. Sin embargo, por optimización e integración con las cuentas Stellar existentes, Soroban soporta 4 tipos diferentes de implementaciones de cuenta.
+
+A continuación se describen las implementaciones generales. Consulta la [guía](../contract-development/contract-interactions/stellar-transaction.mdx) de transacciones para la información concreta de cómo se representan las diferentes cuentas.
+
+##### Cuenta Stellar
+
+Corresponde a `Address::Account`.
+
+Este es un 'contrato de cuenta' especial incorporado que maneja todas las cuentas Stellar. No es un contrato real y no necesita ser desplegado.
+
+Esto soporta la multisig Stellar con umbral medio. Consulta la [documentación] de Stellar para más detalles sobre multisig y umbrales.
+
+[documentación]: ../transactions/signatures-multisig.mdx
+
+##### Invocador de Transacción
+
+Corresponde a `Address::Account`.
+
+Esta es también una cuenta Stellar, pero su firma se infiere de la cuenta fuente de la transacción Stellar (o de la operación, si tiene una).
+
+Esto es puramente una optimización de la [Cuenta Stellar](#stellar-account) que puede omitir una firma en caso de que la cuenta fuente de la transacción también autorice la invocación del contrato.
+
+##### Invocador de Contrato
+
+Corresponde a `Address::Contract`.
+
+Este es un caso especial de 'cuenta' que puede aparecer sólo cuando un contrato llama a otro contrato. Consideramos que dado que el contrato hace la llamada, debe estar autorizándola (de lo contrario, no debería haber hecho esa llamada). Por lo tanto, todas las llamadas a `require_auth` hechas en nombre del contrato invocador **directo** `Address` se consideran autorizadas (pero no las llamadas en nombre de contratos más profundos en la pila).
+
+##### Cuenta Personalizada
+
+Corresponde a `Address::Contract`.
+
+Este es el punto de extensión de la abstracción de cuentas. La cuenta personalizada es un contrato especial que implementa el método `__check_auth`. Si algún contrato llama a `require_auth` para el `Address` de este contrato, el host Soroban llamará a `__check_auth` con los argumentos correspondientes.
+
+`__check_auth` recibe una carga útil de firma, una lista de firmas (en cualquier formato definido por el usuario) y una lista de las invocaciones de contrato que están siendo autorizadas por estas firmas. Su responsabilidad es realizar la autenticación verificando las firmas y también (opcionalmente) aplicar una política de autorización personalizada. Por ejemplo, se puede implementar un sistema de pesos de firmas similar al de Stellar, pero también puede tener reglas personalizables para los pesos, por ejemplo, permitir gastar más de X unidades del token Y solo dado un peso de firma Z.
+
+La cuenta personalizada también puede ser tratada como una billetera inteligente custodia. Mantiene los fondos del usuario (saldos de tokens, NFTs, etc.) y brinda a los usuarios formas de autorizar operaciones sobre estos fondos. Dicho esto, nada impide que las cuentas personalizadas autoricen operaciones que no tengan nada que ver con saldos, por ejemplo, pueden usarse para realizar funciones administrativas para tokens (no olvides que la cuenta personalizada simplemente define qué hacer cuando se llama a `require_auth`).
+
+Para la interfaz exacta y más detalles, consulta el [ejemplo de cuenta personalizada].
+
+[ejemplo de cuenta personalizada]: ../../../build/smart-contracts/example-contracts/custom-account.mdx
+
+### Secp256r1, passkeys y billeteras inteligentes
+
+Después de una exitosa votación de validadores públicos para actualizar la red principal Stellar al Protocolo 21, se habilitó el esquema de firma secp256r1 para transacciones de contratos inteligentes. Esto permite a los desarrolladores implementar passkeys para firmar transacciones en lugar de usar claves secretas o frases semilla. La documentación oficial está en desarrollo, consulta toda la información sobre passkeys y billeteras inteligentes en la página de [Smart Wallets](../../../build/apps/smart-wallets.mdx) en la documentación.
+
+### Conceptos Avanzados
+
+La mayoría de los contratos no necesitarán los conceptos descritos en esta sección. Consulta esto al desarrollar contratos complejos que manejan árboles profundos de llamadas y/o múltiples `Address`es.
+
+#### Detalles de implementación de `require_auth`
+
+Cuando una transacción Soroban se ejecuta en cadena, el host recopila una lista de entradas `SorobanAuthorizationEntry` de la transacción ([XDR][soroban-auth-entry]). Estas entradas contienen credenciales firmadas del autorizador y árboles de invocaciones autorizadas. El host utiliza estas entradas para verificar la autorización durante la ejecución del contrato.
+
+Cada vez que la función del host `require_auth`/`require_auth_for_args` es llamada para una cuenta que no es invocador de contrato, se realizan los siguientes pasos:
+
+- Encontrar un árbol de invocación autorizado que coincida con la llamada `require_auth`. El proceso de coincidencia es bastante complejo y se describe en la sección siguiente.
+- Si la autenticación aún no ha ocurrido para este árbol, entonces realizarla:
+  - Verificar la expiración de la firma. Las firmas expiradas no son válidas.
+  - Verificar y consumir el nonce. El nonce es un número arbitrario que debe ser único entre todas las firmas no expiradas de la dirección.
+  - Construir la preimagen esperada de la [carga útil de firma] y calcular su hash SHA-256 para obtener la carga útil final de la firma.
+  - Llamar a `__check_auth` del contrato de cuenta correspondiente al `Address` usando la carga útil de firma y las invocaciones del árbol de autorización.
+- Marcar la invocación como 'agotada' en su árbol de invocación autorizado. Las invocaciones 'agotadas' se omitirán al coincidir con futuras llamadas a `require_auth`.
+
+Si alguno de los pasos anteriores falla, la autorización se considera no exitosa.
+
+Nota que la autenticación ocurre sólo una vez por árbol, ya que todo el árbol debe estar firmado.
+
+[soroban-auth-entry]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L570
+[preimagen de carga útil de firma]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L703
+
+#### Coincidencia de Árboles de Invocación Autorizados
+
+Para que las autorizaciones tengan éxito, todas las llamadas a `require_auth`/`require_auth_for_args` deben estar cubiertas por los correspondientes árboles `SorobanAuthorizedInvocation` en una transacción (definidos en la [XDR][invocation-xdr] de la transacción).
+
+Formalmente, esta correspondencia se define de la siguiente manera.
+
+Dada una invocación de contrato de nivel superior `I`, podemos construir un 'árbol de invocación de contrato' `T` rastreando todas las llamadas a sub-contratos (un borde dirigido `A->B` en el árbol significa 'la función de contrato A llama a la función de contrato B'). Nota que sólo consideramos las funciones que se implementan en diferentes contratos, es decir, cualquier llamada de función que no involucre una invocación de contrato a través del host `call` se considera que pertenece al mismo nodo.
+
+Supongamos que se requiere autorización de las direcciones `A_1..A_N`. Entonces para cada dirección `A_i` hay dos tipos de nodos en el árbol de invocación `T`: nodos `R` que tuvieron una llamada `require_auth` para `A_i` y nodos `N` que no tuvieron tal llamada. Luego eliminamos todos los nodos `N` y todos los bordes de `T` y añadimos los bordes dirigidos que conectan los nodos `R` restantes de tal manera que el borde vaya de `R_j` a `R_k` si hubo un camino entre `R_j` y `R_k` en `T` que no contiene ningún otro nodo `R`. Como resultado obtenemos un bosque de árboles `SorobanAuthorizedInvocation` para `A_i`. Observa que estos árboles no tienen que tener como raíz al nodo `I` (es decir, la llamada de contrato de nivel superior), por lo tanto es posible, por ejemplo, agrupar la llamada autorizada sin requerir la firma de la función de agrupación.
+
+En términos más simples, los árboles `SorobanAuthorizedInvocation` para un `Address` son subconjuntos del árbol completo de invocación que están 'condensados' para contener solo invocaciones que tienen la llamada `require_auth` para ese `Address`.
+
+Durante el proceso de coincidencia que ocurre para cada `require_auth` el host intenta coincidir el camino actual en `T` con un árbol `SorobanAuthorizedInvocation` para el `Address` correspondiente. El camino se considera coincidente sólo cuando existe un camino correspondiente de nodos `R` _agotados_ que llevan a la llamada actual. Esto significa que si el `Address` firma una secuencia de llamadas `A.foo->B.bar->C.baz`, entonces su verificación de autorización fallará en caso de que `A.foo` llame directamente a `C.baz` porque `C.baz` debe ser llamado estrictamente desde `B.bar`.
+
+##### Direcciones duplicadas
+
+En caso de que la misma función de contrato llame a `require_auth` para el mismo `Address` múltiples veces (por ejemplo, cuando se agrupan varias operaciones del mismo usuario), cada llamada a `require_auth` aún debe tener un nodo correspondiente en el árbol `SorobanAuthorizedInvocation`. Por ello, puede haber múltiples árboles válidos que permitan pasar todas las verificaciones de autorización. No hay nada malo en esto: la dirección debe haber autorizado todas las invocaciones. El único requisito para que tales casos se manejen correctamente es asegurar que las llamadas a `require_auth` para un `Address` ocurran antes de las llamadas a sub-contratos correspondientes.
+
+[invocation-xdr]: https://github.com/stellar/stellar-xdr/blob/e372df9f677961aac04c5a4cc80a3667f310b29f/Stellar-transaction.x#L537
