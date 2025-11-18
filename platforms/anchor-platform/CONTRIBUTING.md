@@ -150,8 +150,8 @@ This should help to make it a bit clearer.
   - Link to it `[something like this](/docs/tools/developer-tools/wallets)`
     (note that there is no `.mdx` extension)
 - Wildcard! I want to link _from_ the MDX document
-  `/platforms/anchor-platform/admin-guide/events/configuration.mdx`
-  _to_ the MDX document
+  `/platforms/anchor-platform/admin-guide/events/configuration.mdx` _to_ the MDX
+  document
   `/platforms/stellar-disbursement-platform/admin-guide/60-anchor-platform-integration-points.mdx`
   - We're "crossing" between the `/platforms/anchor-platform` and
     `/platforms/stellar-disbursement-platform` plugin instances
