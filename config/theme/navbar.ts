@@ -450,7 +450,7 @@ const tools: NavbarItem = {
       className: 'subtitle',
     },
     {
-      to: "/platforms/anchor-platform",
+      to: "/docs/platforms/anchor-platform",
       label: "Anchor Platform",
     },
     {

@@ -10,6 +10,8 @@ import footerColumns from './config/theme/footer';
 
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import type * as Plugin from '@docusaurus/types/src/plugin';
+import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 
 const config: Config = {
   // future: {
@@ -22,6 +24,8 @@ const config: Config = {
   baseUrl: "/",
   trailingSlash: false,
   onBrokenAnchors: "ignore",
+  // onBrokenLinks: "log",
+  // onBrokenMarkdownLinks: "log",
   onBrokenLinks: "throw",
   onBrokenMarkdownLinks: "throw",
   favicon: "img/docusaurus/favicon-96x96.png",
@@ -52,10 +56,28 @@ const config: Config = {
               groupPathsBy: "tagGroup",
             },
           },
-        },
+          ap_platform: {
+            specPath: "openapi/anchor-platform/bundled-platform.yaml",
+            outputDir: "docs/platforms/anchor-platform/api-reference/platform/transactions",
+            hideSendButton: true,
+            template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+          ap_callbacks: {
+            specPath: "openapi/anchor-platform/bundled-callbacks.yaml",
+            outputDir: "docs/platforms/anchor-platform/api-reference/callbacks",
+            hideSendButton: true,
+            template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+          ap_custody: {
+            specPath: "openapi/anchor-platform/bundled-custody.yaml",
+            outputDir: "docs/platforms/anchor-platform/api-reference/custody",
+            hideSendButton: true,
+            template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+        } satisfies Plugin.PluginOptions,
       },
     ],
-    ...anchorPlatformPluginInstances,
+    // ...anchorPlatformPluginInstances,
     ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
