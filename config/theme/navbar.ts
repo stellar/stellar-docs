@@ -35,7 +35,12 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small>',
+      value: '<hr><a href="/docs/build/wallet-playbook" class="subtitle"><small>Stellar Wallet Playbook</small>',
+      className: 'subtitle',
+    },
+    {
+      type: 'html',
+      value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Application Tutorials</small>',
       className: 'subtitle',
     },
     {
