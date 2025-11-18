@@ -141,9 +141,8 @@ This should help to make it a bit clearer.
   - Link to it
     `[something like this](/platforms/anchor-platform/admin-guide/getting-started)`
     (note that there is no `.mdx` extension)
-- I want to link _from_ the MDX document
-  `/platforms/anchor-platform/custody/README.mdx` _to_ the MDX document
-  `/docs/tools/developer-tools/wallets.mdx`
+- I want to link _from_ the MDX document `/platforms/anchor-platform/README.mdx`
+  _to_ the MDX document `/docs/tools/developer-tools/wallets.mdx`
   - We're "crossing" between the `/platforms/anchor-platform` and `/docs` plugin
     instances
   - Use an **absolute URL** path
