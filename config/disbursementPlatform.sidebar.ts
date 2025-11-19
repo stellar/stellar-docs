@@ -11,7 +11,7 @@ const sidebars: SidebarsConfig = {
         type: "doc",
         id: "README",
       },
-      items: [
+      items: [ 
         "README",
         {
           type: "category",
