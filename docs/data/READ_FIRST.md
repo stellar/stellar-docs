@@ -1,5 +1,6 @@
 ---
 draft: true
+sidebar_class_name: hidden
 ---
 
 # STOP WHAT YOU'RE DOING
