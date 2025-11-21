@@ -11,6 +11,17 @@ We're super glad to have you here, and hopefully this document will help you
 understand how (and more importantly _where_) to make the needed changes to our
 documentation. Let's start off with a bit of Docusaurus vocabulary, shall we?
 
+## NOTICE! AP HAS BEEN DE-VERSIONED
+
+The Anchor Platform documentation has been de-versioned, and we're only keeping
+a "current" version of the docs from now on. So, anything in this page that
+references creating a new version, updating old versions, etc. can be
+disregarded.
+
+However, the Anchor Platform docs _still_ remain in their own docusaurus
+instance. So, information here about linking between/across instances is still
+relevant. (This will not be the case forever, but for now, it is.)
+
 ## TL;DR
 
 - For _unreleased_ versions of Anchor Platform:
@@ -40,6 +51,7 @@ yarn ap:versions:regen
 
 ## Table of Contents <!-- omit in toc -->
 
+- [NOTICE! AP HAS BEEN DE-VERSIONED](#notice-ap-has-been-de-versioned)
 - [TL;DR](#tldr)
 - [More About Docusaurus than You Ever Wanted to Know](#more-about-docusaurus-than-you-ever-wanted-to-know)
   - [Versions Nomenclature](#versions-nomenclature)
