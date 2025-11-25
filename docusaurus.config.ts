@@ -146,12 +146,6 @@ const config: Config = {
         navbarItems.networks,
         navbarItems.validators,
         {
-          type: 'docsVersionDropdown',
-          docsPluginId: 'ap',
-          dropdownActiveClassDisabled: true,
-          position: 'right',
-        },
-        {
           type: 'localeDropdown',
           position: 'right',
         },
