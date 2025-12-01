@@ -184,7 +184,6 @@ versioned AP documentation.
   they'll be told it's the unreleased version.
 
   There is also a new directory here you should know about:
-
   - `/platforms/anchor-platform/assets` Since it's likely that the various
     images, diagrams, etc. will need to update/change from one version to
     another, we're co-locating the relevant assets in this directory. This
@@ -200,7 +199,6 @@ versioned AP documentation.
   `v3.x` (and beyond, eventually), you'll want to be updating _specfiles here_.
 
   There is also a new directory here you should know about:
-
   - `/openapi/anchor-platform/versions` This directory stores a copy of the
     _bundled_ specfiles for each version that is released. The plugin we use to
     generate the API documentation for these specfiles gets configured to use
