@@ -41,23 +41,23 @@ Si bien las cuentas personalizadas son admitidas por el protocolo Stellar y el S
 
 [open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
 [open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
-[ejemplo de cuenta personalizada]: https://github.com/stellar/soroban-examples/tree/v22.0.1/account
+[ejemplo de cuenta personalizada]: https://github.com/stellar/soroban-examples/tree/v23.0.0/account
 
 ## Ejecutar el ejemplo
 
-Primero, pasa por el proceso de [Configuración] para obtener tu entorno de desarrollo configurado, luego clona la etiqueta `v22.0.1` del repositorio `soroban-examples`:
+Primero, sigue el proceso de [Configuración] para preparar tu entorno de desarrollo, luego clona la etiqueta `v23.0.0` del repositorio `soroban-examples`:
 
 [configuración]: ../getting-started/setup.mdx
 
-```
-git clone -b v22.0.1 https://github.com/stellar/soroban-examples
+```sh
+git clone -b v23.0.0 https://github.com/stellar/soroban-examples
 ```
 
 O, evita la configuración del entorno de desarrollo y abre este ejemplo en [GitHub Codespaces][open-in-github-codespaces] o en [Code Anywhere][open-in-code-anywhere].
 
 Para ejecutar las pruebas del ejemplo usa `cargo test`.
 
-```
+```sh
 cargo test -p soroban-account-contract
 ```
 
@@ -80,25 +80,35 @@ Por ejemplo, el usuario puede inicializar este contrato con 2 claves y establece
 
 ### Inicialización
 
-```rust
+```rust title="account/src/lib.rs"
+#[contract]
+struct AccountContract;
+
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
     SignerCnt,
     Signer(BytesN<32>),
-    SpendLimit(BytesN<32>),
+    SpendLimit(Address),
 }
+
 ...
-// Initialize the contract with a list of ed25519 public key ('signers').
-pub fn __constructor(env: Env, signers: Vec<BytesN<32>>) {
-    // In reality this would need some additional validation on signers
-    // (deduplication etc.).
-    for signer in signers.iter() {
-        env.storage().instance().set(&DataKey::Signer(signer), &());
+
+#[contractimpl]
+impl AccountContract {
+    // Initialize the contract with a list of ed25519 public key ('signers').
+    pub fn __constructor(env: Env, signers: Vec<BytesN<32>>) {
+        // In reality this would need some additional validation on signers
+        // (deduplication etc.).
+        for signer in signers.iter() {
+            env.storage().instance().set(&DataKey::Signer(signer), &());
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::SignerCnt, &signers.len());
     }
-    env.storage()
-        .instance()
-        .set(&DataKey::SignerCnt, &signers.len());
+
+    ...
 }
 ```
 
@@ -109,18 +119,26 @@ Utilizamos el constructor para garantizar que la instancia del contrato se cree 
 ### Modificación de política
 
 ```rust
-// Adds a limit on any token transfers that aren't signed by every signer.
-pub fn add_limit(env: Env, token: BytesN<32>, limit: i128) {
-    // The current contract address is the account contract address and has
-    // the same semantics for `require_auth` call as any other account
-    // contract address.
-    // Note, that if a contract *invokes* another contract, then it would
-    // authorize the call on its own behalf and that wouldn't require any
-    // user-side verification.
-    env.current_contract_address().require_auth();
-    env.storage()
+#[contractimpl]
+impl AccountContract {
+    ...
+
+    // Adds a limit on any token transfers that aren't signed by every signer.
+    // For the sake of simplicity of the example the limit is only applied on
+    // a per-authorization basis; the 'real' limits should likely be time-based
+    // instead.
+    pub fn add_limit(env: Env, token: Address, limit: i128) {
+        // The current contract address is the account contract address and has
+        // the same semantics for `require_auth` call as any other account
+        // contract address.
+        // Note, that if a contract *invokes* another contract, then it would
+        // authorize the call on its own behalf and that wouldn't require any
+        // user-side verification.
+        env.current_contract_address().require_auth();
+        env.storage()
             .instance()
             .set(&DataKey::SpendLimit(token), &limit);
+    }
 }
 ```
 
@@ -129,40 +147,90 @@ Esta función permite a los usuarios establecer y modificar el límite de gasto 
 ### `__check_auth`
 
 ```rust
-pub fn __check_auth(
-    env: Env,
-    signature_payload: BytesN<32>,
-    signatures: Vec<AccSignature>,
-    auth_context: Vec<Context>,
-) -> Result<(), AccError> {
-    // Perform authentication.
-    authenticate(&env, &signature_payload, &signatures)?;
+#[contracttype]
+#[derive(Clone)]
+pub struct AccSignature {
+    pub public_key: BytesN<32>,
+    pub signature: BytesN<64>,
+}
 
-    let tot_signers: u32 = env
-        .storage()
-        .instance()
-        .get::<_, u32>(&DataKey::SignerCnt)
-        .unwrap();
-    let all_signed = tot_signers == signatures.len();
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum AccError {
+    NotEnoughSigners = 1,
+    NegativeAmount = 2,
+    BadSignatureOrder = 3,
+    UnknownSigner = 4,
+}
 
-    let curr_contract = env.current_contract_address();
+...
 
-    // This is a map for tracking the token spend limits per token. This
-    // makes sure that if e.g. multiple `transfer` calls are being authorized
-    // for the same token we still respect the limit for the total
-    // transferred amount (and not the 'per-call' limits).
-    let mut spend_left_per_token = Map::<Address, i128>::new(&env);
-    // Verify the authorization policy.
-    for context in auth_context.iter() {
-        verify_authorization_policy(
-            &env,
-            &context,
-            &curr_contract,
-            all_signed,
-            &mut spend_left_per_token,
-        )?;
+#[contractimpl]
+impl CustomAccountInterface for AccountContract {
+    type Signature = Vec<AccSignature>;
+    type Error = AccError;
+
+    // This is the 'entry point' of the account contract and every account
+    // contract has to implement it. `require_auth` calls for the Address of
+    // this contract will result in calling this `__check_auth` function with
+    // the appropriate arguments.
+    //
+    // This should return `()` if authentication and authorization checks have
+    // been passed and return an error (or panic) otherwise.
+    //
+    // `__check_auth` takes the payload that needed to be signed, arbitrarily
+    // typed signatures (`Vec<AccSignature>` contract type here) and authorization
+    // context that contains all the invocations that this call tries to verify.
+    //
+    // `__check_auth` has to authenticate the signatures. It also may use
+    // `auth_context` to implement additional authorization policies (like token
+    // spend limits here).
+    //
+    // Soroban host guarantees that `__check_auth` is only being called during
+    // `require_auth` verification and hence this may mutate its own state
+    // without the need for additional authorization (for example, this could
+    // store per-time-period token spend limits instead of just enforcing the
+    // limit per contract call).
+    //
+    // Note, that `__check_auth` function shouldn't call `require_auth` on the
+    // contract's own address in order to avoid infinite recursion.
+    #[allow(non_snake_case)]
+    fn __check_auth(
+        env: Env,
+        signature_payload: Hash<32>,
+        signatures: Self::Signature,
+        auth_context: Vec<Context>,
+    ) -> Result<(), AccError> {
+        // Perform authentication.
+        authenticate(&env, &signature_payload, &signatures)?;
+
+        let tot_signers: u32 = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SignerCnt)
+            .unwrap();
+        let all_signed = tot_signers == signatures.len();
+
+        let curr_contract = env.current_contract_address();
+
+        // This is a map for tracking the token spend limits per token. This
+        // makes sure that if e.g. multiple `transfer` calls are being authorized
+        // for the same token we still respect the limit for the total
+        // transferred amount (and not the 'per-call' limits).
+        let mut spend_left_per_token = Map::<Address, i128>::new(&env);
+        // Verify the authorization policy.
+        for context in auth_context.iter() {
+            verify_authorization_policy(
+                &env,
+                &context,
+                &curr_contract,
+                all_signed,
+                &mut spend_left_per_token,
+            )?;
+        }
+        Ok(())
     }
-    Ok(())
 }
 ```
 
@@ -234,11 +302,23 @@ fn verify_authorization_policy(
             return Err(AccError::NotEnoughSigners);
         }
     };
+
+    ...
+}
 ```
 
 Verificamos la política por `Context`. es decir, por cada llamada `require_auth` a la dirección de esta cuenta. La política para el contrato de la cuenta en sí exige que cada firmante haya firmado la llamada al método.
 
 ```rust
+fn verify_authorization_policy(
+    env: &Env,
+    context: &Context,
+    curr_contract: &Address,
+    all_signed: bool,
+    spend_left_per_token: &mut Map<Address, i128>,
+) -> Result<(), AccError> {
+    ...
+
     // Besides the checks above we're only interested in functions that spend tokens.
     if contract_context.fn_name != TRANSFER_FN
         && contract_context.fn_name != APPROVE_FN
@@ -280,6 +360,7 @@ Verificamos la política por `Context`. es decir, por cada llamada `require_auth
         spend_left_per_token.set(contract_context.contract.clone(), spend_left - spent);
     }
     Ok(())
+}
 ```
 
 Luego verificamos los nombres de las funciones estándar de tokens y confirmamos que para estas funciones no excedemos los límites de gasto.
@@ -288,14 +369,14 @@ Luego verificamos los nombres de las funciones estándar de tokens y confirmamos
 
 Abre el archivo [`account/src/test.rs`] para seguir el proceso.
 
-[`account/src/test.rs`]: https://github.com/stellar/soroban-examples/tree/v22.0.1/account/src/test.rs
+[`account/src/test.rs`]: https://github.com/stellar/soroban-examples/tree/v23.0.0/account/src/test.rs
 
 Consulta otros ejemplos para obtener información general sobre la configuración de la prueba.
 
 Aquí solo nos centramos en algunos puntos específicos de los contratos de cuenta.
 
 ```rust
-fn sign(e: &Env, signer: &Keypair, payload: &BytesN<32>) -> RawVal {
+fn sign(e: &Env, signer: &Keypair, payload: &BytesN<32>) -> Val {
     AccSignature {
         public_key: signer_public_key(e, signer),
         signature: signer
@@ -311,11 +392,14 @@ A diferencia de la mayoría de los contratos que pueden simplemente usar `Addres
 
 ```rust
 let payload = BytesN::random(&env);
-let token = BytesN::random(&env);
+let token = Address::generate(&env);
+// `__check_auth` can't be called directly, hence we need to use
+// `try_invoke_contract_check_auth` testing utility that emulates being
+// called by the Soroban host during a `require_auth` call.
 env.try_invoke_contract_check_auth::<AccError>(
-    &account_contract.address.contract_id(),
+    &account_contract.address,
     &payload,
-    &vec![&env, sign(&env, &signers[0], &payload)],
+    vec![&env, sign(&env, &signers[0], &payload)].into(),
     &vec![
         &env,
         token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1000),
@@ -351,11 +435,13 @@ Afirmar el error específico del contrato a `try_invoke_contract_check_auth` per
 Es una buena idea que el contrato de cuenta tenga códigos de error detallados y verifique que se devuelvan cuando se esperan.
 
 ```rust
+// 1 signer no longer can perform the token operation that transfers more
+// than 1000 units.
 assert_eq!(
     env.try_invoke_contract_check_auth::<AccError>(
-        &account_contract.address.contract_id(),
+        &account_contract.address,
         &payload,
-        &vec![&env, sign(&env, &signers[0], &payload)],
+        vec![&env, sign(&env, &signers[0], &payload)].into(),
         &vec![
             &env,
             token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1001)

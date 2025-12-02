@@ -182,11 +182,6 @@ const learn: NavbarItem = {
       activeBasePath: 'docs/learn/fundamentals/stellar-stack',
     },
     {
-      to: '/docs/learn/fundamentals/networks',
-      label: 'Networks',
-      activeBasePath: 'docs/learn/fundamentals/networks',
-    },
-    {
       to: '/docs/learn/fundamentals/lumens',
       label: 'Lumens (XLM)',
       activeBasePath: 'docs/learn/fundamentals/lumens',
@@ -335,19 +330,24 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/apis/rpc'
     },
     {
+      to: '/docs/data/apis/rpc/providers',
+      label: 'RPC Providers',
+      activeBasePath: 'docs/data/apis/rpc/providers'
+    },
+    {
       to: '/docs/data/apis/horizon',
       label: 'Horizon',
       activeBasePath: 'docs/data/apis/horizon'
     },
     {
+      to: '/docs/data/apis/horizon/providers',
+      label: 'Horizon Providers',
+      activeBasePath: 'docs/data/apis/horizon/providers'
+    },
+    {
       to: '/docs/data/apis/migrate-from-horizon-to-rpc',
       label: 'Migrate Horizon to RPC',
       activeBasePath: 'docs/data/apis/migrate-from-horizon-to-rpc'
-    },
-    {
-      to: '/docs/data/apis/api-providers',
-      label: 'Providers',
-      activeBasePath: 'docs/data/apis/api-providers'
     },
     {
       type: 'html',
@@ -410,9 +410,14 @@ const tools: NavbarItem = {
       activeBasePath: 'docs/tools/quickstart'
     },
     {
-      to: '/docs/tools/developer-tools/openzeppelin-contracts',
+      to: '/docs/tools/openzeppelin-contracts',
       label: 'OpenZeppelin Contracts',
-      activeBasePath: 'docs/tools/developer-tools/openzeppelin-contracts'
+      activeBasePath: 'docs/tools/openzeppelin-contracts'
+    },
+    {
+      to: '/docs/tools/scaffold-stellar',
+      label: 'Scaffold Stellar',
+      activeBasePath: 'docs/tools/scaffold-stellar'
     },
     {
       to: '/docs/tools/developer-tools',
@@ -464,7 +469,7 @@ const networks: NavbarItem = {
   items: [
     {
       to: '/docs/networks',
-      label: 'Network Configuration',
+      label: 'Networks Overview',
       exact: true,
     },
     {
