@@ -125,7 +125,7 @@ So, in practical terms:
 This should help to make it a bit clearer.
 
 - I want to link _from_ the MDX document
-  `/platforms/anchor-platform/admin-guide/sep6/configuration.mdx` _to_ the MDX
+  `/platforms/anchor-platform/sep-guide/sep6/configuration.mdx` _to_ the MDX
   document
   `/platforms/anchor-platform/api-reference/platform/rpc/methods/notify_amounts_updated.mdx`:
   - We're in the same `/platforms/anchor-platform` plugin instance

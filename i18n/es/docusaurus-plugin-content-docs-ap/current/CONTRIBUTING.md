@@ -93,7 +93,9 @@ Así que, en términos prácticos:
 
 Esto debería ayudarte a aclarar un poco.
 
-- Quiero enlazar _desde_ el documento MDX `/platforms/anchor-platform/admin-guide/sep6/configuration.mdx` _hasta_ el documento MDX `/platforms/anchor-platform/api-reference/platform/rpc/methods/notify_amounts_updated.mdx`:
+- Quiero enlazar _desde_ el documento MDX
+  `/platforms/anchor-platform/sep-guide/sep6/configuration.mdx` _hacia_ el documento MDX
+  `/platforms/anchor-platform/api-reference/platform/rpc/methods/notify_amounts_updated.mdx`:
   - Estamos en la misma instancia de plugin `/platforms/anchor-platform`
   - Usa una _ruta de archivo relativa_
   - Enlaza a ella `[algo como esto](../../api-reference/platform/rpc/methods/notify_amounts_updated.mdx)`
