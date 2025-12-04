@@ -56,7 +56,7 @@ const config: Config = {
           } satisfies OpenApiPlugin.Options,
           ap_platform: {
             specPath: "openapi/anchor-platform/bundled-platform.yaml",
-            outputDir: "platforms/anchor-platform/api-reference/platform/transactions",
+            outputDir: "docs/platforms/anchor-platform/api-reference/platform/transactions",
             hideSendButton: true,
             template: "src/template.mustache",
           } satisfies OpenApiPlugin.Options,
