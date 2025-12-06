@@ -16,6 +16,7 @@ const sidebars: SidebarsConfig = {
         {
           type: "category",
           label: "Admin Guide",
+          collapsed: false,
           link: {
             description:
               "All you need to know about setting up, running, and using the Stellar Disbursement Platform.",
@@ -27,7 +28,7 @@ const sidebars: SidebarsConfig = {
         {
           type: "category",
           label: "API Reference",
-          collapsed: false,
+          collapsed: true,
           link: {
             description:
               "View all Stellar Disbursement Platform API information.",
