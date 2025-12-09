@@ -25,8 +25,7 @@ const resources = {
     },
     {
       label: "llms.txt",
-      href: "/llms.txt",
-      target: "_self",
+      to: "/llms.txt",
     },
   ] satisfies FooterLinkItem[],
 };
