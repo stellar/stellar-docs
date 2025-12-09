@@ -16,10 +16,12 @@ export default function FooterLinkItem({ item }: Props): ReactNode {
   if (isStaticFile) {
     return (
       <a
+        className="footer__link-item"
         href={normalizedHref}
         {...props}
         onClick={(e) => {
           // Prevent any routing/search interception
+          e.preventDefault();
           e.stopPropagation();
           window.location.href = normalizedHref;
         }}
