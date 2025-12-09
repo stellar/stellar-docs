@@ -3,13 +3,13 @@ import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
 import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
-import { anchorPlatformPluginInstances } from './config/anchorPlatform.config';
-import { disbursementPlatformPluginInstances } from './config/disbursementPlatform.config';
 import navbarItems from './config/theme/navbar';
 import footerColumns from './config/theme/footer';
 
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import type * as Plugin from '@docusaurus/types/src/plugin';
+import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 
 const config: Config = {
   // future: {
@@ -51,12 +51,31 @@ const config: Config = {
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
-          },
-        },
+          } satisfies OpenApiPlugin.Options,
+          ap_platform: {
+            specPath: "openapi/anchor-platform/bundled-platform.yaml",
+            outputDir: "docs/platforms/anchor-platform/api-reference/platform/transactions",
+            hideSendButton: true,
+            template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+          ap_callbacks: {
+            specPath: "openapi/anchor-platform/bundled-callbacks.yaml",
+            outputDir: "docs/platforms/anchor-platform/api-reference/callbacks",
+            hideSendButton: true,
+            template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+          stellar_disbursement_platform: {
+            specPath: "openapi/stellar-disbursement-platform/bundled.yaml",
+            outputDir: "docs/platforms/stellar-disbursement-platform/api-reference",
+            sidebarOptions: {
+              groupPathsBy: "tag",
+              categoryLinkSource: 'tag',
+            },
+            template: "src/template.mustache",
+          } satisfies OpenApiPlugin.Options,
+        } satisfies Plugin.PluginOptions,
       },
     ],
-    ...anchorPlatformPluginInstances,
-    ...disbursementPlatformPluginInstances,
     require("./src/analytics-module"),
     require("./src/dev-server-plugin"),
     require("./src/route-export-plugin"),

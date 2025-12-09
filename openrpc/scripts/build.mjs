@@ -153,7 +153,7 @@ const services = {
     },
   },
   'anchor-platform': {
-    saveDir: "platforms/anchor-platform/api-reference/platform/rpc",
+    saveDir: "docs/platforms/anchor-platform/api-reference/platform/rpc",
     starterFile: {
       openrpc: "1.2.6",
       info: {
