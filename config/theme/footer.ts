@@ -1,4 +1,4 @@
-import type { FooterLinkItem } from '@docusaurus/theme-common'
+import type { FooterLinkItem } from "@docusaurus/theme-common";
 
 const resources = {
   title: "Resources",
@@ -22,6 +22,11 @@ const resources = {
     {
       label: "Twitch",
       href: "https://m.twitch.tv/stellarorg/home",
+    },
+    {
+      label: "llms.txt",
+      href: "/llms.txt",
+      target: "_self",
     },
   ] satisfies FooterLinkItem[],
 };
@@ -80,7 +85,7 @@ const community = {
       href: "https://communityfund.stellar.org/",
     },
   ] satisfies FooterLinkItem[],
-}
+};
 
 const about = {
   title: "About",
@@ -102,11 +107,11 @@ const about = {
       href: "https://stellar.org/foundation/grants-and-funding",
     },
   ] satisfies FooterLinkItem[],
-}
+};
 
 export default {
   resources,
   tools,
   community,
   about,
-}
+};
