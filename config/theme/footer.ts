@@ -24,8 +24,7 @@ const resources = {
       href: "https://m.twitch.tv/stellarorg/home",
     },
     {
-      label: "llms.txt",
-      to: "/llms.txt",
+      html: '<a class="footer__link-item" href="/llms.txt">llms.txt</a>'
     },
   ] satisfies FooterLinkItem[],
 };
