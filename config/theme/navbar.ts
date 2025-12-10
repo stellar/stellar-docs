@@ -434,7 +434,7 @@ const tools: NavbarItem = {
       label: 'MoneyGram Ramps',
       activeBasePath: '/docs/tools/ramps/moneygram'
     },
-                {
+    {
       type: 'html',
       value: '<hr><small>Infra Tools</small>',
       className: 'subtitle',
@@ -450,11 +450,15 @@ const tools: NavbarItem = {
       className: 'subtitle',
     },
     {
-      to: "/platforms/anchor-platform",
+      type: 'docSidebar',
+      // docId: "docs/platforms/anchor-platform/README",
+      sidebarId: 'anchor_platform',
       label: "Anchor Platform",
     },
     {
-      to: "/platforms/stellar-disbursement-platform",
+      type: 'docSidebar',
+      // docId: "docs/platforms/stellar-disbursement-platform/README",
+      sidebarId: 'stellar_disbursement_platform',
       label: "Stellar Disbursement Platform",
     },
   ]
