@@ -278,24 +278,6 @@ const sidebar: SidebarsConfig = {
           label: "Delete Asset",
           className: "api-method delete",
         },
-        {
-          type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/get-all-wallets",
-          label: "Get All Wallets",
-          className: "api-method get",
-        },
-        {
-          type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/create-wallet",
-          label: "Create Wallet",
-          className: "api-method post",
-        },
-        {
-          type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/update-wallet",
-          label: "Update Wallet",
-          className: "api-method patch",
-        },
       ],
     },
     {
