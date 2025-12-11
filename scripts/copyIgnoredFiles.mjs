@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import glob from 'glob';
+import { globSync } from 'glob';
+// import glob from 'glob';
 import yaml from 'js-yaml';
 
 // Define the list of language codes
@@ -94,19 +95,18 @@ function copyIgnoredFilesForLanguages(config) {
             let srcPattern = source
                 .replace(/^\//, '') // Strip the leading slash for the source path
                 .replace(/\*\*\/\*$/, ''); // strips the glob patter from the end
-            srcPattern += ignorePattern
+            srcPattern += ignorePattern;
 
-            glob(srcPattern, (err, files) => {
-                if (err) {
-                    logMessage(`Error processing pattern ${srcPattern}: ${err.message}`);
-                    return;
-                }
+            const files = globSync(srcPattern);
+            if (!files) {
+                logMessage(`Error processing pattern ${srcPattern}`);
+                return;
+            }
 
-                files.forEach(srcPath => {
-                    languages.forEach(languageCode => {
-                        const destPath = getTranslationPath(translation, languageCode, srcPath, sources);
-                        copyFileOrDirectory(srcPath, destPath);
-                    });
+            files.forEach(srcPath => {
+                languages.forEach(languageCode => {
+                    const destPath = getTranslationPath(translation, languageCode, srcPath, sources);
+                    copyFileOrDirectory(srcPath, destPath);
                 });
             });
         });
