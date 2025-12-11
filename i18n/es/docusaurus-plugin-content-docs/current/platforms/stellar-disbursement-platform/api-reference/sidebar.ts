@@ -228,21 +228,6 @@ const sidebar: SidebarsConfig = {
       id: "platforms/stellar-disbursement-platform/api-reference/delete-asset",
       label: "Eliminar activo",
       className: "método-api delete"
-    }, {
-      type: "doc",
-      id: "platforms/stellar-disbursement-platform/api-reference/get-all-wallets",
-      label: "Obtener todas las carteras",
-      className: "método-api get"
-    }, {
-      type: "doc",
-      id: "platforms/stellar-disbursement-platform/api-reference/create-wallet",
-      label: "Crear cartera",
-      className: "método-api post"
-    }, {
-      type: "doc",
-      id: "platforms/stellar-disbursement-platform/api-reference/update-wallet",
-      label: "Actualizar cartera",
-      className: "método-api patch"
     }]
   }, {
     type: "categoría",
