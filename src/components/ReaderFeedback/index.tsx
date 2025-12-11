@@ -1,18 +1,19 @@
-import React, { useState } from "react";
+import React, { useState, type ReactNode } from "react";
 import useIsBrowser from '@docusaurus/useIsBrowser';
 
 import IconThumbsUp from '@site/static/icons/thumbs-up.svg';
 import IconThumbsDown from '@site/static/icons/thumbs-down.svg';
 import Translate, { translate } from "@docusaurus/Translate";
 
-const ReaderFeedback = ({ pageId }) => {
+export default function ReaderFeedback(): ReactNode {
   const [feedbackGiven, setFeedbackGiven] = useState(false);
+
   const isBrowser = useIsBrowser();
   if (!isBrowser) {
     return null;
   }
 
-  const giveFeedback = (value) => {
+  const giveFeedback = () => {
     setFeedbackGiven(true);
   };
 
@@ -33,19 +34,19 @@ const ReaderFeedback = ({ pageId }) => {
           </Translate>
           <IconThumbsUp
             className="feedback_thumbsup"
-            alt={translate({
+            title={translate({
               message: "Like",
-              id: "components.ReaderFeedback.ThumbsUp.Alt",
-              description: "The alt value for the thumbsup icon"
+              id: "components.ReaderFeedback.ThumbsUp.Title",
+              description: "The title value for the thumbsup icon"
             })}
             onClick={giveFeedback}
           />
           <IconThumbsDown
             className="feedback_thumbsdown"
-            alt={translate({
+            title={translate({
               message: "Dislike",
-              id: "components.ReaderFeedback.ThumbsDown.Alt",
-              description: "The alt value for the thumbsdown icon"
+              id: "components.ReaderFeedback.ThumbsDown.Title",
+              description: "The title value for the thumbsdown icon"
             })}
             onClick={giveFeedback}
           />
@@ -54,5 +55,3 @@ const ReaderFeedback = ({ pageId }) => {
     </div>
   );
 };
-
-export default ReaderFeedback;

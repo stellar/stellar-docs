@@ -1,10 +1,10 @@
-import React from "react";
+import React, { type ReactNode } from "react";
 import clsx from "clsx";
 
 import styles from "./styles.module.scss";
 import Translate from "@docusaurus/Translate";
 
-const transledExample = (
+const translatedExample = (
   <Translate
     id='components.ExampleResponse.Example'
     description="The default title for a table of example API responses">
@@ -12,7 +12,7 @@ const transledExample = (
   </Translate>
 )
 
-export const ExampleResponse = ({ children, title = transledExample }) => {
+export function ExampleResponse({ children, title = translatedExample }): ReactNode {
   const codeElement = children.props.children;
 
   return React.cloneElement(codeElement, {
