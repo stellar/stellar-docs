@@ -4,7 +4,7 @@ import TabItem from '@theme/TabItem';
 import CodeBlock from '@theme/CodeBlock';
 import BrowserOnly from '@docusaurus/BrowserOnly';
 import {getCookie, walletDefaultLang} from "./LanguageSpecific";
-import {CODE_LANGS} from "../constants";
+import {CODE_LANGS} from "@site/config/constants";
 import Translate from '@docusaurus/Translate';
 
 // TODO: when TS docs are ready set to false
@@ -22,7 +22,7 @@ export const WalletCodeExample: React.FC<WalletCodeExampleProps> = ({children}) 
         {() => getTabs(children, getCookie())}
     </BrowserOnly>;
 
-const getTabs = (children: React.ReactElement, targetLanguage: String) => {
+const getTabs = (children: React.ReactElement, targetLanguage: string) => {
     const defaultVal = CODE_LANGS[targetLanguage];
 
     const tabs = React.Children.map(children, (child, index) => {

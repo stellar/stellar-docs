@@ -5,6 +5,7 @@ import { themes as prismThemes } from 'prism-react-renderer';
 import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
 import navbarItems from './config/theme/navbar';
 import footerColumns from './config/theme/footer';
+import { headTags } from './config/theme/headTags';
 
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
@@ -75,9 +76,8 @@ const config: Config = {
         } satisfies Plugin.PluginOptions,
       },
     ],
-    require("./src/analytics-module"),
-    require("./src/dev-server-plugin"),
-    require("./src/route-export-plugin"),
+    './src/plugins/route-export/index.ts',
+    './src/plugins/analytics-module/index.ts',
   ],
   markdown: {
     mermaid: true,
@@ -124,7 +124,10 @@ const config: Config = {
         gtag: {
           trackingID: "G-ZCT4GYX8KN",
           anonymizeIP: true,
-        }
+        },
+        googleTagManager: {
+          containerId: "GTM-M2JLH37",
+        },
       } satisfies Preset.Options,
     ],
   ],
@@ -135,11 +138,8 @@ const config: Config = {
       integrity: 'sha384-odtC+0UGzzFL/6PNoE8rX/SPcQDXBJ+uRepguP4QkPCm2LBxH3FA3y+fKSiJ+AmM',
       crossorigin: 'anonymous',
     },
-    {
-      href: "https://use.fontawesome.com/releases/v6.5.2/css/all.css",
-      type: 'text/css',
-    },
   ],
+  headTags: headTags,
   themeConfig: {
     announcementBar: {
       id: 'announcementBar-translation',
@@ -151,6 +151,9 @@ const config: Config = {
       },
     },
     image: 'img/docusaurus/dev-docs-preview.png',
+    metadata: [
+      { name: 'facebook-domain-verification', content: 'd0o7hha86jfxvtqyxz3d9i5wtfanmy' }
+    ],
     navbar: {
       logo: {
         width: 100,
