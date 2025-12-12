@@ -116,7 +116,7 @@ const config: Config = {
           sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
           editUrl: makeEditUrl,
-          exclude: ['**/component/**', '**/README.md'],
+          exclude: ['**/component/**', '**/CONTRIBUTING.md'],
         },
         theme: {
           customCss: [require.resolve("./src/css/custom.scss")],

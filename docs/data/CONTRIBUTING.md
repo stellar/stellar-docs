@@ -1,7 +1,3 @@
----
-draft: true
----
-
 # STOP WHAT YOU'RE DOING
 
 If you're here to make some fixes to Stellar's API documentation (first, thank
