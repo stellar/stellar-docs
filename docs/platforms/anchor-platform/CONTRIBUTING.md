@@ -18,9 +18,15 @@ a "current" version of the docs from now on. So, anything in this page that
 references creating a new version, updating old versions, etc. can be
 disregarded.
 
-However, the Anchor Platform docs _still_ remain in their own docusaurus
+~~However, the Anchor Platform docs _still_ remain in their own docusaurus
 instance. So, information here about linking between/across instances is still
-relevant. (This will not be the case forever, but for now, it is.)
+relevant. (This will not be the case forever, but for now, it is.)~~
+
+It's no longer a separate plugin instance!! I'll update this doc soon, but for
+now the finer points of linking can be summed up with:
+
+- almost always `[use a](../../relative/link.mdx)` with the file extension,
+  unless you're linking to/from a meeting notes document.
 
 ## TL;DR
 
@@ -117,6 +123,10 @@ _generally_ important to consider different plugin instances, but it _is_
 **quite relevant** when we discuss links. So...
 
 ### Links
+
+> [!WARNING]
+>
+> This section is outdated. Mostly ignore it for the time-being.
 
 Most often, **especially in versioned docs**, it's important to
 [link to other docs by _relative_ file paths](https://docusaurus.io/docs/versioning#link-docs-by-file-paths).
