@@ -79,11 +79,6 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/apps/dapp-frontend',
     },
     {
-      to: '/docs/build/apps/smart-wallets',
-      label: 'Smart Wallets',
-      activeBasePath: 'docs/build/apps/smart-wallets',
-    },
-    {
       type: 'html',
       value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small>',
       className: 'subtitle',
@@ -92,6 +87,11 @@ const build: NavbarItem = {
       to: '/docs/build/guides/auth',
       label: 'Contract Authorization',
       activeBasePath: 'docs/build/guides/auth',
+    },
+    {
+      to: '/docs/build/guides/contract-accounts',
+      label: 'Contract Accounts',
+      activeBasePath: 'docs/build/guides/contract-accounts',
     },
     {
       to: '/docs/build/guides/conventions',
@@ -434,7 +434,7 @@ const tools: NavbarItem = {
       label: 'MoneyGram Ramps',
       activeBasePath: '/docs/tools/ramps/moneygram'
     },
-                {
+    {
       type: 'html',
       value: '<hr><small>Infra Tools</small>',
       className: 'subtitle',
@@ -450,11 +450,15 @@ const tools: NavbarItem = {
       className: 'subtitle',
     },
     {
-      to: "/platforms/anchor-platform",
+      type: 'docSidebar',
+      // docId: "docs/platforms/anchor-platform/README",
+      sidebarId: 'anchor_platform',
       label: "Anchor Platform",
     },
     {
-      to: "/platforms/stellar-disbursement-platform",
+      type: 'docSidebar',
+      // docId: "docs/platforms/stellar-disbursement-platform/README",
+      sidebarId: 'stellar_disbursement_platform',
       label: "Stellar Disbursement Platform",
     },
   ]
