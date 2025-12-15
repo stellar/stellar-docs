@@ -1,4 +1,6 @@
 import { SidebarsConfig } from "@docusaurus/plugin-content-docs";
+import ap_sidebars from "./anchorPlatform.sidebar";
+import sdp_sidebars from "./disbursementPlatform.sidebar"
 
 const sidebars: SidebarsConfig = {
   build: [
@@ -38,7 +40,6 @@ const sidebars: SidebarsConfig = {
         { type: 'ref', id: 'data/apis/rpc/README', label: 'RPC' },
         { type: 'ref', id: 'data/apis/horizon/README', label: 'Horizon' },
         { type: 'ref', id: 'data/apis/migrate-from-horizon-to-rpc', label: 'Migrate Horizon to RPC' },
-        { type: 'ref', id: 'data/apis/api-providers', label: 'API Providers' }
       ]
     },
     {
@@ -65,8 +66,8 @@ const sidebars: SidebarsConfig = {
       dirName: 'tools',
     },
     { type: 'html', value: '<small>SDF Platforms</small>', defaultStyle: true, className: 'networkMenuHtmlItem'},
-    { type: 'link', href: '/platforms/anchor-platform', label: 'Anchor Platform'},
-    { type: 'link', href: '/platforms/stellar-disbursement-platform', label: 'Stellar Disbursement Platform'},
+    { type: 'link', href: '/docs/platforms/anchor-platform', label: 'Anchor Platform'},
+    { type: 'link', href: '/docs/platforms/stellar-disbursement-platform', label: 'Stellar Disbursement Platform'},
   ],
   networks: [
     {
@@ -184,6 +185,8 @@ const sidebars: SidebarsConfig = {
       collapsible: false,
     },
   ],
+  anchor_platform: ap_sidebars.anchor_platform,
+  stellar_disbursement_platform: sdp_sidebars.stellar_disbursement_platform,
 };
 
 export default sidebars;

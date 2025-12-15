@@ -7,7 +7,7 @@ sidebar_label: Contrato de Activo Stellar
 
 :::info
 
-The term "custom token" has been deprecated in favor of "contract token". Ve la conversación en el [Stellar Developer Discord](https://discord.com/channels/897514728459468821/966788672164855829/1359276952971640953).
+El término "custom token" ha sido desaprobado en favor de "contract token". Ve la conversación en el [Stellar Developer Discord](https://discord.com/channels/897514728459468821/966788672164855829/1359276952971640953).
 
 :::
 
@@ -41,7 +41,7 @@ Por ejemplo, al transferir de una cuenta Stellar a un contrato Stellar, se debit
 
 Y, por ejemplo, al transferir de un contrato Stellar a una cuenta Stellar, se debita una entrada de datos del contrato y se acredita la entrada de la línea de confianza de la cuenta.
 
-En ambos ejemplos, es un solo activo el que se transfiere de la cuenta al contrato y de regreso. No se requiere puente y no se necesitan tokens intermedios. Un activo en Stellar y su Contrato de Activo Stellar representan el mismo activo. El SAC de un activo es simplemente una API para interactuar con el activo.
+En ambos ejemplos, es un solo activo el que se transfiere de la cuenta al contrato y de regreso. No se requiere puente y no se necesitan tokens intermedios. Un activo en Stellar y su Stellar Asset Contract representan el mismo activo. El SAC de un activo es simplemente una API para interactuar con el activo.
 
 El SAC implementa la [Interfaz de Token SEP-41], que es similar al ampliamente utilizado estándar de token ERC-20. Contracts that depend on only the SEP-41 portion of the SAC's interface, are also compatible with any contract token that implements SEP-41.
 
@@ -51,7 +51,7 @@ Algunas funcionalidades disponibles en la red Stellar en operaciones de transacc
 
 Cada activo Stellar en Stellar tiene una dirección de contrato reservada a la que se puede implementar el Contrato de Activo Stellar. Cualquiera puede iniciar la implementación y el emisor del activo Stellar no necesita estar involucrado.
 
-Se puede implementar utilizando la [CLI Stellar] como se muestra [aquí](../build/guides/cli/deploy-stellar-asset-contract.mdx).
+Se puede desplegar utilizando el [Stellar CLI] como se muestra [aquí](../tools/cli/cookbook/deploy-stellar-asset-contract.mdx).
 
 O el [Stellar SDK] puede usarse como se muestra [aquí](../learn/fundamentals/contract-development/contract-interactions/stellar-transaction.mdx#xdr-usage) llamando a `InvokeHostFunctionOp` con `HOST_FUNCTION_TYPE_CREATE_CONTRACT` y `CONTRACT_ID_FROM_ASSET`. El recurso token tendrá un identificador determinista, que será el hash sha256 de `HashIDPreimage::ENVELOPE_TYPE_CONTRACT_ID_FROM_ASSET` xdr especificado [aquí][contract_id].
 
@@ -107,7 +107,97 @@ Los mutadores privilegiados requieren autorización de una identidad privilegiad
 
 ## Interfaz del Contrato
 
-Esta interfaz se puede encontrar en el [SDK]. Extiende la común [Interfaz de Token SEP-41].
+El [módulo `token`] del SDK de Rust contiene dos traits, y estructuras cliente correspondientes, para interactuar con SACs.
+
+1. El [trait `TokenInterface`] y la [estructura `TokenClient`] pueden usarse para invocar el "subconjunto básico" de la funcionalidad SAC. Implementan la común [Interfaz Token SEP-41], e incluyen funciones como `transfer`, `burn`, `allowance`, etc.
+2. El [trait `StellarAssetInterface`] y la [estructura `StellarAssetClient`] pueden utilizarse para invocar el "subconjunto extendido" de la funcionalidad SAC. Ellos _extienden_ la común interfaz token SEP-41 con funcionalidad administrativa. Además de todas las funciones de `TokenInterface`, estos traits contienen funciones administrativas como `set_admin`, `clawback`, `set_authorized`, etc.
+
+```rust
+pub trait StellarAssetInterface {
+    // All this is available in any SEP-41-compliant contract
+    fn allowance(env: Env, from: Address, spender: Address) -> i128;
+    fn approve(env: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32);
+    fn balance(env: Env, id: Address) -> i128;
+    fn transfer(env: Env, from: Address, to: MuxedAddress, amount: i128);
+    fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128);
+    fn burn(env: Env, from: Address, amount: i128);
+    fn burn_from(env: Env, spender: Address, from: Address, amount: i128);
+    fn decimals(env: Env) -> u32;
+    fn name(env: Env) -> String;
+    fn symbol(env: Env) -> String;
+
+    //! Everything below is specifically available to SAC instances
+
+    /// Sets the administrator to the specified address `new_admin`.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_admin` - The address which will henceforth be the administrator
+    ///   of this token contract.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with topics `["set_admin", admin: Address], data =
+    /// [new_admin: Address]`
+    fn set_admin(env: Env, new_admin: Address);
+
+    /// Returns the admin of the contract.
+    ///
+    /// # Panics
+    ///
+    /// If the admin is not set.
+    fn admin(env: Env) -> Address;
+
+    /// Sets whether the account is authorized to use its balance. If
+    /// `authorized` is true, `id` should be able to use its balance.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The address being (de-)authorized.
+    /// * `authorize` - Whether or not `id` can use its balance.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with topics `["set_authorized", id: Address], data =
+    /// [authorize: bool]`
+    fn set_authorized(env: Env, id: Address, authorize: bool);
+
+    /// Returns true if `id` is authorized to use its balance.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The address for which token authorization is being checked.
+    fn authorized(env: Env, id: Address) -> bool;
+
+    /// Mints `amount` to `to`.
+    ///
+    /// # Arguments
+    ///
+    /// * `to` - The address which will receive the minted tokens.
+    /// * `amount` - The amount of tokens to be minted.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with topics `["mint", to: Address], data
+    /// = amount: i128`
+    fn mint(env: Env, to: Address, amount: i128);
+
+    /// Clawback `amount` from `from` account. `amount` is burned in the
+    /// clawback process.
+    ///
+    /// # Arguments
+    ///
+    /// * `from` - The address holding the balance from which the clawback will
+    ///   take tokens.
+    /// * `amount` - The amount of tokens to be clawed back.
+    ///
+    /// # Events
+    ///
+    /// Emits an event with topics `["clawback", admin: Address, to: Address],
+    /// data = amount: i128`
+    fn clawback(env: Env, from: Address, amount: i128);
+}
+```
 
 ## Errores de contrato
 
@@ -157,6 +247,10 @@ pub(crate) enum ContractError {
 Fuente: https://github.com/stellar/rs-soroban-env/blob/main/soroban-env-host/src/builtin_contracts/contract_error.rs
 
 [activos]: ../learn/fundamentals/stellar-data-structures/assets.mdx
-[sdk]: https://docs.rs/soroban-sdk/latest/soroban_sdk/token/index.html
+[módulo `token`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/token/index.html
+[trait `TokenInterface`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/token/trait.TokenInterface.html
+[estructura `TokenClient`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/token/struct.TokenClient.html
+[trait `StellarAssetInterface`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/token/trait.StellarAssetInterface.html
+[Estructura `StellarAssetClient`]: https://docs.rs/soroban-sdk/latest/soroban_sdk/token/struct.StellarAssetClient.html
 [cap-46-6 activo estandarizado de contrato inteligente]: https://github.com/stellar/stellar-protocol/blob/master/core/cap-0046-06.md
 [interfaz de token sep-41]: ./token-interface.mdx

@@ -29,15 +29,21 @@ The [token example] demonstrates how to write a token contract that implements t
 
 [open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
 [open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
-[token example]: https://github.com/stellar/soroban-examples/tree/v22.0.1/token
+[token example]: https://github.com/stellar/soroban-examples/tree/v23.0.0/token
 [token interface]: ../../../tokens/token-interface.mdx
+
+:::tip[Whisk Changes]
+
+With the release of Whisk, Protocol 23, the [token interface] has seen some changes to incorporate the `MuxedAddress` type into the `transfer` function. Please see the [Rust SDK documentation](https://docs.rs/soroban-token-sdk/latest/soroban_token_sdk/_migrating/v23_token_transfer/index.html) for more details.
+
+:::
 
 ## Run the Example
 
-First go through the [Setup] process to get your development environment configured, then clone the `v22.0.1` tag of `soroban-examples` repository:
+First go through the [Setup] process to get your development environment configured, then clone the `v23.0.0` tag of `soroban-examples` repository:
 
 ```sh
-git clone -b v22.0.1 https://github.com/stellar/soroban-examples
+git clone -b v23.0.0 https://github.com/stellar/soroban-examples
 ```
 
 Or, skip the development environment setup and open this example in [GitHub Codespaces][open-in-github-codespaces] or [Code Anywhere][open-in-code-anywhere].
@@ -51,11 +57,11 @@ cargo test
 
 You should see the output:
 
-```sh
+```
 running 6 tests
 test test::decimal_is_over_eighteen - should panic ... ok
-test test::transfer_insufficient_balance - should panic ... ok
 test test::test_zero_allowance ... ok
+test test::transfer_insufficient_balance - should panic ... ok
 test test::transfer_from_insufficient_allowance - should panic ... ok
 test test::test_burn ... ok
 test test::test ... ok
@@ -153,12 +159,11 @@ pub fn write_allowance(
     e.storage().temporary().set(&key.clone(), &allowance);
 
     if amount > 0 {
-        e.storage().temporary().bump(
-            &key,
-            expiration_ledger
-                .checked_sub(e.ledger().sequence())
-                .unwrap(),
-        )
+        let live_for = expiration_ledger
+            .checked_sub(e.ledger().sequence())
+            .unwrap();
+
+        e.storage().temporary().extend_ttl(&key, live_for, live_for)
     }
 }
 
@@ -167,13 +172,15 @@ pub fn spend_allowance(e: &Env, from: Address, spender: Address, amount: i128) {
     if allowance.amount < amount {
         panic!("insufficient allowance");
     }
-    write_allowance(
-        e,
-        from,
-        spender,
-        allowance.amount - amount,
-        allowance.expiration_ledger,
-    );
+    if amount > 0 {
+        write_allowance(
+            e,
+            from,
+            spender,
+            allowance.amount - amount,
+            allowance.expiration_ledger,
+        );
+    }
 }
 ```
 
@@ -231,10 +238,12 @@ use crate::metadata::{read_decimal, read_name, read_symbol, write_metadata};
 #[cfg(test)]
 use crate::storage_types::{AllowanceDataKey, AllowanceValue, DataKey};
 use crate::storage_types::{INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD};
-use soroban_sdk::token::{self, Interface as _};
-use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use soroban_sdk::{
+    contract, contractevent, contractimpl, token::TokenInterface, Address, Env, MuxedAddress,
+    String,
+};
+use soroban_token_sdk::events;
 use soroban_token_sdk::metadata::TokenMetadata;
-use soroban_token_sdk::TokenUtils;
 
 fn check_nonnegative_amount(amount: i128) {
     if amount < 0 {
@@ -244,6 +253,15 @@ fn check_nonnegative_amount(amount: i128) {
 
 #[contract]
 pub struct Token;
+
+// SetAdmin is not a standardized token event, so we just define a custom event
+// for our token.
+#[contractevent(data_format = "single-value")]
+pub struct SetAdmin {
+    #[topic]
+    admin: Address,
+    new_admin: Address,
+}
 
 #[contractimpl]
 impl Token {
@@ -272,7 +290,7 @@ impl Token {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         receive_balance(&e, to.clone(), amount);
-        TokenUtils::new(&e).events().mint(admin, to, amount);
+        events::MintWithAmountOnly { to, amount }.publish(&e);
     }
 
     pub fn set_admin(e: Env, new_admin: Address) {
@@ -284,7 +302,7 @@ impl Token {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         write_administrator(&e, &new_admin);
-        TokenUtils::new(&e).events().set_admin(admin, new_admin);
+        SetAdmin { admin, new_admin }.publish(&e);
     }
 
     #[cfg(test)]
@@ -296,7 +314,7 @@ impl Token {
 }
 
 #[contractimpl]
-impl token::Interface for Token {
+impl TokenInterface for Token {
     fn allowance(e: Env, from: Address, spender: Address) -> i128 {
         e.storage()
             .instance()
@@ -314,9 +332,13 @@ impl token::Interface for Token {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         write_allowance(&e, from.clone(), spender.clone(), amount, expiration_ledger);
-        TokenUtils::new(&e)
-            .events()
-            .approve(from, spender, amount, expiration_ledger);
+        events::Approve {
+            from,
+            spender,
+            amount,
+            expiration_ledger,
+        }
+        .publish(&e);
     }
 
     fn balance(e: Env, id: Address) -> i128 {
@@ -326,7 +348,7 @@ impl token::Interface for Token {
         read_balance(&e, id)
     }
 
-    fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+    fn transfer(e: Env, from: Address, to_muxed: MuxedAddress, amount: i128) {
         from.require_auth();
 
         check_nonnegative_amount(amount);
@@ -336,8 +358,15 @@ impl token::Interface for Token {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         spend_balance(&e, from.clone(), amount);
+        let to: Address = to_muxed.address();
         receive_balance(&e, to.clone(), amount);
-        TokenUtils::new(&e).events().transfer(from, to, amount);
+        events::Transfer {
+            from,
+            to,
+            to_muxed_id: to_muxed.id(),
+            amount,
+        }
+        .publish(&e);
     }
 
     fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128) {
@@ -352,7 +381,14 @@ impl token::Interface for Token {
         spend_allowance(&e, from.clone(), spender, amount);
         spend_balance(&e, from.clone(), amount);
         receive_balance(&e, to.clone(), amount);
-        TokenUtils::new(&e).events().transfer(from, to, amount)
+        events::Transfer {
+            from,
+            to,
+            // `transfer_from` does not support muxed destination.
+            to_muxed_id: None,
+            amount,
+        }
+        .publish(&e);
     }
 
     fn burn(e: Env, from: Address, amount: i128) {
@@ -365,7 +401,7 @@ impl token::Interface for Token {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         spend_balance(&e, from.clone(), amount);
-        TokenUtils::new(&e).events().burn(from, amount);
+        events::Burn { from, amount }.publish(&e);
     }
 
     fn burn_from(e: Env, spender: Address, from: Address, amount: i128) {
@@ -379,7 +415,7 @@ impl token::Interface for Token {
 
         spend_allowance(&e, from.clone(), spender, amount);
         spend_balance(&e, from.clone(), amount);
-        TokenUtils::new(&e).events().burn(from, amount)
+        events::Burn { from, amount }.publish(&e);
     }
 
     fn decimals(e: Env) -> u32 {
@@ -400,27 +436,27 @@ impl token::Interface for Token {
 <TabItem value="metadata">
 
 ```rust title="token/src/metadata.rs"
-use soroban_sdk::{Bytes, Env};
-use soroban_token_sdk::{TokenMetadata, TokenUtils};
+use soroban_sdk::{Env, String};
+use soroban_token_sdk::{metadata::TokenMetadata, TokenUtils};
 
 pub fn read_decimal(e: &Env) -> u32 {
     let util = TokenUtils::new(e);
-    util.get_metadata_unchecked().unwrap().decimal
+    util.metadata().get_metadata().decimal
 }
 
-pub fn read_name(e: &Env) -> Bytes {
+pub fn read_name(e: &Env) -> String {
     let util = TokenUtils::new(e);
-    util.get_metadata_unchecked().unwrap().name
+    util.metadata().get_metadata().name
 }
 
-pub fn read_symbol(e: &Env) -> Bytes {
+pub fn read_symbol(e: &Env) -> String {
     let util = TokenUtils::new(e);
-    util.get_metadata_unchecked().unwrap().symbol
+    util.metadata().get_metadata().symbol
 }
 
 pub fn write_metadata(e: &Env, metadata: TokenMetadata) {
     let util = TokenUtils::new(e);
-    util.set_metadata(&metadata);
+    util.metadata().set_metadata(&metadata);
 }
 ```
 
@@ -429,6 +465,13 @@ pub fn write_metadata(e: &Env, metadata: TokenMetadata) {
 
 ```rust title="token/src/storage_types.rs"
 use soroban_sdk::{contracttype, Address};
+
+pub(crate) const DAY_IN_LEDGERS: u32 = 17280;
+pub(crate) const INSTANCE_BUMP_AMOUNT: u32 = 7 * DAY_IN_LEDGERS;
+pub(crate) const INSTANCE_LIFETIME_THRESHOLD: u32 = INSTANCE_BUMP_AMOUNT - DAY_IN_LEDGERS;
+
+pub(crate) const BALANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub(crate) const BALANCE_LIFETIME_THRESHOLD: u32 = BALANCE_BUMP_AMOUNT - DAY_IN_LEDGERS;
 
 #[derive(Clone)]
 #[contracttype]
@@ -448,7 +491,6 @@ pub struct AllowanceValue {
 pub enum DataKey {
     Allowance(AllowanceDataKey),
     Balance(Address),
-    Nonce(Address),
     State(Address),
     Admin,
 }
@@ -457,7 +499,7 @@ pub enum DataKey {
 </TabItem>
 </Tabs>
 
-Ref: https://github.com/stellar/soroban-examples/tree/v22.0.1/token
+Ref: https://github.com/stellar/soroban-examples/tree/v23.0.0/token
 
 ## How it Works
 
@@ -475,25 +517,30 @@ You have likely noticed that this example contract is broken into discrete modul
 
 For example, most of the token logic exists in the `contract.rs` module. Functions like `mint`, `burn`, `transfer`, etc. are written and programmed in that file. The Token Interface describes how some of these functions should emit events when they occur. However, keeping all that event-emitting logic bundled in with the rest of the contract code could make it harder to track what is happening in the code, and that confusion could ultimately lead to errors.
 
-Instead, we have a separate `soroban_token_sdk::TokenUtils` module that takes away all the headache of emitting events when other functions run. Here is the event emitted when a token is minted:
+Instead, we have a separate `soroban_token_sdk::events` module that takes away all the headache of emitting events when other functions run. Here is the event emitted when a token is minted:
 
 ```rust
-TokenUtils::new(&e).events().mint(admin, to, amount);
+events::MintWithAmountOnly { to, amount }.publish(&e);
 ```
 
 Admittedly, this is a simple example, but constructing the contract this way makes it very clear to the developer what is happening and where. This function is then used by the `contract.rs` module whenever the `mint` function is invoked:
 
 ```rust
 // earlier in `contract.rs`
-use crate::event;
+use soroban_token_sdk::events;
 
-fn mint(e: Env, to: Address, amount: i128) {
+pub fn mint(e: Env, to: Address, amount: i128) {
     check_nonnegative_amount(amount);
     let admin = read_administrator(&e);
     admin.require_auth();
+
+    e.storage()
+        .instance()
+        .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+
     receive_balance(&e, to.clone(), amount);
     // highlight-next-line
-    TokenUtils::new(&e).events().mint(admin, to, amount);
+    events::MintWithAmountOnly { to, amount }.publish(&e);
 }
 ```
 
@@ -501,25 +548,38 @@ This same convention is used to separate from the "main" contract code the metad
 
 ### Standardized Interface, Customized Behavior
 
-This example contract follows the standardized [Token Interface], implementing all of the same functions as the [Stellar Asset Contract]. This gives wallets, users, developers, etc. a predictable interface to interact with the token. Even though we are implementing the same _interface_ of functions, that doesn't mean we have to implement the same _behavior_ inside those functions. While this example contract doesn't actually modify any of the functions that would be present in a deployed instance of the Stellar Asset Contract, that possibility remains open to the contract developer.
+This example contract follows the standardized [Token Interface], implementing all of the same functions as the [Stellar Asset Contract] (SAC). This gives wallets, users, developers, etc. a predictable interface to interact with the token. Even though we are implementing the same _interface_ of functions, that doesn't mean we have to implement the same _behavior_ inside those functions. While this example contract doesn't actually modify any of the functions that would be present in a deployed instance of the SAC, that possibility remains open to the contract developer.
 
 By way of example, perhaps you have an NFT project, and the artist wants to have a small royalty paid every time their token transfers hands:
 
 ```rust
-// This is mainly the `transfer` function from `src/contract.rs`
-fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+// This is mainly the `transfer` function from `token/src/contract.rs`
+fn transfer(e: Env, from: Address, to_muxed: MuxedAddress, amount: i128) {
     from.require_auth();
 
     check_nonnegative_amount(amount);
     spend_balance(&e, from.clone(), amount);
+    let to: Address = to_muxed.address();
+
     // highlight-start
     // We calculate some new amounts for payment and royalty
     let payment = (amount * 997) / 1000;
     let royalty = amount - payment
+    let artist = read_artist(&e);
     receive_balance(&e, artist.clone(), royalty);
+    events::TransferWithAmountOnly {
+        to: artist.clone(),
+        amount: royalty,
+    }.publish(&e);
     // highlight-end
     receive_balance(&e, to.clone(), payment);
-    event::transfer(&e, from, to, amount);
+    events::Transfer {
+        from,
+        to,
+        to_muxed_id: to_muxed.id(),
+        amount,
+    }
+    .publish(&e);
 }
 ```
 
@@ -533,7 +593,7 @@ Of course, you will want your token to behave in an _intuitive_ and _transparent
 
 ## Tests
 
-Open the `token/src/test.rs` file to follow along.
+Open the [`token/src/test.rs`](https://github.com/stellar/soroban-examples/tree/v23.0.0/token/src/test.rs) file to follow along.
 
 ```rust title="token/src/test.rs"
 #![cfg(test)]
@@ -850,10 +910,10 @@ The six tests created for this example contract test a range of possible conditi
 
 - **`test()`** - This function makes use of a variety of the built-in token functions to test the "predictable" way an asset might be interacted with by a user, as well as an administrator.
 - **`test_burn()`** - This function ensures a `burn()` invocation decreases a user's balance, and that a `burn_from()` invocation decreases a user's balance as well as consuming another user's allowance of that balance.
-- **`test_zero_allowance()`** - This function makes sure that a `transfer_from()` with an zero balance doesn't create an empty allowance.
 - **`transfer_insufficient_balance()`** - This function ensures a `transfer()` invocation panics when the `from` user doesn't have the balance to cover it.
 - **`transfer_from_insufficient_allowance()`** - This function ensures a user with an existing allowance for someone else's balance cannot make a `transfer()` greater than that allowance.
 - **`decimal_is_over_eighteen()`** - This function tests that constructing a token with too high of a decimal precision will not succeed.
+- **`test_zero_allowance()`** - This function makes sure that a `transfer_from()` with an zero balance doesn't create an empty allowance.
 
 ## Build the Contract
 
@@ -865,7 +925,7 @@ stellar contract build
 
 A `.wasm` file should be outputted in the `target` directory:
 
-```sh
+```text
 target/wasm32v1-none/release/soroban_token_contract.wasm
 ```
 
@@ -874,7 +934,6 @@ target/wasm32v1-none/release/soroban_token_contract.wasm
 If you have [`stellar-cli`] installed, you can invoke contract functions using it.
 
 <Tabs groupId="platform" defaultValue={getPlatform()}>
-
 <TabItem value="unix" label="macOS/Linux">
 
 ```sh
@@ -887,7 +946,6 @@ stellar contract invoke \
 ```
 
 </TabItem>
-
 <TabItem value="windows" label="Windows (PowerShell)">
 
 ```powershell
@@ -900,7 +958,6 @@ stellar contract invoke `
 ```
 
 </TabItem>
-
 </Tabs>
 
 [`stellar-cli`]: ../../../tools/cli/stellar-cli.mdx

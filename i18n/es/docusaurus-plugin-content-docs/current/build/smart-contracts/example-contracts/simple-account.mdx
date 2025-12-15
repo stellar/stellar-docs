@@ -1,0 +1,175 @@
+---
+title: Cuenta Simple
+sidebar_label: Cuenta Simple
+description: Una cuenta de contrato mínima asegurada por una sola clave pública ed25519.
+sidebar_position: 15
+---
+
+<head>
+  <title>Cuenta Simple</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Cuenta de contrato mínima asegurada por una sola clave pública ed25519."
+  />
+  <meta
+    property="og:description"
+    content="Sigue el ejemplo simple de cuenta Soroban para ver cómo se puede implementar __check_auth con una clave."
+  />
+</head>
+
+Este ejemplo implementa la cuenta de contrato más pequeña posible [contract account](../../../learn/glossary.mdx#contract-account): cada llamada `require_auth` delega en una clave pública ed25519. Muestra cómo almacenar esa clave, ejecutar `__check_auth` y mostrar fallos de autorización. Usa esto como base antes de pasar al [Ejemplo de Cuenta Compleja](./complex-account.mdx) para firmas múltiples o aplicación de políticas.
+
+:::danger
+
+Implementar una cuenta de contrato requiere un muy buen entendimiento de la autenticación y autorización y exige pruebas rigurosas y revisión. El ejemplo aquí _no_ es un contrato de cuenta completo: úsalo solo como referencia de la API.
+
+:::
+
+:::caution
+
+Aunque las cuentas de contrato son compatibles con el protocolo Stellar y el SDK Soroban, el soporte completo del cliente (como simulación de transacciones) aún está en desarrollo.
+
+:::
+
+[![Abrir en Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Abrir en Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
+
+## Ejecutar el Ejemplo
+
+1. Completa la lista de verificación de [Configuración] para instalar Stellar CLI, el objetivo Rust y las variables de entorno necesarias.
+2. Clona el repositorio `soroban-examples` en la etiqueta `v23.0.0`:
+
+```sh
+git clone -b v23.0.0 https://github.com/stellar/soroban-examples
+```
+
+3. Si prefieres no instalar nada localmente, lanza el repositorio en [GitHub Codespaces][open-in-github-codespaces] o [Codeanywhere][open-in-code-anywhere].
+
+Ejecuta las pruebas desde el directorio `simple_account`:
+
+```sh
+cd simple_account
+cargo test
+```
+
+Salida esperada:
+
+```
+running 1 test
+test test::test_account ... ok
+```
+
+[setup]: ../getting-started/setup.mdx
+
+## Cómo Funciona
+
+Abre `simple_account/src/lib.rs`. El contrato mantiene un único estado: la clave pública ed25519 del propietario.
+
+### Inicializar al propietario
+
+```rust title="simple_account/src/lib.rs"
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    Owner,
+}
+
+#[contractimpl]
+impl SimpleAccount {
+    pub fn init(env: Env, public_key: BytesN<32>) {
+        if env.storage().instance().has(&DataKey::Owner) {
+            panic!("owner is already set");
+        }
+        env.storage().instance().set(&DataKey::Owner, &public_key);
+    }
+```
+
+Llama a `init` una vez para guardar la clave pública del propietario. Llamadas posteriores causan un pánico para evitar reemplazar la clave.
+
+### Implementar `__check_auth`
+
+```rust title="simple_account/src/lib.rs"
+    #[allow(non_snake_case)]
+    pub fn __check_auth(
+        env: Env,
+        signature_payload: BytesN<32>,
+        signature: BytesN<64>,
+        _auth_context: Vec<Context>,
+    ) {
+        let public_key: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owner)
+            .unwrap();
+        env.crypto()
+            .ed25519_verify(&public_key, &signature_payload.into(), &signature);
+    }
+}
+```
+
+`__check_auth` se ejecuta cada vez que otro contrato invoca `require_auth` en esta dirección de contrato. La implementación carga la clave almacenada, verifica la firma y provoca un pánico en caso de fallo para que la llamada upstream de `require_auth` sea rechazada. Cuando necesites múltiples claves o lógica de políticas, sigue el mismo patrón mostrado en la Cuenta Compleja.
+
+## Pruebas
+
+Abre `simple_account/src/test.rs`. `__check_auth` no está expuesto como un punto de entrada regular, así que las pruebas llaman a `env.try_invoke_contract_check_auth` para emular el host de Soroban y ejecutar la misma ruta que Soroban usa durante `require_auth`.
+
+```rust title="simple_account/src/test.rs"
+#[test]
+fn test_account() {
+    let env = Env::default();
+    let account_contract = SimpleAccountClient::new(&env, &env.register(SimpleAccount, ()));
+
+    let signer = Keypair::generate(&mut thread_rng());
+    account_contract.init(&signer.public.to_bytes().into_val(&env));
+
+    let payload = BytesN::random(&env);
+    env.try_invoke_contract_check_auth::<Error>(
+        &account_contract.address,
+        &payload,
+        sign(&env, &signer, &payload),
+        &vec![&env],
+    )
+    .unwrap();
+
+    assert!(env
+        .try_invoke_contract_check_auth::<Error>(
+            &account_contract.address,
+            &payload,
+            BytesN::<64>::random(&env).into(),
+            &vec![&env],
+        )
+        .is_err());
+}
+```
+
+`try_invoke_contract_check_auth` simula la ruta del host para `require_auth`, permitiendo probar tanto el caso de éxito como un caso de fallo con bytes aleatorios.
+
+Sigue la misma estructura para cualquier cuenta:
+
+- crea un par de claves y guarda el firmante esperado (por ejemplo, con `init`)
+- llama a `try_invoke_contract_check_auth` con una firma válida y verifica que tenga éxito
+- llámalo de nuevo con una firma o carga inválida y verifica que falle
+
+## Compilar el Contrato
+
+Para producir el ejecutable Wasm, ejecuta:
+
+```sh
+stellar contract build
+# add --package soroban-simple-account-contract when building inside the soroban-examples workspace
+```
+
+El archivo compilado aparece en `target/wasm32v1-none/release/simple_account.wasm` (el nombre exacto depende del nombre de tu crate).
+
+## Lecturas Adicionales
+
+- [Ejemplo de cuenta compleja] – añade soporte para multisig y límites de gasto.
+- [Contrato de firma BLS](./bls-signature.mdx) – demuestra esquemas de firma personalizados dentro de `__check_auth`.
+
+[Ejemplo de cuenta compleja]: ./complex-account.mdx
+[ejemplo de cuenta simple]: https://github.com/stellar/soroban-examples/tree/v23.0.0/simple_account

@@ -320,10 +320,13 @@ import (
   "fmt"
   "time"
 
-  sdk "github.com/stellar/go/clients/horizonclient"
-  "github.com/stellar/go/keypair"
-  "github.com/stellar/go/network"
-  "github.com/stellar/go/txnbuild"
+	"github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+
+	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/txnbuild"
+	"github.com/stellar/go/xdr"
 )
 
 func main() {
@@ -559,20 +562,69 @@ import (
 	"github.com/stellar/stellar-rpc/client"
 	"github.com/stellar/stellar-rpc/protocol"
 
-if results, ok := txResult.OperationResults(); ok {
-  // We look at the first result since our first (and only) operation in the
-  // transaction was the CreateClaimableBalanceOp.
-  operationResult := results[0].MustTr().CreateClaimableBalanceResult
-  clientBalanceID, err := xdr.MarshalHex(operationResult.BalanceId)
-  check(err)
-  fmt.Println("Balance ID (2):", clientBalanceID)
-}
+	"github.com/stellar/go/xdr"
+)
 
-// Method 3: Account B could alternatively do something like:
-balances, err := client.ClaimableBalances(sdk.ClaimableBalanceRequest{Claimant: B})
-check(err)
-clientBalanceID := balances.Embedded.Records[0].BalanceID
-fmt.Println("Balance ID (3):", clientBalanceID)
+// Replace with your claimable balance ID
+const BALANCE_ID = "00000000a4c91c4561f2d8b30dad9cf6475221b3003a3b4e12fc0cf78a13251c0e7ff665"
+
+func main() {
+	// Create RPC client
+	rpcClient := client.NewClient("https://soroban-testnet.stellar.org", nil)
+	defer rpcClient.Close()
+
+	fmt.Printf("Looking up balance ID: %s\n", BALANCE_ID)
+
+	// Parse claimable balance ID from hex
+	var claimableBalanceID xdr.ClaimableBalanceId
+	err := xdr.SafeUnmarshalHex(BALANCE_ID, &claimableBalanceID)
+	panicIf(err)
+
+	// Create ledger key for claimable balance
+	ledgerKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeClaimableBalance,
+		ClaimableBalance: &xdr.LedgerKeyClaimableBalance{
+			BalanceId: claimableBalanceID,
+		},
+	}
+
+	// Convert ledger key to base64 for RPC call
+	ledgerKeyB64, err := xdr.MarshalBase64(ledgerKey)
+	panicIf(err)
+
+	fmt.Println("Fetching from RPC server...")
+
+	// Use GetLedgerEntries method from client
+	ctx := context.Background()
+	resp, err := rpcClient.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{
+		Keys: []string{ledgerKeyB64},
+	})
+	panicIf(err)
+
+	if len(resp.Entries) > 0 {
+		entry := resp.Entries[0]
+		fmt.Println("Found claimable balance")
+
+		// Parse the ledger entry XDR
+		var ledgerEntryData xdr.LedgerEntryData
+		err = xdr.SafeUnmarshalBase64(entry.DataXDR, &ledgerEntryData)
+		panicIf(err)
+
+		claimableBalance := ledgerEntryData.ClaimableBalance
+
+		// Display details
+		fmt.Printf("Amount: %d\n", int64(claimableBalance.Amount))
+		fmt.Printf("Asset: %s\n", claimableBalance.Asset.String())
+		// Show claimants
+		fmt.Println("\nClaimants:")
+		for i, claimant := range claimableBalance.Claimants {
+			address := claimant.V0.Destination.Address()
+			fmt.Printf("   %d. %s\n", i+1, address)
+		}
+	} else {
+		fmt.Println("Claimable balance not found")
+	}
+}
 ```
 
 </CodeExample>
@@ -645,23 +697,114 @@ try {
 ```
 
 ```go
-tx, err = txnbuild.NewTransaction(
-    txnbuild.TransactionParams{
-        SourceAccount:        &aAccount, // or Account B, depending on the condition!
-        IncrementSequenceNum: true,
-        BaseFee:              txnbuild.MinBaseFee,
-        Timebounds:           txnbuild.NewInfiniteTimeout(),
-        Operations:           []txnbuild.Operation{
-          &txnbuild.ClaimClaimableBalance{BalanceID: clientBalanceID}
-        },
-    },
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+
+	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/txnbuild"
 )
-check(err)
-tx, err = tx.Sign(network.TestNetworkPassphrase, aKeys)
-check(err)
-txResp, err = client.SubmitTransaction(tx)
-check(err)
-fmt.Printf("%s claimed %s\n", aKeys.Address(), clientBalanceID)
+
+// Replace with your claimable balance ID and claimant secret
+const BALANCE_ID = "00000000a4c91c4561f2d8b30dad9cf6475221b3003a3b4e12fc0cf78a13251c0e7ff665"
+const CLAIMANT_SECRET = "SBMODTOLLH2LGF4AJU5XOGHRQCGKEVJUZSAUAGJL7KGKC7XLJ3SG3F7N"
+
+func main() {
+	// Create RPC client
+	rpcClient := client.NewClient("https://soroban-testnet.stellar.org", nil)
+	defer rpcClient.Close()
+
+	// Create keypair from claimant secret
+	keypairAccA, err := keypair.ParseFull(CLAIMANT_SECRET)
+	panicIf(err)
+
+	fmt.Printf("Claiming account: %s\n", keypairAccA.Address())
+	fmt.Printf("Balance ID: %s\n", BALANCE_ID)
+
+	ctx := context.Background()
+
+	// Load the claimant account using client's LoadAccount method
+	accountA, err := rpcClient.LoadAccount(ctx, keypairAccA.Address())
+	panicIf(err)
+
+	// Create claim claimable balance operation
+	claimOp := txnbuild.ClaimClaimableBalance{
+		BalanceID: BALANCE_ID,
+	}
+
+	// Build transaction
+	fmt.Println("Building claim transaction...")
+	tx, err := txnbuild.NewTransaction(
+		txnbuild.TransactionParams{
+			SourceAccount:        accountA,
+			IncrementSequenceNum: true,
+			BaseFee:              txnbuild.MinBaseFee,
+			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewInfiniteTimeout()},
+			Operations:           []txnbuild.Operation{&claimOp},
+		},
+	)
+	panicIf(err)
+
+	// Sign transaction
+	tx, err = tx.Sign(network.TestNetworkPassphrase, keypairAccA)
+	panicIf(err)
+
+	// Get transaction XDR
+	txXDR, err := tx.Base64()
+	panicIf(err)
+
+	// Submit using RPC client's SendTransaction method
+	fmt.Println("Submitting claim transaction...")
+	sendResp, err := rpcClient.SendTransaction(ctx, protocol.SendTransactionRequest{
+		Transaction: txXDR,
+	})
+	panicIf(err)
+
+	if sendResp.Status != "PENDING" {
+		log.Fatalf("Transaction not pending: %s", sendResp.Status)
+	}
+
+	fmt.Printf("Transaction submitted: %s\n", sendResp.Hash)
+
+	// Poll for completion using RPC client's GetTransaction method
+	fmt.Println("Polling for result...")
+	for i := 0; i < 10; i++ {
+		resp, err := rpcClient.GetTransaction(ctx, protocol.GetTransactionRequest{
+			Hash: sendResp.Hash,
+		})
+		if err != nil {
+			log.Printf("Error getting transaction: %v", err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if resp.Status != protocol.TransactionStatusNotFound {
+			if resp.Status == protocol.TransactionStatusSuccess {
+				fmt.Println("\nSUCCESS: Claimable balance claimed")
+				fmt.Printf("Transaction hash: %s\n", sendResp.Hash)
+				fmt.Printf("Claimed by: %s\n", keypairAccA.Address())
+			} else {
+				fmt.Printf("Transaction failed: %s\n", resp.Status)
+				if resp.ResultXDR != "" {
+					fmt.Printf("Result XDR: %s\n", resp.ResultXDR)
+				}
+			}
+			return
+		}
+
+		time.Sleep(time.Duration(i+1) * time.Second)
+	}
+
+	fmt.Println("Transaction polling timeout")
+}
 ```
 
 </CodeExample>

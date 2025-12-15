@@ -20,8 +20,10 @@ Learn about choosing the right storage for your use case in this [How-To Guide](
 
 All contract data has a Time To Live (TTL) that must be periodically extended. If an entry's TTL is not periodically extended, the entry's TTL will eventually go to 0 and either become "archived" or permanently deleted depending on the storage type. Each type of storage functions similarly, but has different fees and archival behavior:
 
-- When a `Temporary` entry's TTL is 0, it is deleted from the ledger and is permanently inaccessible.
-- When a `Persistent` or `Instance` entry TTL is 0, it becomes inaccessible and is "archived", but can be "restored" and used again via the [`RestoreFootprintOp`](#restorefootprintop).
+- When a `Temporary` entry's TTL is 0, it is deleted from the ledger and is permanently inaccessible
+- When a `Persistent` or `Instance` entry TTL is 0, it is "archived" and can't be accessed until it is "restored". There are two ways to restore entries:
+  - (usually) Automatically when an archived entry is accessed by `InvokeHostFunction` operation
+  - (rarely) By manually building the `RestoreFootprintOp` operation
 
 ## Contract Data Type Descriptions
 
@@ -37,7 +39,7 @@ The general usage and interface are identical for all storage types. They differ
 ### `Instance`
 
 - Most expensive fees (same price as `Persistent` storage).
-- Archived when TTL goes to 0, can be restored using the [`RestoreFootprintOp`](#restorefootprintop) operation.
+- Archived when TTL goes to 0, is automatically restored via the `InvokeHostFunction` operation (or restored manually by using the `RestoreFootprintOp` operation in rare cases).
 - Shares the same TTL as the contract instance. If the contract instance has not been archived, instance data is guaranteed to be accessible and not archived.
 - Limited amount of storage available.
 - Suitable for "shared" contract state that cannot be `Temporary` (i.e. admin accounts, contract metadata, etc.).
@@ -45,10 +47,20 @@ The general usage and interface are identical for all storage types. They differ
 ### `Persistent`
 
 - Most expensive fees (same price as `Instance` storage).
-- Archived when TTL goes to 0, can be restored using the [`RestoreFootprintOp`](#restorefootprintop) operation.
+- Archived when TTL goes to 0, is automatically restored via the `InvokeHostFunction` operation (or restored manually by using the `RestoreFootprintOp` operation in rare cases).
 - Does not share the same TTL as the contract instance. If the contract instance is not archived, `Persistent` data may be archived and need to be restored before invoking the contract.
 - Unlimited amount of storage.
 - Suitable for user data that cannot be `Temporary` (i.e. balances).
+
+## Contract Data Automatic Restoration
+
+Starting in Protocol 23 ([CAP-0066: Soroban In-Memory Read Resource](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0066.md#automatic-entry-restoration)), archived `Persistent` or `Instance` contract entries can be automatically restored before a host function runs, but only if they're included in the transaction's restore list. In practice, this list is usually populated by the contract invocation simulation (via the Stellar RPC): if the simulation detects an access to an archived entry, it adds that entry to the restore list. When the resulting `InvokeHostFunction` operation executes, those entries are restored first, and then the host function runs; normal rent and fees still apply.
+
+:::important
+
+If you build a transaction manually without running simulation (and therefore don’t include all needed archived entries in the restore list), automatic restoration will not occur and the transaction will fail when it tries to access those archived entries.
+
+:::
 
 ## Contract Data Best Practices
 
@@ -149,6 +161,13 @@ liveUntilLedger that is large enough.
 
 ### RestoreFootprintOp
 
+`RestoreFootprintOp` is, for the most part, no longer needed starting in Protocol 23, as archived entries are automatically restored when they appear in a footprint during `InvokeHostFunctionOp`.
+
+`RestoreFootprintOp` can still be used in rare use cases, such as:
+
+- If auto-restoration makes a transaction too large to fit into the network limits, the restoration can be performed separately via `RestoreFootprintOp`
+- If contract developers want to make sure that they pay the restoration fees (as opposed to their users), they can restore their entries on-demand with `RestoreFootprintOp`
+
 XDR:
 
 ```
@@ -180,11 +199,17 @@ We've done our best to build tooling around state archival in both the Stellar R
 
 ### Overview
 
+:::info
+
+The manual operation (`RestoreFootprintOp`) is, for the most part, no longer needed starting in Protocol 23, as archived entries are automatically restored when they appear in a footprint during `InvokeHostFunctionOp`. `RestoreFootprintOp` can be used in rare use cases [described above](#restorefootprintop).
+
+:::
+
 Both restoring and extending the TTL of ledger entries follows a three-step process regardless of their nature (contract data, instances, etc.):
 
 1. **Identify the ledger entries**. This usually means acquiring them from a Stellar RPC server as part of your initial transaction simulation (see the [transaction simulation docs](../contract-interactions/transaction-simulation.mdx) and the [`simulateTransaction`](../../../../data/apis/rpc/api-reference/methods/simulateTransaction.mdx) RPC method).
 
-2. **Prepare your operation**. This means describing the ledger entries within the corresponding operation (i.e. `ExtendFootprintTTLOp` or `RestoreFootprintOp`) and its ledger footprint (the `SorobanTransactionData` field), then simulating it to fill out fee and resource usage information (when restoring, you usually have simulation results already).
+2. **Prepare your operation**. This means describing the ledger entries within the corresponding operation (i.e., `ExtendFootprintTTLOp` or `RestoreFootprintOp`) and its ledger footprint (the `SorobanTransactionData` field), then simulating it to fill out fee and resource usage information (when restoring, you usually have simulation results already).
 
 3. **Submit the transaction** and start again with what you were trying to do in the first place.
 
@@ -197,7 +222,7 @@ Remember, though, that any combination of these scenarios can occur in reality.
 
 ### Preparation
 
-In order to help the scaffolding of the code, we'll reuse the rudimentary, retry-enabled transaction polling function `submitTx` which we outlined in [another guide](/build/guides/transactions/submit-transaction-wait-js.mdx).
+In order to help the scaffolding of the code, we'll reuse the rudimentary, retry-enabled transaction polling function `submitTx` which we outlined in [another guide](../../../../build/guides/transactions/submit-transaction-wait-js.mdx).
 
 In the following code, we will also leverage [`Server.prepareTransaction`](https://stellar.github.io/js-stellar-sdk/module-rpc.Server.html#prepareTransaction). This is a helpful method that, given a transaction, will simulate it, then amend the transaction with the simulation results (fees, etc.) and return that. Then, it can just be signed and submitted. We will also use [`SorobanDataBuilder`](https://stellar.github.io/js-stellar-sdk/SorobanDataBuilder.html), a convenient abstraction that lets us use a [builder pattern](https://en.wikipedia.org/wiki/Builder_pattern) to set the appropriate storage footprints for a transaction.
 
