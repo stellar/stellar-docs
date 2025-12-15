@@ -186,9 +186,13 @@ than one language. See an example including a snippet for `JavaScript` and
 `Python` below. It is using [Prism React Renderer][prism] for syntax
 highlighting.
 
-````markdown
-import { CodeExample } from "@site/src/components/CodeExample";
+> [!NOTE]
+> The `CodeExample` component has been added to the list of globally available
+> components, in `/src/theme/MDXComponents.ts`. This means it's not required to
+> `import { CodeExample } ...` in a page if you're planning to use it. It's just
+> always available in MDX file.
 
+````markdown
 <CodeExample>
 
 ```js
