@@ -1,20 +1,25 @@
-import React from "react";
+import React, {type ReactNode} from "react";
 import clsx from "clsx";
 import Link from "@docusaurus/Link";
 import {
   useDocById,
   findFirstSidebarItemLink,
 } from "@docusaurus/plugin-content-docs/client";
+import type {
+  PropSidebarItemCategory,
+  PropSidebarItemLink,
+} from "@docusaurus/plugin-content-docs";
 import { usePluralForm } from "@docusaurus/theme-common";
 import isInternalUrl from "@docusaurus/isInternalUrl";
 import { translate } from "@docusaurus/Translate";
 
+import type { Props } from "@theme/DocCard";
 import Heading from "@theme/Heading";
-import styles from "./styles.module.css";
+import styles from "./styles.module.scss";
 
 function useCategoryItemsPlural() {
   const { selectMessage } = usePluralForm();
-  return (count) =>
+  return (count: number) =>
     selectMessage(
       count,
       translate(
@@ -29,7 +34,15 @@ function useCategoryItemsPlural() {
     );
 }
 
-function CardContainer({ className, href, children }) {
+function CardContainer({
+  className,
+  href,
+  children,
+}: {
+  className?: string;
+  href: string;
+  children: ReactNode;
+}): ReactNode {
   return (
     <Link
       href={href}
@@ -40,7 +53,19 @@ function CardContainer({ className, href, children }) {
   );
 }
 
-function CardLayout({ className, href, icon, title, description }) {
+function CardLayout({
+  className,
+  href,
+  icon,
+  title,
+  description,
+}: {
+  className?: string;
+  href: string;
+  icon: ReactNode;
+  title: string;
+  description?: string;
+}): ReactNode {
   return (
     <CardContainer href={href} className={className}>
       <Heading
@@ -52,7 +77,7 @@ function CardLayout({ className, href, icon, title, description }) {
       </Heading>
       {description && (
         <p
-          className={clsx("text--truncate", styles.cardDescription)}
+          className={styles.cardDescription}
           title={description}
         >
           {description}
@@ -62,7 +87,7 @@ function CardLayout({ className, href, icon, title, description }) {
   );
 }
 
-function CardCategory({ item }) {
+function CardCategory({ item }: { item: PropSidebarItemCategory }): ReactNode {
   const href = findFirstSidebarItemLink(item);
   const categoryItemsPlural = useCategoryItemsPlural();
 
@@ -86,8 +111,8 @@ function CardCategory({ item }) {
   );
 }
 
-function CardLink({ item }) {
-  const icon = isInternalUrl(item.href) ? "📄️" : "🔗";
+function CardLink({ item }: { item: PropSidebarItemLink }): ReactNode {
+  const icon = isInternalUrl(item.href) ? "📄" : "🔗";
   const doc = useDocById(item.docId ?? undefined);
   return (
     <CardLayout
@@ -100,7 +125,7 @@ function CardLink({ item }) {
   );
 }
 
-export default function DocCard({ item }) {
+export default function DocCard({ item }: Props): ReactNode {
   switch (item.type) {
     case "link":
       return <CardLink item={item} />;
