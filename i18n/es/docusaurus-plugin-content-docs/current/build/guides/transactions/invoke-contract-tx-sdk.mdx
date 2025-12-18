@@ -366,7 +366,7 @@ stellar contract deploy --wasm ./target/wasm32v1-none/release/soroban_auth_contr
 Esto devolverá un ID de contrato; en el siguiente ejemplo usaremos `CBU3OHKZ2BHOHK5VMG3HBWIW3PBQHZLNMHNJUGM23W5NBFA75JMMWAVT`.
 
 ```rust
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::time::Duration;
 
 use soroban_client::{
     account::{Account, AccountBehavior},
@@ -374,9 +374,7 @@ use soroban_client::{
     contract::{ContractBehavior, Contracts},
     keypair::{Keypair, KeypairBehavior},
     network::{NetworkPassphrase, Networks},
-    soroban_rpc::{
-        GetTransactionResponse, SendTransactionResponse, SendTransactionStatus, TransactionStatus,
-    },
+    soroban_rpc::TransactionStatus,
     transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
     Options, Server,
 };
@@ -384,7 +382,7 @@ use soroban_client::{
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_url = "https://soroban-testnet.stellar.org";
-    let server = soroban_client::Server::new(server_url, Options::default())?;
+    let server = Server::new(server_url, Options::default())?;
 
     let source_keypair = Keypair::random()?;
     let source_public_key = &source_keypair.public_key();
@@ -392,15 +390,12 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get account information from server
     let account_data = server.request_airdrop(source_public_key).await?;
-    let source_account = Rc::new(RefCell::new(Account::new(
-        source_public_key,
-        &account_data.sequence_number(),
-    )?));
+    let mut source_account = Account::new(source_public_key, &account_data.sequence_number())?;
 
     // Calling the increment method of the contract
     let contract_addr = "CBU3OHKZ2BHOHK5VMG3HBWIW3PBQHZLNMHNJUGM23W5NBFA75JMMWAVT";
     let contract = Contracts::new(contract_addr).unwrap();
-    let tx = TransactionBuilder::new(source_account, Networks::testnet(), None)
+    let tx = TransactionBuilder::new(&mut source_account, Networks::testnet(), None)
         .fee(1000u32)
         .add_operation(contract.call(
             "increment",
@@ -430,66 +425,23 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let hash = &response.hash;
     println!(">> Tx hash: {hash}");
-    let counter: u32 = if let Some(tx_result) = wait_success(&server, response).await {
-        // On success we can extract the returned value
-        let (_meta, ret_val) = tx_result.to_result_meta().expect("No result meta");
-        ret_val
-            .expect("None returned value")
-            .try_into()
-            .expect("Return value is not u32")
-    } else {
-        return Err("Failed to create contract".into());
+    let counter: u32 = match server.wait_transaction(hash, Duration::from_secs(15)).await {
+        Ok(tx_result) if tx_result.status == TransactionStatus::Success => {
+            // On success we can extract the returned value
+            let (_meta, ret_val) = tx_result.to_result_meta().expect("No result meta");
+            ret_val
+                .expect("None returned value")
+                .try_into()
+                .expect("Return value is not u32")
+        }
+        _ => {
+            return Err("Failed to create contract".into());
+        }
     };
     println!(">> Counter: {counter}",);
     println!();
 
     Ok(())
-}
-
-// Polling the `get_transaction` until the transaction is found in Success or Failed
-async fn wait_success(
-    server: &Server,
-    response: SendTransactionResponse,
-) -> Option<GetTransactionResponse> {
-    if response.status != SendTransactionStatus::Error {
-        let mut count = 0;
-        loop {
-            let response = server.get_transaction(&response.hash).await;
-            if let Ok(tx_result) = response {
-                match tx_result.status {
-                    TransactionStatus::Success => {
-                        if let Some(ledger) = tx_result.ledger {
-                            println!(">> Confirmed in ledger: {}", ledger);
-                        }
-                        return Some(tx_result);
-                    }
-                    TransactionStatus::NotFound => {
-                        count += 1;
-
-                        if count > 6 {
-                            println!(
-                                ">> Waiting for transaction confirmation... Latest ledger: {}",
-                                tx_result.latest_ledger
-                            );
-                        }
-
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                    TransactionStatus::Failed => {
-                        if let Some(result) = tx_result.to_result() {
-                            eprintln!("Transaction failed with result: {:?}", result);
-                        } else {
-                            eprintln!("Transaction failed without result XDR");
-                        }
-                        return None;
-                    }
-                }
-            } else {
-                eprintln!("! Error getting transaction status: {:?}", response);
-            }
-        }
-    }
-    None
 }
 ```
 
