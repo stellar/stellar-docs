@@ -20,8 +20,10 @@ Aprende a elegir el almacenamiento adecuado para tu caso de uso en esta [Guía p
 
 Todos los datos del contrato tienen un Tiempo de Vida (TTL) que debe extenderse periódicamente. Si el TTL de una entrada no se extiende regularmente, eventualmente llegará a 0 y la entrada será "archivada" o eliminada permanentemente dependiendo del tipo de almacenamiento. Cada tipo de almacenamiento funciona de forma similar, pero con diferentes tarifas y comportamientos de archivado:
 
-- Cuando una entrada `Temporary` tiene un TTL de 0, se elimina del libro mayor y es inaccesible permanentemente.
-- Cuando una entrada `Persistent` o `Instance` tiene un TTL de 0, se vuelve inaccesible y queda "archivada", pero puede ser "restaurada" y usada nuevamente mediante [`RestoreFootprintOp`](#restorefootprintop).
+- Cuando el TTL de una entrada `Temporary` es 0, se elimina del libro mayor y queda permanentemente inaccesible
+- Cuando el TTL de una entrada `Persistent` o `Instance` es 0, se "archiva" y no puede accederse a ella hasta que se "restaure". Hay dos formas de restaurar entradas:
+  - (generalmente) Automáticamente cuando una entrada archivada es accedida mediante la operación `InvokeHostFunction`
+  - (rara vez) Construyendo manualmente la operación `RestoreFootprintOp`
 
 ## Descripciones de tipos de datos de contrato
 
@@ -37,7 +39,7 @@ El uso general e interfaz son idénticos para todos los tipos de almacenamiento.
 ### `Instance`
 
 - Tarifas más costosas (igual precio que almacenamiento `Persistent`).
-- Archivado cuando el TTL llega a 0, puede ser restaurado usando la operación [`RestoreFootprintOp`](#restorefootprintop).
+- Archivada cuando el TTL llega a 0, se restaura automáticamente a través de la operación `InvokeHostFunction` (o se restaura manualmente usando la operación `RestoreFootprintOp` en casos raros).
 - Comparte el mismo TTL que la instancia del contrato. Si la instancia del contrato no ha sido archivada, los datos de instancia garantizan estar accesibles y no archivados.
 - Cantidad limitada de almacenamiento disponible.
 - Adecuado para estados "compartidos" de contrato que no pueden ser `Temporary` (por ejemplo, cuentas de administrador, metadatos del contrato, etc.).
@@ -45,10 +47,20 @@ El uso general e interfaz son idénticos para todos los tipos de almacenamiento.
 ### `Persistent`
 
 - Tarifas más costosas (igual precio que almacenamiento `Instance`).
-- Archivado cuando el TTL llega a 0, puede ser restaurado usando la operación [`RestoreFootprintOp`](#restorefootprintop).
+- Archivada cuando el TTL llega a 0, se restaura automáticamente a través de la operación `InvokeHostFunction` (o se restaura manualmente usando la operación `RestoreFootprintOp` en casos raros).
 - No comparte el mismo TTL que la instancia del contrato. Si la instancia del contrato no está archivada, los datos `Persistent` pueden estar archivados y deben restaurarse antes de invocar el contrato.
 - Cantidad ilimitada de almacenamiento.
 - Adecuado para datos de usuario que no pueden ser `Temporary` (por ejemplo, balances).
+
+## Restauración Automática de Datos de Contrato
+
+A partir del Protocolo 23 ([CAP-0066: Recurso de Lectura en Memoria de Soroban](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0066.md#automatic-entry-restoration)), las entradas de contrato `Persistent` o `Instance` archivadas pueden restaurarse automáticamente antes de que se ejecute una función host, pero solo si están incluidas en la lista de restauración de la transacción. En la práctica, esta lista suele completarse mediante la simulación de la invocación del contrato (a través del RPC de Stellar): si la simulación detecta acceso a una entrada archivada, la añade a la lista de restauración. Cuando se ejecuta la operación `InvokeHostFunction` resultante, esas entradas se restauran primero y luego se ejecuta la función host; los alquileres y tarifas normales aún se aplican.
+
+:::important
+
+Si construyes una transacción manualmente sin ejecutar la simulación (y por lo tanto no incluyes todas las entradas archivadas necesarias en la lista de restauración), la restauración automática no ocurrirá y la transacción fallará al intentar acceder a esas entradas archivadas.
+
+:::
 
 ## Buenas prácticas para datos de contrato
 
@@ -149,6 +161,13 @@ liveUntilLedger that is large enough.
 
 ### RestoreFootprintOp
 
+`RestoreFootprintOp`, en general, ya no es necesario a partir del Protocolo 23, ya que las entradas archivadas se restauran automáticamente cuando aparecen en una huella durante `InvokeHostFunctionOp`.
+
+`RestoreFootprintOp` todavía puede usarse en casos de uso raros, tales como:
+
+- Si la restauración automática hace que una transacción sea demasiado grande para ajustarse a los límites de la red, la restauración puede realizarse por separado mediante `RestoreFootprintOp`
+- Si los desarrolladores de contratos quieren asegurarse de pagar las tarifas de restauración (en lugar de sus usuarios), pueden restaurar sus entradas bajo demanda con `RestoreFootprintOp`
+
 XDR:
 
 ```
@@ -180,11 +199,17 @@ Hemos hecho lo posible para construir herramientas alrededor del archivado de es
 
 ### Resumen
 
+:::info
+
+La operación manual (`RestoreFootprintOp`) ya no es necesaria en la mayoría de los casos a partir del Protocolo 23, ya que las entradas archivadas se restauran automáticamente cuando aparecen en una huella durante `InvokeHostFunctionOp`. `RestoreFootprintOp` puede usarse en casos raros descritos [arriba](#restorefootprintop).
+
+:::
+
 Tanto restaurar como extender el TTL de entradas del libro sigue un proceso de tres pasos, sin importar su naturaleza (datos de contrato, instancias, etc.):
 
 1. **Identificar las entradas del libro.** Esto generalmente significa obtenerlas desde un servidor RPC Stellar como parte de la simulación inicial de tu transacción (consulte la [documentación de simulación de transacciones](../contract-interactions/transaction-simulation.mdx) y el método RPC [`simulateTransaction`](../../../../data/apis/rpc/api-reference/methods/simulateTransaction.mdx)).
 
-2. **Preparar tu operación.** Esto significa describir las entradas del libro dentro de la operación correspondiente (es decir, `ExtendFootprintTTLOp` o `RestoreFootprintOp`) y su huella en el libro (el campo `SorobanTransactionData`), luego simularla para llenar la información de tarifas y uso de recursos (al restaurar, normalmente ya tienes resultados de simulación).
+2. **Preparar tu operación.** Esto implica describir las entradas del libro mayor dentro de la operación correspondiente (es decir, `ExtendFootprintTTLOp` o `RestoreFootprintOp`) y su huella del libro mayor (el campo `SorobanTransactionData`), y luego simularla para completar la información de tarifas y uso de recursos (al restaurar, normalmente ya se tienen los resultados de la simulación).
 
 3. **Enviar la transacción** y empezar de nuevo con lo que querías hacer en primer lugar.
 
@@ -197,7 +222,7 @@ Recuerda que, sin embargo, cualquier combinación de estos escenarios puede ocur
 
 ### Preparación
 
-Para facilitar la estructura del código, reutilizaremos la función rudimentaria de sondeo de transacciones con reintentos `submitTx` que describimos en [otra guía](/build/guides/transactions/submit-transaction-wait-js.mdx).
+Para facilitar la estructuración del código, reutilizaremos la función básica de sondeo de transacciones con reintentos habilitados `submitTx`, que describimos en [otra guía](../../../../build/guides/transactions/submit-transaction-wait-js.mdx).
 
 En el siguiente código, también aprovecharemos [`Server.prepareTransaction`](https://stellar.github.io/js-stellar-sdk/module-rpc.Server.html#prepareTransaction). Este es un método útil que, dado un transaction, lo simula, luego modifica la transacción con los resultados de la simulación (tarifas, etc.) y devuelve eso. Luego, sólo puede firmarse y enviarse. También usaremos [`SorobanDataBuilder`](https://stellar.github.io/js-stellar-sdk/SorobanDataBuilder.html), una abstracción conveniente que nos permite usar un [patrón Builder](https://es.wikipedia.org/wiki/Patr%C3%B3n_builder) para establecer las huellas de almacenamiento apropiadas para una transacción.
 
