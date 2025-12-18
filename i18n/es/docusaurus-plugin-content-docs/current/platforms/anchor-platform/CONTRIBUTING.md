@@ -13,7 +13,12 @@ Estamos muy contentos de tenerte aquí, y esperamos que este documento te ayude 
 La documentación de Anchor Platform ha sido desversionada, y ahora sólo mantenemos una versión "actual" de los documentos. Así que, cualquier cosa en esta página que
 hable de crear una nueva versión, actualizar versiones antiguas, etc., puede ser ignorada.
 
-Sin embargo, la documentación de Anchor Platform _todavía_ permanece en su propia instancia de Docusaurus. Por lo tanto, la información aquí sobre enlazar dentro y entre instancias sigue siendo relevante. (Esto no será así para siempre, pero por ahora, sí lo es.)
+~~Sin embargo, la documentación de la Plataforma Anchor _todavía_ permanece en su propia instancia de docusaurus. Por lo tanto, la información aquí sobre enlazar dentro y entre instancias sigue siendo relevante. (Esto no será así para siempre, pero por ahora, sí lo es.)~~
+
+¡Ya no es una instancia separada del plugin! Actualizaré este documento pronto, pero por ahora los detalles del enlace se pueden resumir en:
+
+- casi siempre `[usa un](../../relative/link.mdx)` con la extensión del archivo,
+  a menos que estés enlazando desde/hacia un documento de notas de reunión.
 
 ## Resumen Rápido (TL;DR)
 
@@ -87,6 +92,10 @@ Ambas configuraciones de plugins se han separado en un archivo `/config/anchorPl
 Aquí las cosas se vuelven un poco más técnicas, pero te prometo que esta parte es útil de conocer. Ambos [plugins](#plugins) que mencioné antes son realmente sólo _instancias_ de esos dos plugins. De hecho, cada uno de esos plugins se usa en otras partes de nuestro sitio de documentación para Horizon, SDP, y la documentación "regular". _Generalmente_ no es importante tener en cuenta las diferentes instancias de plugins, pero sí es **muy relevante** cuando hablamos de enlaces. Así que...
 
 ### Enlaces
+
+> [!ADVERTENCIA]
+>
+> Esta sección está desactualizada. Por ahora, ignorala en su mayoría.
 
 La mayoría de las veces, **especialmente en documentos versionados**, es importante [enlazar a otros documentos usando rutas de archivo _relativas_](https://docusaurus.io/docs/versioning#link-docs-by-file-paths).
 Esto permite que Docusaurus reescriba URLs cuando es necesario en tiempo de compilación.
