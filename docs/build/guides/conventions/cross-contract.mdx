@@ -1,0 +1,130 @@
+---
+title: Making cross-contract calls
+description: Call a smart contract from within another smart contract
+---
+
+As with developing software in any language, developing a Stellar smart contract with a rich feature set can be a challenging and time-consuming task. Thankfully, someone else might already have solved part of your issues or build components which could be reused. The open source community is vibrant and Stellar's community does not disappoint.
+
+There are two kinds of dependencies that can be introduced in a Stellar smart contract:
+
+1. Other Rust crates can be used (provided that they are compatible with Soroban's [Rust dialect](../../../learn/fundamentals/contract-development/rust-dialect.mdx));
+2. Other smart contract can be used. This is referred to as a [cross-contract call](../../../learn/fundamentals/contract-development/contract-interactions/cross-contract.mdx).
+
+In the following, we will see how contracts can be leveraged from within another contract.
+
+## Contract as a dependency
+
+While finding a contract is out of scope for this guide, there are a few place to be on the lookout. Most projects and dApps publicly disclose the address of their Stellar smart contract on their website. With this information, a [block explorer](../../../tools/developer-tools/block-explorers.mdx) is a powerful tool to understand how a contract is being used. Some explorers also allow you to download the compiled contract as a Wasm file. There are also projects that provide a link to access the code itself.
+
+:::info[Contract address]
+
+To depend on a project, we need to know the contract address of the contract to depend on.
+
+:::
+
+## Public API
+
+All public functions of a contract can be called. Using a network explorer can be helpful as some propose to see the Rust interface of a contract. Bindings can also be generated using the CLI:
+
+```bash
+stellar contract bindings rust --network --contract-id ... --output-dir ...
+```
+
+## Making a cross-contract call
+
+Once we know which function to call and which arguments to use, there are two main ways to make a cross-contract call: we can either load the Wasm or call the contract.
+
+Let's start by using only a contract's address. In this example, we have an external contract with a public function named `add_with` which takes two `u32` as input values to sum them.
+
+```rust
+#[contract]
+pub struct ContractB;
+
+#[contractimpl]
+impl ContractB {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        env.invoke_contract(&contract, symbol_short!("add"), vec![&env, x.to_val(), y.to_val()])
+    }
+}
+```
+
+Only using the contract comes with its own challenges. Because we don't have access to the Wasm code, we don't have any typing inference and have to manually convert function inputs to `Val`. If we want more tools to help us, we can load the Wasm code in the contract. This allows us to pass normal types without needing manual conversions from our side. Behind the scenes, this way of doing it is simply a convenient wrapper around `env.invoke_contract`.
+
+```rust
+mod contract_a {
+    soroban_sdk::contractimport!(
+        file = "soroban_contract_a.wasm"
+    );
+}
+
+#[contract]
+pub struct ContractB;
+
+#[contractimpl]
+impl ContractB {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        let client = contract_a::Client::new(&env, &contract);
+        client.add(&x, &y)
+    }
+}
+```
+
+Although we have access to the Wasm, we still need a contract address because there could be multiple contracts deployed on-chain that use the same underlying code. This can be of importance if, for instance, the function that you need requires access to stored values from other users.
+
+:::tip[Address and Wasm]
+
+Thanks to the Rust bindings of the external contract, we can also use any public enum of the contract as if we would have defined them within our own contract.
+
+```rust
+client::ContractAEnum::SomeField
+```
+
+:::
+
+## Handling responses
+
+In the examples above, we have used `env.invoke_contract` and `client.some_function`. In both cases, if there is an issue with the underlying contract call, the contract will panic. This might be a valid approach, but in some cases we want to catch errors and handle them depending on the outcome. This is to forward a custom error message, or even triggers an alternative code path.
+
+Enter `try_`. By using `env.try_invoke_contract` or `client.try_some_function`, underlying errors won't make the contract panic. Instead, errors will be wrapped and can be handled. For example if we wanted to default to 0 in case of an error:
+
+```rust
+client.try_add(&x, &y).unwrap_or(Ok(0)).unwrap()
+```
+
+Of course, we could have far more complex error handling by leveraging the `match` statement:
+
+```rust
+match client.try_add(&x, &y) {
+    // the contract returned a value
+    Ok(Ok(number)) => todo!("do something with the number returned"),
+    Ok(Err(ConversionError)) => todo!("got a value back, but it wasn't a number like we expected"),
+
+    // the contract errored
+    Err(Ok(Error::AnError)) => todo!("do something when an error occurs that the contract included in its contract spec"),
+    Err(Err(status)) => todo!("do something when an unrecognized error, or system error, occurs"),
+}
+```
+
+## Depending on another contract
+
+Congratulations, now you can effectively leverage the whole Soroban ecosystem and its myriad of smart contracts. There is one last point to discuss before closing up: **dependability**.
+
+As with calling any smart contract, depending on an external smart contract should be done with care. It is advisable to do your own research and analysis on the contract you want to use. As contracts can be updated without their address changing, it is important to pay close attention to any changes in the underlying code.
+
+:::tip[Contract Wasm]
+
+The Wasm can be fetched by using the [Stellar CLI](../../../tools/cli/README.mdx). This can serve as a quick way to (for example) automate a hash check in a continuous integration system. However, such a check would not provide strong on-chain guarantees, but one could build a contract for that!
+
+```bash
+stellar contract fetch --id C... --network ... > contract.wasm
+```
+
+:::
+
+Besides this security consideration, upgrading a contract is an integral part of a contract's lifecycle. New features are added, bugs are fixed, and public API changes are made. Here as well, it is important to observe any development on these contracts to ensure the continuous operation of your own contract.
+
+## Examples
+
+See the following full example with tests:
+
+- [Cross-contract calls](../../smart-contracts/example-contracts/cross-contract-call.mdx) shows how to create two contracts, deploy them, and then how to call one from the other.

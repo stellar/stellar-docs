@@ -1,0 +1,124 @@
+name: Crowdin Download Action
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "Branch to run this workflow on"
+        required: true
+        default: "main"
+  schedule:
+    - cron: '25 20 * * *' # Runs daily at 20:25 UTC (15:25 Central)
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  crowdin_download:
+    runs-on: ubuntu-latest
+
+    env:
+      TARGET_BRANCH:
+        ${{ github.event.inputs.target_branch || 'main' }}
+      BRANCH_NAME:
+        feature/crowdin-download-${{ github.event.inputs.target_branch || 'main' }}
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
+
+      - name: Install GitHub CLI
+        run: sudo apt-get install -y gh
+
+      - name: Delete existing PR and branch if they exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          PR_NUMBER=$(gh pr list --head $BRANCH_NAME --json number --jq '.[0].number' || echo "")
+          if [ -n "$PR_NUMBER" ]; then
+            echo "Closing existing PR #$PR_NUMBER"
+            gh pr close $PR_NUMBER --delete-branch || true
+          fi
+          git push origin --delete $BRANCH_NAME || true
+
+      - name: Create new branch
+        run: |
+          git checkout -b $BRANCH_NAME
+
+      - name: Synchronize with Crowdin
+        uses: crowdin/github-action@v2
+        with:
+          upload_sources: false
+          upload_translations: false
+          download_translations: true
+          localization_branch_name: ${{ env.BRANCH_NAME }}
+          create_pull_request: false
+          push_translations: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CROWDIN_PROJECT_ID: ${{ env.CROWDIN_PROJECT_ID }}
+          CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Fix permissions for i18n directory
+        run: |
+          sudo mkdir -p i18n
+          sudo chown -R $USER:$USER i18n
+          sudo chmod -R 755 i18n
+          find i18n -type d -exec chmod 755 {} \;
+          find i18n -type f -exec chmod 644 {} \;
+
+      - name: Run crowdin:fix
+        run: yarn run crowdin:fix
+
+      - name: Build application
+        run: npx docusaurus build --locale es
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fix Git permissions
+        run: |
+          sudo chown -R $USER:$USER .git
+          sudo chmod -R u+rwX .git
+
+      - name: Commit and push changes
+        if: steps.changes.outputs.changes == 'true'
+        run: |
+          git add .
+          git commit -m "chore: Download crowdin translations and run crowdin:fix" || echo "No changes to commit"
+          git push origin $BRANCH_NAME
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.changes == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create --repo ${{ github.repository }} \
+            --base ${{ env.TARGET_BRANCH }} \
+            --head $BRANCH_NAME \
+            --title "Download translations and copy ignored files" \
+            --body "This PR was created by GitHub Actions to download crowdin translations and run crowdin:fix command."

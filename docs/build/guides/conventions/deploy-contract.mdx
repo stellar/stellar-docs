@@ -1,0 +1,241 @@
+---
+title: Deploy a contract from installed Wasm bytecode using a deployer contract
+description: Deploy a contract from installed Wasm bytecode using a deployer contract
+---
+
+<head>
+  <title>
+    {`Deploy a contract from installed Wasm bytecode using a deployer contract`}
+  </title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Deploy a contract from installed Wasm bytecode using a deployer contract"
+  />
+  <meta
+    property="og:description"
+    content="Deploy a contract from installed Wasm bytecode using a deployer contract"
+  />
+</head>
+
+## Overview
+
+This guide walks through the process of deploying a smart contract from installed Wasm bytecode using a deployer contract. We will cover setting up your environment, uploading Wasm bytecode, and deploying and initializing a contract atomically.
+
+### Prerequisites:
+
+- Basic understanding of [Rust programming language](https://www.rust-lang.org/). To brush up on Rust, check out [Rustlings](https://github.com/rust-lang/rustlings) or [The Rust book](https://doc.rust-lang.org/book/).
+- Familiarity with [Stellar smart contracts](../../smart-contracts/getting-started/hello-world.mdx)
+- Installed Cargo, [Stellar CLI](../../smart-contracts/getting-started/setup.mdx#install-the-stellar-cli) and Soroban SDK
+
+### Setup environment
+
+The [deployer example](https://github.com/stellar/soroban-examples/tree/v22.0.1/deployer) demonstrates how to deploy contracts using a contract.
+
+1. Clone the Soroban Examples Repository:
+
+```bash
+git clone -b v20.2.0 https://github.com/stellar/soroban-examples
+```
+
+2. Navigate to the Deployer Example:
+
+```bash
+cd soroban-examples/deployer/deployer
+```
+
+:::note
+
+For this example to work, you should navigate to `deployer/contracts` and `deployer/deployer` and run the command `stellar contract build` in each directory to generate the target files.
+
+:::
+
+3. Run tests:
+
+In the `deployer/deployer`, run the following command:
+
+```bash
+cargo test
+```
+
+You should see the output indicating the tests passed:
+
+```bash
+running 2 tests
+test test::test_deploy_from_contract ... ok
+test test::test_deploy_from_address ... ok
+```
+
+### Code overview
+
+```rust title="deployer/deployer/src/lib.rs"
+#[contract]
+pub struct Deployer;
+
+#[contractimpl]
+impl Deployer {
+    /// Deploy the contract Wasm and after deployment invoke the init function
+    /// of the contract with the given arguments.
+    ///
+    /// This has to be authorized by `deployer` (unless the `Deployer` instance
+    /// itself is used as deployer). This way the whole operation is atomic
+    /// and it's not possible to frontrun the contract initialization.
+    ///
+    /// Returns the contract address and result of the init function.
+    pub fn deploy(
+        env: Env,
+        deployer: Address,
+        wasm_hash: BytesN<32>,
+        salt: BytesN<32>,
+        init_fn: Symbol,
+        init_args: Vec<Val>,
+    ) -> (Address, Val) {
+        // Skip authorization if deployer is the current contract.
+        if deployer != env.current_contract_address() {
+            deployer.require_auth();
+        }
+
+        // Deploy the contract using the uploaded Wasm with given hash.
+        let deployed_address = env
+            .deployer()
+            .with_address(deployer, salt)
+            .deploy(wasm_hash);
+
+        // Invoke the init function with the given arguments.
+        let res: Val = env.invoke_contract(&deployed_address, &init_fn, init_args);
+        // Return the contract ID of the deployed contract and the result of
+        // invoking the init result.
+        (deployed_address, res)
+    }
+}
+```
+
+## How it works
+
+The deployer contract provides a mechanism to deploy other contracts in a secure and deterministic manner. It ensures that the deployment is authorized by the specified deployer address and supports atomic initialization of the newly deployed contract. This guarantees that the contract is properly initialized immediately after deployment, preventing any potential issues with uninitialized contracts.
+
+### Function breakdown
+
+- `env: Env`: The Env object represents the current contract execution environment. It provides methods to interact with the blockchain and other contracts, as well as perform various operations.
+- `deployer: Address`: The Address of the entity that is requesting the contract deployment. This address will be used to authorize the deployment.
+- `wasm_hash: BytesN<32>`: The hash of the Wasm bytecode of the contract to be deployed and must already be installed and on the ledger. This hash is used to uniquely identify the contract's code.
+- `salt: BytesN<32>`: A unique value used to derive the address of the deployed contract. The same combination of deployer address and salt will always produce the same deployed contract address, ensuring deterministic contract addresses.
+- `init_fn: Symbol`: The name of the initialization function to be called on the newly deployed contract.
+- `init_args: Vec<Val>`: A vector of arguments, specified as `{type: value}` objects, to be passed to the initialization function of the deployed contract.
+
+### Function steps
+
+```rust
+if deployer != env.current_contract_address() {
+   deployer.require_auth();
+}
+```
+
+The function checks if the `deployer` address is the same as the current contract’s address. If it is not, it requires authorization from the deployer address to ensure that the deployer has permitted this deployment.
+
+```rust
+let deployed_address = env
+   .deployer()
+   .with_address(deployer, salt)
+   .deploy(wasm_hash);
+```
+
+- Uses the `env.deployer()` method to create a deployer object.
+- `with_address(deployer, salt)` specifies the deployer address and the salt to derive the new contract’s address.
+- `deploy(wasm_hash)` deploys the contract using the provided Wasm bytecode hash and returns the address of the newly deployed contract.
+
+```rust
+let res: Val = env.invoke_contract(&deployed_address, &init_fn, init_args);
+```
+
+- Invokes the specified initialization function (`init_fn`) on the newly deployed contract (`deployed_address`), passing the provided initialization arguments (`init_args`).
+- The result of this function call is stored in `res`.
+
+```rust
+(deployed_address, res)
+```
+
+Returns a tuple containing the address of the newly deployed contract and the result of the initialization function.
+
+### Build the contracts
+
+To build the contract into a `.wasm` file, use the `stellar contract build` command. This command builds both the deployer contract and the test contract.
+
+```sh
+stellar contract build
+```
+
+Both `.wasm` files should be found in both contract `target` directories after building both contracts:
+
+```
+target/wasm32v1-none/release/soroban_deployer_contract.wasm
+```
+
+```
+target/wasm32v1-none/release/soroban_deployer_test_contract.wasm
+```
+
+## Run the contract
+
+Before deploying the test contract with the deployer, install the test contract Wasm using the `install` command. The `install` command will print out the hash derived from the Wasm file which should be used by the deployer.
+
+```sh
+stellar contract upload \
+--wasm  contract/target/wasm32v1-none/release/soroban_deployer_test_contract.wasm \
+--source-account alice \
+--network testnet
+```
+
+When deploying a smart contract to the network, you must specify an identity that will be used to sign the transactions. Change the `alice` [identity] to your own.
+
+[identity]: ../../smart-contracts/getting-started/setup.mdx#configure-an-identity
+
+The command prints out the hash as hex. It will look something like `6bc6d975ef99c057231481c40f69f4c2a8a89ac56e8826ef0378f8e5c6abc4be`.
+
+We also need to deploy the `Deployer` contract:
+
+```sh
+stellar contract deploy \
+  --wasm deployer/target/wasm32v1-none/release/soroban_deployer_contract.wasm \
+  --source-account alice  \
+  --network testnet
+```
+
+This will return the deployer address. For example: `CDKYZMA3OXR54YAHOQ5D4EWDFDT3ZNKKRYKQT7MGPWH22ZVD2DX2BJID`.
+
+Then the deployer contract may be invoked with the Wasm hash value above.
+
+```sh
+stellar contract invoke \
+  --id CDKYZMA3OXR54YAHOQ5D4EWDFDT3ZNKKRYKQT7MGPWH22ZVD2DX2BJID \
+  --source-account alice \
+  --network testnet \
+  -- \
+  deploy \
+  --deployer CDKYZMA3OXR54YAHOQ5D4EWDFDT3ZNKKRYKQT7MGPWH22ZVD2DX2BJID \
+  --salt 123 \
+  --wasm_hash 6bc6d975ef99c057231481c40f69f4c2a8a89ac56e8826ef0378f8e5c6abc4be \
+  --init_fn init \
+  --init_args '[{"u32":8}]'
+```
+
+replace `alice` with your own identity
+
+The deployer contract invocation will return the Contract address (For example: `CCTVFX6BFTQHTGAHA5TY4YZQJRUKRE2RRNUTGVBNKE3PJF5C7CI53APY`) of the newly deployed test contract.
+
+Invoke the deployed test contract using the address returned from the previous command.
+
+```sh
+stellar contract invoke \
+  --id CCTVFX6BFTQHTGAHA5TY4YZQJRUKRE2RRNUTGVBNKE3PJF5C7CI53APY \
+  --source-account alice \
+  --network testnet \
+  -- \
+  value
+```
+
+You should receive something like the following output:
+
+```json
+8
+```

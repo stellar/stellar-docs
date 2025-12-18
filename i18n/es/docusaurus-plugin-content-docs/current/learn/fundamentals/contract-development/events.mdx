@@ -1,0 +1,235 @@
+---
+sidebar_position: 11
+title: Eventos
+description: Monitorea los cambios de contratos inteligentes fuera de cadena.
+---
+
+Los eventos son el mecanismo que las aplicaciones fuera de cadena pueden usar para monitorear cambios y eventos en contratos en cadena.
+
+## ¿Cómo se emiten los eventos?
+
+Los `ContractEvents` se emiten en el `TransactionMeta` de Stellar Core. Puedes ver en el XDR [TransactionMetaV3] a continuación que hay una lista de `OperationEvents` llamada `events`. Cada `OperationEvent` corresponde a una operación en una transacción y contiene a su vez una lista de `ContractEvents`. Ten en cuenta que `events` solo se llenarán si la transacción tiene éxito.
+
+[transactionmetav3]: #transactionmetav3
+
+### ContractEvent
+
+Los temas de un evento no tienen que ser del mismo tipo: puedes mezclar diferentes tipos.
+
+Un evento también contiene un objeto de datos de cualquier valor o tipo, incluidos [tipos personalizados](./types/custom-types.mdx) definidos por contratos utilizando `#[contracttype]`:
+
+```cpp
+struct ContractEvent
+{
+    // We can use this to add more fields, or because it
+    // is first, to change ContractEvent into a union.
+    ExtensionPoint ext;
+
+    Hash* contractID;
+    ContractEventType type;
+
+    union switch (int v)
+    {
+    case 0:
+        struct
+        {
+            SCVec topics;
+            SCVal data;
+        } v0;
+    }
+    body;
+};
+```
+
+### OperationEvents
+
+```cpp
+struct OperationEvents
+{
+    ContractEvent events<>;
+};
+```
+
+### TransactionMetaV3
+
+```cpp
+struct TransactionMetaV3
+{
+    LedgerEntryChanges txChangesBefore; // tx level changes before operations
+                                        // are applied if any
+    OperationMeta operations<>;         // meta for each operation
+    LedgerEntryChanges txChangesAfter;  // tx level changes after operations are
+                                        // applied if any
+    OperationEvents events<>;           // custom events populated by the
+                                        // contracts themselves. One list per operation.
+    TransactionResult txResult;
+
+    Hash hashes[3];                     // stores sha256(txChangesBefore, operations, txChangesAfter),
+                                        // sha256(events), and sha256(txResult)
+
+    // Diagnostics events that are not hashed. One list per operation.
+    // This will contain all contract and diagnostic events. Even ones
+    // that were emitted in a failed contract call.
+    OperationDiagnosticEvents diagnosticEvents<>;
+};
+```
+
+[Enlace](https://github.com/stellar/stellar-xdr/blob/eab1622f18b8101aa0cea76361c08beaeaa8d715/Stellar-ledger.x#L444) al XDR anterior.
+
+### Tipos de eventos
+
+Hay tres `ContractEventType` -
+
+1. Los eventos `CONTRACT` son eventos emitidos por contratos que usan la función de host `contract_event` para transmitir cambios de estado.
+2. Los eventos `SYSTEM` son eventos emitidos por el host. Actualmente, solo hay un evento del sistema emitido por el host. Se emite cuando se llama a la función del host `update_current_contract_wasm`, donde `topics = ["executable_update", old_executable: ContractExecutable, old_executable: ContractExecutable]` y `data = []`.
+3. Los eventos `DIAGNOSTIC` están destinados a la depuración y no se emitirán a menos que la instancia del host los habilite explícitamente. Puedes leer más sobre esto a continuación.
+
+## ¿Qué son los diagnosticEvents?
+
+Al observar la estructura XDR `TransactionMetaV3` anterior, puede que hayas notado el campo `diagnosticEvents`. Esta lista estará vacía por defecto a menos que tu instancia de stellar-core tenga `ENABLE_SOROBAN_DIAGNOSTIC_EVENTS=true` en su archivo de configuración. Si los eventos de diagnóstico están habilitados, esta lista no solo incluirá todos los ContractEvents en `events`, sino también eventos de llamadas fallidas a contratos, errores del host, eventos para rastrear la pila de llamadas del contrato y registros de la función del host `log_from_linear_memory`. Estos eventos se pueden identificar porque `type == DIAGNOSTIC`. Los eventos de diagnóstico emitidos por el host para rastrear la pila de llamadas se definen a continuación.
+
+### fn_call
+
+El evento de diagnóstico `fn_call` se emite cuando se llama a un contrato y contiene -
+
+- Temas
+  1. El símbolo "fn_call".
+  2. El id del contrato que está a punto de ser llamado.
+  3. Un símbolo que contiene el nombre de la función que se está llamando.
+- Datos
+  1. Un vector de los argumentos pasados a la función que se está llamando.
+
+### fn_return
+
+El evento de diagnóstico `fn_return` se emite cuando una llamada a contrato finaliza y contiene -
+
+- Temas
+  1. El símbolo "fn_return".
+  2. Un símbolo que contiene el nombre de la función que está a punto de retornar.
+- Datos
+  1. El valor retornado por la función del contrato.
+
+### ¿Cuándo se deben habilitar los eventos de diagnóstico?
+
+Los `events` contienen `ContractEvents` que deberían transmitir información sobre cambios de estado. Los `diagnosticEvents`, por otro lado, contienen eventos que no son útiles para la mayoría de los usuarios, pero pueden ser útiles para depurar problemas o construir la pila de llamadas del contrato. Como no serán utilizados por la mayoría de los usuarios, se pueden habilitar opcionalmente porque no se incluyen en el hash del libro mayor y, por lo tanto, no son parte del protocolo. Esto se hace para que un nodo stellar-core pueda mantenerse sincronizado con la red mientras emite estos eventos que normalmente no serían útiles para la mayoría de los usuarios.
+
+Debido a que un nodo con eventos de diagnóstico habilitados ejecutará caminos de código que divergen de un nodo regular, recomendamos encarecidamente usar esta función solo en un nodo de observación (es decir, nodos donde `NODE_IS_VALIDATOR=false`).
+
+## Leer eventos
+
+Puedes usar el endpoint [`getEvents`](../../../data/apis/rpc/api-reference/methods/getEvents.mdx) de cualquier servicio RPC para obtener y filtrar eventos por tipo, contrato y tema.
+
+:::warning
+
+Los eventos son efímeros: los proveedores RPC normalmente solo conservan fragmentos breves (menos de una semana) del historial.
+
+:::
+
+Para aprender más sobre cómo trabajar con eventos, echa un vistazo a las [guías de eventos](../../../build/guides/events/README.mdx) y [este contrato ejemplo](../../../build/smart-contracts/example-contracts/events.mdx).
+
+Para una demostración rápida y de alto nivel, usaremos el [SDK de TypeScript](../../../tools/sdks/README.mdx) para recuperar infinitamente todos los eventos `transfer` (definidos por la [Interfaz Soroban Token](https://stellar.org/protocol/sep-41#interface)) que involucren el [contrato XLM](https://stellar.expert/explorer/testnet/contract/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC) y mostrarlos en un formato amigable para humanos.
+
+<CodeExample>
+
+```javascript
+import {
+  humanizeEvents,
+  nativeToScVal,
+  scValToNative,
+  Address,
+  Networks,
+  Asset,
+  xdr,
+} from "@stellar/stellar-sdk";
+import { Server } from "@stellar/stellar-sdk/rpc";
+
+const s = new Server("https://soroban-testnet.stellar.org");
+
+async function main() {
+  const response = await s.getLatestLedger();
+  const xlmFilter = {
+    type: "contract",
+    contractIds: [Asset.native().contractId(Networks.TESTNET)],
+    topics: [
+      // Defined in https://stellar.org/protocol/sep-41#interface
+      // for all compatible transfer events.
+      [
+        nativeToScVal("transfer", { type: "symbol" }).toXDR("base64"),
+        "*", // from anyone
+        "*", // to anyone
+        "*", // any asset (it'll be XLM anyway)
+      ],
+    ],
+  };
+  let page = await s.getEvents({
+    startLedger: response.sequence - 120, // start ~10m in the past
+    filters: [xlmFilter],
+    limit: 10,
+  });
+
+  // Run forever until Ctrl+C'd by user
+  while (true) {
+    if (!page.events.length) {
+      await new Promise((r) => setTimeout(r, 2000));
+    } else {
+      //
+      // Two ways to output a human-friendly version:
+      //  1. the RPC response itself for human-readable text
+      //  2. a helper for the XDR structured-equivalent for human-readable JSON
+      //
+      console.log(cereal(simpleEventLog(page.events)));
+      console.log(cereal(fullEventLog(page.events)));
+    }
+
+    // Fetch the next page until events are exhausted, then wait.
+    page = await s.getEvents({
+      filters: [xlmFilter],
+      cursor: page.cursor,
+      limit: 10,
+    });
+  }
+}
+
+function simpleEventLog(events) {
+  return events.map((event) => {
+    return {
+      topics: event.topic.map((t) => scValToNative(t)),
+      value: scValToNative(event.value),
+    };
+  });
+}
+
+function fullEventLog(events) {
+  return humanizeEvents(
+    events.map((event) => {
+      // rebuild the decomposed response into its original XDR structure
+      return new xdr.ContractEvent({
+        contractId: event.contractId.address().toBuffer(),
+        type: xdr.ContractEventType.contract(), // since we filtered on 'contract'
+        body: new xdr.ContractEventBody(
+          0,
+          new xdr.ContractEventV0({
+            topics: event.topic,
+            data: event.value,
+          }),
+        ),
+      });
+    }),
+  );
+}
+
+// A custom JSONification method to handle bigints.
+function cereal(data) {
+  return JSON.stringify(
+    data,
+    (k, v) => (typeof v === "bigint" ? v.toString() : v),
+    2,
+  );
+}
+
+main().catch((e) => console.error(e));
+```
+
+</CodeExample>
+
+También puedes aprovechar los [formatos alternativos de codificación XDR](../../../data/apis/rpc/api-reference/structure/data-format) del RPC, como JSON, para ver eventos legibles para humanos directamente desde la línea de comandos, por ejemplo, pasando `xdrFormat: "json"` como parámetro adicional al [ejemplo](../../../data/apis/rpc/api-reference/methods/getEvents#examples) de `getEvents`.

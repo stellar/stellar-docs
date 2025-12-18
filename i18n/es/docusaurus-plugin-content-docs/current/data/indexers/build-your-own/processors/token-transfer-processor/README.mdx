@@ -1,0 +1,237 @@
+---
+title: Procesador de Transferencia de Tokens
+sidebar_position: 0
+---
+
+## Descripción general
+
+El Procesador de Transferencia de Tokens (TTP) es un [paquete Go](https://github.com/stellar/go/tree/ttp-v1.0.0/ingest/processors/token_transfer) que utiliza el [ingest-sdk](../../ingest-sdk/README.mdx) para analizar los datos de transacciones de la red Stellar y derivar eventos de transferencia de tokens. Antes del TTP, los desarrolladores tenían que analizar manualmente datos complejos del ledger, resultados de operaciones y cambios en las entradas del ledger para entender cuándo y cómo se movía el valor entre cuentas, contratos y otras entidades en la red.
+
+Antes de [CAP-67 Eventos Unificados][cap67], rastrear transferencias de tokens requería lógica personalizada significativa para manejar distintos tipos de operaciones, interpretar cambios en el ledger y reconstruir el flujo de activos. CAP-67 introdujo un formato estandarizado de eventos que simplifica este proceso al proporcionar una manera unificada de representar todas las actividades de transferencia de tokens.
+
+TTP funciona como una fachada para CAP-67, generando automáticamente estos eventos estandarizados a partir de los datos del ledger Stellar. Puede operar en dos modos:
+
+- **Modo independiente**: TTP analiza operaciones, resultados de operaciones y cambios en las entradas del ledger para derivar eventos de transferencia
+- **Modo de eventos unificados**: TTP lee directamente de eventos unificados compatibles con CAP-67 cuando están disponibles en los datos del ledger
+
+Para más detalles sobre los modos de operación, consulta la sección [Modos de Operación](#modes-of-operation).
+
+## Características clave
+
+- Captura movimientos de tokens resultantes de:
+
+  - Pagos simples
+  - Pagos con rutas
+  - Operaciones en DEX
+  - Fusiones de cuentas
+  - Revocaciones de trustline
+  - Operaciones de saldo reclamable
+  - Operaciones con Fondos de Liquidez
+  - Operaciones de recuperación forzosa (Clawback)
+  - Eventos de Stellar Asset Contract
+  - Eventos de token compatibles con [SEP-41][sep41]
+
+- Genera eventos de tokens estandarizados CAP-67:
+
+  - Transferencia: Movimiento de tokens entre cuentas
+  - Creación: Creación de nuevos tokens
+  - Eliminación: Destrucción de tokens
+  - Recuperación forzosa (Clawback): Reclamación de tokens por el emisor del activo
+  - Tarifa: Pago de tarifas de red
+
+- Gestiona información de cuentas muxed conforme al soporte de multiplexación de CAP-67
+
+- Conciliación para versiones antiguas del protocolo para asegurar consistencia entre cambios de operaciones y eventos generados
+
+## Eventos
+
+TTP genera eventos en las vinculaciones de Go basándose en las [definiciones protobuf](https://github.com/stellar/go/blob/ttp-v1.0.0/protos/ingest/processors/token_transfer/token_transfer_event.proto). Las definiciones codifican un IDL para los modelos estandarizados de eventos de transferencia de tokens propuestos en CAP-67. Cada evento contiene metadatos e información específica del tipo estructurada de la siguiente manera:
+
+| Tipo de evento           | Descripción                                   | Campos clave                                   | Cuándo se genera                                                                   |
+| ------------------------ | --------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| **Transferencia**        | Movimiento de activo entre dos entidades      | `from`, `to`, `amount`, `asset`, `toMuxedInfo` | Cuando los activos se mueven entre cuentas, contratos u otras entidades            |
+| **Creación**             | Creación del activo por el emisor             | `to`, `amount`, `asset`, `toMuxedInfo`         | Cuando un emisor crea nuevos tokens o cuando los activos se envían desde el emisor |
+| **Eliminación**          | Destrucción del activo para el emisor         | `from`, `amount`, `asset`                      | Cuando los activos son devueltos al emisor para su destrucción                     |
+| **Recuperación forzosa** | Recuperación forzada de activos por el emisor | `from`, `amount`, `asset`                      | Cuando un emisor usa operaciones de clawback para recuperar activos                |
+| **Tarifa**               | Pago o reembolso de tarifa de red             | `account`, `amount`                            | Para todas las tarifas de transacción y reembolsos de tarifas de Soroban           |
+
+### Eventos de Tarifa
+
+TTP genera eventos de tarifas para rastrear las tarifas de red asociadas con el procesamiento de transacciones. Es importante entender los diferentes tipos de eventos de tarifas para una contabilidad precisa:
+
+Los eventos de tarifa se generan para todas las transacciones, ya sea que tengan éxito o fallen. Estos representan las tarifas de red que las cuentas pagan para enviar transacciones a la red Stellar.
+
+- **Presentes en**: Todas las transacciones
+- **Representación del monto**: Valores positivos que indican tarifas pagadas
+- **Activo**: Siempre XLM (el activo nativo de Stellar)
+
+Los eventos de reembolso de tarifas se generan solo para transacciones Soroban (contratos inteligentes) y solo cuando hay recursos no usados que califican para un reembolso.
+
+- **Presentes en**: Transacciones Soroban con tarifas de recursos no usados
+- **Representación del monto**: Valores negativos para indicar dinero que se devuelve
+- **Activo**: Siempre XLM
+- **Tipo de evento**: Usa el mismo tipo de evento `Fee`, distinguido por el monto negativo
+
+:::note
+
+TTP usa montos negativos en eventos de tarifa para representar reembolsos en vez de crear un tipo separado de evento de reembolso. Este enfoque mantiene la consistencia con la especificación CAP-67 mientras indica claramente la dirección de la transacción de tarifa.
+
+:::
+
+### Metadatos del Evento
+
+Cada evento de transferencia de tokens incluye metadatos completos para proporcionar contexto sobre cuándo y dónde ocurrió el evento:
+
+| Campo             | Tipo      | Descripción                                                                                                                                                                                                                                                                                   |
+| ----------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ledgerSequence`  | `uint32`  | El número del ledger donde ocurrió este evento. Esto proporciona un orden cronológico en toda la red.                                                                                                                                                                                         |
+| `txHash`          | `string`  | El hash de transacción que generó este evento. Esto permite rastrear eventos hasta su transacción de origen.                                                                                                                                                                                  |
+| `operationIndex`  | `uint32*` | El índice uno basado en la operación dentro de la transacción que causó este evento según se define en [SEP-35][sep35]. Este campo es `nil` para eventos a nivel de transacción como las tarifas.                                                                                             |
+| `contractAddress` | `string`  | La dirección del contrato asociada con el activo/token que se está moviendo. Para operaciones clásicas o eventos de Stellar Asset Contract, este campo será el contractId del activo clásico subyacente. Esto habilita la integración con el ecosistema de contratos inteligentes de Stellar. |
+
+:::note
+
+El campo `toMuxedInfo` está incluido en eventos de Transferencia y Creación cuando el destino usa una cuenta muxed (dirección M) y/o cuando se establece un memo a nivel de transacción (en el caso de transacciones no de contratos inteligentes), proporcionando información adicional para la ruta.
+
+:::
+
+Por favor, consulta [esta](../../../../../build/guides/transactions/pooled-accounts-muxed-accounts-memos.mdx) sección para obtener más información sobre el uso de cuentas muxed/memo.
+
+Consulta [esta](https://stellar.org/protocol/cap-67#prohibit-the-transaction-memo-and-muxed-source-accounts-from-being-set-on-soroban-transactions) sección en CAP-67 para saber más sobre qué esperar en el campo `toMuxedInfo`.
+
+:::note
+
+El campo `contractAddress` es particularmente importante para aplicaciones DeFi ya que provee el puente entre los activos clásicos de Stellar y sus representaciones en contratos inteligentes.
+
+Para eventos de transacciones clásicas y eventos SAC de transacciones de contratos inteligentes, el campo `contractAddress` refleja la dirección SAC para el activo.
+
+:::
+
+## Resumen de la API en Go
+
+TTP proporciona tres funciones distintas que derivan eventos de diferentes niveles de granularidad a partir de los datos subyacentes de la red Stellar.
+
+### EventsFromLedger
+
+```go
+func (p *EventsProcessor) EventsFromLedger(lcm xdr.LedgerCloseMeta) ([]*TokenTransferEvent, error)
+```
+
+Esta función procesa un ledger completo y devuelve una lista aplanada de objetos `TokenTransferEvent`. El orden de los eventos en la lista retornada representa el orden cronológico de débitos, créditos y tarifas como fueron aplicados a cuentas, trustlines y contratos durante el procesamiento del ledger.
+
+El orden cronológico es crucial para aplicaciones que necesitan mantener seguimiento preciso de saldos o auditorías. Para información detallada sobre cómo se ordenan los eventos, consulta la sección [Ordenamiento de Eventos](#event-ordering).
+
+### EventsFromTransaction
+
+```go
+func (p *EventsProcessor) EventsFromTransaction(tx ingest.LedgerTransaction) (TransactionEvents, error)
+```
+
+Esta función procesa una única transacción y devuelve una estructura `TransactionEvents` que separa eventos relacionados con tarifas de eventos relacionados con operaciones:
+
+- `FeeEvents`: Contiene cargos y reembolsos de tarifas asociados con la transacción
+- `OperationEvents`: Contiene todos los eventos generados por las operaciones de la transacción
+
+Esta separación es útil cuando necesitas manejar las tarifas de manera diferente a las transferencias operacionales, como para contabilidad o análisis.
+
+### EventsFromOperation
+
+```go
+func (p *EventsProcessor) EventsFromOperation(
+	tx ingest.LedgerTransaction,
+	opIndex uint32,
+	op xdr.Operation,
+	opResult xdr.OperationResult
+	) ([]*TokenTransferEvent, error)
+```
+
+Esta función procesa una única operación dentro de una transacción y devuelve una lista de eventos generados por esa operación específica. Este enfoque granular es útil para aplicaciones que necesitan analizar o reaccionar a tipos específicos de operaciones.
+
+## Modos de Operación
+
+TTP puede operar en dos modos distintos según cómo se generaron los datos del ledger y qué información esté disponible.
+
+### Modo por defecto (Recomendado)
+
+En modo por defecto, TTP analiza tres fuentes de información para derivar eventos de transferencia de tokens:
+
+- **Operaciones**: Las operaciones enviadas en transacciones
+- **Resultados de Operación**: Los resultados de éxito/falla de cada operación
+- **Cambios en las Entradas del Ledger**: Los cambios realizados al estado del ledger
+
+Este modo funciona con todos los ledgers Stellar independientemente de cómo fueron generados o qué versión de stellar-core los produjo. Es la opción más segura y compatible.
+
+```go
+// Default mode - works with all ledgers
+processor := token_transfer.NewEventsProcessor(networkPassphrase)
+```
+
+### Modo de flujo de eventos unificados
+
+En modo de flujo de eventos unificados, TTP lee eventos de transferencia de tokens directamente del flujo de eventos unificados incrustado en los datos del ledger. Este modo es más eficiente pero requiere que los ledgers hayan sido generados con flags de configuración específicos de stellar-core.
+
+```go
+// Unified events mode - only for specially configured ledgers
+processor := token_transfer.NewEventsProcessorForUnifiedEvents(networkPassphrase)
+```
+
+Solo usa el modo de flujo de eventos unificados si estás seguro de que tus ledgers contienen eventos unificados. Estos ledgers deben ser generados por stellar-core con las flags de configuración `EMIT_CLASSIC_EVENTS=true` y `BACKFILL_STELLAR_ASSET_EVENTS=true` activadas. TTP no puede determinar dinámicamente si un ledger contiene eventos unificados o no.
+
+:::caution
+
+Si configuras TTP en modo de eventos unificados y luego proporcionas ledgers sin eventos unificados, TTP no generará eventos sin notificarlo.
+
+:::
+
+**Cuando tengas dudas, siempre usa el modo por defecto**, ya que funciona de manera confiable con todos los tipos de ledgers.
+
+## Orden de eventos
+
+El orden de los eventos que devuelve TTP depende de la versión del protocolo Stellar que estaba activa cuando se creó el ledger. Este ordenamiento es crucial para mantener registros cronológicos precisos de movimientos de activos.
+
+### Ordenamiento antes del Protocolo 23
+
+Antes de Whisk, Protocolo 23, los eventos siguen este patrón cronológico:
+
+```
+All Fee Events (from all transactions)
+↓
+For each transaction in ledger:
+  - Operation Events (from all operations in the transaction)
+  - Fee Refund Event (if applicable, immediately after operation events)
+```
+
+En este orden, los reembolsos de tarifas aparecen inmediatamente después de los eventos de operación de cada transacción individual.
+
+### Orden del Protocolo 23+
+
+A partir de Whisk, Protocolo 23, los eventos siguen este patrón cronológico:
+
+```
+All Fee Events (from all transactions)
+↓
+All Operation Events (from all transactions, maintaining transaction and operation order)
+↓
+All Fee Refund Events (from all transactions)
+```
+
+En este orden más reciente, todos los reembolsos de tarifas se agrupan juntos al final, después de que se hayan procesado todas las transacciones.
+
+:::note
+
+TTP detecta automáticamente la versión del protocolo y aplica las reglas de orden correctas. No necesitas configurar esto manualmente, pero entender las diferencias en el orden es importante para las aplicaciones que dependen de la secuencia de eventos.
+
+:::
+
+El orden cronológico asegura que cuando procesas eventos en el orden que devuelve TTP, sigues la secuencia exacta en la que débitos y créditos se aplicaron a cuentas durante el procesamiento del ledger. Esto es esencial para mantener cálculos precisos de saldos y registros de auditoría.
+
+## Referencias
+
+- [CAP-67: Eventos unificados][cap67]
+- [SEP-41: Especificación de Contrato de Token de Activo][sep41]
+- [CAP-38: Creadores de Mercado Automatizados](https://stellar.org/protocol/cap-38)
+- [SEP-35: Esquema de ID para operaciones Stellar][sep35]
+
+[sep41]: https://stellar.org/protocol/sep-41
+[cap67]: https://stellar.org/protocol/cap-67
+[sep35]: https://stellar.org/protocol/sep-35

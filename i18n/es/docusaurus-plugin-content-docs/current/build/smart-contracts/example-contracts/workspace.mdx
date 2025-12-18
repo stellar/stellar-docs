@@ -1,0 +1,279 @@
+---
+title: Espacio de trabajo
+description: Desarrollar múltiples contratos lado a lado.
+sidebar_position: 170
+---
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import { getPlatform } from "@site/src/helpers/getPlatform";
+
+El [ejemplo de espacio de trabajo] demuestra cómo se pueden desarrollar, probar y crear múltiples contratos inteligentes lado a lado en el mismo espacio de trabajo de Rust.
+
+[![Abrir en Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Abrir en Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
+[ejemplo de espacio de trabajo]: https://github.com/stellar/soroban-examples/tree/main/workspace
+
+## Ejecutar el Ejemplo
+
+Primero pasa por el proceso de [Configuración] para configurar tu entorno de desarrollo, luego clona el repositorio `soroban-examples`:
+
+[Configuración]: ../getting-started/setup.mdx
+
+```shell
+git clone https://github.com/stellar/soroban-examples
+```
+
+O, omite la configuración del entorno de desarrollo y abre este ejemplo en [GitHub Codespaces][open-in-github-codespaces] o en [Code Anywhere][open-in-code-anywhere].
+
+Para ejecutar las pruebas del ejemplo usa `cargo test`.
+
+```shell
+cd workspace
+cargo test
+```
+
+Deberías ver tres conjuntos de salida, uno para `contract_a`, `contract_a_interface`, y `contract_b`. Los dos primeros crates en el espacio de trabajo no contienen pruebas, pero el tercer crate debería darte la siguiente salida:
+
+```text
+running 1 test
+test test::test_token_auth ... ok
+```
+
+## Código
+
+<Tabs>
+<TabItem value="Contract A Interface" default>
+
+```rust title="workspace/contract_a_interface/src/lib.rs"
+#![no_std]
+use soroban_sdk::contractclient;
+
+#[contractclient(name = "ContractAClient")]
+pub trait ContractAInterface {
+    fn add(x: u32, y: u32) -> u32;
+}
+```
+
+</TabItem>
+<TabItem value="Contract A">
+
+```rust title="workspace/contract_a/src/lib.rs"
+#![no_std]
+use soroban_sdk::{contract, contractimpl};
+use soroban_workspace_contract_a_interface::ContractAInterface;
+
+#[contract]
+pub struct ContractA;
+
+#[contractimpl]
+impl ContractAInterface for ContractA {
+    fn add(x: u32, y: u32) -> u32 {
+        x.checked_add(y).expect("no overflow")
+    }
+}
+```
+
+</TabItem>
+<TabItem value="Contract B">
+
+```rust title="workspace/contract_b/src/lib.rs"
+#![no_std]
+use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_workspace_contract_a_interface::ContractAClient;
+
+#[contract]
+pub struct ContractB;
+
+#[contractimpl]
+impl ContractB {
+    pub fn add_with(env: Env, contract: Address, x: u32, y: u32) -> u32 {
+        let client = ContractAClient::new(&env, &contract);
+        client.add(&x, &y)
+    }
+}
+
+mod test;
+```
+
+</TabItem>
+<TabItem value="Contract B Test">
+
+```rust title="workspace/src/contract_b/src/test.rs"
+#![cfg(test)]
+use soroban_sdk::Env;
+
+use crate::{ContractB, ContractBClient};
+
+use soroban_workspace_contract_a::ContractA;
+
+#[test]
+fn test() {
+    let env = Env::default();
+
+    // Register contract A using the native contract imported.
+    let contract_a_id = env.register(ContractA, ());
+
+    // Register contract B defined in this crate.
+    et contract_b_id = env.register(ContractB, ());
+
+    // Create a client for calling contract B.
+    let client = ContractBClient::new(&env, &contract_b_id);
+
+    // Invoke contract B via its client. Contract B will invoke contract A.
+    let sum = client.add_with(&contract_a_id, &5, &7);
+    assert_eq!(sum, 12);
+}
+```
+
+</TabItem>
+</Tabs>
+
+Ref: https://github.com/stellar/soroban-examples/tree/main/workspace
+
+## Cómo Funciona
+
+Hay tres crates que son parte del espacio de trabajo.
+
+1. `contract_a_interface` contiene un trait, `ContractAInterface`, que solo sirve como un lugar para definir el trait de interfaz para el Contrato A.
+2. `contract_a` contains a smart contract, `ContractA`, that implements logic, and conforms to the `ContractAInterface` trait.
+3. `contract_b` es otro contrato inteligente, que implementa una interfaz diferente, y hace una llamada a `ContractA`, y cross-calls la función `contract_a`. Este es también el único crate en el espacio de trabajo con pruebas definidas.
+
+Echemos un vistazo a cada crate y veamos cómo trabajan todos juntos.
+
+### Contrato A Interface: El Trait
+
+El crate `contract_a_interface` define un trait que contiene una interfaz de contrato. Esta interfaz está definida separada de la implementación y solo define cuáles son las funciones exportadas de la implementación.
+
+La interfaz define `add` como la única función que contendrá el contrato. La función `add` requiere dos entradas, `x` y `y`, ambos enteros `u32`, y también retorna un entero `u32`.
+
+El uso de `contractclient` como un macro de atributo en `ContractAInterface` significa que se creará un cliente, conformando a esta interfaz, que podrán usar los contratos existentes fuera del crate `contract_a_interface`. Como verás más adelante, el cliente, `ContractAClient`, se utiliza en el crate `contract_b` para llamar a la función `add`.
+
+### Contrato A: La Lógica
+
+El crate `contract_a` contiene la implementación para el Contrato A, definiendo para cada función lo que debería realmente _hacer_.
+
+La implementación toma el valor de `x`, junto con el valor de `y`, y realiza un `checked_add`, retornando la suma de ambos números (evitando un error de desbordamiento).
+
+:::info
+
+La función `add` no requiere un argumento `Env`. ¡Eso está totalmente bien! `Env` tiene muchas características útiles que están disponibles para tus contratos inteligentes, si las necesitas. Pero, no estás en absoluto obligado a usarlo, si no lo necesitas.
+
+:::
+
+Todo lo que se requiere para hacer uso del `ContractAInterface` previamente definido es `usar` la interfaz, definir una estructura `ContractA`, e `impl` la interfaz para esa estructura.
+
+Este crate utiliza el macro de atributo `contractimpl` en la implementación de `ContractA`, haciendo que la función `add` sea pública e invocable por otros en la red Stellar.
+
+### Contrato B: La Invocación
+
+Ahora que hemos creado un trait en `contract_a_interface`, y lo hemos implementado en `contract_a`, podemos usar el crate `contract_b` para invocar la función `add` y obtener la suma de nuestros enteros.
+
+Estamos creando e implementando un contrato completamente nuevo, `ContractB`. Estamos saltando el trait y yendo directamente al contrato en sí.
+
+::: info
+
+Definir la interfaz del contrato con un `trait` por separado es opcional. Es una excelente manera de compartir la interfaz de un contrato y un cliente de contrato, con múltiples contratos en un espacio de trabajo multi-contrato.
+
+:::
+
+`ContractB` tiene una función, `add_with`, que requiere tres argumentos:
+
+- `contract: Address` - La dirección de un contrato que implementa esa interfaz de cliente requerida, `ContractAInterface`.
+- `x: u32` y `y: u32` - Los dos números que queremos (safely) calcular la suma de.
+
+`ContractB` invoca la función `add` de `ContractA`, retornando su valor al invocador original. Es un poco largo el viaje para este ejemplo simple, pero ilustra una manera muy poderosa en la que puedes separar las definiciones de interfaz/trait de la lógica del contrato y compartirla junto con su cliente en un espacio de trabajo multi-contrato.
+
+## Ejemplos de Casos de Uso Prácticos
+
+Más allá de este ejemplo simple, esta técnica es versátil y útil. Por ejemplo, esta estrategia podría usarse para:
+
+- Crear y referenciar una interfaz de token estandarizada y consistente.
+- Reutilizar una única interfaz que deseas incorporar en muchos contratos diferentes.
+
+## Crear los Contratos
+
+Para crear los contratos en un conjunto de archivos `.wasm`, usa el comando `stellar contract build`. Tanto `workspace/contract_a` como `workspace/contract_b` serán creados, y puedes usar un solo comando, ya que nuestro espacio de trabajo define sus `members` en el archivo `Cargo.toml`:
+
+```shell
+stellar contract build
+```
+
+Deberías encontrar dos archivos `.wasm` en el directorio `workspace/target`:
+
+```text
+target/wasm32v1-none/release/soroban_workspace_contract_a.wasm
+target/wasm32v1-none/release/soroban_workspace_contract_b.wasm
+```
+
+El [`stellar-cli`] sabe que el `contract_a_interface` no está destinado a ser compilado en un .wasm, porque el `Cargo.toml` del `contract_a_interface` tiene su `crate-type` configurado como `rlib` (librería rust). ¡Genial!
+
+## Ejecutar el Contrato
+
+Si tienes [`stellar-cli`] instalado, puedes invocar las funciones del contrato. Ambos contratos deben estar desplegados.
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+<TabItem value="unix" label="macOS/Linux">
+
+```shell
+stellar contract deploy \
+    --wasm target/wasm32v1-none/release/soroban_workspace_contract_a.wasm \
+```
+
+```shell
+stellar contract deploy \
+    --wasm target/wasm32v1-none/release/soroban_workspace_contract_b.wasm \
+```
+
+</TabItem>
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+stellar contract deploy `
+    --wasm target/wasm32v1-none/release/soroban_workspace_contract_a.wasm `
+```
+
+```powershell
+stellar contract deploy `
+    --wasm target/wasm32v1-none/release/soroban_workspace_contract_b.wasm `
+```
+
+</TabItem>
+</Tabs>
+
+Invoca la función `add_with` de `ContractB`, pasando la dirección de `ContractA` para `contract`, y los valores enteros para `x` y `y` (por ejemplo, como `5` y `7`).
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+<TabItem value="unix" label="macOS/Linux">
+
+```shell
+stellar contract invoke \
+    --id CONTRACT_B_ADDRESS \
+    -- \
+    add_with \
+    --contract CONTRACT_A_ADDRESS \
+    --x 5 \
+    --y 7
+```
+
+</TabItem>
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+stellar contract invoke `
+    --id CONTRACT_B_ADDRESS `
+    -- `
+    add_with `
+    --contract CONTRACT_A_ADDRESS `
+    --x 5 `
+    --y 7
+```
+
+</TabItem>
+</Tabs>
+
+[`stellar-cli`]: ../getting-started/setup.mdx#install-the-stellar-cli

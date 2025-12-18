@@ -1,0 +1,143 @@
+---
+title: Export to GCS
+sidebar_position: 20
+---
+
+# Export to GCS
+
+## Goals
+
+- Ledger Metadata is stored on Google Cloud Storage(GCS).
+- Downstream consumers need access to the latest network data with minimal latency.
+  - Ledger Metadata for each newly closed ledger on Stellar Testnet should be expediently exported to GCS.
+- Deployment shall be fully on-cloud, use GCP for all storage and compute needs.
+
+## Solution - Publisher Pipeline
+
+Run the Galexie Dockerhub image, [stellar/stellar-galexie](https://hub.docker.com/r/stellar/stellar-galexie) as an instance in [GCP Compute Engines](https://cloud.google.com/run/docs/create-jobs) and export the ledger metadata to [GCS bucket](https://cloud.google.com/storage/docs/json_api/v1/buckets) storage.
+
+[Galexie](/data/indexers/build-your-own/galexie/README.mdx) in this example, performs the main roles of data pipeline. It acts as the `origin` and `publisher` of ledger metadata to the Google Cloud Storage bucket which is the `sink`.
+
+### Prepare the Galexie configuration file locally
+
+#### `testnet-config.toml`
+
+<CodeExample>
+
+```
+[datastore_config]
+type = "GCS"
+
+[datastore_config.params]
+destination_bucket_path = "galexie-data/ledgers/testnet"
+
+[datastore_config.schema]
+ledgers_per_file = 1
+files_per_partition = 10
+
+[stellar_core_config]
+  network = "testnet"
+```
+
+</CodeExample>
+
+### Set default zone and project on gcloud
+
+Do this once, so, you don't have to repeat it on all further commands. Example commands assume this is done, ensuring all resources created are in the same GCP project and zone if applicable such as for compute.
+
+<CodeExample>
+
+```
+gcloud config set compute/zone {your zone here}
+gcloud config set project {your GCP project name}
+```
+
+</CodeExample>
+
+### Store the galexie configuration file on a Compute Disk
+
+Create a new GCP Compute disk which just holds the configuration file for Galexie. It will be used in proceeding step as a volume mount for the Galexie container to access it.
+
+<CodeExample>
+
+```
+// create the raw disk in GCP project
+$ gcloud compute disks create galexie-config-disk \
+  --size=10GB \
+  --type=pd-standard
+
+// need to format this raw disk
+// create a temp instance, attach the new galexie disk to the instance
+$ gcloud compute instances create temp-instance \
+  --machine-type=e2-medium \
+  --disk=name=galexie-config-disk,device-name=galexie-config-disk,mode=rw,auto-delete=no
+
+// shell into the temp instance
+$ gcloud compute ssh temp-instance
+
+// find the unformatted, attached disk device
+// it will be listed with no mountpoint and 10GB
+temp-instance:~$ lsblk
+
+// format the empty disk
+temp-instance:~$ sudo mkfs.ext4 -F /dev/sda
+
+// mount the formatted disk in the instance
+temp-instance:~$ sudo mkdir -p /mnt/my-disk; chmod a+rw /mnt/my-disk
+temp-instance:~$ sudo mount /dev/sda /mnt/my-disk
+temp-instance:~$ exit
+
+// copy the local testnet-config.toml file onto the formatted galexie-config-disk
+$ gcloud compute scp testnet-config.toml temp-instance:/mnt/my-disk
+
+// discard the temp instance, no longer needed, the disk will remain.
+$ gcloud compute instances delete temp-instance
+
+```
+
+</CodeExample>
+
+### Create a new gcloud bucket for storage of exported ledger metadata
+
+<CodeExample>
+
+```
+$ gcloud storage buckets create gs://galexie-data
+```
+
+</CodeExample>
+
+### Use gcloud to deploy and run Galexie as compute instance.
+
+Configure the volume mount on the instance for Galexie to load configuration file from existing compute disk created in prior step. Specify the starting ledger sequence for Galexie to begin exporting ledger metadata, the requirements for this deloyment are to start with latest from network, which can be initially obtained from any block explorer, such as reported from [steller.expert/explorer/testnet](https://stellar.expert/explorer/testnet).
+
+In this example the `e2-medium` machine type, should suffice for [Galexie Prerequisites](../admin_guide/prerequisites.mdx).
+
+<CodeExample>
+
+```
+gcloud compute instances create-with-container galexie-instance \
+  --scopes=cloud-platform \
+  --machine-type=e2-medium \
+  --container-image=stellar/stellar-galexie \
+  --disk=name=galexie-config-disk,device-name=galexie-config-disk,mode=ro,auto-delete=no \
+  --container-mount-disk=mount-path=/mnt/config,mode=ro,name=galexie-config-disk \
+  --container-arg="append" \
+  --container-arg="--start" \
+  --container-arg="1554952" \
+  --container-arg="--config-file" \
+  --container-arg="/mnt/config/testnet-config.toml"
+```
+
+</CodeExample>
+
+### Monitor Galexie export status
+
+Proceed to the GCP console:
+
+- `Cloud Storage->Buckets`, view the contents of the GCS `galexie-data` bucket, should see new files representing the latest ledger metadata from Testnet arriving in the bucket every minute.
+- `Compute Engine->Virtual Machines`, check the log output of `galexie-instance`, you'll see `level=info msg="Uploaded ..` lines indicating each time a new file of ledger metadata is uploaded to the GCS bucket.
+
+## Next step - Consumer Pipelines
+
+Ledger metadata is now accumulating as files in your GCS bucket, you can start to explore the options for applications to consume this pre-computed network data using the [Ingest SDK](../../ingest-sdk/README.mdx) to assemble consumer driven data pipelines capable of importing and parsing the data to derive custom, enriched data models. Refer to [GCS bucket consumer pipeline](https://developers.stellar.org/docs/build/apps/ingest-sdk/overview#ledger-metadata-consumer-pipeline) for relevant example code.

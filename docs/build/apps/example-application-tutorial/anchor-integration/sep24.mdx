@@ -1,0 +1,279 @@
+---
+title: "SEP-24: Hosted Deposit and Withdrawal"
+sidebar_position: 40
+---
+
+import sep24_transfers from "/assets/basic-pay/sep24_transfers.png";
+
+SEP-24 provides a standard way for wallets and anchors to interact by having the user open a webview hosted by an anchor to collect and handle KYC information. In this integration, a user's KYC information is gathered and handled entirely by the anchor. For the most part, after the anchor's webview has opened, BasicPay will have little knowledge about what's going on.
+
+:::info
+
+Remember, SEP-24 depends on [SEP-10 authentication]. Everything below assumes the user has successfully authenticated with the anchor server, and BasicPay has access to an unexpired authentication token to send with its requests.
+
+:::
+
+## Find the anchor's `TRANSFER_SERVER_SEP0024`
+
+Before we can ask anything about _how_ to make a SEP-24 transfer, we have to figure out _where_ to discover that information. Fortunately, the SEP-1 protocol describes standardized fields to find out what we need.
+
+```js title=/src/lib/stellar/sep1.js
+// Fetches and returns the endpoint used for SEP-24 transfer interactions.
+export async function getTransferServerSep24(domain) {
+  let { TRANSFER_SERVER_SEP0024 } = await fetchStellarToml(domain);
+  return TRANSFER_SERVER_SEP0024;
+}
+```
+
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep1.js
+
+## Get `/info`
+
+Our application will request the `/info` endpoint from the anchor's transfer server to understand the supported transfer methods (deposit, withdraw) and available endpoints, as well as additional features that may be available during transfers.
+
+<img src={sep24_transfers} width="70%" />
+
+```js title=/src/lib/stellar/sep24.js
+// Fetches and returns basic information about what the SEP-24 transfer server supports.
+export async function getSep24Info(domain) {
+  let transferServerSep24 = await getTransferServerSep24(domain);
+
+  let res = await fetch(`${transferServerSep24}/info`);
+  let json = await res.json();
+
+  if (!res.ok) {
+    throw error(res.status, {
+      message: json.error,
+    });
+  } else {
+    return json;
+  }
+}
+```
+
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep24.js
+
+## The user clicks "deposit" or "withdraw"
+
+Now that we have all the SEP-24 information the anchor has made available to us, it's up to the user to actually begin the initiation process. In BasicPay, they do that by simply clicking a button that will then trigger the `launchTransferWindowSep24` function.
+
+:::note
+
+This file was pretty heavily covered in the [SEP-6 section]. We'll be presenting here the additions we make to this file, though we won't repeat things we've already covered. Remember to check the source files for the full picture.
+
+:::
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* This <script> tag has been abbreviated for simplicity */
+
+  // Launch the interactive SEP-24 popup window for the user to interact directly with the anchor to begin a transfer.
+  const launchTransferWindowSep24 = async ({
+    homeDomain,
+    assetCode,
+    assetIssuer,
+    endpoint,
+  }) => {
+    // We initiate the transfer from the SEP-24 server, and get the
+    // interactive URL back from it
+    let { url } = await initiateTransfer24({
+      authToken: $webAuthStore[homeDomain],
+      endpoint: endpoint,
+      homeDomain: homeDomain,
+      urlFields: {
+        asset_code: assetCode,
+        account: data.publicKey,
+      },
+    });
+
+    /* ... */
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+## Retrieve the interactive URL
+
+BasicPay then initiates a transfer method by sending a `POST` request to either the “SEP-24 Deposit” or “SEP-24 Withdraw” endpoint. The anchor then sends an interactive URL that BasicPay will open as a popup for the user to complete and confirm the transfer.
+
+```js title=/src/lib/stellar/sep24.js
+// Initiates a transfer using the SEP-24 protocol.
+export async function initiateTransfer24({
+  authToken,
+  endpoint,
+  homeDomain,
+  urlFields = {},
+}) {
+  let transferServerSep24 = await getTransferServerSep24(homeDomain);
+
+  let res = await fetch(
+    `${transferServerSep24}/transactions/${endpoint}/interactive`,
+    {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(urlFields),
+    },
+  );
+  let json = await res.json();
+
+  if (!res.ok) {
+    throw error(res.status, {
+      message: json.error,
+    });
+  } else {
+    return json;
+  }
+}
+```
+
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/lib/stellar/sep24.js
+
+## Launch the popup window and listen for a callback
+
+BasicPay doesn't really need (or want) to know everything that's happening between the user and the anchor during a SEP-24 transfer. However, we _do_ want to know when the interaction is over, since we may need to take some action at that point. So, we add a callback to the interactive URL and open the popup window.
+
+:::caution
+
+Since BasicPay is an entirely client-side application, we can't provide a callback as a URL. So, we are using a `postMessage` callback. For more information on the details of these callback options, check out [this section of the SEP-24 specification].
+
+:::
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* This <script> tag has been abbreviated for simplicity */
+
+  // Launch the interactive SEP-24 popup window for the user to interact directly with the anchor to begin a transfer.
+  const launchTransferWindowSep24 = async ({
+    homeDomain,
+    assetCode,
+    assetIssuer,
+    endpoint,
+  }) => {
+    /* ... */
+
+    // We add our callback method to the end of the URL and launch the popup
+    // window for the user to interact with
+    let interactiveUrl = `${url}&callback=postMessage`;
+    let popup = window.open(interactiveUrl, "bpaTransfer24Window", "popup");
+
+    // We listen for the callback `message` from the popup window
+    window.addEventListener("message", async (event) => {
+      /* ... */
+    });
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+## Complete transfer
+
+Once the user is finished with the interactive window from the anchor, they'll be brought back to BasicPay. We store the details of the transfer in the `transfersStore` store (remember, this is just so we can track which anchors to query for transfers later on).
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* This <script> tag has been abbreviated for simplicity */
+
+  // Launch the interactive SEP-24 popup window for the user to interact directly with the anchor to begin a transfer.
+  const launchTransferWindowSep24 = async ({
+    homeDomain,
+    assetCode,
+    assetIssuer,
+    endpoint,
+  }) => {
+    /* ... */
+
+    // We listen for the callback `message` from the popup window
+    window.addEventListener("message", async (event) => {
+      // Close the interactive window if it's not already
+      popup?.close();
+
+      // Store the transfer in the browser's localStorage
+      transfers.addTransfer({
+        homeDomain: homeDomain,
+        protocol: "sep24",
+        assetCode: assetCode,
+        transferID: event.data.transaction.id,
+      });
+
+      /* ... */
+    });
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+## (Sometimes) Send a Stellar payment
+
+In a withdrawal transaction, BasicPay will also build and present to the user a Stellar transaction for them to sign with their pincode.
+
+```html title=/src/routes/dashboard/transfers/+page.svelte
+<script>
+  /* This <script> tag has been abbreviated for simplicity */
+
+  // Launch the interactive SEP-24 popup window for the user to interact directly with the anchor to begin a transfer.
+  const launchTransferWindowSep24 = async ({
+    homeDomain,
+    assetCode,
+    assetIssuer,
+    endpoint,
+  }) => {
+    /* ... */
+
+    // We listen for the callback `message` from the popup window
+    window.addEventListener("message", async (event) => {
+      /* ... */
+
+      // If the user has requested a withdraw with the anchor, they will
+      // need to submit a Stellar transaction that sends the asset from
+      // the user's account to an account controlled by the anchor.
+      if (event.data.transaction.kind === "withdrawal") {
+        // Generate a transaction with the necessary details to complete
+        // the transfer
+        let { transaction, network_passphrase } =
+          await createPaymentTransaction({
+            source: data.publicKey,
+            destination: event.data.transaction.withdraw_anchor_account,
+            asset: `${assetCode}:${assetIssuer}`,
+            amount: event.data.transaction.amount_in,
+            memo: Buffer.from(event.data.transaction.withdraw_memo, "base64"),
+          });
+
+        // Set the component variables to hold the transaction details
+        paymentXDR = transaction;
+        paymentNetwork = network_passphrase;
+
+        // Open the confirmation modal for the user to confirm or reject
+        // the Stellar payment transaction. We provide our customized
+        // `onPaymentConfirm` function to be called as part of the
+        // modal's confirming process.
+        open(ConfirmationModal, {
+          transactionXDR: paymentXDR,
+          transactionNetwork: paymentNetwork,
+          onConfirm: onPaymentConfirm,
+        });
+      }
+    });
+  };
+</script>
+
+<!-- HTML has been omitted from this tutorial. Please check the source file -->
+```
+
+**Source:** https://github.com/stellar/basic-payment-app/blob/main/src/routes/dashboard/transfers/+page.svelte
+
+[sep-10 authentication]: ./sep10.mdx
+[sep-6 section]: ./sep6.mdx
+[this section of the sep-24 specification]: https://www.stellar.org/protocol/sep-24#adding-parameters-to-the-url

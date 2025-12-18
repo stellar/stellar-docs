@@ -1,0 +1,886 @@
+---
+title: Recuperaciones
+description: Usa las recuperaciones para quemar una cantidad específica de un activo habilitado para recuperación desde una trustline o un saldo reclamable.
+sidebar_position: 30
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+
+Las recuperaciones fueron introducidas en CAP-0035 y permiten a un emisor de activo quemar una cantidad específica de un activo habilitado para recuperación desde una trustline o un saldo reclamable, destruyéndolo efectivamente y removiéndolo del saldo de un destinatario.
+
+Fueron diseñadas para permitir a los emisores de activos cumplir con regulaciones de valores, que en muchas jurisdicciones requieren que los emisores de activos (o agentes de transferencia designados) tengan la capacidad de revocar activos en caso de una transacción errónea o fraudulenta u otra acción regulatoria relacionada con una persona o activo específico.
+
+Las recuperaciones son útiles para:
+
+- Recuperar activos que han sido obtenidos fraudulentamente
+- Responder a acciones regulatorias
+- Permitir que personas con identidad verificada recuperen un activo habilitado en caso de pérdida de custodia de clave o robo
+
+## Operaciones
+
+### Configurar opciones
+
+El emisor configura su cuenta para habilitar las recuperaciones usando la bandera `AUTH_CLAWBACK_ENABLED`. Esto causa que cada trustline establecida posteriormente para cualquier activo emitido por esa cuenta tenga automáticamente la bandera `TRUSTLINE_CLAWBACK_ENABLED_FLAG` establecida.
+
+Si una cuenta emisora desea establecer la bandera `AUTH_CLAWBACK_ENABLED_FLAG`, debe tener establecida la bandera `AUTH_REVOCABLE_FLAG`. Esto permite al emisor de un activo recuperar saldos bloqueados en ofertas revocando primero la autorización de una trustline, lo que elimina todas las ofertas que involucran esa trustline. Luego, el emisor puede realizar la recuperación.
+
+### Recuperación
+
+La cuenta emisora utiliza esta operación para recuperar parte o la totalidad de un activo. Una vez que una cuenta posee un activo para el cual se han habilitado las recuperaciones, la cuenta emisora puede recuperarlo, quemándolo. Necesitas proporcionar el activo, una cantidad y la cuenta desde la cual estás recuperando el activo. Para más detalles, consulta la [operación Recuperación](../../../learn/fundamentals/transactions/list-of-operations.mdx#clawback).
+
+### Recuperar saldo reclamable
+
+Esta operación recupera un saldo reclamable, devolviendo el activo a la cuenta emisora, quemándolo. Debes recuperar la totalidad del saldo reclamable, no solo una parte de él. Una vez que un saldo reclamable ha sido reclamado, utiliza la operación de recuperación regular para recuperarlo. Las recuperaciones de saldos reclamables requieren el ID del saldo reclamable. Para más detalles, consulta la [operación de Recuperar saldo reclamable](../../../learn/fundamentals/transactions/list-of-operations.mdx#clawback-claimable-balance).
+
+### Establecer bandera de trustline
+
+La cuenta emisora utiliza esta operación para eliminar las capacidades de recuperación en una trustline específica removiendo la bandera `TRUSTLINE_CLAWBACK_ENABLED_FLAG` vía la operación [**SetTrustLineFlags**](../../../learn/fundamentals/transactions/list-of-operations.mdx#set-trustline-flags).
+
+Solo puedes eliminar una bandera, no establecerla. Por lo tanto, eliminar una bandera de recuperación en una trustline es irreversible. Esto se hace para que no cambies retroactivamente las reglas para los tenedores de tu activo. Si quieres habilitar recuperaciones nuevamente, los tenedores deben reemitir sus trustlines.
+
+## Ejemplos
+
+Aquí cubriremos los siguientes enfoques para recuperar un activo.
+
+**Ejemplo 1:** La cuenta emisora (Cuenta A) crea un activo habilitado para recuperación y lo envía a la Cuenta B. La Cuenta B envía ese activo a la Cuenta C. La Cuenta A luego recupera el activo de C. **Ejemplo 2:** La Cuenta B crea un saldo reclamable para la Cuenta C, y la Cuenta A recupera el saldo reclamable. **Ejemplo 3:** La Cuenta A emite un activo habilitado para recuperación a la Cuenta B. A recupera parte del activo de B, luego elimina la bandera habilitada para recuperación de la trustline y ya no puede recuperar el activo.
+
+### Preámbulo: Crear y Financiar Cuentas y Emitir un Activo Recuperable
+
+Primero, configuraremos una cuenta para habilitar recuperaciones y emitir un activo en consecuencia.
+
+Emitir correctamente un activo (con cuentas separadas de emisión y distribución) es un poco más complejo, pero aquí usaremos un método más simple.
+
+Además, ten en cuenta que primero necesitamos habilitar recuperaciones y luego establecer trustlines, ya que no puedes habilitar recuperación retroactivamente en trustlines existentes.
+
+:::info
+
+El siguiente fragmento de código contiene funciones auxiliares que se usarán en los ejemplos siguientes
+
+:::
+
+<CodeExample>
+
+```js
+import * as sdk from "@stellar/stellar-sdk";
+
+let server = new sdk.rpc.Server("https://soroban-testnet.stellar.org");
+
+const A = sdk.Keypair.random();
+const B = sdk.Keypair.random();
+const C = sdk.Keypair.random();
+
+console.log("=== ACCOUNT SETUP ===");
+console.log(`Account A (Issuer): ${A.publicKey()}`);
+console.log(`Account B (Trustor): ${B.publicKey()}`);
+console.log(`Account C (Trustor): ${C.publicKey()}`);
+console.log();
+
+const ASSET = new sdk.Asset("CLAW", A.publicKey());
+
+// Helper function to format account ID with label
+function formatAccount(accountId) {
+  const shortId = accountId.substring(0, 8);
+  if (accountId === A.publicKey()) {
+    return `${shortId} (Account A)`;
+  } else if (accountId === B.publicKey()) {
+    return `${shortId} (Account B)`;
+  } else if (accountId === C.publicKey()) {
+    return `${shortId} (Account C)`;
+  }
+  return shortId;
+}
+
+// Helper function to safely scale XDR Int64 asset amounts
+function scaleAsset(x) {
+  return Number((x * 10n) / 10000000n) / 10; // one decimal place
+}
+
+// Helper function to fetch claimable balance details using SDK's built-in method
+async function fetchClaimableBalance(
+  balanceId,
+  description = "Claimable Balance",
+) {
+  try {
+    console.log(`\n--- Checking ${description} ---`);
+    console.log(`Looking up balance ID: ${balanceId}`);
+
+    // Use SDK's built-in getClaimableBalance method
+    const claimableBalance = await server.getClaimableBalance(balanceId);
+    const asset = sdk.Asset.fromOperation(claimableBalance.asset());
+    const amount = scaleAsset(claimableBalance.amount().toBigInt()).toFixed(1);
+
+    console.log(`✅ Found claimable balance`);
+    console.log(`   Amount: ${amount} ${asset.code}`);
+    console.log(
+      `   Number of claimants: ${claimableBalance.claimants().length}`,
+    );
+
+    // Show claimant details
+    claimableBalance.claimants().forEach((claimant, index) => {
+      const destination = claimant.v0().destination().ed25519();
+      const claimantAddress = sdk.StrKey.encodeEd25519PublicKey(destination);
+      console.log(
+        `   Claimant ${index + 1}: ${formatAccount(claimantAddress)}`,
+      );
+    });
+
+    return true; // Balance exists
+  } catch (error) {
+    console.log(`❌ Claimable balance not found (${error.message})`);
+    return false; // Balance doesn't exist
+  }
+}
+
+// Fund accounts first
+function fundAccounts() {
+  console.log("=== FUNDING ACCOUNTS WITH XLM ===");
+  return Promise.all([
+    server.requestAirdrop(A.publicKey()),
+    server.requestAirdrop(B.publicKey()),
+    server.requestAirdrop(C.publicKey()),
+  ]).then(() => {
+    console.log("All accounts funded with XLM via airdrop");
+    // Wait for funding to complete
+    return new Promise((resolve) => setTimeout(resolve, 3000));
+  });
+}
+
+// Enables AuthClawbackEnabledFlag on an account.
+function enableClawback(account, keys) {
+  console.log(
+    `Enabling clawback flags on account ${formatAccount(account.accountId())}`,
+  );
+  return submitAndPollTransaction(
+    buildTx(account, keys, [
+      sdk.Operation.setOptions({
+        setFlags: sdk.AuthClawbackEnabledFlag | sdk.AuthRevocableFlag,
+      }),
+    ]),
+    "Enable Clawback Flags",
+  );
+}
+
+// Establishes a trustline for `recipient` for the CLAW Asset
+const establishTrustline = function (recipient, key) {
+  console.log(
+    `${formatAccount(recipient.accountId())} establishing trustline for ${
+      ASSET.code
+    }`,
+  );
+  return submitAndPollTransaction(
+    buildTx(recipient, key, [
+      sdk.Operation.changeTrust({
+        asset: ASSET,
+        limit: "5000", // arbitrary
+      }),
+    ]),
+    `Establish Trustline (${formatAccount(recipient.accountId())})`,
+  );
+};
+
+// Retrieves latest account info for all accounts.
+function getAccounts() {
+  return Promise.all([
+    server.getAccount(A.publicKey()),
+    server.getAccount(B.publicKey()),
+    server.getAccount(C.publicKey()),
+  ]);
+}
+
+// Show XLM balances (after funding)
+function showXLMBalances(accounts) {
+  console.log("\n=== XLM BALANCES ===");
+  return Promise.all(
+    accounts.map((acc) => {
+      return getXLMBalance(acc.accountId()).then((balance) => {
+        console.log(`${formatAccount(acc.accountId())}: ${balance} XLM`);
+      });
+    }),
+  );
+}
+
+// Get XLM balance using account ledger entry
+function getXLMBalance(accountId) {
+  return server
+    .getAccountEntry(accountId)
+    .then((accountEntry) => {
+      return scaleAsset(accountEntry.balance().toBigInt()).toFixed(1);
+    })
+    .catch(() => "0");
+}
+
+// Show CLAW balances
+function showCLAWBalances(accounts) {
+  console.log("\n=== CLAW BALANCES ===");
+  return Promise.all(
+    accounts.map((acc) => {
+      return getBalance(acc.accountId()).then((balance) => {
+        console.log(`${formatAccount(acc.accountId())}: ${balance} CLAW`);
+      });
+    }),
+  );
+}
+
+// Get CLAW balance using getTrustline
+function getBalance(accountId) {
+  return server
+    .getTrustline(accountId, ASSET)
+    .then((trustlineEntry) => {
+      return scaleAsset(trustlineEntry.balance().toBigInt()).toFixed(1);
+    })
+    .catch(() => "0");
+}
+
+// Helps simplify creating & signing a transaction.
+function buildTx(source, signer, ops) {
+  var tx = new sdk.TransactionBuilder(source, {
+    fee: sdk.BASE_FEE,
+    networkPassphrase: sdk.Networks.TESTNET,
+  });
+
+  ops.forEach((op) => tx.addOperation(op));
+  tx = tx.setTimeout(30).build();
+  tx.sign(signer);
+  return tx;
+}
+
+// Helper function to submit transaction and poll for completion using RPC
+function submitAndPollTransaction(transaction, description = "Transaction") {
+  return server.sendTransaction(transaction).then((submitResponse) => {
+    if (submitResponse.status !== "PENDING") {
+      throw new Error(
+        `Transaction submission failed: ${submitResponse.status}`,
+      );
+    }
+
+    console.log(`${description} submitted: ${submitResponse.hash}`);
+
+    return server.pollTransaction(submitResponse.hash).then((finalResponse) => {
+      if (finalResponse.status === "SUCCESS") {
+        console.log(`${description} completed successfully`);
+      } else {
+        console.log(`${description} failed: ${finalResponse.status}`);
+      }
+
+      return {
+        hash: submitResponse.hash,
+        status: finalResponse.status,
+        resultXdr: finalResponse.resultXdr,
+      };
+    });
+  });
+}
+
+// Makes payment from `fromAccount` to `toAccount` of `amount`
+function makePayment(toAccount, fromAccount, fromKey, amount) {
+  console.log(
+    `\nPayment: ${formatAccount(fromAccount.accountId())} → ${formatAccount(
+      toAccount.accountId(),
+    )} (${amount} CLAW)`,
+  );
+  return submitAndPollTransaction(
+    buildTx(fromAccount, fromKey, [
+      sdk.Operation.payment({
+        destination: toAccount.accountId(),
+        asset: ASSET,
+        amount: amount,
+      }),
+    ]),
+    `Payment of ${amount} CLAW`,
+  );
+}
+
+// Creates a claimable balance from `fromAccount` to `toAccount` of `amount`
+function createClaimable(fromAccount, fromKey, toAccount, amount) {
+  console.log(
+    `\nCreating claimable balance: ${formatAccount(
+      fromAccount.accountId(),
+    )} → ${formatAccount(toAccount.accountId())} (${amount} CLAW)`,
+  );
+  return submitAndPollTransaction(
+    buildTx(fromAccount, fromKey, [
+      sdk.Operation.createClaimableBalance({
+        asset: ASSET,
+        amount: amount,
+        claimants: [new sdk.Claimant(toAccount.accountId())],
+      }),
+    ]),
+    `Create Claimable Balance of ${amount} CLAW`,
+  );
+}
+
+// Parse the ClaimableBalanceId from the transaction result XDR
+function getBalanceId(txResponse) {
+  const txResult = txResponse.resultXdr;
+  const operationResult = txResult.result().results()[0];
+
+  let creationResult = operationResult.value().createClaimableBalanceResult();
+  return creationResult.balanceId().toXDR("hex");
+}
+
+// Clawback the claimable balance using its ID
+function clawbackClaimable(issuerAccount, issuerKey, balanceId) {
+  console.log(
+    `\nClawback claimable balance: ${formatAccount(
+      issuerAccount.accountId(),
+    )} clawing back balance ${balanceId}`,
+  );
+  return submitAndPollTransaction(
+    buildTx(issuerAccount, issuerKey, [
+      sdk.Operation.clawbackClaimableBalance({ balanceId }),
+    ]),
+    `Clawback Claimable Balance`,
+  );
+}
+
+// Clawback `amount` of CLAW from `fromAccount` by `byAccount`
+function doClawback(byAccount, byKey, fromAccount, amount) {
+  console.log(
+    `\nClawback: ${formatAccount(
+      byAccount.accountId(),
+    )} clawing back ${amount} CLAW from ${formatAccount(
+      fromAccount.accountId(),
+    )}`,
+  );
+  return submitAndPollTransaction(
+    buildTx(byAccount, byKey, [
+      sdk.Operation.clawback({
+        from: fromAccount.accountId(),
+        asset: ASSET,
+        amount: amount,
+      }),
+    ]),
+    `Clawback of ${amount} CLAW`,
+  );
+}
+
+// Disable clawback for a trustline by the issuer
+function disableClawback(issuerAccount, issuerKeys, forTrustor) {
+  console.log(
+    `\nDisabling clawback for ${formatAccount(
+      forTrustor.accountId(),
+    )} on asset ${ASSET.code}`,
+  );
+  return submitAndPollTransaction(
+    buildTx(issuerAccount, issuerKeys, [
+      sdk.Operation.setTrustLineFlags({
+        trustor: forTrustor.accountId(),
+        asset: ASSET,
+        flags: {
+          clawbackEnabled: false,
+        },
+      }),
+    ]),
+    "Disable Clawback on Trustline",
+  );
+}
+
+// Enables clawback on A, and establishes trustlines for the CLAW asset for accounts B and C.
+function preamble() {
+  console.log("\n=== SETTING UP CLAWBACK AND TRUSTLINES ===");
+  return getAccounts().then(function (accounts) {
+    let [accountA, accountB, accountC] = accounts;
+
+    return enableClawback(accountA, A)
+      .then(() => {
+        console.log("Clawback enabled successfully");
+        // Get fresh accounts after enabling clawback
+        return getAccounts();
+      })
+      .then((refreshedAccounts) => {
+        let [newAccountA, newAccountB, newAccountC] = refreshedAccounts;
+
+        return Promise.all([
+          establishTrustline(newAccountB, B),
+          establishTrustline(newAccountC, C),
+        ]);
+      })
+      .then(() => {
+        console.log("All trustlines established successfully");
+      });
+  });
+}
+```
+
+</CodeExample>
+
+### Ejemplo 1: Pagos
+
+Este ejemplo resaltará cómo el emisor del activo mantiene el control sobre su activo sin importar cómo se distribuya al mundo.
+
+En este escenario:
+
+- La Cuenta A pagará a la Cuenta B con 1000 tokens de su activo personalizado.
+- Luego, la Cuenta B pagará a la Cuenta C 500 tokens a su vez.
+- Finalmente, la Cuenta A recuperará la mitad del saldo de la Cuenta C, quemando 250 tokens para siempre.
+
+<CodeExample>
+
+```js
+function examplePaymentAndThenClawback() {
+  console.log("\n=== PAYMENT AND CLAWBACK EXAMPLE ===");
+  return getAccounts()
+    .then(function (accounts) {
+      let [accountA, accountB, accountC] = accounts;
+
+      // A issues 1000 CLAW to B
+      return makePayment(accountB, accountA, A, "1000")
+        .then(() => {
+          console.log("\n--- After A → B payment ---");
+          return getAccounts();
+        })
+        .then((refreshedAccounts) => {
+          [accountA, accountB, accountC] = refreshedAccounts;
+          return showCLAWBalances([accountA, accountB, accountC]);
+        })
+        .then(() => {
+          // B sends 500 CLAW to C
+          return makePayment(accountC, accountB, B, "500");
+        })
+        .then(() => {
+          console.log("\n--- After B → C payment ---");
+          return getAccounts();
+        })
+        .then((refreshedAccounts2) => {
+          [accountA, accountB, accountC] = refreshedAccounts2;
+          return showCLAWBalances([accountA, accountB, accountC]);
+        })
+        .then(() => {
+          // A claws back 250 CLAW from C
+          return doClawback(accountA, A, accountC, "250");
+        });
+    })
+    .then(() => getAccounts());
+}
+
+// Run the example with proper promise chaining
+function runExample1() {
+  fundAccounts()
+    .then(() => getAccounts())
+    .then(showXLMBalances)
+    .then(preamble)
+    .then(examplePaymentAndThenClawback)
+    .then((finalAccounts) => {
+      console.log("\n--- FINAL BALANCES ---");
+      return showCLAWBalances(finalAccounts);
+    })
+    .then(() => {
+      console.log("\n=== CLAWBACK DEMO COMPLETED ===");
+    })
+    .catch((error) => {
+      console.error("Error in example:", error.message);
+    });
+}
+```
+
+</CodeExample>
+
+Cuando invoques `runExample1()`, deberías ver una salida similar a:
+
+```
+=== ACCOUNT SETUP ===
+Account A (Issuer): GDYIV7XB5M6OS4S2P3DAGIEKRXNKSYZ4LSS5VBWMFGNAO42WGBOQY2E5
+Account B (Trustor): GA7JEMMG46H6CDXR757ZUZ6HCEXE64RKC4M4DYX5DME2XP2P3LXQFVIM
+Account C (Trustor): GCLJYLVE43A73KV62YVC2H7ZK4CDSGMK7IYV2NC4WHQOFRQDFTBG6ZB7
+
+=== FUNDING ACCOUNTS WITH XLM ===
+All accounts funded with XLM via airdrop
+
+=== XLM BALANCES ===
+GDYIV7XB (Account A): 10000.0 XLM
+GCLJYLVE (Account C): 10000.0 XLM
+GA7JEMMG (Account B): 10000.0 XLM
+
+=== SETTING UP CLAWBACK AND TRUSTLINES ===
+Enabling clawback flags on account GDYIV7XB (Account A)
+Enable Clawback Flags submitted: aa48d5bbf1e3c5b3b3ee6b21f4ab4dfbf52632e0d70b1f6e2a09ee33943093d5
+Enable Clawback Flags completed successfully
+Clawback enabled successfully
+GA7JEMMG (Account B) establishing trustline for CLAW
+GCLJYLVE (Account C) establishing trustline for CLAW
+Establish Trustline (GCLJYLVE (Account C)) submitted: effb33b48f126ddd54237b8942d48fdfb562d7dc07500e9db07a1b223a5ef50e
+Establish Trustline (GA7JEMMG (Account B)) submitted: e05fe02b4da8dff22285da2d927545288160ec8f68c1359cefbabdfd4f0020df
+Establish Trustline (GA7JEMMG (Account B)) completed successfully
+Establish Trustline (GCLJYLVE (Account C)) completed successfully
+All trustlines established successfully
+
+=== PAYMENT AND CLAWBACK EXAMPLE ===
+
+Payment: GDYIV7XB (Account A) → GA7JEMMG (Account B) (1000 CLAW)
+Payment of 1000 CLAW submitted: be5cfda0f1625762b3b3b704affa356ff04e5ab388b7b63ede1fa5ca9873c96a
+Payment of 1000 CLAW completed successfully
+
+--- After A → B payment ---
+
+=== CLAW BALANCES ===
+GDYIV7XB (Account A): 0 CLAW
+GA7JEMMG (Account B): 1000.0 CLAW
+GCLJYLVE (Account C): 0.0 CLAW
+
+Payment: GA7JEMMG (Account B) → GCLJYLVE (Account C) (500 CLAW)
+Payment of 500 CLAW submitted: 8a0d19c8e56487255ffe24f5453ffe78177acc6f39bad204bab2849415032555
+Payment of 500 CLAW completed successfully
+
+--- After B → C payment ---
+
+=== CLAW BALANCES ===
+GDYIV7XB (Account A): 0 CLAW
+GA7JEMMG (Account B): 500.0 CLAW
+GCLJYLVE (Account C): 500.0 CLAW
+
+Clawback: GDYIV7XB (Account A) clawing back 250 CLAW from GCLJYLVE (Account C)
+Clawback of 250 CLAW submitted: e63eed593a20fb5571e8189ff549cd1360849749c06294f00596fae30da0f23d
+Clawback of 250 CLAW completed successfully
+
+--- FINAL BALANCES ---
+
+=== CLAW BALANCES ===
+GCLJYLVE (Account C): 250.0 CLAW
+GA7JEMMG (Account B): 500.0 CLAW
+GDYIV7XB (Account A): 0 CLAW
+
+=== CLAWBACK DEMO COMPLETED ===
+```
+
+Observa que la Cuenta A (el emisor) no tiene ninguno de los activos a pesar de haber recuperado 250 de la Cuenta C. Esto debe dejar claro que los activos recuperados se queman, no se transfieren.
+
+Puede parecer extraño que A nunca posea tokens de su activo personalizado, pero así es exactamente cómo funciona la emisión: creas valor donde antes no lo había. Enviar un activo a su cuenta emisora equivale a quemarlo, y auditar la cantidad total de un activo en existencia es uno de los beneficios de distribuirlo correctamente mediante una cuenta de distribución, lo cual evitamos hacer aquí por brevedad del ejemplo.
+
+### Ejemplo 2: Saldos reclamables
+
+Los pagos directos no son la única manera de transferir activos entre cuentas: los saldos reclamables también lo hacen. Como son un mecanismo de pago separado, necesitan un mecanismo de recuperación separado.
+
+En este escenario:
+
+- La Cuenta A pagará a la Cuenta B con 1000 tokens de su activo personalizado.
+- La Cuenta B crea un Saldo Reclamable para la Cuenta C por 300 tokens. (Puedes consultar el Saldo Reclamable vía el endpoint `getLedgerEntries` de RPC.)
+- Luego, la Cuenta A recupera el Saldo Reclamable de la Cuenta C.
+- La entrada del Saldo Reclamable se elimina y ya no es accesible mediante consulta.
+
+<CodeExample>
+
+```js
+function exampleClaimableBalanceClawback() {
+  console.log("\n=== CLAIMABLE BALANCE CLAWBACK EXAMPLE ===");
+  let balanceId;
+
+  return getAccounts()
+    .then(function (accounts) {
+      let [accountA, accountB, accountC] = accounts;
+
+      console.log("\n--- Initial CLAW balances ---");
+      return showCLAWBalances([accountA, accountB, accountC])
+        .then(() => {
+          // A pays 1000 CLAW to B
+          return makePayment(accountB, accountA, A, "1000");
+        })
+        .then(() => {
+          console.log("\n--- After A → B payment ---");
+          return getAccounts();
+        })
+        .then((refreshedAccounts) => {
+          [accountA, accountB, accountC] = refreshedAccounts;
+          return showCLAWBalances([accountA, accountB, accountC]);
+        })
+        .then(() => {
+          // B creates claimable balance for C
+          return createClaimable(accountB, B, accountC, "300");
+        })
+        .then((txResp) => {
+          balanceId = getBalanceId(txResp);
+          console.log(`Claimable balance created with ID: ${balanceId}`);
+
+          console.log("\n--- After claimable balance creation ---");
+          return getAccounts()
+            .then((refreshedAccounts2) => {
+              [accountA, accountB, accountC] = refreshedAccounts2;
+              return showCLAWBalances([accountA, accountB, accountC]);
+            })
+            .then(() => {
+              // Check that the claimable balance exists
+              return fetchClaimableBalance(
+                balanceId,
+                "claimable balance after creation",
+              );
+            })
+            .then(() => {
+              // A claws back the claimable balance
+              return clawbackClaimable(accountA, A, balanceId);
+            })
+            .then(() => {
+              // Check that the claimable balance no longer exists
+              return fetchClaimableBalance(
+                balanceId,
+                "claimable balance after clawback",
+              );
+            });
+        });
+    })
+    .then(() => getAccounts());
+}
+
+// Run the example with proper promise chaining
+function runExample2() {
+  fundAccounts()
+    .then(() => getAccounts())
+    .then(showXLMBalances)
+    .then(preamble)
+    .then(exampleClaimableBalanceClawback)
+    .then((finalAccounts) => {
+      console.log("\n--- FINAL BALANCES ---");
+      return showCLAWBalances(finalAccounts);
+    })
+    .then(() => {
+      console.log("\n=== CLAIMABLE BALANCE CLAWBACK DEMO COMPLETED ===");
+    })
+    .catch((error) => {
+      console.error("Error in example:", error.message);
+    });
+}
+```
+
+</CodeExample>
+
+Cuando invoques `runExample2()`, deberías ver una salida similar a:
+
+```
+=== ACCOUNT SETUP ===
+Account A (Issuer): GBOK4XIKNCKVWKRG27EEMYX2H7H5GP6ZCLYJTORHJVV3ZDJZJXTUPKTJ
+Account B (Trustor): GBI5XUOWLBL44DWJXURGQJX46TUSNEPQ553LZUGLFCVQ6KRRPEEFBPKE
+Account C (Trustor): GANXLMMUIG7G5NT6GQZNE3OPCRCROYJLTR6PGRZHVURUGNURSF3H3ZEZ
+
+=== FUNDING ACCOUNTS WITH XLM ===
+All accounts funded with XLM via airdrop
+
+=== XLM BALANCES ===
+GBI5XUOW (Account B): 10000.0 XLM
+GANXLMMU (Account C): 10000.0 XLM
+GBOK4XIK (Account A): 10000.0 XLM
+
+=== SETTING UP CLAWBACK AND TRUSTLINES ===
+Enabling clawback flags on account GBOK4XIK (Account A)
+Enable Clawback Flags submitted: 4812d2be7e8652dbeb29fd4d9387c71725e09e5f1d3500b3e913eebc9bec03b1
+Enable Clawback Flags completed successfully
+Clawback enabled successfully
+GBI5XUOW (Account B) establishing trustline for CLAW
+GANXLMMU (Account C) establishing trustline for CLAW
+Establish Trustline (GANXLMMU (Account C)) submitted: eb2c17135109408d751cdbab9235c8a833922a66c6576fe76a7930a2ef9e7042
+Establish Trustline (GBI5XUOW (Account B)) submitted: 1ebb5ed64cb1c5c9beb121d56c31b802fab885ef06b771b3d8617371482e115d
+Establish Trustline (GANXLMMU (Account C)) completed successfully
+Establish Trustline (GBI5XUOW (Account B)) completed successfully
+All trustlines established successfully
+
+=== CLAIMABLE BALANCE CLAWBACK EXAMPLE ===
+
+--- Initial CLAW balances ---
+
+=== CLAW BALANCES ===
+GANXLMMU (Account C): 0.0 CLAW
+GBI5XUOW (Account B): 0.0 CLAW
+GBOK4XIK (Account A): 0 CLAW
+
+Payment: GBOK4XIK (Account A) → GBI5XUOW (Account B) (1000 CLAW)
+Payment of 1000 CLAW submitted: ec852daea2fea4e5b6a1d56530618f30642d9207767f30558d577b4f98e59850
+Payment of 1000 CLAW completed successfully
+
+--- After A → B payment ---
+
+=== CLAW BALANCES ===
+GANXLMMU (Account C): 0.0 CLAW
+GBI5XUOW (Account B): 1000.0 CLAW
+GBOK4XIK (Account A): 0 CLAW
+
+Creating claimable balance: GBI5XUOW (Account B) → GANXLMMU (Account C) (300 CLAW)
+Create Claimable Balance of 300 CLAW submitted: 743066775839ef5112fd2b8a26730700a986655c557abcb98b91c6fdbd12abde
+Create Claimable Balance of 300 CLAW completed successfully
+Claimable balance created with ID: 0000000091b5fe84a029c79d409ac88d34b7047a6cc9f95b2c2f965843db122ef70fac2c
+
+--- After claimable balance creation ---
+
+=== CLAW BALANCES ===
+GBI5XUOW (Account B): 700.0 CLAW
+GBOK4XIK (Account A): 0 CLAW
+GANXLMMU (Account C): 0.0 CLAW
+
+--- Checking claimable balance after creation ---
+Looking up balance ID: 0000000091b5fe84a029c79d409ac88d34b7047a6cc9f95b2c2f965843db122ef70fac2c
+✅ Found claimable balance
+   Amount: 300.0 CLAW
+   Number of claimants: 1
+   Claimant 1: GANXLMMU (Account C)
+
+Clawback claimable balance: GBOK4XIK (Account A) clawing back balance 0000000091b5fe84a029c79d409ac88d34b7047a6cc9f95b2c2f965843db122ef70fac2c
+Clawback Claimable Balance submitted: a82a0ed067d34361da622a56a3b6d59a7c4a351414a69da4dc9df8a5728e7758
+Clawback Claimable Balance completed successfully
+
+--- Checking claimable balance after clawback ---
+Looking up balance ID: 0000000091b5fe84a029c79d409ac88d34b7047a6cc9f95b2c2f965843db122ef70fac2c
+❌ Claimable balance not found (Claimable balance 0000000091b5fe84a029c79d409ac88d34b7047a6cc9f95b2c2f965843db122ef70fac2c not found)
+
+--- FINAL BALANCES ---
+
+=== CLAW BALANCES ===
+GBI5XUOW (Account B): 700.0 CLAW
+GBOK4XIK (Account A): 0 CLAW
+GANXLMMU (Account C): 0.0 CLAW
+
+=== CLAIMABLE BALANCE CLAWBACK DEMO COMPLETED ===
+```
+
+### Ejemplo 3: Activar Selectivamente la Recuperación
+
+Cuando habilitas el `AUTH_CLAWBACK_ENABLED_FLAG` en tu cuenta, todos los trustlines futuros tendrán activada la recuperación para cualquiera de los activos que hayas emitido. Esto puede no ser siempre deseable, ya que podrías querer que ciertos activos se comporten como antes. Aunque podrías solucionarlo reemitiendo activos desde una cuenta "dedicada a la recuperación", también puedes simplemente desactivar la recuperación para ciertos trustlines borrando el `TRUST_LINE_CLAWBACK_ENABLED_FLAG` en un trustline.
+
+En este escenario:
+
+- La Cuenta A emite un activo y envía 1000 tokens a una cuenta de distribución (Cuenta B).
+- La Cuenta A recupera 500 tokens de la Cuenta B.
+- Luego, la Cuenta A limpia el trustline para que no pueda recuperar el activo.
+- La Cuenta A intenta entonces recuperar 250 tokens de la Cuenta B y falla.
+
+_Nota que la Cuenta C no es relevante en este ejemplo._
+
+<CodeExample>
+
+```js
+function exampleSelectiveClawbackThenDisableClawback() {
+  console.log("\n=== SELECTIVE CLAWBACK EXAMPLE ===");
+  return getAccounts()
+    .then((accounts) => {
+      let [accountA, accountB] = accounts;
+
+      console.log("\n--- Initial CLAW balances ---");
+      return showCLAWBalances([accountA, accountB])
+        .then(() => {
+          // A pays 1000 CLAW to B
+          return makePayment(accountB, accountA, A, "1000");
+        })
+        .then(() => {
+          console.log("\n--- After A → B payment ---");
+          return getAccounts();
+        })
+        .then((refreshedAccounts) => {
+          [accountA, accountB] = refreshedAccounts;
+          return showCLAWBalances([accountA, accountB]);
+        })
+        .then(() => {
+          // A claws back 500 CLAW from B (should work)
+          return doClawback(accountA, A, accountB, "500");
+        })
+        .then(() => {
+          console.log("\n--- After first clawback ---");
+          return getAccounts();
+        })
+        .then((refreshedAccounts2) => {
+          [accountA, accountB] = refreshedAccounts2;
+          return showCLAWBalances([accountA, accountB]);
+        })
+        .then(() => {
+          // A disables clawback for B's trustline
+          return disableClawback(accountA, A, accountB);
+        })
+        .then(() => {
+          // Try to clawback again (should fail)
+          return doClawback(accountA, A, accountB, "250");
+        })
+        .catch((err) => {
+          console.log("Error:", err.message);
+        });
+    })
+    .then(() => getAccounts());
+}
+
+// Run the example with proper promise chaining
+function runExample3() {
+  fundAccounts()
+    .then(() => getAccounts())
+    .then((accounts) => showXLMBalances([accounts[0], accounts[1]])) // Only show A and B
+    .then(preamble) // This sets up clawback and trustlines for A, B, C
+    .then(exampleSelectiveClawbackThenDisableClawback)
+    .then((finalAccounts) => {
+      console.log("\n--- FINAL BALANCES ---");
+      return showCLAWBalances([finalAccounts[0], finalAccounts[1]]); // Only show A and B
+    })
+    .then(() => {
+      console.log("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===");
+    })
+    .catch((error) => {
+      console.error("Error in example:", error.message);
+    });
+}
+```
+
+</CodeExample>
+
+Cuando invoques `runExample3()`, deberías ver una salida similar a:
+
+```
+=== ACCOUNT SETUP ===
+Account A (Issuer): GCTYN2SAMM2SHM5LOCHS2P2I24MEHVYKHKCSO5XPR2H2GQCK6PFCQRK6
+Account B (Trustor): GAWDYTIKQI7J3YSCSLWGAJPN6J62WQKDA3XCAC55DDRH5KCTEZ5IGGWP
+Account C (Trustor): GC5KQ7H5G5E65OVZGKBVCXBJKTEHWBBLQ56L7DK4ATUHUH5VJP4YHQVC
+
+=== FUNDING ACCOUNTS WITH XLM ===
+All accounts funded with XLM via airdrop
+
+=== XLM BALANCES ===
+GCTYN2SA (Account A): 10000.0 XLM
+GAWDYTIK (Account B): 10000.0 XLM
+
+=== SETTING UP CLAWBACK AND TRUSTLINES ===
+Enabling clawback flags on account GCTYN2SA (Account A)
+Enable Clawback Flags submitted: 52e7e15d70e46dc3b551e787ec3be11692d2cc8e0b2fda070cebfa048c67cedd
+Enable Clawback Flags completed successfully
+Clawback enabled successfully
+GAWDYTIK (Account B) establishing trustline for CLAW
+GC5KQ7H5 (Account C) establishing trustline for CLAW
+Establish Trustline (GAWDYTIK (Account B)) submitted: 3cf49bf597085ede004d566d151b9a917b31d1dbbfa81d71a64b615356702da7
+Establish Trustline (GC5KQ7H5 (Account C)) submitted: 9250e62be27e3111924d36c0169f3b08e12565f8f842bf32a8a7a0efb098a080
+Establish Trustline (GAWDYTIK (Account B)) completed successfully
+Establish Trustline (GC5KQ7H5 (Account C)) completed successfully
+All trustlines established successfully
+
+=== SELECTIVE CLAWBACK EXAMPLE ===
+
+--- Initial CLAW balances ---
+
+=== CLAW BALANCES ===
+GCTYN2SA (Account A): 0 CLAW
+GAWDYTIK (Account B): 0.0 CLAW
+
+Payment: GCTYN2SA (Account A) → GAWDYTIK (Account B) (1000 CLAW)
+Payment of 1000 CLAW submitted: 9974f7a8f85dbe437a18364066959718ceeeaa3ae9a84ccd0e91da5f4e6bfaeb
+Payment of 1000 CLAW completed successfully
+
+--- After A → B payment ---
+
+=== CLAW BALANCES ===
+GAWDYTIK (Account B): 1000.0 CLAW
+GCTYN2SA (Account A): 0 CLAW
+
+Clawback: GCTYN2SA (Account A) clawing back 500 CLAW from GAWDYTIK (Account B)
+Clawback of 500 CLAW submitted: b1729001fba89198f67bcff2de7fb47ea97c358e902688d88b76c6ff3947cec2
+Clawback of 500 CLAW completed successfully
+
+--- After first clawback ---
+
+=== CLAW BALANCES ===
+GAWDYTIK (Account B): 500.0 CLAW
+GCTYN2SA (Account A): 0 CLAW
+
+Disabling clawback for GAWDYTIK (Account B) on asset CLAW
+Disable Clawback on Trustline submitted: a1fe18c12628806bac90936f563978d1f9a3333a1a77482d55d3b7af99e679a7
+Disable Clawback on Trustline completed successfully
+
+Clawback: GCTYN2SA (Account A) clawing back 250 CLAW from GAWDYTIK (Account B)
+Clawback of 250 CLAW submitted: eab31d237832b513ca911cd2b4a4466a7b7b502f274dcc926b9910223fc2043f
+Clawback of 250 CLAW failed: FAILED
+
+--- FINAL BALANCES ---
+
+=== CLAW BALANCES ===
+GAWDYTIK (Account B): 500.0 CLAW
+GCTYN2SA (Account A): 0 CLAW
+
+=== SELECTIVE CLAWBACK DEMO COMPLETED ===
+```

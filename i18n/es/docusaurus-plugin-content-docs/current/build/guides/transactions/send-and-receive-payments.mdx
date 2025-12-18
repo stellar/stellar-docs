@@ -1,0 +1,1139 @@
+---
+title: Enviar y recibir pagos
+description: Aprende a enviar pagos y estar atento a los pagos recibidos en la red Stellar.
+sidebar_position: 7
+---
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import { Alert } from "@site/src/components/Alert";
+import Details from "@theme/Details";
+
+## Resumen de pagos
+
+Un pago constituye la transferencia de un token de una cuenta a otra. En la red Stellar, un token puede ser un activo Stellar o un token de contrato personalizado que sigue el [estándar de token SEP-41](../../../tokens/stellar-asset-contract.mdx#overview).
+
+Hay dos formas principales en que se realizan los pagos en Stellar:
+
+- Usando las [operaciones](../../../learn/fundamentals/transactions/list-of-operations.mdx) relacionadas con pagos de Stellar
+- [Invocando una función](../../../learn/fundamentals/contract-development/contract-interactions/overview.mdx) en un contrato de token.
+
+El enfoque que debes tomar depende del caso de uso:
+
+- Si deseas hacer un pago de un activo de Stellar entre dos cuentas Stellar, usa las operaciones de pago. Las tarifas de transacción son más económicas al usarlas comparado con las tarifas por invocar directamente el contrato de token del activo, conocido como el [Contrato de Activo Stellar](../../../tokens/stellar-asset-contract.mdx#overview).
+- Si quieres realizar un pago de un activo Stellar entre una cuenta Stellar y una dirección de contrato, o entre dos direcciones de contrato, entonces debe usarse el contrato del activo. Las operaciones de pago de Stellar no pueden tener direcciones de contrato como origen o destino.
+- Si deseas realizar un pago con un token de contrato personalizado que no sea un activo Stellar pero que siga el [estándar de token SEP-41](../../../tokens/stellar-asset-contract.mdx#overview), debes usar el contrato del token. Las operaciones de pago de Stellar solo se pueden usar para transferir activos Stellar.
+
+Para aprender más sobre las diferencias entre activos Stellar y tokens de contrato, consulta la descripción general de [Tokens](../../../tokens/README.mdx).
+
+<Alert>
+
+En los siguientes ejemplos de código, se omite la comprobación adecuada de errores por brevedad. Sin embargo, debes _siempre_ validar tus resultados, ya que hay muchas formas en que las solicitudes pueden fallar.
+
+</Alert>
+
+## Ejemplo de uso de Pagos
+
+Este ejemplo destaca el enfoque mencionado para realizar pagos usando operaciones y activos, y el uso del [RPC de Stellar](../../../data/apis/rpc/README.mdx) con los [SDKs de cliente Stellar](../../../tools/sdks/client-sdks.mdx#overview) para ejecutar todas las acciones necesarias.
+
+### Enviar un Pago
+
+Demostramos un pago de un activo en Stellar. Construiremos una transacción con una operación de pago para enviar 10 Lummens desde una cuenta emisora a una cuenta receptora, la firmaremos como la cuenta emisora y la enviaremos a la red.
+
+- Enviando la transacción al nodo público de testnet mantenido por SDF del servidor Stellar RPC.
+- Al enviar transacciones al servidor RPC, es posible que no recibas una respuesta debido a las condiciones de la red.
+  - En tal situación, es imposible determinar el estado de tu transacción.
+  - Se recomienda siempre guardar una transacción (o la transacción codificada en formato XDR) en una variable o base de datos y reenviarla si no conoces su estado.
+  - La transacción en formato XDR serializado es idempotente, lo que significa que si la transacción ya fue aplicada con éxito al libro mayor, el RPC simplemente devolverá el resultado guardado y no intentará enviar la transacción de nuevo.
+  - Solo en los casos donde el estado de la transacción sea desconocido (y por lo tanto tenga posibilidad de ser incluida en un ledger) se producirá un reenvío a la red.
+
+<Details summary="Haz clic para ver el código de envío de pagos">
+<CodeExample>
+
+```js
+// send_payment.js
+// follow the https://github.com/stellar/js-stellar-sdk?tab=readme-ov-file#installation
+
+import * as StellarSdk from "@stellar/stellar-sdk";
+import fs from "fs";
+const rpcServer = new StellarSdk.rpc.Server(
+  "https://soroban-testnet.stellar.org",
+);
+
+async function sendPayments() {
+  const { Keypair } = StellarSdk;
+  const senderKeyPair = Keypair.random();
+  const recipientKeyPair = Keypair.random();
+  let senderAccount;
+
+  try {
+    // Request airdrop for the sender account - this creates, funds and returns the Account object
+    senderAccount = await rpcServer.requestAirdrop(senderKeyPair.publicKey());
+    console.log("Sender Account funded with airdrop");
+    console.log("Sender Account ID:", senderAccount.accountId());
+    console.log("Sender Sequence number:", senderAccount.sequence.toString());
+
+    // Note - this persistence of sender id to a file on file system is only done for demo purposes.
+    // It shares the created sender account with the payment monitor example which will run next.
+    // Since this example is using file system it therefore is intended to run only on Node.
+    // In a real application the stellar js sdk can be used in browser or Node.
+    fs.writeFileSync("sender_public.key", senderAccount.accountId());
+
+    console.log("\n\n");
+
+    await rpcServer.requestAirdrop(recipientKeyPair.publicKey());
+    console.log("Recipient Account funded with airdrop");
+    console.log("Recipient Account ID:", recipientKeyPair.publicKey());
+  } catch (err) {
+    console.error("Airdrop / Account loading failed:", err);
+    return;
+  }
+
+  // Now call sendPayment with the funded account, in a loop of once every 30 seconds
+  while (true) {
+    console.log("\n\nSending payment...");
+    await sendPayment(
+      senderKeyPair,
+      senderAccount,
+      recipientKeyPair.publicKey(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30000)); // wait for 30 seconds
+  }
+}
+
+async function sendPayment(sender, senderAccount, recipient) {
+  // The next step is to parametrize and build the transaction object:
+  // Using the source account we just loaded we begin to assemble the transaction.
+  // We set the fee to the base fee, which is 100 stroops (0.00001 XLM).
+  // We also set the network passphrase to TESTNET.
+  const transaction = new StellarSdk.TransactionBuilder(senderAccount, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase: StellarSdk.Networks.TESTNET,
+  })
+    // We then add a payment operation to the transaction oject.
+    // This operation will send 10 XLM to the destination account.
+    // Obs.: Not specifying a explicit source account here means that the
+    // operation will use the source account of the whole transaction, which we specified above.
+    .addOperation(
+      StellarSdk.Operation.payment({
+        destination: recipient,
+        asset: StellarSdk.Asset.native(),
+        amount: "10",
+      }),
+    )
+    // We include an optional memo which oftentimes is used to identify the transaction
+    // when working with pooled accounts or to facilitate reconciliation.
+    .addMemo(StellarSdk.Memo.id("1234567890"))
+    // Finally, we set a timeout for the transaction.
+    // This means that the transaction will not be valid anymore after 180 seconds.
+    .setTimeout(180)
+    .build();
+
+  // We sign the transaction with the source account's secret key.
+  transaction.sign(sender);
+
+  // Now we can send the transaction to the network.
+  // The sendTransaction method immediately returns a reply with the transaction hash
+  // and the status "PENDING". This means the transaction was received and is being processed.
+  const sendTransactionResponse = await rpcServer.sendTransaction(transaction);
+
+  // Here we check the status of the transaction as there are
+  // a possible outcomes after sending a transaction that would have
+  // to be handled accordingly, such as "DUPLICATE" or "TRY_AGAIN_LATER".
+  if (sendTransactionResponse.status !== "PENDING") {
+    throw new Error(
+      `Failed to send transaction, status: ${sendTransactionResponse.status}`,
+    );
+  }
+
+  console.log(
+    "Payment Transaction submitted, hash:",
+    sendTransactionResponse.hash,
+  );
+
+  // Here we poll the transaction status to await for its final result.
+  // We can use the transaction hash to poll the transaction status later.
+  const finalStatus = await rpcServer.pollTransaction(
+    sendTransactionResponse.hash,
+  );
+
+  // The pollTransaction method will return the final status of the transaction
+  // after the specified number of attempts or when the transaction is finalized.
+  // We then check the final status of the transaction and handle it accordingly.
+  switch (finalStatus.status) {
+    case StellarSdk.rpc.Api.GetTransactionStatus.FAILED:
+      console.error("Transaction failed, status:", finalStatus.status);
+      if (finalStatus.resultXdr) {
+        console.error(
+          "Transaction Result XDR (decoded):",
+          JSON.stringify(finalStatus.resultXdr, null, 2),
+        );
+      }
+
+      throw new Error(`Transaction failed with status: ${finalStatus.status}`);
+    case StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND:
+      throw new Error(`Transaction failed with status: ${finalStatus.status}`);
+    case StellarSdk.rpc.Api.GetTransactionStatus.SUCCESS:
+      console.log("Success! Committed on Ledger:", finalStatus.ledger);
+      break;
+  }
+}
+
+sendPayments().catch((error) => {
+  console.error("Error executing sendPayments function:", error);
+  process.exit(1);
+});
+```
+
+```java
+// SendPaymentExample.java
+// Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
+
+import org.stellar.sdk.Account;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.MemoId;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+
+public class SendPaymentJavaExample {
+  public static void main(String[] args) throws Exception {
+    final String RPC_URL = "https://soroban-testnet.stellar.org";
+    SorobanServer rpc = new SorobanServer(RPC_URL);
+
+    // Generate sender/recipient and fund via Friendbot (testnet)
+    // get the friendbot url from rpc info
+    var info = rpc.getNetwork();
+    System.out.println("Friendbot URL: " + info.getFriendbotUrl());
+
+    KeyPair sender = KeyPair.random();
+    KeyPair recipient = KeyPair.random();
+    friendbotFund(sender.getAccountId(), info.getFriendbotUrl());
+    friendbotFund(recipient.getAccountId(), info.getFriendbotUrl());
+    Files.writeString(Paths.get("sender_public.key"),
+        sender.getAccountId(),
+        StandardOpenOption.CREATE,
+        StandardOpenOption.TRUNCATE_EXISTING,
+        StandardOpenOption.WRITE);
+
+    // Load sender sequence using RPC getLedgerEntries
+    Account source = new Account(sender.getAccountId(), rpc.getAccount(sender.getAccountId()).getSequenceNumber());
+
+    // do this in a loop, send payment once every 30 seconds
+    while (true) {
+      // Build classic payment: 10 XLM, memo id, 180s timeout
+      Transaction tx = new TransactionBuilder(source, Network.TESTNET)
+          .setBaseFee(Transaction.MIN_BASE_FEE)
+          .addOperation(PaymentOperation.builder().destination(recipient.getAccountId()).asset(new AssetTypeNative())
+              .amount(new BigDecimal("10")).build())
+          .addMemo(new MemoId(1234567890L))
+          .setTimeout(180)
+          .build();
+
+      tx.sign(sender);
+
+      // Submit via RPC
+      var sendResp = rpc.sendTransaction(tx);
+      if (!SendTransactionStatus.PENDING.equals(sendResp.getStatus())) {
+        throw new RuntimeException("Failed to send transaction, status: " + sendResp.getStatus());
+      }
+      System.out.println("Submitted. Hash: " + sendResp.getHash());
+
+      // Poll final status (throws on FAILED/NOT_FOUND)
+      var finalResp = pollTransaction(rpc, sendResp.getHash());
+      System.out.println("Success! Committed on ledger: " + finalResp.getLedger());
+      Thread.sleep(30000L); // wait 30s
+    }
+  }
+
+  // Fund account with Friendbot (testnet)
+  static void friendbotFund(String accountId, String friendbotUrl) throws Exception {
+    OkHttpClient http = new OkHttpClient.Builder().build();
+    String url = friendbotUrl + "?addr=" + URLEncoder.encode(accountId, StandardCharsets.UTF_8);
+
+    Request req = new Request.Builder().url(url).build();
+    Response res = http.newCall(req).execute();
+
+    if (res.code() != 200) {
+      throw new RuntimeException("Friendbot funding failed: " + res.code() + " " + res.body().string());
+    }
+    System.out.println("Funded: " + accountId);
+  }
+
+  // Helper: wrap SorobanServer.pollTransaction and enforce failure handling
+  static GetTransactionResponse pollTransaction(SorobanServer rpc, String txHash) throws Exception {
+    GetTransactionResponse resp = rpc.pollTransaction(txHash);
+
+    if (GetTransactionStatus.SUCCESS.equals(resp.getStatus())) {
+      return resp;
+    }
+    if (GetTransactionStatus.FAILED.equals(resp.getStatus())) {
+      if (resp.getResultXdr() != null) {
+        System.err.println("Failed TX, Result XDR (base64): " + resp.getResultXdr());
+      }
+      throw new RuntimeException("Transaction failed.");
+    }
+    if (GetTransactionStatus.NOT_FOUND.equals(resp.getStatus())) {
+      throw new RuntimeException("Transaction not found.");
+    }
+    throw new RuntimeException("Unexpected status: " + resp.getStatus());
+  }
+}
+
+```
+
+```go
+// sender.go
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/stellar/go/keypair"
+	"github.com/stellar/go/network"
+	"github.com/stellar/go/txnbuild"
+	sdk "github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+)
+
+// friendbotFund funds an account using the Stellar testnet friendbot
+func friendbotFund(accountID, friendbotURL string) error {
+	// Construct the URL with account parameter
+	fullURL := friendbotURL + "?addr=" + url.QueryEscape(accountID)
+
+	// Make HTTP GET request
+	resp, err := http.Get(fullURL)
+	if err != nil {
+		return fmt.Errorf("failed to make friendbot request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Check if response is successful (2xx status code)
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("friendbot funding failed: %d", resp.StatusCode)
+	}
+
+	fmt.Printf("Funded: %s\n", accountID)
+	return nil
+}
+
+// check panics if there's an error
+func check(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+// SignAndSend builds, signs, and submits a transaction with the given operations
+func SignAndSend(
+	ctx context.Context,
+	client *sdk.Client,
+	account txnbuild.Account,
+	signers []*keypair.Full,
+	operations ...txnbuild.Operation,
+) protocol.GetTransactionResponse {
+	// Build, sign, and submit the transaction
+	tx, err := txnbuild.NewTransaction(
+		txnbuild.TransactionParams{
+			SourceAccount:        account,
+			IncrementSequenceNum: true,
+			BaseFee:              txnbuild.MinBaseFee,
+			Preconditions: txnbuild.Preconditions{
+				TimeBounds: txnbuild.NewInfiniteTimeout(),
+			},
+			Operations: operations,
+		},
+	)
+	check(err)
+
+	for _, signer := range signers {
+		tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+		check(err)
+	}
+
+	txnB64, err := tx.Base64()
+	check(err)
+
+	txSendResp, err := client.SendTransaction(ctx,
+		protocol.SendTransactionRequest{Transaction: txnB64})
+	check(err)
+
+	for i := range 5 {
+		txResp, err := client.GetTransaction(ctx,
+			protocol.GetTransactionRequest{Hash: txSendResp.Hash})
+		check(err)
+
+		switch txResp.Status {
+		case "NOT_FOUND":
+		case "SUCCESS":
+			return txResp
+		case "FAILED":
+			panic(fmt.Errorf("transaction failed: %s",
+				strings.Join(txResp.DiagnosticEventsXDR, "\n")))
+		}
+
+		// Increase delay for each polling request
+		time.Sleep(time.Duration(i) * time.Second)
+	}
+
+	panic(fmt.Errorf("transaction never found: %s", txSendResp.Hash))
+}
+
+// sendPayment creates and submits a payment transaction using the helper function
+func sendPayment(ctx context.Context, rpcClient *sdk.Client, sourceAccount txnbuild.Account, signerKP *keypair.Full, destinationAddr string) error {
+	// Create payment operation
+	paymentOp := txnbuild.Payment{
+		Destination: destinationAddr,
+		Amount:      "10",
+		Asset:       txnbuild.NativeAsset{},
+	}
+
+	// Use the helper function to build, sign, and submit
+	fmt.Printf("Submitting payment of 10 XLM to %s...\n", destinationAddr)
+
+	txResp := SignAndSend(ctx, rpcClient, sourceAccount, []*keypair.Full{signerKP}, &paymentOp)
+
+	fmt.Printf("Success! Committed on ledger: %d\n", txResp.Ledger)
+	return nil
+}
+
+func main() {
+	const RPC_URL = "https://soroban-testnet.stellar.org"
+
+	rpcClient := sdk.NewClient(RPC_URL, nil)
+
+	// Get network info to obtain friendbot URL
+	ctx := context.Background()
+	networkInfo, err := rpcClient.GetNetwork(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get network info: %v", err))
+	}
+
+	fmt.Printf("Friendbot URL: %s\n", networkInfo.FriendbotURL)
+
+	// Generate sender and recipient keypairs
+	sender, err := keypair.Random()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate sender keypair: %v", err))
+	}
+
+	recipient, err := keypair.Random()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate recipient keypair: %v", err))
+	}
+
+	// Fund accounts via friendbot
+	err = friendbotFund(sender.Address(), networkInfo.FriendbotURL)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to fund sender: %v", err))
+	}
+
+	err = friendbotFund(recipient.Address(), networkInfo.FriendbotURL)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to fund recipient: %v", err))
+	}
+
+	// Save sender public key to file
+	err = os.WriteFile("sender_public.key", []byte(sender.Address()), 0644)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to write sender public key: %v", err))
+	}
+
+	// Load sender account info
+	senderAccount, err := rpcClient.LoadAccount(ctx, sender.Address())
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get sender account: %v", err))
+	}
+
+	// Payment loop - send payment every 30 seconds
+	for {
+		err := sendPayment(ctx, rpcClient, senderAccount, sender, recipient.Address())
+		if err != nil {
+			panic(fmt.Sprintf("Payment failed: %v", err))
+		}
+
+		fmt.Println("Waiting 30 seconds before next payment...")
+		time.Sleep(30 * time.Second)
+
+		// Reload account to get updated sequence number
+		senderAccount, err = rpcClient.LoadAccount(ctx, sender.Address())
+		if err != nil {
+			panic(fmt.Sprintf("Failed to reload sender account: %v", err))
+		}
+	}
+}
+```
+
+</CodeExample>
+</Details>
+
+### Monitoreo de pagos como flujo de eventos
+
+Aprovecha el último [Protocolo 23 (Whisk)](https://stellar.org/blog/developers/introducing-whisk-stellar-protocol-23) para capturar la actividad de pagos como eventos puros. Estos eventos pueden ser monitoreados eficazmente usando el método `getEvents` del servidor RPC, que proporciona filtrado del lado del servidor y detección en tiempo real de pagos.
+
+El enfoque RPC ofrece varias ventajas:
+
+- **Filtrado de temas de evento del lado del servidor**: filtra eventos específicos usando patrones de temas
+- **Sondeo eficiente**: usa cursores y paginación para procesamiento confiable de eventos
+- **Modelo de eventos unificado**: soporta [CAP-67](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md), todos los movimientos de activos en la red se emiten como eventos con nombres de temas estandarizados para indicar el tipo de movimiento (p. ej., "transfer" para pagos)
+- **Mejor manejo de errores**: el sondeo HTTP sin estado en RPC es más resistente que protocolos de streaming persistentes como SSE o WebSockets
+
+Demuestra monitoreo casi en tiempo real de transacciones de la red Stellar estableciendo un listener asíncrono para consumir eventos desde RPC y filtrarlos por tema solo para los pagos de ejemplo generados por nuestro script anterior.
+
+<Details summary="Haz clic para ver el código de monitoreo de pagos">
+<CodeExample>
+
+```js
+// monitor_payment.js
+// follow the https://github.com/stellar/js-stellar-sdk?tab=readme-ov-file#installation
+
+import * as StellarSdk from "@stellar/stellar-sdk";
+import fs from "fs";
+
+async function monitorPayments() {
+  // Initialize RPC server for testnet
+  const rpcServer = new StellarSdk.rpc.Server(
+    "https://soroban-testnet.stellar.org",
+  );
+
+  // One-time initialization - everything encapsulated here
+  const monitoredFromAccount = fs
+    .readFileSync("sender_public.key", "utf-8")
+    .trim();
+
+  // create our payment event topic filter values
+  const transferTopicFilter =
+    StellarSdk.xdr.ScVal.scvSymbol("transfer").toXDR("base64");
+  const fromTopicFilter = StellarSdk.nativeToScVal(monitoredFromAccount, {
+    type: "address",
+  }).toXDR("base64");
+
+  // Get starting ledger
+  const latestLedger = await rpcServer.getLatestLedger();
+  console.log(
+    `Starting payment monitoring from ledger ${latestLedger.sequence} and from account ${monitoredFromAccount}`,
+  );
+  let currentStartLedger = latestLedger.sequence;
+  let currentCursor;
+
+  while (true) {
+    // Query for payments from our monitored account
+    const eventsResponse = await rpcServer.getEvents({
+      startLedger: currentStartLedger,
+      cursor: currentCursor,
+      filters: [
+        {
+          type: "contract",
+          topics: [
+            [
+              transferTopicFilter,
+              fromTopicFilter,
+              "**", // filter will match on any 'to' address and any token(SAC or SEP-41)
+            ],
+          ],
+        },
+      ],
+      limit: 10,
+    });
+
+    // Process any events found
+    console.log(`Found ${eventsResponse.events.length} payment(s):`);
+
+    for (const event of eventsResponse.events) {
+      console.log("\n--- Payment Received ---");
+      console.log(`Ledger: ${event.ledger}`);
+      console.log(`Transaction Hash: ${event.txHash}`);
+      console.log(`Closed At: ${event.ledgerClosedAt}`);
+
+      // Decode addresses from topics
+      try {
+        const fromAddress = StellarSdk.scValToNative(event.topic[1]);
+        const toAddress = StellarSdk.scValToNative(event.topic[2]);
+        console.log(`Transfer: ${fromAddress} → ${toAddress}`);
+      } catch (error) {
+        console.log(`From/To: Unable to decode addresses`, error);
+        continue;
+      }
+
+      // Decode transfer amount from the event data
+      try {
+        // Protocol 23+ unified events model per CAP-0067
+        // https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md
+        // Event value field is scMap with {amount: i128, to_muxed_id: u64|bytes|string} (when muxed info present)
+        const amount = StellarSdk.scValToNative(event.value)["amount"];
+        console.log(
+          `Amount: ${amount.toString()} stroops (${(Number(amount) / 10000000).toFixed(7)} XLM)`,
+        );
+      } catch (error) {
+        console.log(`Failed to decode transfer amount:`, error);
+      }
+      // Decode asset from topics[3], this is only present in events from SAC tokens
+      if (event.topic.length > 3) {
+        const asset = StellarSdk.scValToNative(event.topic[3]);
+        console.log(`Asset: ${asset}`);
+      }
+    }
+
+    // Update cursor to drive next query
+    currentCursor = eventsResponse.cursor;
+    currentStartLedger = null;
+
+    // Wait 5 seconds before next iteration
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+}
+
+// Start the application
+monitorPayments().catch((error) => {
+  console.error("Failed during payment monitoring:", error);
+});
+```
+
+```java
+// MonitorPaymentExample.java
+// Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
+
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.responses.sorobanrpc.GetLatestLedgerResponse;
+
+import org.stellar.sdk.requests.sorobanrpc.EventFilterType;
+import org.stellar.sdk.requests.sorobanrpc.GetEventsRequest;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCSymbol;
+import org.stellar.sdk.xdr.SCVal;
+
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+public class MonitorPaymentsJavaExample {
+  public static void main(String[] args) throws Exception {
+    final String RPC_URL = "https://soroban-testnet.stellar.org";
+    SorobanServer rpc = new SorobanServer(RPC_URL);
+
+    // Load the account we monitor payments FROM (written by send_payment example)
+    String monitoredFromAccount = Files.readString(Paths.get("sender_public.key"), StandardCharsets.UTF_8).trim();
+
+    // Build topic filters using SDK helpers (base64 XDR via toXdrBase64())
+    String transferTopicFilter = Scv.toSymbol("transfer").toXdrBase64();
+    String fromTopicFilter = Scv.toAddress(monitoredFromAccount).toXdrBase64();
+
+    // Starting point: latest ledger
+    GetLatestLedgerResponse latest = rpc.getLatestLedger();
+    Long startLedger = latest.getSequence().longValue();
+    String cursor = null;
+    System.out.printf("Starting payment monitoring from ledger %d and from account %s%n", startLedger,
+        monitoredFromAccount);
+
+    while (true) {
+      // filter will match on any 'to' address and any token(SAC or SEP-41)
+      GetEventsRequest.EventFilter eventFilter = GetEventsRequest.EventFilter.builder()
+          .type(EventFilterType.CONTRACT)
+          .topic(Arrays.asList(transferTopicFilter, fromTopicFilter, "**"))
+          .build();
+      GetEventsRequest.PaginationOptions paginationOptions = GetEventsRequest.PaginationOptions.builder()
+          .limit(10L)
+          .cursor(cursor)
+          .build();
+      GetEventsRequest getEventsRequest = GetEventsRequest.builder()
+          .startLedger(startLedger)
+          .filter(eventFilter)
+          .pagination(paginationOptions)
+          .build();
+
+      var eventsResp = rpc.getEvents(getEventsRequest);
+      var events = eventsResp.getEvents();
+      System.out.println("Found " + events.size() + " payment(s):");
+
+      for (var ev : events) {
+        System.out.println("\n--- Payment Received ---");
+        System.out.println("Ledger: " + ev.getLedger());
+        System.out.println("Transaction Hash: " + ev.getTransactionHash());
+        System.out.println("Closed At: " + ev.getLedgerClosedAt());
+
+        List<String> topics = ev.getTopic();
+        if (topics.size() < 3) {
+          System.out.println("Invalid event, not enough topics.");
+          continue;
+        }
+
+        try {
+          String fromAddr = Scv.fromAddress(SCVal.fromXdrBase64(topics.get(1))).toString();
+          String toAddr = Scv.fromAddress(SCVal.fromXdrBase64(topics.get(2))).toString();
+          System.out.println("Transfer: " + fromAddr + " → " + toAddr);
+        } catch (Exception e) {
+          System.out.println("From/To: Unable to decode addresses: " + e.getMessage());
+        }
+
+        try {
+          // the event value is a map with key of Symbol for 'amount' to i128 value
+          Map<SCVal, SCVal> map = Scv.fromMap(SCVal.fromXdrBase64(ev.getValue()));
+          SCVal amount = map.get(Scv.toSymbol("amount"));
+
+          if (amount != null) {
+            String amountStr = Scv.fromInt128(amount).toString();
+            BigDecimal raw = new BigDecimal(amountStr);
+            System.out.printf("Token Amount Transferred: (%.7f)%n", raw.scaleByPowerOfTen(-7));
+          }
+        } catch (Exception e) {
+          System.out.println("Failed to decode transfer amount: " + e.getMessage());
+        }
+
+        try {
+          if (topics.size() > 3) {
+            // Decode asset from topics[3], this is only present in events from SAC tokens
+            System.out.println("Asset: " + new String(Scv.fromString(SCVal.fromXdrBase64(topics.get(3)))));
+          }
+        } catch (Exception ex) {
+          System.out.println("Asset: Unable to decode asset" + ex.getMessage());
+        }
+      }
+
+      // pagination: update cursor and clear startLedger for subsequent calls
+      cursor = eventsResp.getCursor();
+      startLedger = null;
+      Thread.sleep(5000L);
+    }
+  }
+}
+```
+
+```go
+// monitor.go
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/base64"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/stellar/go/strkey"
+	"github.com/stellar/go/xdr"
+	sdk "github.com/stellar/stellar-rpc/client"
+	"github.com/stellar/stellar-rpc/protocol"
+)
+
+func main() {
+	const RPC_URL = "https://soroban-testnet.stellar.org"
+
+	rpcClient := sdk.NewClient(RPC_URL, nil)
+	ctx := context.Background()
+
+	// Load the account we monitor payments FROM (written by send_payment example)
+	senderKeyBytes, err := os.ReadFile("sender_public.key")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to read sender_public.key: %v", err))
+	}
+	monitoredFromAccount := strings.TrimSpace(string(senderKeyBytes))
+
+	fmt.Printf("Starting payment monitoring from account: %s\n", monitoredFromAccount)
+
+	// Get latest ledger as starting point
+	latestLedger, err := rpcClient.GetLatestLedger(ctx)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get latest ledger: %v", err))
+	}
+
+	startLedger := latestLedger.Sequence
+	var cursor string
+
+	fmt.Printf("Starting payment monitoring from ledger %d\n", startLedger)
+
+	for {
+		err := monitorPayments(ctx, rpcClient, monitoredFromAccount, &startLedger, &cursor)
+		if err != nil {
+			fmt.Printf("Error monitoring payments: %v\n", err)
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func monitorPayments(ctx context.Context, client *sdk.Client, fromAccount string, startLedger *uint32, cursor *string) error {
+	// Create a simple event filter for contract events
+	eventFilter := protocol.EventFilter{
+		EventType: protocol.EventTypeSet{protocol.EventTypeContract: nil},
+		// We'll filter by topics in the processing logic instead
+	}
+
+	// Create request
+	request := protocol.GetEventsRequest{
+		Filters: []protocol.EventFilter{eventFilter},
+	}
+
+	// Set startLedger only on first call
+	if *startLedger != 0 {
+		request.StartLedger = *startLedger
+	}
+
+	// Set cursor for pagination
+	if *cursor != "" {
+		parsedCursor, err := protocol.ParseCursor(*cursor)
+		if err != nil {
+			return fmt.Errorf("failed to parse cursor: %v", err)
+		}
+		request.Pagination = &protocol.PaginationOptions{
+			Cursor: &parsedCursor,
+			Limit:  10,
+		}
+	} else {
+		request.Pagination = &protocol.PaginationOptions{
+			Limit: 10,
+		}
+	}
+
+	// Get events
+	eventsResp, err := client.GetEvents(ctx, request)
+	if err != nil {
+		return fmt.Errorf("failed to get events: %v", err)
+	}
+
+	// Filter events that match our criteria
+	relevantEvents := []protocol.EventInfo{}
+	for _, event := range eventsResp.Events {
+		if isPaymentEvent(event, fromAccount) {
+			relevantEvents = append(relevantEvents, event)
+		}
+	}
+
+	fmt.Printf("Found %d payment(s):\n", len(relevantEvents))
+
+	// Process relevant events
+	for _, event := range relevantEvents {
+		err := processPaymentEvent(event)
+		if err != nil {
+			fmt.Printf("Error processing event: %v\n", err)
+			continue
+		}
+	}
+
+	// Update pagination
+	*cursor = eventsResp.Cursor
+	*startLedger = 0 // Clear start ledger for subsequent calls
+
+	return nil
+}
+
+func isPaymentEvent(event protocol.EventInfo, fromAccount string) bool {
+	// Check if this is a transfer event by looking at the first topic
+	if len(event.TopicXDR) < 2 {
+		return false
+	}
+
+	// Try to decode the first topic to see if it's "transfer"
+	if isTransferTopic(event.TopicXDR[0]) && isFromAccount(event.TopicXDR[1], fromAccount) {
+		return true
+	}
+
+	return false
+}
+
+func isTransferTopic(topicXDR string) bool {
+	xdrBytes, err := base64.StdEncoding.DecodeString(topicXDR)
+	if err != nil {
+		return false
+	}
+
+	var scVal xdr.ScVal
+	err = scVal.UnmarshalBinary(xdrBytes)
+	if err != nil {
+		return false
+	}
+
+	return scVal.Type == xdr.ScValTypeScvSymbol &&
+		scVal.Sym != nil &&
+		string(*scVal.Sym) == "transfer"
+}
+
+func isFromAccount(topicXDR, expectedAccount string) bool {
+	decodedAddr, err := decodeAddressFromXDR(topicXDR)
+	return err == nil && decodedAddr == expectedAccount
+}
+
+func createTransferTopicFilter() (string, error) {
+	// Create "transfer" symbol and encode to base64 XDR
+	symbol := xdr.ScSymbol("transfer")
+	scVal := xdr.ScVal{
+		Type: xdr.ScValTypeScvSymbol,
+		Sym:  &symbol,
+	}
+
+	// Use XDR marshaling to base64
+	xdrBytes, err := scVal.MarshalBinary()
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(xdrBytes), nil
+}
+
+func createAddressTopicFilter(accountID string) (string, error) {
+	// Convert address string to AccountId
+	accountKey, err := xdr.AddressToAccountId(accountID)
+	if err != nil {
+		return "", err
+	}
+
+	// Create SCAddress for account
+	scAddr := xdr.ScAddress{
+		Type:      xdr.ScAddressTypeScAddressTypeAccount,
+		AccountId: &accountKey,
+	}
+
+	scVal := xdr.ScVal{
+		Type:    xdr.ScValTypeScvAddress,
+		Address: &scAddr,
+	}
+
+	// Use XDR marshaling to base64
+	xdrBytes, err := scVal.MarshalBinary()
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(xdrBytes), nil
+}
+
+func processPaymentEvent(event protocol.EventInfo) error {
+	fmt.Println("\n--- Payment Received ---")
+	fmt.Printf("Ledger: %d\n", event.Ledger)
+	fmt.Printf("Transaction Hash: %s\n", event.TransactionHash)
+	fmt.Printf("Closed At: %s\n", event.LedgerClosedAt)
+
+	// Parse topics
+	if len(event.TopicXDR) < 3 {
+		fmt.Println("Invalid event, not enough topics.")
+		return nil
+	}
+
+	// Decode from and to addresses
+	fromAddr, err := decodeAddressFromXDR(event.TopicXDR[1])
+	if err != nil {
+		fmt.Printf("From/To: Unable to decode from address: %v\n", err)
+	} else {
+		toAddr, err := decodeAddressFromXDR(event.TopicXDR[2])
+		if err != nil {
+			fmt.Printf("From/To: Unable to decode to address: %v\n", err)
+		} else {
+			fmt.Printf("Transfer: %s → %s\n", fromAddr, toAddr)
+		}
+	}
+
+	// Decode amount from event value
+	if event.ValueXDR != "" {
+		amount, err := decodeAmountFromXDR(event.ValueXDR)
+		if err != nil {
+			fmt.Printf("Failed to decode transfer amount: %v\n", err)
+		} else {
+			fmt.Printf("Token Amount Transferred: %.7f\n", float64(amount)/10000000) // Scale by 10^7
+		}
+	}
+
+	// Decode asset if available
+	if len(event.TopicXDR) > 3 {
+		asset, err := decodeAssetFromXDR(event.TopicXDR[3])
+		if err != nil {
+			fmt.Printf("Asset: Unable to decode asset: %v\n", err)
+		} else {
+			fmt.Printf("Asset: %s\n", asset)
+		}
+	}
+
+	return nil
+}
+
+func decodeAddressFromXDR(base64XDR string) (string, error) {
+	xdrBytes, err := base64.StdEncoding.DecodeString(base64XDR)
+	if err != nil {
+		return "", err
+	}
+
+	var scVal xdr.ScVal
+	err = scVal.UnmarshalBinary(xdrBytes)
+	if err != nil {
+		return "", err
+	}
+
+	if scVal.Type != xdr.ScValTypeScvAddress || scVal.Address == nil {
+		return "", fmt.Errorf("not an address type")
+	}
+
+	switch scVal.Address.Type {
+	case xdr.ScAddressTypeScAddressTypeAccount:
+		if scVal.Address.AccountId == nil {
+			return "", fmt.Errorf("account ID is nil")
+		}
+		return scVal.Address.AccountId.Address(), nil
+	case xdr.ScAddressTypeScAddressTypeContract:
+		if scVal.Address.ContractId == nil {
+			return "", fmt.Errorf("contract ID is nil")
+		}
+		return strkey.MustEncode(strkey.VersionByteContract, scVal.Address.ContractId[:]), nil
+	default:
+		return "", fmt.Errorf("unknown address type")
+	}
+}
+
+func decodeAmountFromXDR(base64XDR string) (int64, error) {
+	xdrBytes, err := base64.StdEncoding.DecodeString(base64XDR)
+	if err != nil {
+		return 0, err
+	}
+
+	var scVal xdr.ScVal
+	err = scVal.UnmarshalBinary(xdrBytes)
+	if err != nil {
+		return 0, err
+	}
+
+	// The value should be a map containing an "amount" key
+	if scVal.Type != xdr.ScValTypeScvMap || scVal.Map == nil {
+		return 0, fmt.Errorf("value is not a map")
+	}
+
+	// Look for the "amount" key in the map
+	for _, pair := range **scVal.Map {
+		if pair.Key.Type == xdr.ScValTypeScvSymbol && pair.Key.Sym != nil && string(*pair.Key.Sym) == "amount" {
+			// Found the amount key, extract the value
+			if pair.Val.Type == xdr.ScValTypeScvI128 && pair.Val.I128 != nil {
+				// Convert I128 to int64 (simplified - just use the low part for now)
+				return int64(pair.Val.I128.Lo), nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("amount not found in map")
+}
+
+func decodeAssetFromXDR(base64XDR string) (string, error) {
+	xdrBytes, err := base64.StdEncoding.DecodeString(base64XDR)
+	if err != nil {
+		return "", err
+	}
+
+	var scVal xdr.ScVal
+	err = scVal.UnmarshalBinary(xdrBytes)
+	if err != nil {
+		return "", err
+	}
+
+	if scVal.Type == xdr.ScValTypeScvString && scVal.Str != nil {
+		return string(*scVal.Str), nil
+	}
+
+	return "", fmt.Errorf("not a string type")
+}
+```
+
+</CodeExample>
+</Details>
+
+### Ejecutando tu pipeline de pagos con RPC
+
+1. **Ejecuta el script de envío de pagos** en una terminal. Déjalo en ejecución, enviará un pago cada 30 segundos.
+
+<Details summary="Haz clic para ver el comando para ejecutar los pagos">
+<CodeExample>
+
+```bash
+# js
+node send_payment.js
+
+# java
+# JRE 17 or higher should be installed - https://adoptium.net/temurin/releases/?version=17&package=jdk
+# download Stellar Java SDK jar, latest release on maven central
+JAR_REPO='https://repo1.maven.org/maven2/network/lightsail/stellar-sdk'
+JAR_VERSION="2.0.0" # replace with latest version if needed
+JAR_FILE="stellar-sdk-$JAR_VERSION-uber.jar"
+curl -fsSL -o "$JAR_FILE" "$JAR_REPO/$JAR_VERSION/$JAR_FILE"
+
+javac -cp "$JAR_FILE" SendPaymentExample.java
+java -cp ".:$JAR_FILE" SendPaymentExample
+
+# go
+mkdir -p payments_example/sender
+cd payments_example
+go mod init payments_example
+go get github.com/stellar/go@latest
+go get github.com/stellar/stellar-rpc@latest
+# save sender.go code to sender/sender.go file
+go build -o sender sender/sender.go
+./sender
+```
+
+</CodeExample>
+</Details>
+
+2. **Ejecuta el script de monitoreo de pagos** en una terminal separada.
+
+<Details summary="Haz clic para ver el comando para ejecutar el monitor de pagos">
+<CodeExample>
+
+```bash
+# js
+node monitor_payments.js
+
+# java
+javac -cp "$JAR_FILE" MonitorPaymentExample.java
+java -cp ".:$JAR_FILE" MonitorPaymentExample
+
+# go
+mkdir -p payments_example/monitor
+# save monitor.go code to monitor/monitor.go file
+go build -o monitor monitor/monitor.go
+./monitor
+```
+
+</CodeExample>
+</Details>
+
+3. **Observa los eventos de pago** a medida que son detectados y mostrados en la consola.
+
+## Resumen
+
+- Los pagos mediante operaciones de transacción o invocaciones de contratos en la red Stellar pueden ser monitoreados aprovechando el modelo unificado de eventos desde el [Protocolo 23 (Whisk)](https://stellar.org/blog/developers/introducing-whisk-stellar-protocol-23) y el método `getEvents` del RPC.
+
+  - **Los pagos son eventos 'transfer'**: el [modelo unificado de eventos](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md) asegura que tanto si un pago ocurrió a través de una operación o una invocación de contrato, se emitirá el mismo evento 'transfer'.
+  - **Tipo de Evento**: `"contract"` indica que los pagos son un evento a nivel de aplicación y no un evento 'sistema'.
+  - **Modelo de temas de transferencia**: un arreglo de cuatro temas, especificados en [CAP-67](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md) y resumidos:
+    - `topic[0]` = El nombre del evento 'transfer' determina los siguientes 3 temas
+    - `topic[1]` = Dirección del emisor de la transferencia
+    - `topic[2]` = Dirección del receptor de la transferencia
+    - `topic[3]` = Identificador del activo (presente solo para activos Stellar, a través de sus contratos integrados (SAC))
+
+- RPC proporciona un filtrado preciso de eventos de la red Stellar, incluyendo el modelo de temas de evento definido para eventos unificados en [CAP-67](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md). Ahorras tiempo usando las capacidades de filtrado del servidor RPC para enfocarte solo en procesar los eventos relevantes para tu aplicación, como los pagos de una cuenta específica en este ejemplo.
+  - **Comodines**: el método `getEvents` del RPC permite usar "\*" para coincidir con cualquier valor en una posición de tema
+  - **Filtrado del lado del servidor**: `getEvents` del RPC aplica los filtros y sólo devuelve eventos que coinciden, reduciendo el ancho de banda
+  - **Paginación basada en cursores**: el método `getEvents` del RPC recupera los datos de eventos de forma eficiente con un mecanismo de paginación

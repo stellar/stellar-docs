@@ -1,0 +1,630 @@
+---
+title: Crear una cuenta
+sidebar_position: 5
+description: Aprende sobre cómo crear cuentas Stellar, pares de llaves, financiamiento y conceptos básicos de las cuentas.
+---
+
+# Crear una cuenta
+
+import { CodeExample } from "@site/src/components/CodeExample";
+import { Alert } from "@site/src/components/Alert";
+
+_Antes de comenzar a trabajar con Stellar en código, considera revisar los siguientes ejemplos usando el [Stellar Lab](https://lab.stellar.org). El laboratorio te permite crear cuentas, financiar cuentas en la red de prueba Stellar, desarrollar transacciones, ejecutar cualquier operación e inspeccionar respuestas desde Horizon a través del Explorador de Endpoints.
+
+[Las cuentas](../../../learn/fundamentals/stellar-data-structures/accounts.mdx) son un componente fundamental de Stellar: contienen todos tus saldos, te permiten enviar y recibir pagos, y hacer ofertas para comprar y vender activos. Dado que prácticamente todo en Stellar está vinculado a una cuenta, lo primero que generalmente necesitas hacer al comenzar a desarrollar es crear una. Este tutorial para principiantes explica los tres bloques fundamentales que necesitarás: [generar claves](#create-a-keypair), [financiar una cuenta](#create-an-account) y [consultar saldos](#fetch-balances).
+
+## Crear un par de llaves
+
+Stellar usa criptografía de clave pública para asegurar cada transacción: cada cuenta Stellar tiene un par de claves formado por una **clave pública** y una **clave secreta**. La clave pública siempre es segura para compartir: otras personas la necesitan para identificar tu cuenta y verificar que autorizaste una transacción. Es como una dirección de correo electrónico. Sin embargo, la clave secreta es información privada que prueba que eres el dueño y te da acceso a tu cuenta. Es como una contraseña, y nunca deberías compartirla con nadie.
+
+Antes de crear una cuenta, necesitas generar tu propio par de claves; aprenderemos cómo hacerlo en el [ejemplo completo](#full-example), más abajo.
+
+## Crear una cuenta
+
+Un par de claves válido por sí solo no constituye una cuenta. Para evitar que las entradas no usadas inflen el ledger, Stellar requiere que cada cuenta mantenga un [saldo mínimo](../../../learn/fundamentals/lumens.mdx#minimum-balance) de 1 XLM antes de que realmente exista.
+
+En la red de prueba, puedes pedirle a Friendbot — un servicio amable de financiación — que cree y financie la cuenta por ti. En los ejemplos del SDK, abajo, verás que "descubrimos" el endpoint de Friendbot mediante la llamada `getNetwork` del RPC, y luego enviamos una solicitud de financiación.
+
+En la red pública, las cosas son un poco diferentes. Adquirirías lumens en un exchange o harías que alguien cree o patrocine una cuenta en tu nombre. Este es el propósito de la [operación `CreateAccount`](../../../learn/fundamentals/transactions/list-of-operations.mdx#create-account). Veremos en los ejemplos posteriores que dada una cuenta financiada, luego puedes crear una cuenta secundaria en la red con un saldo inicial.
+
+## Consultar saldos
+
+Una vez que tus cuentas existan, puedes consultar su estado. En Stellar, los activos pueden mantenerse en varias formas diferentes:
+
+- tu saldo **nativo** es la cantidad de XLM que posees, el cual está asociado directamente a tu cuenta
+- también puedes establecer **trustlines** a diversos activos para mantener saldo; estos pueden obtenerse tanto mediante operaciones de pago simples como interacciones con contratos inteligentes
+- finalmente, puedes mantener **tokens personalizados de contratos inteligentes**, que son activos no estándar
+
+Aprenderás sobre estos en tutoriales posteriores.
+
+## Ejemplo completo
+
+Combinemos estos cuatro conceptos en un ejemplo único y coherente. Ten en cuenta que siempre verás tu saldo de USDC como cero, ya que en realidad no recibimos ninguno, pero será útil en el futuro cuando poseas más que solo el token nativo.
+
+Para cada uno de estos, asegúrate de seguir las instrucciones de instalación y configuración correspondientes a cada SDK desde su [documentación](../../../tools/sdks/client-sdks.mdx).
+
+<CodeExample>
+
+```js
+import {
+  Keypair,
+  BASE_FEE,
+  Networks,
+  Operation,
+  Asset,
+  humanizeEvents,
+  TransactionBuilder,
+} from "@stellar/stellar-sdk";
+import { Server } from "@stellar/stellar-sdk/rpc";
+
+// See https://developers.stellar.org/docs/data/apis/api-providers
+const server = new Server("https://soroban-testnet.stellar.org");
+
+const testnetUsdc = new Asset(
+  "USDC",
+  "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+);
+
+async function main() {
+  //
+  // Generating keypairs
+  //
+  const parent = Keypair.random();
+  console.log("Secret:", parent.secret());
+  console.log("Public:", parent.publicKey());
+
+  //
+  // Account creation via friendbot (does not work on mainnet)
+  //
+  const friendbotResponse = await server.requestAirdrop(parent.publicKey());
+  console.log("SUCCESS! You have a new account:\n", friendbotResponse);
+
+  const parentAccount = await server.getAccount(parent.publicKey());
+  const childAccount = Keypair.random();
+
+  //
+  // Account creation via the CreateAccount operation
+  //
+  const createAccountTx = new TransactionBuilder(parentAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.createAccount({
+        destination: childAccount.publicKey(),
+        startingBalance: "5",
+      }),
+    )
+    .addOperation(Operation.changeTrust({ asset: testnetUsdc }))
+    .setTimeout(180)
+    .build();
+
+  createAccountTx.sign(parent);
+
+  const sendTxResponse = await server.sendTransaction(createAccountTx);
+  if (sendTxResponse.status !== "PENDING") {
+    console.log(`There was an error: ${JSON.stringify(sendTxResponse)}`);
+    throw sendTxResponse;
+  }
+
+  const txResponse = await server.pollTransaction(sendTxResponse.hash);
+  if (txResponse.status !== "SUCCESS") {
+    console.log(
+      `Transaction status: ${txResponse.status}, events: ${humanizeEvents(
+        txResponse.diagnosticEvents,
+      )}`,
+    );
+  }
+
+  console.log("Created the new account", childAccount.publicKey());
+
+  //
+  // Fetching native and USDC balances
+  //
+  const accountEntry = await server.getAccountEntry(parent.publicKey());
+  console.log("Balance for account: " + parent.publicKey());
+  console.log("XLM:", accountEntry.balance().toString());
+
+  const trustlineEntry = await server.getTrustline(
+    parent.publicKey(),
+    testnetUsdc,
+  );
+  console.log("USDC:", trustlineEntry.balance().toString());
+}
+
+main().catch((err) => console.error(err));
+```
+
+````py
+```py
+import requests
+from stellar_sdk import *
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import *
+
+RPC_URL = "https://soroban-testnet.stellar.org"
+TESTNET_USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+SERVER = SorobanServer(RPC_URL)
+
+
+def main():
+    #
+    # Keypair generation
+    #
+    parent = Keypair.random()
+    print(f"Secret: {parent.secret}")
+    print(f"Public: {parent.public_key}")
+
+    #
+    # Account creation via friendbot
+    #
+    friendbot_url = get_friendbot_url()
+    print(f"Using {friendbot_url} for friendbot funding")
+
+    body = request_funds(friendbot_url, parent.public_key)
+    print(f"SUCCESS! You have a new account:\n{body}")
+
+    #
+    # Account creation via CreateAccount operation
+    #
+    child = Keypair.random()
+    parent_account = SERVER.load_account(parent.public_key)
+    usdc_asset = Asset("USDC", TESTNET_USDC_ISSUER)
+    tx = (
+        TransactionBuilder(
+            source_account=parent_account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=TransactionBuilder.BASE_FEE,
+        )
+        .add_time_bounds(0, 0)
+        .append_operation(
+            CreateAccount(destination=child.public_key, starting_balance="5")
+        )
+        .build()
+    )
+    tx.sign(parent)
+
+    ledger_seq = submit_and_confirm(tx)
+    print(f"Transaction confirmed in ledger {ledger_seq}")
+    print(f"Created the new account {child.public_key}")
+
+    #
+    # Fetching native and USDC balances
+    #
+    native_balance = load_native_balance(parent.public_key)
+    print(f"Balance for account {parent.public_key}")
+    print(f"XLM: {native_balance}")
+
+    trustline_balance = get_trustline(parent.public_key, usdc_asset)
+    print(f"USDC trustline balance (raw): {trustline_balance}")
+
+def request_funds(friendbot_url: str, account_id: str) -> str:
+    request_url = f"{friendbot_url}?addr={account_id}"
+    resp = requests.get(request_url, timeout=30)
+    check(resp.ok, f"friendbot returned {resp.status_code}: {resp.text}")
+    return resp.text
+
+
+def get_friendbot_url() -> str:
+    response = SERVER.get_network()
+    if response.friendbot_url:
+        return response.friendbot_url.strip()
+    raise RuntimeError("Friendbot URL not provided by network")
+
+
+def load_native_balance(account_id: str) -> int:
+    key = LedgerKey(
+        LedgerEntryType.ACCOUNT,
+        account=LedgerKeyAccount(
+            account_id=Keypair.from_public_key(account_id).xdr_account_id()
+        ),
+    )
+    response = SERVER.get_ledger_entries([key])
+    check(response.entries, f"account {account_id} not found")
+    ledger_entry = LedgerEntryData.from_xdr(response.entries[0].xdr)
+    account = ledger_entry.account
+    check(account is not None, "ledger entry missing account data")
+    return account.balance.int64
+
+
+def get_trustline(account_id: str, asset: Asset) -> int:
+    key = LedgerKey(
+        LedgerEntryType.TRUSTLINE,
+        trust_line=LedgerKeyTrustLine(
+            account_id=Keypair.from_public_key(account_id).xdr_account_id(),
+            asset=asset.to_trust_line_xdr_object(),
+        ),
+    )
+    response = SERVER.get_ledger_entries([key])
+    if not response.entries:
+        return 0
+    ledger_entry = LedgerEntryData.from_xdr(response.entries[0].xdr)
+    trust_line = ledger_entry.trust_line
+    if trust_line is None:
+        return 0
+    return trust_line.balance.int64
+
+
+def submit_and_confirm(transaction):
+    response = SERVER.send_transaction(transaction)
+    check(
+        response.status == SendTransactionStatus.PENDING,
+        f"Transaction submission failed: {response.status}",
+    )
+
+    tx_resp = SERVER.poll_transaction(response.hash)
+    if tx_resp.status == GetTransactionStatus.SUCCESS:
+        return tx_resp.ledger or tx_resp.latest_ledger
+    raise RuntimeError(f"Transaction failed: {tx_resp.diagnostic_events_xdr}")
+
+
+def check(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(message)
+
+
+if __name__ == "__main__":
+    main()
+````
+
+```go
+package main
+
+import (
+  "context"
+  "fmt"
+  "io"
+  "log"
+  "net/http"
+  "net/url"
+  "strings"
+  "time"
+
+  "github.com/stellar/go/amount"
+  "github.com/stellar/go/keypair"
+  "github.com/stellar/go/network"
+  "github.com/stellar/go/txnbuild"
+  "github.com/stellar/go/xdr"
+
+  "github.com/stellar/stellar-rpc/client"
+  "github.com/stellar/stellar-rpc/protocol"
+)
+
+const (
+  rpcURL            = "https://soroban-testnet.stellar.org"
+  testnetUSDCIssuer = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+  pollAttempts      = 10
+  pollInitialDelay  = time.Second
+)
+
+func main() {
+  //
+  // Generating keypairs
+  //
+  parent := keypair.MustRandom()
+  log.Printf("Secret: %s", parent.Seed())
+  log.Printf("Public: %s", parent.Address())
+
+  //
+  // Funding via friendbot
+  //
+  ctx := context.Background()
+  cli := client.NewClient(rpcURL, nil)
+  defer cli.Close()
+  networkInfo, err := cli.GetNetwork(ctx)
+  check(err)
+
+  friendbotURL := strings.TrimSpace(networkInfo.FriendbotURL)
+  if friendbotURL == "" {
+    log.Fatal("friendbot URL not provided by network")
+  }
+  log.Printf("Using %s for friendbot funding", friendbotURL)
+
+  body := requestAirdrop(friendbotURL, parent.Address())
+  log.Printf("SUCCESS! You have a new account:\n%s", body)
+
+  //
+  // Funding a new account via CreateAccount operation
+  //
+  child := keypair.MustRandom()
+  parentAccount, err := cli.LoadAccount(ctx, parent.Address())
+  check(err)
+
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        parentAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              txnbuild.MinBaseFee,
+    Preconditions: txnbuild.Preconditions{
+      TimeBounds: txnbuild.NewInfiniteTimeout(),
+    },
+    Operations: []txnbuild.Operation{
+      &txnbuild.CreateAccount{
+        Destination: child.Address(),
+        Amount:      "5",
+      },
+    },
+  })
+  check(err)
+
+  tx, err = tx.Sign(network.TestNetworkPassphrase, parent)
+  check(err)
+
+  resp := submitAndAwait(ctx, cli, tx)
+  log.Printf("Transaction confirmed in ledger %d", resp.Ledger)
+  log.Printf("Created the new account %s", child.Address())
+
+  //
+  // Fetch native and USDC balances for account
+  //
+  accountEntry := getAccountEntry(ctx, cli, parent.Address())
+  log.Printf("Balance for account %s", parent.Address())
+  log.Printf("XLM: %s", amount.String(accountEntry.Balance))
+
+  usdcAsset := txnbuild.CreditAsset{Code: "USDC", Issuer: testnetUSDCIssuer}
+  trustlineEntry := getTrustlineEntry(ctx, cli, parent.Address(), usdcAsset)
+  log.Printf("USDC trustline balance (raw): %d", trustlineEntry.Balance)
+
+}
+
+func requestAirdrop(friendbotURL, address string) string {
+  requestURL := fmt.Sprintf("%s?addr=%s", friendbotURL, url.QueryEscape(address))
+  resp, err := http.Get(requestURL)
+  check(err)
+  defer resp.Body.Close()
+
+  body, err := io.ReadAll(resp.Body)
+  check(err)
+  if resp.StatusCode >= 400 {
+    log.Fatalf("friendbot returned %s: %s", resp.Status, string(body))
+  }
+
+  return string(body)
+}
+
+func submitAndAwait(ctx context.Context, cli *client.Client, tx *txnbuild.Transaction) protocol.GetTransactionResponse {
+  txnB64, err := tx.Base64()
+  check(err)
+
+  sendResp, err := cli.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: txnB64})
+  check(err)
+  if sendResp.Status != "PENDING" {
+    log.Fatalf("transaction submission failed with status %s", sendResp.Status)
+  }
+
+  return pollTransaction(ctx, cli, sendResp.Hash)
+}
+
+func pollTransaction(ctx context.Context, cli *client.Client, hash string) protocol.GetTransactionResponse {
+  delay := pollInitialDelay
+  for range pollAttempts {
+    resp, err := cli.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
+    check(err)
+
+    switch resp.Status {
+    case protocol.TransactionStatusSuccess:
+      return resp
+    case protocol.TransactionStatusFailed:
+      log.Fatalf("transaction failed: %s", strings.Join(resp.DiagnosticEventsXDR, "\n"))
+    case protocol.TransactionStatusNotFound:
+      // keep polling
+    default:
+      // unexpected status, continue polling in case it's transient
+    }
+
+    select {
+    case <-ctx.Done():
+      log.Fatalf("context cancelled while polling: %v", ctx.Err())
+    case <-time.After(delay):
+    }
+    delay += pollInitialDelay
+  }
+
+  log.Fatalf("transaction %s not found after polling", hash)
+  return protocol.GetTransactionResponse{}
+}
+
+func getAccountEntry(ctx context.Context, cli *client.Client, address string) *xdr.AccountEntry {
+  ledgerKey := xdr.LedgerKey{
+    Type: xdr.LedgerEntryTypeAccount,
+    Account: &xdr.LedgerKeyAccount{
+      AccountId: xdr.MustAddress(address),
+    },
+  }
+
+  keyB64, err := xdr.MarshalBase64(ledgerKey)
+  check(err)
+
+  resp, err := cli.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+  check(err)
+  if len(resp.Entries) == 0 {
+    log.Fatalf("account %s not found", address)
+  }
+
+  var ledgerData xdr.LedgerEntryData
+  check(xdr.SafeUnmarshalBase64(resp.Entries[0].DataXDR, &ledgerData))
+  if ledgerData.Account == nil {
+    log.Fatalf("ledger entry for %s missing account data", address)
+  }
+
+  return ledgerData.Account
+}
+
+func getTrustlineEntry(ctx context.Context, cli *client.Client, account string, asset txnbuild.CreditAsset) xdr.TrustLineEntry {
+  trustlineAsset, err := asset.MustToTrustLineAsset().ToXDR()
+  check(err)
+
+  ledgerKey := xdr.LedgerKey{
+    Type: xdr.LedgerEntryTypeTrustline,
+    TrustLine: &xdr.LedgerKeyTrustLine{
+      AccountId: xdr.MustAddress(account),
+      Asset:     trustlineAsset,
+    },
+  }
+
+  keyB64, err := xdr.MarshalBase64(ledgerKey)
+  check(err)
+
+  resp, err := cli.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+  check(err)
+  if len(resp.Entries) == 0 {
+    check(fmt.Errorf("trustline for %s:%s not found", asset.Code, asset.Issuer))
+  }
+
+  var ledgerData xdr.LedgerEntryData
+  check(xdr.SafeUnmarshalBase64(resp.Entries[0].DataXDR, &ledgerData))
+  return ledgerData.MustTrustLine()
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
+```java
+// File: main.java
+// Dependencies (Maven coordinates):
+//   org.stellar:java-stellar-sdk:0.43.0-SNAPSHOT
+//   com.fasterxml.jackson.core:jackson-databind:2.17.2
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.*;
+import java.time.Duration;
+import java.util.Collections;
+
+import org.stellar.sdk.*;
+import org.stellar.sdk.requests.sorobanrpc.*;
+import org.stellar.sdk.xdr.*;
+
+public final class main {
+  private static final String RPC_URL = "https://soroban-testnet.stellar.org";
+  private static final String TESTNET_USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  private static final HttpClient HTTP = HttpClient.newBuilder()
+    .connectTimeout(Duration.ofSeconds(20))
+    .build();
+  private static final SorobanServer SERVER = new SorobanServer(RPC_URL);
+
+  public static void main(String[] args) throws Exception {
+    //
+    // Generate keypairs
+    //
+    KeyPair parent = KeyPair.random();
+    log("Secret: %s", new String(parent.getSecretSeed()));
+    log("Public: %s", parent.getAccountId());
+
+    //
+    // Fund a new account via friendbot
+    //
+    GetNetworkResponse networkInfo = SERVER.getNetwork();
+    String friendbotUrl = networkInfo != null ? networkInfo.getFriendbotUrl() : null;
+    check(friendbotUrl != null && !friendbotUrl.isBlank(), "Friendbot URL not provided by network");
+    log("Using %s for friendbot funding", friendbotUrl);
+
+    String friendbotResponse = requestFunds(friendbotUrl, parent.getAccountId());
+    log("SUCCESS! You have a new account:\n%s", friendbotResponse);
+
+    //
+    // Fund a new account via CreateAccount operation
+    //
+    KeyPair child = KeyPair.random();
+    Account parentAccount = SERVER.loadAccount(parent.getAccountId());
+
+    Transaction transaction = new TransactionBuilder(parentAccount, Network.TESTNET)
+      .setBaseFee(Transaction.MIN_BASE_FEE)
+      .setTimeout(TransactionBuilder.TIMEOUT_INFINITE)
+      .addOperation(new CreateAccountOperation.Builder(child.getAccountId(), "5").build())
+      .build();
+    transaction.sign(parent);
+
+    long ledgerSeq = submitAndConfirm(transaction);
+    log("Transaction confirmed in ledger %d", ledgerSeq);
+    log("Created the new account %s", child.getAccountId());
+
+    //
+    // Fetch native and USDC balances for account
+    //
+    long nativeBalance = loadNativeBalance(parent.getAccountId());
+    log("Balance for account %s", parent.getAccountId());
+    log("XLM: %d", nativeBalance);
+
+    AssetTypeCreditAlphaNum12 usdcAsset = Asset.createNonNative("USDC", TESTNET_USDC_ISSUER);
+    long trustlineBalance = getTrustlineBalance(parent.getAccountId(), usdcAsset);
+    log("USDC trustline balance (raw): %d", trustlineBalance);
+  }
+
+  private static String requestFunds(String friendbotUrl, String accountId)
+      throws IOException, InterruptedException {
+    String requestUrl = friendbotUrl + "?addr=" + accountId;
+    HttpRequest request = HttpRequest.newBuilder()
+      .uri(URI.create(requestUrl))
+      .timeout(Duration.ofSeconds(30))
+      .GET()
+      .build();
+    HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+    check(response.statusCode() / 100 == 2, "Friendbot returned " + response.statusCode() + ": " + response.body());
+    return response.body();
+  }
+  private static long loadNativeBalance(String accountId) throws IOException {
+    LedgerKey key = new LedgerKey();
+    key.setDiscriminant(LedgerEntryType.ACCOUNT);
+    LedgerKeyAccount accountKey = new LedgerKeyAccount();
+    accountKey.setAccountID(KeyPair.fromAccountId(accountId).getXdrAccountId());
+    key.setAccount(accountKey);
+
+    GetLedgerEntriesResponse response = SERVER.getLedgerEntries(Collections.singletonList(key));
+    check(!response.getEntries().isEmpty(), "Account " + accountId + " not found");
+    LedgerEntryData data = LedgerEntryData.fromXdr(response.getEntries().get(0).getXdr());
+    check(data.getAccount() != null, "Ledger entry missing account data");
+    return data.getAccount().getBalance().getInt64();
+  }
+
+  private static long getTrustlineBalance(String accountId, org.stellar.sdk.Asset asset) throws IOException {
+    LedgerKey key = new LedgerKey();
+    key.setDiscriminant(LedgerEntryType.TRUSTLINE);
+    LedgerKeyTrustLine trustLineKey = new LedgerKeyTrustLine();
+    trustLineKey.setAccountID(KeyPair.fromAccountId(accountId).getXdrAccountId());
+    trustLineKey.setAsset(asset.toXdr());
+    key.setTrustLine(trustLineKey);
+
+    GetLedgerEntriesResponse response = SERVER.getLedgerEntries(Collections.singletonList(key));
+    if (response.getEntries().isEmpty()) {
+      return 0L;
+    }
+    LedgerEntryData data = LedgerEntryData.fromXdr(response.getEntries().get(0).getXdr());
+    TrustLineEntry trustLine = data.getTrustLine();
+    if (trustLine == null) {
+      return 0L;
+    }
+    return trustLine.getBalance().getInt64();
+  }
+
+  private static long submitAndConfirm(Transaction transaction) throws IOException, InterruptedException {
+    SendTransactionResponse sendResp = SERVER.sendTransaction(transaction);
+    check(sendResp.getStatus() == SendTransactionStatus.PENDING,
+        "Transaction submission failed: " + sendResp.getStatus());
+
+    GetTransactionResponse txResp = SERVER.pollTransaction(sendResp.getHash());
+    check(txResp.getStatus() == GetTransactionResponse.Status.SUCCESS,
+        "Transaction failed: " + txResp.getStatus());
+    Long ledger = txResp.getLedger() != null ? txResp.getLedger() : txResp.getLatestLedger();
+    check(ledger != null, "Transaction completed but ledger sequence unavailable");
+    return ledger;
+  }
+
+  private static void check(boolean condition, String message) {
+    if (!condition) {
+      throw new IllegalStateException(message);
+    }
+  }
+
+  private static void log(String format, Object... args) {
+    System.out.println(String.format(format, args));
+  }
+}
+```
+
+</CodeExample>
+
+Ahora que tienes una cuenta y puedes revisar los saldos de sus activos, puedes [comenzar a enviar y recibir pagos](send-and-receive-payments.mdx) o, si estás listo para concentrarte, puedes avanzar y [desarrollar un monedero](../../apps/wallet/overview.mdx) o [emitir un activo Stellar](../../../tokens/anatomy-of-an-asset.mdx).

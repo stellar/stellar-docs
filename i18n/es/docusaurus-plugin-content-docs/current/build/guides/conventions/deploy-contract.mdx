@@ -1,0 +1,241 @@
+---
+title: Desplegar un contrato a partir de bytecode Wasm instalado usando un contrato desplegador
+description: Desplegar un contrato a partir de bytecode Wasm instalado usando un contrato desplegador
+---
+
+<head>
+  <title>
+    {`Desplegar un contrato a partir de bytecode Wasm instalado usando un contrato desplegador`}
+  </title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Desplegar un contrato a partir de bytecode Wasm instalado usando un contrato desplegador"
+  />
+  <meta
+    property="og:description"
+    content="Desplegar un contrato a partir de bytecode Wasm instalado usando un contrato desplegador"
+  />
+</head>
+
+## Descripción general
+
+Esta guía te lleva a través del proceso de desplegar un contrato inteligente a partir de bytecode Wasm instalado usando un contrato desplegador. Cubriremos la configuración de tu entorno, la carga de bytecode Wasm y el despliegue e inicialización de un contrato de forma atómica.
+
+### Requisitos previos:
+
+- Conocimiento básico del [lenguaje de programación Rust](https://www.rust-lang.org/). Para refrescarte en Rust, visita [Rustlings](https://github.com/rust-lang/rustlings) o [El libro de Rust](https://doc.rust-lang.org/book/).
+- Familiaridad con [contratos inteligentes Stellar](../../smart-contracts/getting-started/hello-world.mdx)
+- Cargo instalado, [Stellar CLI](../../smart-contracts/getting-started/setup.mdx#install-the-stellar-cli) y SDK de Soroban
+
+### Configuración del entorno
+
+El [ejemplo de desplegador](https://github.com/stellar/soroban-examples/tree/v22.0.1/deployer) demuestra cómo desplegar contratos usando un contrato.
+
+1. Clona el repositorio de ejemplos de Soroban:
+
+```bash
+git clone -b v20.2.0 https://github.com/stellar/soroban-examples
+```
+
+2. Navega al ejemplo de desplegador:
+
+```bash
+cd soroban-examples/deployer/deployer
+```
+
+:::note
+
+Para que este ejemplo funcione, debes navegar a `deployer/contracts` y `deployer/deployer` y ejecutar el comando `stellar contract build` en cada directorio para generar los archivos de destino.
+
+:::
+
+3. Ejecuta pruebas:
+
+En el `deployer/deployer`, ejecuta el siguiente comando:
+
+```bash
+cargo test
+```
+
+Deberías ver la salida indicando que las pruebas pasaron:
+
+```bash
+running 2 tests
+test test::test_deploy_from_contract ... ok
+test test::test_deploy_from_address ... ok
+```
+
+### Descripción del código
+
+```rust title="deployer/deployer/src/lib.rs"
+#[contract]
+pub struct Deployer;
+
+#[contractimpl]
+impl Deployer {
+    /// Deploy the contract Wasm and after deployment invoke the init function
+    /// of the contract with the given arguments.
+    ///
+    /// This has to be authorized by `deployer` (unless the `Deployer` instance
+    /// itself is used as deployer). This way the whole operation is atomic
+    /// and it's not possible to frontrun the contract initialization.
+    ///
+    /// Returns the contract address and result of the init function.
+    pub fn deploy(
+        env: Env,
+        deployer: Address,
+        wasm_hash: BytesN<32>,
+        salt: BytesN<32>,
+        init_fn: Symbol,
+        init_args: Vec<Val>,
+    ) -> (Address, Val) {
+        // Skip authorization if deployer is the current contract.
+        if deployer != env.current_contract_address() {
+            deployer.require_auth();
+        }
+
+        // Deploy the contract using the uploaded Wasm with given hash.
+        let deployed_address = env
+            .deployer()
+            .with_address(deployer, salt)
+            .deploy(wasm_hash);
+
+        // Invoke the init function with the given arguments.
+        let res: Val = env.invoke_contract(&deployed_address, &init_fn, init_args);
+        // Return the contract ID of the deployed contract and the result of
+        // invoking the init result.
+        (deployed_address, res)
+    }
+}
+```
+
+## Cómo funciona
+
+El contrato desplegador proporciona un mecanismo para desplegar otros contratos de manera segura y determinista. Asegura que el despliegue esté autorizado por la dirección de desplegador especificada y admite la inicialización atómica del contrato recién desplegado. Esto garantiza que el contrato esté correctamente inicializado inmediatamente después del despliegue, previniendo cualquier problema potencial con contratos no inicializados.
+
+### Desglose de funciones
+
+- `env: Env`: El objeto Env representa el entorno de ejecución del contrato actual. Proporciona métodos para interactuar con la blockchain y otros contratos, así como realizar varias operaciones.
+- `deployer: Address`: La dirección de la entidad que está solicitando el despliegue del contrato. Esta dirección se utilizará para autorizar el despliegue.
+- `wasm_hash: BytesN<32>`: El hash del bytecode Wasm del contrato que se va a desplegar y que debe estar ya instalado y en el ledger. Este hash se utiliza para identificar de manera única el código del contrato.
+- `salt: BytesN<32>`: Un valor único utilizado para derivar la dirección del contrato desplegado. La misma combinación de dirección del desplegador y sal siempre producirá la misma dirección de contrato desplegado, asegurando direcciones de contrato deterministas.
+- `init_fn: Symbol`: El nombre de la función de inicialización que se llamará en el contrato recién desplegado.
+- `init_args: Vec<Val>`: Un vector de argumentos, especificados como objetos `{type: value}`, que se pasarán a la función de inicialización del contrato desplegado.
+
+### Pasos de la función
+
+```rust
+if deployer != env.current_contract_address() {
+   deployer.require_auth();
+}
+```
+
+La función verifica si la dirección `deployer` es la misma que la dirección del contrato actual. Si no lo es, requiere autorización de la dirección del desplegador para asegurar que el desplegador ha permitido este despliegue.
+
+```rust
+let deployed_address = env
+   .deployer()
+   .with_address(deployer, salt)
+   .deploy(wasm_hash);
+```
+
+- Usa el método `env.deployer()` para crear un objeto desplegador.
+- `with_address(deployer, salt)` especifica la dirección del desplegador y la sal para derivar la nueva dirección del contrato.
+- `deploy(wasm_hash)` despliega el contrato usando el hash de bytecode Wasm proporcionado y devuelve la dirección del contrato recién desplegado.
+
+```rust
+let res: Val = env.invoke_contract(&deployed_address, &init_fn, init_args);
+```
+
+- Invoca la función de inicialización especificada (`init_fn`) en el contrato recién desplegado (`deployed_address`), pasando los argumentos de inicialización proporcionados (`init_args`).
+- El resultado de esta llamada a la función se almacena en `res`.
+
+```rust
+(deployed_address, res)
+```
+
+Devuelve una tupla que contiene la dirección del contrato recién desplegado y el resultado de la función de inicialización.
+
+### Construir los contratos
+
+Para construir el contrato en un archivo `.wasm`, usa el comando `stellar contract build`. Este comando construye tanto el contrato desplegador como el contrato de prueba.
+
+```sh
+stellar contract build
+```
+
+Ambos archivos `.wasm` deberían encontrarse en ambos directorios de destino del contrato después de construir ambos contratos:
+
+```
+target/wasm32v1-none/release/soroban_deployer_contract.wasm
+```
+
+```
+target/wasm32v1-none/release/soroban_deployer_test_contract.wasm
+```
+
+## Ejecutar el contrato
+
+Antes de desplegar el contrato de prueba con el desplegador, instala el bytecode Wasm del contrato de prueba usando el comando `install`. El comando `install` imprimirá el hash derivado del archivo Wasm que debe ser utilizado por el desplegador.
+
+```sh
+stellar contract upload \
+--wasm  contract/target/wasm32v1-none/release/soroban_deployer_test_contract.wasm \
+--source-account alice \
+--network testnet
+```
+
+Al desplegar un contrato inteligente en la red, debes especificar una identidad que se utilizará para firmar las transacciones. Cambia la [identidad] `alice` por la tuya.
+
+[identidad]: ../../smart-contracts/getting-started/setup.mdx#configure-an-identity
+
+El comando imprime el hash en formato hexadecimal. Se verá algo así como `6bc6d975ef99c057231481c40f69f4c2a8a89ac56e8826ef0378f8e5c6abc4be`.
+
+También necesitamos desplegar el contrato `Deployer`:
+
+```sh
+stellar contract deploy \
+  --wasm deployer/target/wasm32v1-none/release/soroban_deployer_contract.wasm \
+  --source-account alice  \
+  --network testnet
+```
+
+Esto devolverá la dirección del desplegador. Por ejemplo: `CDKYZMA3OXR54YAHOQ5D4EWDFDT3ZNKKRYKQT7MGPWH22ZVD2DX2BJID`.
+
+Luego, el contrato desplegador puede ser invocado con el valor hash de Wasm anterior.
+
+```sh
+stellar contract invoke \
+  --id CDKYZMA3OXR54YAHOQ5D4EWDFDT3ZNKKRYKQT7MGPWH22ZVD2DX2BJID \
+  --source-account alice \
+  --network testnet \
+  -- \
+  deploy \
+  --deployer CDKYZMA3OXR54YAHOQ5D4EWDFDT3ZNKKRYKQT7MGPWH22ZVD2DX2BJID \
+  --salt 123 \
+  --wasm_hash 6bc6d975ef99c057231481c40f69f4c2a8a89ac56e8826ef0378f8e5c6abc4be \
+  --init_fn init \
+  --init_args '[{"u32":8}]'
+```
+
+reemplaza `alice` con tu propia identidad
+
+La invocación del contrato desplegador devolverá la dirección del contrato (por ejemplo: `CCTVFX6BFTQHTGAHA5TY4YZQJRUKRE2RRNUTGVBNKE3PJF5C7CI53APY`) del contrato de prueba que se ha desplegado recientemente.
+
+Invoca el contrato de prueba desplegado usando la dirección devuelta del comando anterior.
+
+```sh
+stellar contract invoke \
+  --id CCTVFX6BFTQHTGAHA5TY4YZQJRUKRE2RRNUTGVBNKE3PJF5C7CI53APY \
+  --source-account alice \
+  --network testnet \
+  -- \
+  value
+```
+
+Deberías recibir algo como la siguiente salida:
+
+```json
+8
+```
