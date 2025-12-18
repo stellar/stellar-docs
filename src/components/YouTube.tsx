@@ -27,7 +27,7 @@ const YouTube = ({ ID }: YouTubeVid): JSX.Element => (
       src={`https://www.youtube-nocookie.com/embed/${ID}?controls=0&rel=0&modestbranding=1`}
       title="Informational explainer"
       frameBorder="0"
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture; gyroscope"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture; gyroscope" // screen tilt
       allowFullScreen
       style={iframeStyle}
     />
