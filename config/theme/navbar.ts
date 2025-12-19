@@ -360,11 +360,6 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/indexers/build-your-own'
     },
     {
-      to: '/docs/data/indexers/indexer-providers',
-      label: 'Providers',
-      activeBasePath: 'docs/data/indexers/indexer-providers'
-    },
-    {
       type: 'html',
       value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
       className:'subtitle'
