@@ -1,0 +1,78 @@
+---
+title: Arquitectura
+sidebar_position: 20
+---
+
+La Plataforma de Desembolso Stellar consta de tres servicios desplegados juntos:
+
+- **Dashboard**: la interfaz de usuario que los administradores usan para iniciar y rastrear el progreso de los desembolsos
+- **Servicio Central SDP**: el servicio principal de backend que realiza varias funciones:
+  - **API del Dashboard**: la API que usa la interfaz frontal para todas las solicitudes de desembolso. La API está documentada [aquí](../api-reference)
+  - **API Admin**: la API que usa la organización anfitriona para administrar la provisión y configuración de inquilinos. La API está documentada [aquí](../api-reference/admin)
+  - **Servicio de Mensajería**: un proceso recurrente que envía mensajes de texto a los usuarios para invitarlos a descargar la wallet seleccionada para un desembolso en particular y verificar su teléfono con un OTP
+  - **Registro de Wallet**: una aplicación web que registra a un destinatario recogiendo y verificando su código OTP e información de verificación a través del protocolo [SEP-24: Depósito y Retiro Hospedado](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md) de Stellar
+- **Servicio de Envío de Transacciones**: el servicio que envía todas las transacciones de pago a la red Stellar. Este servicio está diseñado para maximizar el rendimiento de los pagos, manejar la cola y la reaplicación/control de errores de forma elegante
+
+## Dependencias {#dependencies}
+
+- **Orquestación de Contenedores**: el SDP se empaqueta como contenedores Docker y puede desplegarse en Kubernetes o AWS Fargate. SDF proporciona un Helm Chart para Kubernetes
+- **Postgres**: el SDP usa un servidor de base de datos Postgres para todos sus servicios
+- **Twilio o AWS SNS y SES**: el servicio de mensajería del SDP usa mensajes SMS/WhatsApp vía Twilio o AWS SNS y correos administrativos para configuración y recuperación de cuentas de organizaciones vía AWS SES o Twilio SendGrid
+- **Cuentas Stellar**:
+  - Cuenta de Distribución: el SDP requiere acceso a al menos una cuenta Stellar financiada para realizar pagos al destinatario
+  - Cuenta de Autenticación SEP-10: el SDP necesita una cuenta Stellar para el protocolo de autenticación mutua [SEP-10: Autenticación Web Stellar](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md) usado para conectar aplicaciones wallet
+
+## Diagrama de Arquitectura
+
+![Architecture Diagram](/assets/SDP/SDP2-2.png)
+
+### Roles de Usuario {#user-roles}
+
+El SDP define los siguientes roles de usuario:
+
+- **Admin Anfitrión**: la organización que aloja la instancia SDP y administra la provisión y configuración de los inquilinos a través de la API `Tenant Admin`
+- **Usuario del Dashboard**: un usuario que pertenece a un inquilino y usa el Dashboard del SDP para crear y administrar desembolsos, destinatarios y otros datos específicos del inquilino.
+- **Usuario API**: un usuario que pertenece a un inquilino y utiliza la `Dashboard API` para crear y gestionar desembolsos, destinatarios y otros datos específicos del inquilino de forma programática
+- **Receptores**: los usuarios finales que reciben los fondos enviados a través del SDP. Los receptores pueden usar una aplicación wallet que soporte SEP-24 para registro automático, o recibir fondos directamente en su cuenta Stellar.
+
+### Flujo de Trabajo {#workflow}
+
+1. El admin anfitrión usa la API `Tenant Admin` para proveer y administrar inquilinos.
+2. `Usuario del Dashboard` y `Usuario API` usan el Servicio Central SDP para enviar desembolsos y administrar/invitar a otros usuarios. Esto puede hacerse vía la interfaz del Dashboard o directamente mediante la `Dashboard API`.
+3. Para pagos que requieren registro SEP-24, el `Servicio Central SDP` envía un mensaje para notificar a los receptores. El mensaje contiene un enlace profundo que abre la wallet destino, lo que a su vez inicia el **flujo de depósito SEP-24** y registra a los receptores.
+4. El Servicio de Envío de Transacciones saca los pagos listos para ser procesados y luego los envía a la red Stellar mediante Cuentas Canal.
+
+## Base de Datos y Esquemas {#database}
+
+El SDP usa una base de datos Postgres para todos sus servicios. El esquema de la base de datos es gestionado por el Servicio Central SDP y está versionado en el código. El esquema de la base de datos está diseñado para ser consciente de los inquilinos, lo que significa que cada inquilino tiene su propio conjunto de tablas y datos. Esto permite que el SDP sea multi-inquilino y soporte varias organizaciones usando la misma instancia.
+
+Hay 3 tipos de esquemas en la base de datos:
+
+- **Esquema Admin**: contiene tablas para administrar inquilinos. Este esquema es usado por la API Admin para gestionar la configuración y provisión de inquilinos.
+- **Esquema TSS**: contiene tablas para administrar transacciones. Este esquema es usado por el Servicio de Envío de Transacciones para manejar el estado de las transacciones de pago.
+- **Esquemas de Inquilinos**: cada inquilino tiene su propio esquema que contiene tablas para administrar desembolsos, destinatarios y otros datos específicos del inquilino. Estos esquemas están prefijados con `sdp_`.
+
+## Multi-inquilino {#multi-tenancy}
+
+El SDP puede desplegarse en configuración multi-inquilino, donde múltiples organizaciones comparten la misma instancia del SDP. Cada organización se denomina inquilino y tiene su propio conjunto de datos y configuración. Una organización anfitriona puede administrar múltiples inquilinos y su configuración mediante la API Admin.
+
+### Resolución de Inquilinos {#tenant-resolution}
+
+El SDP utiliza una estrategia de resolución de inquilinos para determinar a qué inquilino pertenece una solicitud. La resolución de inquilinos solo es necesaria para solicitudes no autenticadas, ya que las autenticadas incluyen la información del inquilino en el token JWT.
+
+- **Encabezado**: el encabezado `SDP-Tenant-Name` se usa para especificar el nombre del inquilino en la solicitud. Cuando está presente, este encabezado se usa para intentar resolver el inquilino.
+- **Subdominio**: el SDP puede usar el subdominio de la URL de la solicitud para resolver el inquilino. Por ejemplo, `tenant1.sdp.backend.test` resolvería al inquilino `tenant1`.
+
+La prioridad de resolución es la siguiente: token JWT (solicitudes autenticadas) > Encabezado > Subdominio.
+
+#### Modo de Inquilino Único {#single-tenant-mode}
+
+Cuando el modo inquilino único está habilitado usando la variable de entorno `SINGLE_TENANT_MODE`, todos los inquilinos se resolverán automáticamente al inquilino predeterminado. Un inquilino predeterminado se establece llamando a la API [`POST /tenants/default-tenant`](../api-reference/default-tenant.api.mdx).
+
+El inquilino predeterminado es útil para propósitos de desarrollo o cuando el SDP es usado por una sola organización. Esto permite a la organización omitir especificar el inquilino en cada solicitud y simplifica la configuración operativa del SDP, eliminando la necesidad de proveer certificados TLS comodín para configuraciones multi-inquilino.
+
+#### Resolución de Subdominios {#subdomain-resolution}
+
+Cuando se ejecuta el SDP en modo multi-inquilino, el SDP usa el subdominio de la URL de la solicitud para resolver el inquilino. Por ejemplo, `tenant1.sdp.backend.test` resolvería al inquilino `tenant1`. Esto permite que el SDP diferencie entre inquilinos sin requerir que el nombre del inquilino se especifique en la solicitud.
+
+La resolución de subdominios es especialmente importante para el proceso de Registro de Wallet, ya que el SDP depende de los subdominios para diferenciar entre inquilinos durante el flujo de depósito SEP-24. Los dominios principales, que contienen el nombre del inquilino como subdominio, se utilizan durante el proceso de registro por el SDP para identificar al inquilino y dirigir la solicitud de registro de wallet al contexto correcto del inquilino.

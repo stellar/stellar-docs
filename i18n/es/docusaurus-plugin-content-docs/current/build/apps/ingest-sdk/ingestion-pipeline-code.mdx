@@ -3,32 +3,19 @@ title: Código de ejemplo de la canalización del consumidor CDP
 sidebar_position: 30
 ---
 
-Código completo para un pequeño ejemplo de la canalización del consumidor CDP de metadatos de ledger de la red Stellar utilizando el Stellar Go [Ingest SDK](overview.mdx#the-ingestion-sdk-packages) emparejado con el nuevo [CDP SDK](https://github.com/stellar/go/tree/master/ingest/cdp) para demostrar la canalización de datos desde los metadatos del ledger hasta el modelo de datos derivado con procesamiento distribuido y basado en eventos a un microservicio de ejemplo (script de Python) como suscriptor.
+Código completo para un pequeño ejemplo de un pipeline consumidor de metadatos del ledger de la red Stellar usando el [Ingest SDK](overview.mdx#the-ingestion-sdk-packages) de Stellar Go para demostrar el pipeline de datos desde metadatos del ledger hasta un modelo de datos derivado con procesamiento distribuido y basado en eventos hacia un microservicio de muestra (script Python) como suscriptor.
 
 Este ejemplo utiliza el SDK envoltorio de Go [goczmq](https://github.com/zeromq/goczmq) de ZeroMQ, que requiere varias [bibliotecas dependientes del sistema operativo para que también estén instaladas en la máquina host](https://github.com/zeromq/goczmq?tab=readme-ov-file#dependencies).
 
-Pasos:\
-#1 - Coloca estos archivos en un directorio\
-#2 - compila y ejecuta con `go mod tidy;go build -o pipeline ./.; ./pipeline`\
-#3 - en una terminal separada, ejecuta `python distributed_payment_subsciber.py`, esto ejecutará la topología de la canalización distribuida, ya que recibe mensajes con información de pago del proceso de canalización y realiza procesamiento adicional (imprimiéndolo en la consola).
+Este ejemplo requiere tener acceso a un lago de metadatos de ledger público que esté siendo completado activamente con los últimos ledgers de la mainnet de Stellar. Para propósitos del ejemplo, utiliza un lago de datos de referencia alojado en [AWS Open Data S3](../../../data/apis/rpc/admin-guide/data-lake-integration#1-accessing-a-data-lake)
 
-### `go.mod`
+### Paso #1 - Crea un directorio de ejemplo y copia los siguientes archivos a tu estación de trabajo.
 
 <CodeExample>
+```bash
+mkdir pipeline-example; cd pipeline-example
 
-```
-module example/pipeline
-
-go 1.22
-
-toolchain go1.22.1
-
-require (
-        github.com/stellar/go v0.0.0-20241008214914-7950d4254e6a
-        github.com/zeromq/goczmq v4.1.0+incompatible
-)
-```
-
+````
 </CodeExample>
 
 ### `main.go`
@@ -44,20 +31,20 @@ import (
   "encoding/json"
   "fmt"
   "io"
-  "log"
   "os"
   "os/signal"
 
   "github.com/pelletier/go-toml"
   "github.com/pkg/errors"
-  "github.com/stellar/go/amount"
-  "github.com/stellar/go/historyarchive"
-  "github.com/stellar/go/ingest"
-  "github.com/stellar/go/ingest/ledgerbackend"
-  "github.com/stellar/go/network"
-  "github.com/stellar/go/support/datastore"
-  "github.com/stellar/go/support/storage"
-  "github.com/stellar/go/xdr"
+  "github.com/stellar/go-stellar-sdk/amount"
+  "github.com/stellar/go-stellar-sdk/historyarchive"
+  "github.com/stellar/go-stellar-sdk/ingest"
+  "github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/support/datastore"
+  "github.com/stellar/go-stellar-sdk/support/storage"
+  "github.com/stellar/go-stellar-sdk/xdr"
+  "github.com/stellar/go-stellar-sdk/support/log"
 
   "github.com/zeromq/goczmq"
 )
@@ -113,6 +100,7 @@ func (transformer *AppPaymentTransformer) Process(ctx context.Context, msg Messa
   closeTime := uint(ledgerCloseMeta.LedgerHeaderHistoryEntry().Header.ScpValue.CloseTime)
 
   // scan all transactions in a ledger for payments to derive new model from
+  counter := 0
   transaction, err := ledgerTxReader.Read()
   for ; err == nil; transaction, err = ledgerTxReader.Read() {
     for _, op := range transaction.Envelope.Operations() {
@@ -134,12 +122,16 @@ func (transformer *AppPaymentTransformer) Process(ctx context.Context, msg Messa
         for _, processor := range transformer.processors {
           processor.Process(ctx, Message{Payload: jsonBytes})
         }
+        counter++
       }
     }
   }
+
   if err != io.EOF {
     return errors.Wrapf(err, "failed to read transaction from ledger %v", ledgerCloseMeta.LedgerSequence())
   }
+
+  log.Infof("Published %v payments from ledger sequnce %v", counter, ledgerCloseMeta.LedgerSequence())
   return nil
 }
 
@@ -178,7 +170,7 @@ func (adapter *LedgerMetadataInboundAdapter) Run(ctx context.Context) error {
     BufferedStorageConfig: ingest.DefaultBufferedStorageBackendConfig(1),
   }
 
-  fmt.Printf("beginning payments stream, starting at ledger %v ...\n", latestNetworkLedger)
+  log.Infof("beginning payments stream, starting at ledger %v ...\n", latestNetworkLedger)
   return ingest.ApplyLedgerMetadata(ledgerRange, pubConfig, ctx,
       func(lcm xdr.LedgerCloseMeta) error {
           for _, processor := range adapter.processors {
@@ -194,6 +186,7 @@ func main() {
   // run a data pipeline that transforms Pubnet ledger metadata into payment events
   ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
   defer stop()
+  log.SetLevel(log.InfoLevel)
 
   cfg, err := toml.LoadFile("config.toml")
   if err != nil {
@@ -221,7 +214,7 @@ func main() {
   // publishes application data model as messages to a broker
   publisher, err := goczmq.NewPub("tcp://127.0.0.1:5555")
   if err != nil {
-    log.Printf("error creating 0MQ publisher: %v\n", err)
+    log.Infof("error creating 0MQ publisher: %v\n", err)
     return
   }
   defer publisher.Destroy()
@@ -230,24 +223,30 @@ func main() {
   // wire up the ingestion pipeline and let it run
   appTransformer.Subscribe(outboundAdapter)
   ledgerMetadataInboundAdapter.Subscribe(appTransformer)
-  log.Printf("Payment ingestion pipeline ended %v\n", ledgerMetadataInboundAdapter.Run(ctx))
+  log.Infof("Payment ingestion pipeline ended %v\n", ledgerMetadataInboundAdapter.Run(ctx))
 }
 
-```
+````
 
 </CodeExample>
 
 ### `config.toml`
 
-La configuración de CDP, este archivo define el almacenamiento de datos que contiene los archivos de metadatos del ledger pre-generados. Se utiliza el almacenamiento en Google Cloud en este ejemplo.
+La configuración de CDP, este archivo define el almacenamiento de datos que contiene los archivos de metadatos del ledger pre-generados. Se utiliza el bucket [S3 Public Blockchain](https://registry.opendata.aws/aws-public-blockchain/) para [Stellar Pubnet](hhttps://aws-public-blockchain.s3.us-east-2.amazonaws.com/index.html#v1.1/stellar/ledgers/pubnet/) en este ejemplo.
 
 <CodeExample>
 
 ```
-type = "GCS"
+type = "S3"
 
 [params]
-destination_bucket_path = "my-gcs-bucketname/prefix1/prefix2"
+destination_bucket_path = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+region = "us-east-2"
+
+# this is the schema specific to the public s3 data lake being used
+[schema]
+ledgers_per_file = 1
+files_per_partition = 64000
 
 ```
 
@@ -282,3 +281,21 @@ while True:
 ```
 
 </CodeExample>
+
+### Paso #2 - Compila y ejecuta el ejemplo del pipeline de ingestión.
+
+<CodeExample>
+```bash 
+go mod init example/pipeline
+go get github.com/stellar/go-stellar-sdk@latest github.com/zeromq/goczmq@v4.1.0
+go mod tidy 
+go build -o pipeline ./. 
+AWS_SHARED_CREDENTIALS_FILE=/dev/null ./pipeline
+
+```
+</CodeExample>
+
+### Step# 3 - Run the distributed pipeline consumer
+
+In separate terminal, run `python distributed_payment_subsciber.py`, this will perform distributed pipeline topology, as it receives messages with payment info from the pipeline process and does additional processing(printing it to console).
+```
