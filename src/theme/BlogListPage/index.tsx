@@ -15,8 +15,6 @@ import BlogPostItems from "@theme/BlogPostItems";
 import BlogListPageStructuredData from "@theme/BlogListPage/StructuredData";
 
 const MEETING_ROUTE = "/meetings";
-const PLAYLIST_URL =
-  "https://www.youtube.com/playlist?list=PLmr3tp_7-7Gg5IAsJ0VlgfMoh-aTmbQmh";
 
 function BlogListPageMetadata(props: Props): ReactNode {
   const { metadata } = props;
@@ -38,21 +36,39 @@ function MeetingSeriesIntro(): ReactNode {
   return (
     <div className="card margin-bottom--lg">
       <div className="card__body">
-        <h1 className="margin-bottom--sm">Stellar Meetings</h1>
-        <p className="margin-bottom--sm">
-          Weekly developer and protocol calls keep the community aligned on
-          roadmap progress, new CAP proposals, and ecosystem updates. Each post
-          below includes notes and the recording, but you can also binge the full
-          series on YouTube.
+        <h2 className="margin-bottom--sm">Developer Meetings</h2>
+        <p className="margin-bottom--sm" style={{ fontSize: "0.9rem" }}>
+          Welcome to the archive of public Stellar meetings. This section collects recordings and notes so you can watch key discussions and follow along at your own pace. Each post below includes notes and the recording, but you can also binge the full series on YouTube. The buttons below go to these lists if you are interested in the "why" behind Stellar’s core design choices (maintained for the SDF).
         </p>
-        <Link
-          className="button button--primary"
-          href={PLAYLIST_URL}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          Watch the YouTube playlist
-        </Link>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+          <Link
+            className="button button--primary"
+            style={{ color: "#fff" }}
+            href="https://www.youtube.com/playlist?list=PLmr3tp_7-7Gg5IAsJ0VlgfMoh-aTmbQmh"
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            Recent
+          </Link>
+          <Link
+            className="button button--primary"
+            style={{ color: "#fff" }}
+            href="https://www.youtube.com/playlist?list=PLmr3tp_7-7GiPm9649cKh0Ythi2l5wj0a"
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            Soroban
+          </Link>
+          <Link
+            className="button button--primary"
+            style={{ color: "#fff" }}
+            href="https://www.youtube.com/playlist?list=PLmr3tp_7-7Gj9cTR5ieSaRHxiA2zItFyx"
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            Legacy
+          </Link>
+        </div>
       </div>
     </div>
   );
