@@ -7,16 +7,15 @@ const DEFAULT_FORMATTER_KEY = 'default';
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function getFormatter(locale?: string): Intl.DateTimeFormat {
-  const key = locale ?? DEFAULT_FORMATTER_KEY;
-  let formatter = formatterCache.get(key);
+  const cacheKey = `${locale ?? DEFAULT_FORMATTER_KEY}-monthDay`;
+  let formatter = formatterCache.get(cacheKey);
   if (!formatter) {
     formatter = new Intl.DateTimeFormat(locale ?? undefined, {
       month: 'long',
       day: 'numeric',
-      year: 'numeric',
       timeZone: 'UTC',
     });
-    formatterCache.set(key, formatter);
+    formatterCache.set(cacheKey, formatter);
   }
   return formatter;
 }
