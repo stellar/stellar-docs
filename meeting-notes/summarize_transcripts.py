@@ -101,21 +101,38 @@ STOPWORDS = {
 TRANSLATION_TABLE = str.maketrans({"“": '"', "”": '"', "’": "'", "–": "-", "—": "-"})
 
 
+YOUTUBE_ID_RE = re.compile(r'<YouTube ID="([^"]+)"')
+
+
 def read_video_ids() -> list[str]:
     videos: list[str] = []
+    seen: set[str] = set()
+
     for line in VIDEOS_TXT.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        videos.append(line)
+        if line not in seen:
+            videos.append(line)
+            seen.add(line)
+
+    for path in MEETING_DIR.glob("*.mdx"):
+        text = path.read_text(encoding="utf-8")
+        for match in YOUTUBE_ID_RE.findall(text):
+            if match not in seen:
+                videos.append(match)
+                seen.add(match)
+
     return videos
 
 
-def find_meeting_file(video_id: str) -> Path | None:
+def build_meeting_index() -> dict[str, Path]:
+    mapping: dict[str, Path] = {}
     for path in MEETING_DIR.glob("*.mdx"):
-        if video_id in path.read_text(encoding="utf-8"):
-            return path
-    return None
+        text = path.read_text(encoding="utf-8")
+        for match in YOUTUBE_ID_RE.findall(text):
+            mapping[match] = path
+    return mapping
 
 
 def split_sentences(text: str) -> list[str]:
@@ -186,6 +203,7 @@ def summarize_transcript(transcript_path: Path) -> dict[str, Iterable[str] | str
 
 def main() -> None:
     output: dict[str, dict[str, Iterable[str] | str]] = {}
+    meeting_index = build_meeting_index()
     missing_transcripts: list[str] = []
 
     for video_id in read_video_ids():
@@ -194,7 +212,7 @@ def main() -> None:
             missing_transcripts.append(video_id)
             continue
 
-        meeting_file = find_meeting_file(video_id)
+        meeting_file = meeting_index.get(video_id)
         key = meeting_file.name if meeting_file else video_id
 
         try:
