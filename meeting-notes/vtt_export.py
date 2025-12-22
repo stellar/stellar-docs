@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import argparse
-import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 YOUTUBE_ID_RE = re.compile(r"(?:v=|\/)([0-9A-Za-z_-]{11})(?:\?|&|\/|$)")
@@ -33,13 +33,22 @@ def vtt_to_text(vtt_path: Path) -> str:
       lines.append(t)
   return "\n".join(lines).strip() + "\n"
 
-def fetch_captions(video_id: str, out_dir: Path, lang: str, cookies: str | None):
+def fetch_captions(
+  video_id: str,
+  out_dir: Path,
+  lang: str,
+  cookies: str | None,
+  js_runtime: str | None,
+  impersonate: str | None,
+):
   out_dir.mkdir(parents=True, exist_ok=True)
 
   before = set(out_dir.glob(f"{video_id}*.vtt"))
 
   cmd = [
-    "yt-dlp",
+    sys.executable,
+    "-m",
+    "yt_dlp",
     "--skip-download",
     "--write-subs",
     "--write-auto-subs",
@@ -50,7 +59,12 @@ def fetch_captions(video_id: str, out_dir: Path, lang: str, cookies: str | None)
   ]
 
   if cookies:
-    cmd[1:1] = ["--cookies", cookies]  # insert early
+    insert_at = 3 if len(cmd) >= 3 else len(cmd)
+    cmd[insert_at:insert_at] = ["--cookies", cookies]
+  if js_runtime:
+    cmd.extend(["--js-runtimes", js_runtime])
+  if impersonate:
+    cmd.extend(["--impersonate", impersonate])
 
   p = subprocess.run(cmd, capture_output=True, text=True)
   if p.returncode != 0:
@@ -71,6 +85,14 @@ def main():
   ap.add_argument("--out", default="transcripts_out")
   ap.add_argument("--lang", default="en")
   ap.add_argument("--cookies", help="Path to cookies.txt")
+  ap.add_argument(
+    "--js-runtime",
+    help="Pass through to yt-dlp --js-runtimes (e.g. deno, node)",
+  )
+  ap.add_argument(
+    "--impersonate",
+    help="Pass through to yt-dlp --impersonate (see `yt-dlp --list-impersonate-targets`)",
+  )
 
   args = ap.parse_args()
 
@@ -88,6 +110,8 @@ def main():
       out_dir,
       args.lang,
       args.cookies,
+      args.js_runtime,
+      args.impersonate,
     )
 
     if status != "ok":
