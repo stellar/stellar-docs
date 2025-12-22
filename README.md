@@ -162,7 +162,7 @@ Note: the testnet is reset every three months, so when building on it, make sure
 
 #### Alert
 
-![Testnet reset alert](./readme-imgs/alert.png)
+![Testnet reset alert](./github/alert.png)
 
 `<Alert />` is used to convey hints, warnings, etc. For example,
 [Build a SEP-31 Anchor on Testnet][alert-example]
@@ -179,7 +179,7 @@ Note: the testnet is reset every three months, so when building on it, make sure
 
 #### Code Example
 
-![Create account code example](./readme-imgs/code-example.png)
+![Create account code example](./github/code-example.png)
 
 `<CodeExample />` is a code snippet component. You can include snippets for more
 than one language. See an example including a snippet for `JavaScript` and
