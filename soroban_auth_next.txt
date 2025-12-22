@@ -1,0 +1,221 @@
+﻿Soroban Auth Next 
+Protocol support for generalized auth
+TL;DR
+This is a proposal for a new Soroban auth approach that provides protocol-level support for the account abstraction and authorized sub-contract calls. See the draft PR for the proof-of-concept examples.
+Background
+The philosophy of the initial approach to authentication and authorization (further ‘auth’ refers to both at the same time) in Soroban was to defer as much auth as possible to the contracts. Hence it only provided the crypto-primitives (like ‘verify ed25519 signature’) and low-level information about classic Stellar accounts (like signers and weights). The contracts are expected to manage signature schemes and provide replay protection (such as manage cryptographic nonces). This approach is loosely based on EIP-2612.
+
+
+Since the initial approach proved to be too complicated for simple use cases, the ‘invoker’ concept has been also introduced, so that the classic Stellar account could authorize a top-level contract call and the contract itself doesn’t need to worry about anything auth-related besides using the `invoker` method to get the identifier of the authorized account. Invoker is loosely based on the EVM msg.sender.
+
+
+The soroban-auth SDK provides a way to use several cherry-picked signature schemes using the same interface (invoker, presigned classic account, presigned ed25519), however the contracts still need to worry about the nonces and work around some quirks (e.g. invoker only supports nonce of ‘0’).
+
+
+Hence currently the contracts have 3 auth options: invoker, soroban-auth and arbitrary custom auth.
+Problems
+The current auth approach is serviceable and potentially arbitrary auth protocols can be developed by the ecosystem. However, the initial decisions have a high chance to influence a large fraction of the contracts. For example, the auth scheme used in the standard token interface would either restrict all the tokens and token users to use it or spawn various token interfaces that contracts would need to handle. Here are the problems of the existing options:
+invoker:
+* Too narrow: an operation can only have a single invoker, so there is no way to work with more than one authorized entity
+* Too shallow: only the top-level contract invocation can be authorized by the invoker in order to avoid the “confused deputy” problem, so there is no way to call subcontracts on behalf of the invoker (e.g. token.xfer)
+* Restrictive: invoker is tied to the classic Stellar accounts, so the invoker-based contracts won’t ever be compatible with any other authorized entities
+soroban-auth:
+* Contract complexity: the contracts using soroban-auth would typically be more complex than the contracts using the invoker auth
+* Limited flexibility: While the approach is more flexible than invoker, it still forces the users into using the certain authentication methods
+* Signature complexity: it’s tricky for the wallet to understand what needs to be signed, especially if the contract has more complex signature scheme than just ‘sign all the invocation arguments’
+* Duplication: almost all the contracts need to do the nonce management (storage, public interface etc.), while the code itself would be the same for most of the contracts
+* Signature preflight: transaction simulation via preflight may require sending the real pubnet signatures[a][b], which may be problematic in some scenarios. The UX is always suboptimal as well.
+* Testing complexity: the tests need to sign the contract calls and cover the nonce-related logic
+Custom auth:
+* Compatibility: while pretty much anything is possible in theory, the compatibility with soroban-auth or other custom auth methods may not be straightforward or even possible at all.
+* Fragmentation: incompatible auth methods lead to fragmentation and make it difficult for contracts to interoperate and for wallets to work with contracts.
+Requirements
+Considering the problems with the current approaches listed above, this proposal aims to build a protocol-level auth framework that fulfills the following high-level requirements:
+* Generality: most (if not all) of the contracts should be able to use the auth framework, thus decreasing fragmentation and increasing interoperability
+* Extensibility: the framework shouldn’t limit the users to just a few standard authentication methods
+* Use-case coverage: the framework should provide support for complex authorization scenarios, such as invocations involving invoking subcontracts on behalf of the user and/or involving multiple authorized parties (an example using both would be atomic token swap with just a single contract invocation)
+* Contract usability: the framework should not be much harder to use for the contract writers than the current ‘invoker’ auth
+* Wallet usability: it should be easy for the wallets to sign the contract invocations, no matter how complex they are
+* Wallet controls: besides simple authentication, users should be able to control how their funds can be spent (e.g. not allow to spend more than X token without an additional signature etc., no matter the context)
+High-level design
+This proposal comprises two key components that fulfill the requirements (note, that there is overlap, which means that the components complement each other):
+1. Account abstraction to fulfill generality, extensibility, wallet usability and wallet controls requirements
+2. Standardized invocation authorization to fulfill generality, use-case coverage, contract usability requirements
+Account abstraction
+The concept of account abstraction is often discussed in the ethereum ecosystem and has been implemented in e.g. ETH L2 Starknet (see 1, 2, 3, 4 for some details).
+Account abstraction allows to completely decouple authentication scheme from the contract’s business logic, so e.g. users will be able to use the same token contract with any current or future authentication scheme (including different crypto primitives, multisig schemes etc.).
+The contracts will operate on a unified account type that may represent a classic Stellar account or a custom account contract (aka smart wallet) with a specific protocol-defined interface that handles authentication and (partially) authorization. Every account has an address that can be used to transfer the funds to the account and store any per-account data in general. Both of these types are opaque from the contract standpoint. The only input information required from the contracts is to make sure the account has authorized its own invocation with given arguments, i.e. there is no coupling with authentication logic, nonces etc.
+The account contracts will verify signatures (in an arbitrary, contract-defined format) and also have access to the authorization context (see next section), which allows to introduce token spend limits, give delegated spending access to the other contracts etc.
+We also introduce a built-in account contract that works with the classic Stellar accounts and supports the ‘transaction invoker’ account for the sake of optimization.
+Standardized invocation authorization
+While account abstraction unifies and generalizes the way the signatures work, this part of the proposal unifies and generalizes the way of building the signature payloads. 
+Instead of signing every contract invocation separately, the wallet will need to sign a protocol-defined, structured payload that may contain multiple sub-contract invocations[c][d][e][f]. Thanks to the structured format, the host can enforce that the payload matches the contract’s authorization requirements. In order to ensure that the payload is being used in the right context, the whole call stacks of the sub-contract calls are included into the signature payload.
+For example, consider a contract A with function ‘swap’ that takes N units of token T from the user and does something useful for the user and transfers some token T2 to the user address. With this proposal, the wallet would need to sign a single structured payload to perform this operation; it would consist of the calls `[A.swap(T, N), A.swap->T.xfer(A, N)]`[g]. This signature is enough to verify that the user gave permission to the contract to transfer the required amount of token and also is frontrun-proof, as there is no singular `xfer` signature that can be frontrun. The subcontract calls don’t need to be necessarily executed, hence it’s possible for the payload to contain the optional calls (though usefulness of such calls would likely be limited to highly dynamic contracts).
+The signature payload for any given account should contain all the contract invocations authorized on behalf of that account and only such invocations. So if in the example above the contract also calls into some other subcontracts on behalf of itself or another account, the signature payload for the user won’t change.
+Design details
+There are a number of additional design considerations to make the two key parts above to be useful and usable. This section describes some important design elements that enable the whole proposal.
+Authorization tracing in Preflight
+The structured invocation data can get pretty complicated in case of complex call trees of the contract invocations (e.g. consider a DEX contract that uses an atomic swap contract that uses token contract etc.). All the invocations besides the top one, as well as the exact arguments of every invocation are hard to infer by just looking at the contract signature. 
+We propose to use the Preflight service (aka transaction simulation) for the purpose of tracing[h][i][j][k]. Similar to the footprints, auth management would have a ‘recording’ mode that instead of enforcing the authorization would simply record it using the current call stack. This automatically ensures the correctness of the arguments for every invocation and the call stack correctness (besides the cases when pubnet ledger state has some critical difference compared to the preflight ledger state). Instead of the full account signature payloads only the respective addresses need to be passed to such recording preflight calls.
+The downside of this approach is that the metering data wouldn’t be useful for such preflight call (as different code is executed). The second preflight code[l][m][n][o][p] in enforcing mode is needed to get the proper metering and footprint data.
+Alternative considered: contract defines its invocation tree
+The contracts would need to define some special common method that produces the subcontract invocation trees for every method that needs authorization. This would be hard to maintain as essentially the same code would need to be written twice (once for making the actual invocations and once to declare them). For the same reason this approach would be error prone.
+Host-based nonce management
+The signature payload needs replay protection. Here we propose the host (i.e. the contract runtime) to be responsible for it. The host will store nonces per contract and account address. If we consider the standardized signature payload to contain a forest of the contract invocation trees, then only the tree roots need to have nonces attached in order to prevent replay.
+The benefit of managing nonces by host is that neither account contracts nor regular contracts would need to worry about it. Another benefit is that it’s easy to populate nonces during the tracing in Preflight and produce a per-account account payload with correct nonce.
+Alternative considered: account contracts manage nonce
+We could also delegate nonce management to the account contracts. This somewhat increases flexibility (though arguably nonces should provide enough replay protection), but it makes it harder to build the signature payloads: instead of the unified structured payload the wallet would need to build the full payload from a nonce-less part traced by Preflight and its own nonce.
+Account contract interface
+Account contract interface will consist of a single function, check_auth, that takes a signature payload (32-byte hash of the standardized signature payload), signature arguments (custom for every account contract) and authorization context (the list of contract invocations that are about to be authorized), uses the inputs to verify auth, and errors if auth fails. 
+The account contract doesn’t need to build the payload preimage. This allows to avoid the problem of sending pubnet signatures to preflight: the wallet could sign some well-defined mock payload (e.g. 32 0-s) and send this signature to preflight. Since the account contract should only care about verifying the signature, the preflight would successfully execute the signature verification code without the need to expose the pubnet signature. The only caveat is that in theory some signature verification algorithms may have different performance depending on the payload, though this is unlikely and the difference would be marginal.
+The authorization context allows account contracts to define the policies based on the contracts being invoked and the invocation arguments.
+Alternative considered: invoke account contract for every subcontract call
+The approach above suggests to only use a single method that is intended to be called only once. This is good from the performance perspective (only 1 cross-contract call per account required), but limits the potential state updates. For example, if the contract requests 2 token transfers from an account, an account may only consider that both transfers have happened  even if only one transfer happens in reality (as they have to be approved in the same single call).
+The alternative approach would be to make the account contract interface to contain two methods: ‘authenticate’ and ‘authorize’ and call ‘authorize’ every time the account needs to authorize any singular subcontract call. This way the account contract will know exactly which operations actually happened. However, this approach comes with a cost of N + 1 account contract calls (where N is the number of contract calls the account needs to authorize), which in case of custom accounts means N + 1 VM invocations.
+Temporary storage
+With a simple enough way to do authorized subcontract calls it’s possible to make some typical contract patterns safer and more efficient via temporary contract storage. 
+Temporary contract storage would look exactly like the regular contract storage, but it would only exist during a single top-level contract invocation and it wouldn’t need to be specified in the footprint.
+For example, consider the token `approve` operation. With a ERC-20 approach it would create a ledger entry for approval that may be reused/misused in case if the approval amount hasn’t been fully used. Instead, `approve` could create a temporary entry only. That would mean that the contract might spend the token on behalf of the account only during this current invocation - there is no risk that there is some outstanding approval left and there is also less ledger usage, which is better for the network and the users.[q][r][s][t]
+Temporary storage could also be used to extend the account contract usage patterns in a similar fashion. For example, instead of approving the token operations, the account contract itself could approve arbitrary contract invocations just for the duration of the top-level invocation.
+Tackling subcontract argument volatility
+In some situations subcontract calls authorized on behalf of the account may have volatile arguments that are dependent on the immediate on-chain state (such as an AMM swap price or a contract using an oracle to get the prices etc.). There is no way for a user to sign such calls (that issue would occur in any system that relies on signatures to authorize contract invocations).
+The contracts need some additional care when handling such situations. The conceptual approach would be that the user would need to sign the upper (or lower) bounds for the transactions instead of the exact values. The rationale is that from the user perspective the contract effect should be evaluated by the bounds (e.g. if they sign ‘the contract might spend up to 100 USDC’ they should assume it spends exactly 100 USDC). Hence subcontract calls should be written in a boundary-defined fashion, for example: if the contract spends the token on behalf of the user account, then the contract would need to call the token method like `approve` with the maximum required amount and the user would sign that amount.
+Temporary storage described above makes writing the code that relies on such temporary approval boundaries cheaper and safer, as no state needs to be persisted in the ledger.
+The ability to conveniently call the subcontracts on behalf of the account is pretty novel and may allow for adjusting the interfaces in the respective fashion. For example, well known token methods like `xfer` may be extended with something like `xfer_max` where the user would need to sign the maximum amount of the token that can be transferred. Methods like this would be useless for the top-level invocations, but may prove to be very useful for the subcontract calls.
+Risks and tradeoffs
+* While the framework is designed for flexibility, there is a risk that there is some broad category of the use cases that it doesn’t cover[u][v][w][x][y]. While the alternative of the custom auth is still there, it would be tricky to make it compatible with the rest of the ecosystem
+* Moving most of the sensitive auth code to the host increases the risk for pretty much every contract to be compromised at once. This is true for every host function, for example for the cryptography host functions. On the other hand, this decreases the per-contract risks due to contract bugs and makes it easier to review and test the functionality once and get some security guarantees for all the contracts.
+* Custom account contracts come at additional performance cost
+* The preflight usage patterns would become more complicated and some additional care would be needed to get the correct budget metering data
+* Structured signature payloads increase the transaction sizes, as now the set of invocation call stacks has to be passed along with the top-level invocation arguments
+Proof-of-concept examples
+There are a few proof-of-concept examples that use this auth proposal:
+* Regular contracts:
+   * API notes:
+      * `Account` type represents the abstract account
+      * `authorize` operation on an account means that account should have authorized invoking the current contract with specified arguments
+      * `Address` type/`address()` account property represent the unified address
+      * `current_contract_account` represents the account to authorize operations on behalf of the currently running contract (obviously, no signatures would be required when this is used)
+   * Timelock (claimable balance)
+      * Simple, yet important pattern of ‘transfer token to contract, then do something’
+      * Uses token xfer instead of relying on approve/permit etc
+   * Atomic swap
+      * Swap two tokens between two parties atomically
+      * The parties don’t need to know each other
+   * Atomic multiswap
+      * Swaps token pair between multiple pairs of parties
+      * The parties don’t need to know each other or even that they’re used in this contract. Only presigned payloads for atomic swap above are needed
+   * Testing note: notice that authorization testing is optional for the tests (probably could be done just once) and authentication doesn’t need to be covered at all, hence the tests don’t need to worry about signatures, nonces etc.
+      * We introduce `verify_account_authorization` function that allows to check if a certain authorization has happened, e.g. see this test
+* Account contracts:
+   * API notes:
+      * `check_auth` is the ‘account contract interface’ function, i.e. the only function the contract needs to implement in order to be a valid account contract
+   * Simple account
+      * An account contract that uses a single ed25519 signature and doesn’t care about context during verification
+      * Allows to change the signer. Notice, that changing the signer can use the auth framework too, hence there is no need to duplicate the signature verification code
+   * Account with per-token limits
+      * Account contract that supports simple ed25519 multisig (without weights)
+      * This contract allows users to set per-token limits on xfer/approve operations. The operations that spend token above the limit require every signer to have signed that invocation
+      * Similar to above, the admin functions can be authorized via the standard auth API. The `check_auth` function ensures that every signer should have signed the admin functions
+Appendix: implementation draft
+Here is the abridged changes summary for the draft implementation of the proposal:
+* XDR (RS XDR)
+   * First class ScAccount object type that represents any Soroban-auth-compatible account on the network (account abstraction). This contains the information required to authenticate and authorize any entity. Note, that ed25519 account type probably can be safely removed.
+   * First class ScAddress object type that represents any Soroban-auth-compatible address on the network.
+   * First class nonce key object type to store host-managed nonces (this probably can also move to the smart wallets if needed, that’s still up to debate)
+* Host
+   * Authorization manager to handle most of the authorization logic. Supports recording and enforcing modes
+   * Built-in account contract. Currently supports classic invoker account, presigned classic account and ed25519 (probably should be dropped)
+   * Built-in token update to use the Account/Address types everywhere
+* SDK
+   * Removed soroban-auth as it’s no longer needed
+   * Added Account/Address structs
+   * Remove invoker/source account etc. as they are no longer supported
+This notably doesn’t include all the necessary preflight-related changes, though the recording mode for authorization is implemented.
+
+
+Appendix: expected Platform impact
+* Soroban-cli
+   * To be determined once SDK and host changes are ready. T-shirt size : x-large.
+* Soroban-rpc
+   * Changes to simulateTransaction endpoint. T-shirt size : large
+* Horizon
+   * XDR needs to be updated. T-shirt size : small
+* SDKs
+   * To be determined
+[a]For preflight, we can do the following:
+1. replace the signature with the pubkey
+2. relax the crypto verification so that it would pass on either "real" verification or secret==expected pubkey.
+That should provide a good emulation, assuming that the enduser is honest and is truly the owner of the account.
+[b]Well, that's something we're trying to do with the auth next proposal here, but in a more generic fashion (account address instead of pubkey, recording auth instead of just bypassing crypto etc.). The paragraph here concerns soroban-auth, which is an SDK library and building special code paths around it would be weird (as opposed to building the special code paths for protocol-defined patterns).
+[c]If I call A, and A calls B. Do I have to sign B? If yes, how does B know that I'm signing B intentionally as some first-class actor, vs as the result of just being a third-party dependency? It feels like this would create a confused deputy problem for contracts.
+[d]The idea is to sign things that do meaningful operations on the user side and require authorization where appropriate on the contract side. E.g. if you're interested in swapping some token, you sign the swap (with all the necessary subcontract calls) and then it shouldn't really matter who executes it as your intention would be fulfilled. On the other hand if there is a contract that with a negative side effect based on swap (e.g. for whatever reason it limits the number of swaps per user per time period), then it should probably require an explicit user authorization at the top level. With these two patterns there shouldn't be confused deputy issues.
+I've been thinking about maybe adding a capability to disallow unauthorized calls to the current contract fn, but I'm not sure if that's useful. Also in the initial ideas we'd require a top-level call to be signed, but now I don't feel like that's necessary (but it definitely is rather limiting for a lot of use cases).
+Please let me know if you have some specific examples of how this can be exploited.
+[e]For example, if multi-parties need to sign the top-level invocation, but does things with say 5 tokens. How does a token know if my signature is acting as an approval on someone elses actions with their token, vs acting in some first-party relationship? Maybe this doesn't matter, but it feels like there's intent lost.
+
+
+e.g. Top-level contract moves some of its own tokens around as part of invocation. I am signing the top-level, but my signature on the token txs seems confusing, what's the intent of my signature there if the tokens aren't mine.
+[f]Maybe I'm misunderstanding something, but it doesn't seem like the correct design to me.
+
+
+Every account should sign their own intent.  Raw token operations should rarely be signed at all (unless your intent is to just pay someone, in which case you probably shouldn't care if someone has executed your payment as a part of a subcontract call).
+
+
+If the top-level contract moves its own token balances, then it uses its own account and all the other accounts would be unaware of such movement. Accounts only need to sign the calls that happen on their behalf.
+[g]1 total reaction
+Tsachi Herman reacted with 😀 at 2023-01-12 12:53 PM
+[h]This sounds swish. I suspect it will only work for a subset of contracts. A recording mode assumes a contract can be executed in a way that a single path exists that hits all auth attempts. If a contract does two auth checks in succession, is the second one discovered? What if the second only happens if the first fails? How can we know it works for the subset of contracts that matters, and we don't end up with contracts that can never succeed preflight analysis to determine the signatures?
+[i]>  What if the second only happens if the first fails?
+I think we simply shouldn't allow that. I don't really see a legitimate scenario where authorization failure should be recoverable and even if it was, I don't think it should be retried.
+
+
+Basically the assumption here is that all the authorization calls should succeed. That's a similar assumption as to one we make w.r.t. ledger footprints (as even non-existent keys have to be declared). Do you see any useful scenarios where they it's ok for auth to not succeed?
+
+
+In any case, the alternative to preflight is providing nothing to help building the payloads. I'm not sure if that's a strong enough argument to just skip the cases where this helps.
+[j]I think this just means a contract can't do optional or one-of auth. It isn't really about auth failing in these cases as being some sort of undesirable quality, it's about different behavior for auth vs no-auth, or different based on maybe one type of auth vs another type of auth.
+[k]I think it's not impossible to mock the failed auth and it wouldn't even require a protocol change (that would be just a preflight API extension). 
+
+
+However, I don't think that's a good contract design/UX. The users shouldn't really care about some internal code paths of the contract at the signature time. You normally would want your payload to be a function of some top-level contract invocation. In your proposal it also would need to be a function of itself, which is confusing.
+
+
+If one needs multiple auth types, a cleaner solution would be to introduce different contract fns or some 'operation mode' arguments etc. The same goes for 'no-auth' behavior - the function that behaves differently depending on the presence of authorizations seems confusing, error-prone, and unsafe. Why not just expose the non-authorized fn instead?
+
+
+There are scenarios where it seems useful to be able to gracefully handle auth failures (e.g. imagine some trading contract that clears a batch of trades at once). Maybe one trade failing shouldn't lead to every trade failing. So I'm not opposed to having something like `try_authorize`. But I don't think that changes anything in preflight - authorization failing should really be an exception scenario that leads to a smaller footprint/gas. Reauthorization is probably a bad idea, as I've mentioned above.
+[l]Does this mean that two preflight runs are needed?
+[m]Yes, in a general case two runs would be needed, which I agree is a bit annoying, but I'm not sure what the alternative would be. We may be able to decouple custom account contract preflight runs from the business logic contract run, though I'm not sure how beneficial that would be.
+If your payload is simple/stable enough, you can build it manually (someone would still need to get  the fresh nonces though) and run preflight only once in enforcing mode after you've got your signatures.
+[n]Also I suppose if all the accounts are covered by the built-in account contract, we could execute both calls immediately, thus removing the need for the second preflight call.
+[o]Does the second simulation run requires signatures? It would be impractical to run the second simulation if so, as doing so would then require hardware wallets to sign multiple versions of the transaction, the simulation then the real.
+[p]My idea was to use the single predefined payload (e.g. 32-x 0). There is indeed inconvenience of signing it once, but at least it can be reused for all the soroban preflights. I realize that's not the most elegant solution, but I'm not sure how to otherwise preflight authentication for a custom smart wallet without exposing the pubnet signatures.
+One thing that comes to mind is to ask wallets to provide  some sane upper bound on ledger footprint and gas consumption, but that wouldn't work for more complex use cases (like in my wallet example where we check the signature thresholds depending on the token/amount spent).
+Maybe that would work better if smart wallet authentication is completely decoupled from the authorization, but that would require an additional layer of mocking required from the wallets (they'd need to mock the results of `authenticate` call to return all the signers and potential supplementary data).
+[q]How does this approach compare to multi-operation transactions? Wouldn't the user still need to invoke the token directly to do the approval?
+[r]Approve can be called from within the contract and hence can't be frontrun. But temporary storage described here could also be useful for multi-op scenarios as long as it's alive for the transaction duration, so that e.g. 'approve' could be called before the actual function execution. That's 2 signatures though vs 1 signature when just calling approve from within a contract.
+[s]It couldn't be frontrun in a multi-op transaction, could it?
+[t]I suppose it depends on how the transaction is signed. If the operation transaction is signed separately, then it can be frontrun. Signing the operations is something being discussed now (orthogonally to auth next), so I wouldn't make any assumptions on this yet.
+[u]The main use case I see that would be difficult is any form of a mechanism like `pathPaymentStrictReceive` where the send amount will fluctuate within the block to get the desired receive, such that the `xfer` argument can't be pre-signed.
+
+
+In this system, this is still possible with `xfer_from` and `approvals`
+
+
+The temporary storage seems like a path forward, but including `approval` with the auth pattern feels counter intuitive.
+
+
+We could also include a `xfer_max` where the signed argument is some maximum send amount, but that would require a change to the token interface.
+[v]`xfer_max` is a valid option as well, though I'm not sure we should get rid of approvals completely, as not only amount, but also the receiver may be unknown. So the `xfer_max` for such cases would need to lead to the contract address, which is a bit less safe and efficient than temporary approvals (as `xfer_max` would modify the contract balance ledger entry, while temporary approval is ephemeral).
+Overall, I think there is nothing wrong with changing the token interface and leveraging the new possibilities (it would change anyway to get rid of nonces, use Account/Address etc.).
+[w]permit based approvals suffer from the same problem so I don't consider this a regression. I think that having approvals as a catch-all backup plan is good enough. xfer_max sounds like a foot gun fro me
+[x]I don't think `xfer_max` would have an additional contract balance ledger entry modification than a standard `xfer`. The way I imagine this would be the signature payload would contain a max amount, and the actual amount to xfer would be excluded. It would be on the contract to verify that the actual amount is under verified max amount.
+
+
+This could be abstracted further to remove `to` from the `xfer_max` (`xfer_contract` might be a better name here) signature payload as well. The assumption here is that the caller would be included in the signature payload to maintain the same trust assumptions approvals do, while providing the same functionality.
+
+
+I don't think sticking with approvals is a bad idea at all, but it appears we can get feature parity by relying on auth-next only.
+[y]I don't think we can achieve feature parity with approvals using any variation of `xfer` (unless we follow a less safe pattern of xfer to the contract address + refund). Consider the cases when the balance from one account is distributed between an arbitrary number of another accounts (e.g. if we clear some complex DEX trade). It's not possible to presign all the xfers (we don't necessarily know how many of them would happen) and we can't reuse the `xfer_max` an arbitrary number of times.
+I don't think the existence of approvals should limit the xfer design (and vice versa). We may have some `xfer_contract` method that acts as a shortcut of `approve` + `xfer_from` that covers, say, 90% of the use cases and then we can have temporary approvals to serve the remaining 10% of 'tricky' cases.
