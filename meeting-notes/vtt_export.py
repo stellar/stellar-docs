@@ -40,6 +40,7 @@ def fetch_captions(
   cookies: str | None,
   js_runtime: str | None,
   impersonate: str | None,
+  remote_components: str | None,
 ):
   out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -65,6 +66,8 @@ def fetch_captions(
     cmd.extend(["--js-runtimes", js_runtime])
   if impersonate:
     cmd.extend(["--impersonate", impersonate])
+  if remote_components:
+    cmd.extend(["--remote-components", remote_components])
 
   p = subprocess.run(cmd, capture_output=True, text=True)
   if p.returncode != 0:
@@ -85,6 +88,10 @@ def main():
   ap.add_argument("--out", default="transcripts_out")
   ap.add_argument("--lang", default="en")
   ap.add_argument("--cookies", help="Path to cookies.txt")
+  ap.add_argument(
+    "--remote-components",
+    help="Pass through to yt-dlp --remote-components (e.g. 'ejs:github')",
+  )
   ap.add_argument(
     "--js-runtime",
     help="Pass through to yt-dlp --js-runtimes (e.g. deno, node)",
@@ -112,6 +119,7 @@ def main():
       args.cookies,
       args.js_runtime,
       args.impersonate,
+      args.remote_components,
     )
 
     if status != "ok":
