@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterable
 
 ROOT = Path(__file__).resolve().parent.parent
-MEETING_DIR = ROOT / "meeting-notes"
+MEETING_DIR = ROOT / "meetings"
 TRANSCRIPT_DIR = ROOT / "transcripts_out"
 VIDEOS_TXT = MEETING_DIR / "videos.txt"
 OUTPUT_JSON = MEETING_DIR / "meeting_summaries.json"

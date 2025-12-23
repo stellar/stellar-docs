@@ -94,7 +94,7 @@ const config: Config = {
       "classic",
       {
         blog: {
-          path: 'meeting-notes',
+          path: 'meetings',
           blogTitle: 'Meeting Notes',
           blogDescription: 'Notes and recordings from the Stellar protocol & developers meetings',
           blogSidebarTitle: 'All meetings',
