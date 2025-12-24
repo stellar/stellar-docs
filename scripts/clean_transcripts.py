@@ -1,44 +1,43 @@
 #!/usr/bin/env python3
-import pathlib
-from typing import Iterable, List
+"""
+Normalize transcripts by stripping filler words.
 
-RAW_DIR = pathlib.Path("transcripts_out")
-OUT_DIR = RAW_DIR / "pretty"
+Run this from the repository root to rewrite every transcript file
+in `transcripts_out` and its subfolders.
+"""
 
+from __future__ import annotations
 
-def read_segments(path: pathlib.Path) -> List[str]:
-    """Return non-empty segments from a transcript file."""
-    raw = path.read_text(encoding="utf-8")
-    segments = [line.strip() for line in raw.splitlines() if line.strip()]
-    return segments
-
-
-def pretty_line(segment: str) -> str:
-    """Capitalize and punctuate a single transcript segment."""
-    content = segment.strip()
-    if not content:
-        return ""
-    content = content[0].upper() + content[1:]
-    if content[-1] not in ".!?":
-        content += "."
-    return content
+import re
+from pathlib import Path
 
 
-def pretty_content(segments: Iterable[str]) -> str:
-    """Join prettified segments into readable paragraphs."""
-    lines = [pretty_line(seg) for seg in segments if seg]
-    return " ".join(lines)
+FILLER_PATTERN = re.compile(r"\b(?:um+|uh+|crap)\b", re.IGNORECASE)
 
 
-def clean_first_n(n: int = 10) -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    transcripts = sorted(RAW_DIR.glob("*.en.txt"))[:n]
-    for path in transcripts:
-        content = pretty_content(read_segments(path))
-        target = OUT_DIR / f"{path.stem}.pretty.txt"
-        target.write_text(content + "\n", encoding="utf-8")
-        print(f"Wrote {target}")
+def clean_text(text: str) -> str:
+    """Remove filler tokens and collapse the leftover whitespace."""
+    cleaned = FILLER_PATTERN.sub("", text)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"[ \t]*\n[ \t]*", "\n", cleaned)
+    return cleaned
+
+
+def main() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    transcripts_root = repo_root / "transcripts_out"
+    for path in transcripts_root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in {".txt", ".vtt"}:
+            continue
+
+        original = path.read_text(encoding="utf-8")
+        cleaned = clean_text(original)
+        if cleaned == original:
+            continue
+        path.write_text(cleaned, encoding="utf-8")
 
 
 if __name__ == "__main__":
-    clean_first_n()
+    main()
