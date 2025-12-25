@@ -68,6 +68,13 @@ function MeetingSeriesIntro(): ReactNode {
           >
             Legacy
           </Link>
+          <Link
+            className="button button--primary"
+            style={{ color: "#fff" }}
+            href="/meetings/tags/community"
+          >
+            Community
+          </Link>
         </div>
       </div>
     </div>
