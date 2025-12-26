@@ -94,7 +94,7 @@ const config: Config = {
       "classic",
       {
         blog: {
-          path: 'meeting-notes',
+          path: 'meetings',
           blogTitle: 'Meeting Notes',
           blogDescription: 'Notes and recordings from the Stellar protocol & developers meetings',
           blogSidebarTitle: 'All meetings',
@@ -102,6 +102,7 @@ const config: Config = {
           postsPerPage: 12,
           routeBasePath: 'meetings',
           onUntruncatedBlogPosts: 'ignore',
+          showReadingTime: false,
         },
         docs: {
           showLastUpdateTime: true,
