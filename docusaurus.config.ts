@@ -2,7 +2,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
-import { makeEditUrl, DEFAULT_LOCALE } from './config/constants';
+import { makeEditUrl, DEFAULT_LOCALE, GOOGLE_TRANSLATE_ELEMENT } from './config/constants';
 import navbarItems from './config/theme/navbar';
 import footerColumns from './config/theme/footer';
 import { headTags } from './config/theme/headTags';
@@ -31,7 +31,11 @@ const config: Config = {
     defaultLocale: DEFAULT_LOCALE,
     locales: ["en", "es"],
   },
+  scripts: [
+    'https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit',
+  ],
   plugins: [
+    require("./src/google-translate-plugin"),
     "docusaurus-plugin-sass",
     [
       "docusaurus-plugin-sentry",
@@ -178,6 +182,11 @@ const config: Config = {
           position: "right",
           className: "header-github-link",
           'aria-label': "GitHub",
+        },
+        {
+          type: 'html',
+          position: 'right',
+          value: GOOGLE_TRANSLATE_ELEMENT,
         },
       ],
     },
