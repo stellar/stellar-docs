@@ -3,6 +3,10 @@ import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 const sidebar: SidebarsConfig = {
   apisidebar: [
     {
+      type: "doc",
+      id: "platforms/stellar-disbursement-platform/api-reference/stellar-disbursement-platform-api",
+    },
+    {
       type: "category",
       label: "Admin (Tenant Management)",
       link: {
