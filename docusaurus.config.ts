@@ -32,10 +32,12 @@ const config: Config = {
     locales: ["en", "es"],
   },
   scripts: [
-    'https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit',
+    {
+      src: 'https://translate.google.com/translate_a/element.js',
+      async: true,
+    },
   ],
   plugins: [
-    require("./src/google-translate-plugin"),
     "docusaurus-plugin-sass",
     [
       "docusaurus-plugin-sentry",
@@ -173,20 +175,12 @@ const config: Config = {
         navbarItems.tools,
         navbarItems.networks,
         navbarItems.validators,
-        {
-          type: 'localeDropdown',
-          position: 'right',
-        },
+        ...navbarItems.translation,
         {
           href: "https://github.com/stellar/stellar-docs",
           position: "right",
           className: "header-github-link",
           'aria-label': "GitHub",
-        },
-        {
-          type: 'html',
-          position: 'right',
-          value: GOOGLE_TRANSLATE_ELEMENT,
         },
       ],
     },

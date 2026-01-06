@@ -1,4 +1,5 @@
-import type { NavbarItem } from '@docusaurus/theme-common'
+import type { NavbarItem } from '@docusaurus/theme-common';
+import { GOOGLE_TRANSLATE_ELEMENT } from '../constants';
 
 const build: NavbarItem = {
   type: 'dropdown',
@@ -510,6 +511,23 @@ const validators: NavbarItem = {
   ]
 }
 
+const translation: NavbarItem[] = [
+  {
+    type: 'html',
+    position: 'right',
+    value: '<div id="google_translate_element"></div>',
+  },
+  {
+    type: 'html',
+    position: 'right',
+    value: GOOGLE_TRANSLATE_ELEMENT,
+  },
+  {
+    type: 'localeDropdown',
+    position: 'right',
+  },
+]
+
 export default {
   build,
   learn,
@@ -518,4 +536,5 @@ export default {
   tools,
   networks,
   validators,
+  translation,
 }
