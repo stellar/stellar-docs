@@ -3,10 +3,6 @@ import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 const sidebar: SidebarsConfig = {
   apisidebar: [
     {
-      type: "doc",
-      id: "platforms/stellar-disbursement-platform/api-reference/stellar-disbursement-platform-api",
-    },
-    {
       type: "category",
       label: "Admin (Tenant Management)",
       link: {
@@ -440,8 +436,8 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/load-wallet-registration-webview",
-          label: "Load Wallet Registration Webview",
+          id: "platforms/stellar-disbursement-platform/api-reference/start-wallet-registration",
+          label: "Start Wallet Registration",
           className: "api-method get",
         },
         {
