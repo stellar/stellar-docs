@@ -24,7 +24,6 @@ const config: Config = {
   trailingSlash: false,
   onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
-  onBrokenMarkdownLinks: "throw",
   favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
@@ -84,6 +83,9 @@ const config: Config = {
     mermaid: true,
     mdx1Compat: {
       headingIds: true,
+    },
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
     },
   },
   themes: ["docusaurus-theme-openapi-docs", "@docusaurus/theme-mermaid"],
