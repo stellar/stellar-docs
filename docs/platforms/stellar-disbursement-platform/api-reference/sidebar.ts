@@ -400,12 +400,6 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/retry-receiver-invitation",
-          label: "Retry Receiver Invitation",
-          className: "api-method patch",
-        },
-        {
-          type: "doc",
           id: "platforms/stellar-disbursement-platform/api-reference/update-receiver-wallet-status",
           label: "Update Receiver Wallet Status",
           className: "api-method patch",
@@ -466,12 +460,6 @@ const sidebar: SidebarsConfig = {
           type: "doc",
           id: "platforms/stellar-disbursement-platform/api-reference/get-sep-24-info",
           label: "SEP-24 Info",
-          className: "api-method get",
-        },
-        {
-          type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/get-sep-24-transaction",
-          label: "Retrieve SEP-24 Transaction",
           className: "api-method get",
         },
         {
