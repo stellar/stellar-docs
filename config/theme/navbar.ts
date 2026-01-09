@@ -406,6 +406,11 @@ const tools: NavbarItem = {
       activeBasePath: 'docs/tools/quickstart'
     },
     {
+      to: '/docs/tools/openzeppelin-relayer',
+      label: 'OpenZeppelin Relayer',
+      activeBasePath: 'docs/tools/openzeppelin-relayer'
+    },
+    {
       to: '/docs/tools/openzeppelin-contracts',
       label: 'OpenZeppelin Contracts',
       activeBasePath: 'docs/tools/openzeppelin-contracts'
