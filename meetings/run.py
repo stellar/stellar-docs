@@ -162,7 +162,7 @@ def main():
     for x in inputs:
         vid = extract_video_id(x)
         if not vid:
-            print(f"Skipping (could not parse video id): {x}", file=sys.stderr)
+            print(f"Skipping (could not parse video ID): {x}", file=sys.stderr)
             continue
         video_ids.append(vid)
 

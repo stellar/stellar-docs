@@ -109,7 +109,7 @@ def main():
   for x in inputs:
     vid = extract_video_id(x)
     if not vid:
-      print(f"Skipping (bad id): {x}")
+      print(f"Skipping (bad ID): {x}")
       continue
 
     status, vtt_path = fetch_captions(
