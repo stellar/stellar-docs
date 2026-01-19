@@ -38,7 +38,7 @@ function MeetingSeriesIntro(): ReactNode {
       <div className="card__body">
         <h2 className="margin-bottom--sm">Developer Meetings</h2>
         <p className="margin-bottom--sm" style={{ fontSize: "0.9rem" }}>
-          Welcome to the archive of public Stellar meetings. This section collects recordings and notes so you can watch key discussions and follow along at your own pace. Each post below includes notes and the recording, but you can also binge the full series on YouTube. The buttons below go to these lists if you are interested in the "why" behind Stellar’s core design choices (maintained for the SDF).
+          Welcome to the archive of public Stellar meetings. This section collects recordings and notes so you can watch key discussions and follow along at your own pace. Each post below includes notes and the recording, but you can also binge the full series on YouTube. The buttons below go to these lists if you are interested in the "why" behind Stellar’s core design choices (maintained by the SDF).
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
           <Link
