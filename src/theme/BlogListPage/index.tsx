@@ -30,6 +30,92 @@ type DateParts = {
   weekday?: string;
 };
 
+function MainPageText(): ReactNode {
+  const [localMeetingTime, setLocalMeetingTime] = React.useState<string | null>(
+    null,
+  );
+
+  React.useEffect(() => {
+    const nextMeeting = getNextMeetingDate(new Date());
+    const formatter = new Intl.DateTimeFormat(undefined, {
+      weekday: "long",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const timeFormatter = new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const parts = formatter.formatToParts(nextMeeting);
+    const weekday = parts.find((part) => part.type === "weekday")?.value;
+    const time = timeFormatter.format(nextMeeting);
+    const formatted = weekday ? `${weekday}s at ${time}` : time;
+    setLocalMeetingTime(formatted);
+  }, []);
+
+  return (
+    <div className="card margin-bottom--lg">
+      <div className="card__body">
+        <h2 className="margin-bottom--sm">Developer Meetings</h2>
+        <p className="margin-bottom--sm" style={{ fontSize: "0.9rem" }}>
+          These are archived discussions in open Stellar meetings. Feel free to join in weekly on{" "}
+          {localMeetingTime
+            ? `${localMeetingTime} local time`
+            : "1:00 PM Pacific time"}{" "}
+          in{" "}
+          <Link
+            href="https://discord.gg/b9zfSytphY?event=1394227773765062677"
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            Discord events
+          </Link>
+          . Or subscribe to the developer{" "}
+          <Link
+            href="https://groups.google.com/g/stellar-dev/search?q=subject%3Ameeting"
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            mailing list
+          </Link>
+          {" "}
+          for chat notifications.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+          <Link
+            className="button button--primary"
+            style={{ color: "#fff" }}
+            to="/meetings/tags/developer"
+          >
+            Recent
+          </Link>
+          <Link
+            className="button button--primary"
+            style={{ color: "#fff" }}
+            to="/meetings/tags/soroban"
+          >
+            Soroban
+          </Link>
+          <Link
+            className="button button--primary"
+            style={{ color: "#fff" }}
+            to="/meetings/tags/legacy"
+          >
+            Legacy
+          </Link>
+          <Link
+            className="button button--primary"
+            style={{ color: "#fff" }}
+            to="/meetings/tags/community"
+          >
+            Community
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getTimeZoneOffset(date: Date, timeZone: string): number {
   const dtf = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -105,7 +191,7 @@ function getTimeZoneParts(date: Date, timeZone: string): DateParts {
 }
 
 function getNextMeetingDate(now: Date): Date {
-  const laParts = getTimeZoneParts(now, MEETING_TIMEZONE);
+  const ptParts = getTimeZoneParts(now, MEETING_TIMEZONE);
   const weekdayOrder = [
     "Sunday",
     "Monday",
@@ -115,17 +201,17 @@ function getNextMeetingDate(now: Date): Date {
     "Friday",
     "Saturday",
   ];
-  const currentIndex = weekdayOrder.indexOf(laParts.weekday ?? "");
+  const currentIndex = weekdayOrder.indexOf(ptParts.weekday ?? "");
   const targetIndex = weekdayOrder.indexOf(MEETING_WEEKDAY);
   const daysAhead = (targetIndex - currentIndex + 7) % 7 || 7;
-  const nextMeetingLa = {
-    year: laParts.year,
-    month: laParts.month,
-    day: laParts.day + daysAhead,
+  const nextMeetingPT = {
+    year: ptParts.year,
+    month: ptParts.month,
+    day: ptParts.day + daysAhead,
     hour: MEETING_HOUR,
     minute: MEETING_MIN,
   };
-  return makeDateInTimeZone(nextMeetingLa, MEETING_TIMEZONE);
+  return makeDateInTimeZone(nextMeetingPT, MEETING_TIMEZONE);
 }
 
 function BlogListPageMetadata(props: Props): ReactNode {
@@ -144,93 +230,12 @@ function BlogListPageMetadata(props: Props): ReactNode {
   );
 }
 
-function MeetingSeriesIntro(): ReactNode {
-  const [localMeetingTime, setLocalMeetingTime] = React.useState<string | null>(
-    null,
-  );
-
-  React.useEffect(() => {
-    const nextMeeting = getNextMeetingDate(new Date());
-    const formatter = new Intl.DateTimeFormat(undefined, {
-      weekday: "long",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    const parts = formatter.formatToParts(nextMeeting);
-    const weekday = parts.find((part) => part.type === "weekday")?.value;
-    const time = formatter.format(nextMeeting).replace(weekday ?? "", "").trim();
-    const formatted = weekday ? `${weekday}s at ${time}` : formatter.format(nextMeeting);
-    setLocalMeetingTime(formatted);
-  }, []);
-
-  return (
-    <div className="card margin-bottom--lg">
-      <div className="card__body">
-        <h2 className="margin-bottom--sm">Developer Meetings</h2>
-        <p className="margin-bottom--sm" style={{ fontSize: "0.9rem" }}>
-          Watch key discussions in this archive of open Stellar meetings and reference notes. And feel free to join weekly on{" "}
-          {localMeetingTime
-            ? `${localMeetingTime} local time`
-            : `1:00 PM pacific time`}{" "}
-          in{" "}
-          <Link
-            href="https://discord.gg/b9zfSytphY?event=1394227773765062677"
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            Discord events
-          </Link>
-          . You can also subscribe to email notifications in the developer{" "}
-          <Link
-            href="https://groups.google.com/g/stellar-dev/search?q=subject%3Ameeting"
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            mailing list
-          </Link>
-          .
-        </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
-          <Link
-            className="button button--primary"
-            style={{ color: "#fff" }}
-            to="/meetings/tags/developer"
-          >
-            Recent
-          </Link>
-          <Link
-            className="button button--primary"
-            style={{ color: "#fff" }}
-            to="/meetings/tags/soroban"
-          >
-            Soroban
-          </Link>
-          <Link
-            className="button button--primary"
-            style={{ color: "#fff" }}
-            to="/meetings/tags/legacy"
-          >
-            Legacy
-          </Link>
-          <Link
-            className="button button--primary"
-            style={{ color: "#fff" }}
-            to="/meetings/tags/community"
-          >
-            Community
-          </Link>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function BlogListPageContent(props: Props): ReactNode {
   const { metadata, items, sidebar } = props;
   const showMeetingIntro = metadata.permalink === MEETING_ROUTE;
   return (
     <BlogLayout sidebar={sidebar}>
-      {showMeetingIntro && <MeetingSeriesIntro />}
+      {showMeetingIntro && <MainPageText />}
       <BlogPostItems items={items} />
       <BlogListPaginator metadata={metadata} />
     </BlogLayout>
