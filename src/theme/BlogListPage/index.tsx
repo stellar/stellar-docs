@@ -34,23 +34,18 @@ function MainPageText(): ReactNode {
   const [localMeetingTime, setLocalMeetingTime] = React.useState<string | null>(
     null,
   );
+  const fallbackMeetingTime = React.useMemo(
+    () => formatMeetingTimeFallback(),
+    [],
+  );
 
   React.useEffect(() => {
-    const nextMeeting = getNextMeetingDate(new Date());
-    const formatter = new Intl.DateTimeFormat(undefined, {
-      weekday: "long",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    const timeFormatter = new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    const parts = formatter.formatToParts(nextMeeting);
-    const weekday = parts.find((part) => part.type === "weekday")?.value;
-    const time = timeFormatter.format(nextMeeting);
-    const formatted = weekday ? `${weekday}s at ${time}` : time;
-    setLocalMeetingTime(formatted);
+    try {
+      const nextMeeting = getNextMeetingDate(new Date());
+      setLocalMeetingTime(formatMeetingDisplay(nextMeeting));
+    } catch {
+      // use `fallbackMeetingTime`
+    }
   }, []);
 
   return (
@@ -58,28 +53,24 @@ function MainPageText(): ReactNode {
       <div className="card__body">
         <h2 className="margin-bottom--sm">Developer Meetings</h2>
         <p className="margin-bottom--sm" style={{ fontSize: "0.9rem" }}>
-          These are archived discussions in open Stellar meetings. Feel free to join in weekly on{" "}
-          {localMeetingTime
-            ? `${localMeetingTime} local time`
-            : "1:00 PM Pacific time"}{" "}
-          in{" "}
+          These are archived discussions of open Stellar meetings. Anyone can attend them on{" "}
+          {localMeetingTime ?? fallbackMeetingTime}. Join in the{" "}
           <Link
             href="https://discord.gg/b9zfSytphY?event=1394227773765062677"
             target="_blank"
             rel="noreferrer noopener"
           >
-            Discord events
+            developer Discord
           </Link>
-          . Or subscribe to the developer{" "}
+          , and subscribe to the{" "}
           <Link
             href="https://groups.google.com/g/stellar-dev/search?q=subject%3Ameeting"
             target="_blank"
             rel="noreferrer noopener"
           >
             mailing list
-          </Link>
-          {" "}
-          for chat notifications.
+          </Link>{" "}
+          for reminders.
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
           <Link
@@ -114,6 +105,45 @@ function MainPageText(): ReactNode {
       </div>
     </div>
   );
+}
+
+function formatMeetingTimeFallback(): string {
+  const currentYear = new Date().getFullYear();
+  const date = makeDateInTimeZone(
+    {
+      year: currentYear,
+      month: 1,
+      day: 1,
+      hour: MEETING_HOUR,
+      minute: MEETING_MIN,
+    },
+    MEETING_TIMEZONE,
+  );
+  return formatMeetingDisplay(date);
+}
+
+function formatMeetingDisplay(date: Date): string {
+  const formatter = new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: MEETING_TIMEZONE,
+    timeZoneName: "longGeneric",
+  });
+  const timeFormatter = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: MEETING_TIMEZONE,
+  });
+  const parts = formatter.formatToParts(date);
+  const weekday = parts.find((part) => part.type === "weekday")?.value;
+  const timeZoneName = parts.find((part) => part.type === "timeZoneName")
+    ?.value;
+  const time = timeFormatter.format(date);
+  if (!weekday) {
+    return `${time}${timeZoneName ? ` ${timeZoneName}` : ""}`;
+  }
+  return `${weekday}s at ${time}${timeZoneName ? ` ${timeZoneName}` : ""}`;
 }
 
 function getTimeZoneOffset(date: Date, timeZone: string): number {
