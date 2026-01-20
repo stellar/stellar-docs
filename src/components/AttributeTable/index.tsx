@@ -1,10 +1,9 @@
-import React from "react";
-
+import React, { type ReactNode } from "react";
 import { ListItem } from "./ListItem";
 
 import styles from "./styles.module.scss";
 
-export const AttributeTable = ({ children }) => {
+export const AttributeTable = ({ children }): ReactNode => {
 
   const renderArray = [];
   children.props.children
