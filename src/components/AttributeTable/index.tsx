@@ -3,8 +3,7 @@ import { ListItem } from "./ListItem";
 
 import styles from "./styles.module.scss";
 
-export const AttributeTable = ({ children }): ReactNode => {
-
+export function AttributeTable({ children }): ReactNode {
   const renderArray = [];
   children.props.children
     .filter((child) => child !== "\n")
