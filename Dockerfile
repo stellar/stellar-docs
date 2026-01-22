@@ -24,12 +24,13 @@ RUN yarn stellar-cli:build --no-minify --cli-ref=main
 RUN yarn stellar-cli:fix-links
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
-    yarn docusaurus build --no-minify; \
-  else \
-    # In the preview build, we only want to build for English. Much quicker
-    yarn build --no-minify; \
-  fi
+# RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
+#     yarn docusaurus build --no-minify; \
+#   else \
+#     # In the preview build, we only want to build for English. Much quicker
+#     yarn build --no-minify; \
+#   fi
+RUN yarn build --no-minify
 
 FROM nginx:1.29
 
