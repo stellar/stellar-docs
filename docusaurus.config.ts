@@ -103,6 +103,7 @@ const config: Config = {
           routeBasePath: 'meetings',
           onUntruncatedBlogPosts: 'ignore',
           showReadingTime: false,
+          authorsMapPath: 'authors.yml',
         },
         docs: {
           showLastUpdateTime: true,
