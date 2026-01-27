@@ -226,6 +226,12 @@ const sidebar: SidebarsConfig = {
           label: "Update a Disbursement Status",
           className: "api-method patch",
         },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/list-registration-contact-types",
+          label: "List Registration Contact Types",
+          className: "api-method get",
+        },
       ],
     },
     {
@@ -306,6 +312,18 @@ const sidebar: SidebarsConfig = {
           label: "Retrieve a Payment",
           className: "api-method get",
         },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/retry-payments",
+          label: "Retry Payments",
+          className: "api-method patch",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/update-payment-status",
+          label: "Update Payment Status",
+          className: "api-method patch",
+        },
       ],
     },
     {
@@ -328,6 +346,12 @@ const sidebar: SidebarsConfig = {
           label: "Update User Profile",
           className: "api-method patch",
         },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/reset-user-password",
+          label: "Reset Password",
+          className: "api-method patch",
+        },
       ],
     },
     {
@@ -338,6 +362,12 @@ const sidebar: SidebarsConfig = {
         id: "platforms/stellar-disbursement-platform/api-reference/receivers",
       },
       items: [
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/list-receiver-verification-types",
+          label: "List Verification Types",
+          className: "api-method get",
+        },
         {
           type: "doc",
           id: "platforms/stellar-disbursement-platform/api-reference/list-all-receivers",
@@ -362,6 +392,18 @@ const sidebar: SidebarsConfig = {
           label: "Update a Receiver",
           className: "api-method patch",
         },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/update-receiver-wallet",
+          label: "Update Receiver Wallet",
+          className: "api-method patch",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/update-receiver-wallet-status",
+          label: "Update Receiver Wallet Status",
+          className: "api-method patch",
+        },
       ],
     },
     {
@@ -374,8 +416,8 @@ const sidebar: SidebarsConfig = {
       items: [
         {
           type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/start-wallet-registration",
-          label: "Start Wallet Registration",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-receiver-registration-info",
+          label: "Get Receiver Registration Info",
           className: "api-method get",
         },
         {
@@ -389,6 +431,12 @@ const sidebar: SidebarsConfig = {
           id: "platforms/stellar-disbursement-platform/api-reference/verify-receiver-registration",
           label: "Verify Receiver Registration",
           className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/start-wallet-registration",
+          label: "Start Wallet Registration",
+          className: "api-method get",
         },
         {
           type: "doc",
@@ -407,6 +455,12 @@ const sidebar: SidebarsConfig = {
           id: "platforms/stellar-disbursement-platform/api-reference/provide-signed-challenge-transaction",
           label: "Provide Signed Challenge Transaction",
           className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-sep-24-info",
+          label: "SEP-24 Info",
+          className: "api-method get",
         },
         {
           type: "doc",
@@ -523,6 +577,12 @@ const sidebar: SidebarsConfig = {
           id: "platforms/stellar-disbursement-platform/api-reference/update-wallet",
           label: "Update Wallet",
           className: "api-method patch",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/delete-wallet",
+          label: "Delete Wallet",
+          className: "api-method delete",
         },
       ],
     },
