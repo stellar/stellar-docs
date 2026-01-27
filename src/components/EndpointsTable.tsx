@@ -1,4 +1,4 @@
-import React from "react";
+import React, { type ReactNode } from "react";
 import { MethodTable } from "./MethodTable";
 import Translate from "@docusaurus/Translate";
 
@@ -10,6 +10,8 @@ const transledEndpoints = (
   </Translate>
 )
 
-export const EndpointsTable = ({ children, title = transledEndpoints }) => (
-  <MethodTable title={title}>{children}</MethodTable>
-);
+export function EndpointsTable({ children, title = transledEndpoints }): ReactNode {
+  return (
+    <MethodTable title={title}>{children}</MethodTable>
+  );
+};
