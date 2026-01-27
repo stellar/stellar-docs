@@ -5,11 +5,7 @@ import type { LoadContext, Plugin } from "@docusaurus/types";
 // meaning when translated. Case-sensitive to avoid false positives
 // (e.g. "Rust" the language vs "rust" the oxidation).
 const NO_TRANSLATE_WORDS: string[] = [
-  "Stellar",
-  "Soroban",
-  "Horizon",
   "Rust",
-  "XLM",
 ];
 
 export default function noTranslatePlugin(context: LoadContext): Plugin {
