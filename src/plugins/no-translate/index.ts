@@ -43,18 +43,25 @@ export default function noTranslatePlugin(context: LoadContext): Plugin {
 
     var match;
     while ((match = pattern.exec(text)) !== null) {
-      // Append text before the match
-      if (match.index > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      var start = match.index;
+      var end = pattern.lastIndex;
+
+      // Pull surrounding spaces inside the span so Google Translate
+      // cannot collapse them at the notranslate boundary
+      if (start > lastIndex && text[start - 1] === " ") start--;
+      if (end < text.length && text[end] === " ") end++;
+
+      // Append text before the span
+      if (start > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, start)));
       }
 
-      // Wrap the matched word
       var span = document.createElement("span");
       span.className = "notranslate";
-      span.textContent = match[0];
+      span.textContent = text.slice(start, end);
       fragment.appendChild(span);
 
-      lastIndex = pattern.lastIndex;
+      lastIndex = end;
     }
 
     // Append remaining text
