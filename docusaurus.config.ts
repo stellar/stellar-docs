@@ -110,6 +110,7 @@ const config: Config = {
           onUntruncatedBlogPosts: 'ignore',
           showReadingTime: false,
           authorsMapPath: 'authors.yml',
+          exclude: ['**/README.md'],
         },
         docs: {
           showLastUpdateTime: true,
