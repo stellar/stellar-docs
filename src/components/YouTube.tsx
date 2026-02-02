@@ -1,4 +1,4 @@
-import React, { type CSSProperties } from "react";
+import React, { type ReactNode } from 'react';
 
 type YouTubeVid = {
   ID: string;
