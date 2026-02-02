@@ -1,4 +1,4 @@
-import React from "react";
+import React, { type ReactNode } from "react";
 import clsx from "clsx";
 
 import { partition } from "@site/src/helpers";
@@ -11,7 +11,7 @@ const RIGHT_COLUMN_COMPONENTS_NAME = {
   table: "table",
 };
 
-export const WrapperApiReference = ({ children, ...props }) => {
+export function WrapperApiReference({ children, ...props }): ReactNode {
   const [rightColumnContent, middleColumnContent] = React.useMemo(
     () =>
       partition(
