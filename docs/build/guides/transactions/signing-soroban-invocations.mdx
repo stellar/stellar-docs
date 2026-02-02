@@ -1,0 +1,462 @@
+---
+title: "Signing Soroban contract invocations"
+description: "Learn two methods to sign Soroban smart contract invocations: full transaction signing for G-accounts and auth-entry signing for G or C-accounts with sponsored fees."
+sidebar_position: 15
+---
+
+When invoking Soroban smart contracts that require authorization, there are two distinct signing approaches. Understanding when to use each method is essential for building powerful applications that interact with smart contracts.
+
+## Overview
+
+| Method | Who can Sign? | Best For |
+| --- | --- | --- |
+| Transaction signing | G-accounts | G-accounts who fully trust and know how to thoroughly verify the authenticity and security of the transactions. <br />📌 **Note:** This is the only method supported by Stellar Classic. |
+| Auth-entry signing | G-accounts and C-accounts | Smart wallets, multi-party auth, stricter authorization control, relayed and/or sponsored transactions |
+
+In both methods, the sequence number is "spent" by the transaction source account.
+
+## Method 1: Transaction signing
+
+Full transaction signing is the simpler approach where the same account acts as both the transaction source (paying fees and consuming sequence) and the authorizer of the contract invocation. This method works **only with G-accounts** (Stellar accounts starting with `G`).
+
+### When to use
+
+- The calling account owns the keys and can sign the full transaction
+- The caller is willing to pay transaction fees, which can only be paid in XLM and by a G-account
+- You want the simplest integration path
+- Single-party authorization is sufficient
+
+### How it works
+
+1. **Client** builds a transaction with an `invokeHostFunction` operation
+2. **Client** simulates the transaction to get resource requirements and footprint
+3. **Client** signs the entire transaction envelope with the source account's keypair
+4. **Client** submits the signed transaction to the network
+
+When the transaction source account is the same as the address being authorized, the signature on the transaction itself implicitly authorizes the invocation—no separate auth entry signature is needed. This is called "source account authorization" and uses the `sorobanCredentialsSourceAccount` credential type.
+
+### Code example
+
+```typescript
+import {
+  BASE_FEE,
+  Keypair,
+  nativeToScVal,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from "@stellar/stellar-sdk";
+import { Server, Api } from "@stellar/stellar-sdk/rpc";
+
+const rpcUrl = "https://soroban-testnet.stellar.org";
+const server = new Server(rpcUrl);
+
+const sourceKeypair = Keypair.fromSecret("S...");
+
+async function invokeWithFullSigning(
+  contractId: string,
+  recipientAddress: string,
+  amount: bigint,
+): Promise<Api.SendTransactionResponse> {
+  const sourceAccount = await server.getAccount(sourceKeypair.publicKey());
+
+  const transaction = new TransactionBuilder(sourceAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.invokeContractFunction({
+        contract: contractId,
+        function: "transfer",
+        args: [
+          nativeToScVal(sourceKeypair.publicKey(), { type: "address" }),
+          nativeToScVal(recipientAddress, { type: "address" }),
+          nativeToScVal(amount, { type: "i128" }),
+        ],
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  // prepareTransaction simulates and assembles in one step
+  const preparedTx = await server.prepareTransaction(transaction);
+
+  // Sign the transaction envelope
+  preparedTx.sign(sourceKeypair);
+
+  // Submit to network
+  const response = await server.sendTransaction(preparedTx);
+  return response;
+}
+```
+
+:::note[Source account authorization]
+
+For transaction signing, `prepareTransaction` handles simulation internally. Since the source account's signature on the transaction envelope implicitly authorizes the invocation, no separate auth entry signing is needed—and therefore no second simulation is required.
+
+:::
+
+### Key characteristics
+
+- **Sequence number**: Consumed from the source account
+- **Fees**: Paid by the source account
+- **Authorization**: Implicit via transaction signature (for source account credentials)
+- **Limitation**: Cannot be used with C-accounts (contract accounts)
+
+## Method 2: Auth-entry signing
+
+Auth-entry signing decouples authorization from transaction submission. The authorizer signs only the specific contract invocation (an "auth entry"), while a **separate account** acts as the transaction source, paying fees and consuming its own sequence number. This method works for either G-account or C-account clients.
+
+### When to use
+
+- The end-user has a C-account (commonly a smart wallet) — Method 2 is the **only** option for C-accounts, as they cannot sign transaction envelopes. G-accounts can also use this method.
+- The end-user doesn't (need to) have XLM to pay for fees
+- Applications want a fine-grained control over which parts of the contract invocation (and subinvocations) are authorized by each account.
+- Building smart contract protocols where the end-user doesn't submit the transaction
+- Building payment protocols where the transaction source account will be defined at a later point in time
+
+### How it works
+
+1. **Client** builds the transaction using `AssembledTransaction`
+2. **Client** simulates (Recording Mode) to get the authorization tree
+3. **Client** signs the auth entries using `signAuthEntries`
+4. **Client** optionally re-simulates (Enforcing Mode) to validate their signatures
+5. **Client** sends the transaction XDR to the fee-payer
+6. **Fee-payer** parses the XDR and rebuilds with its own G-account as source
+7. **Fee-payer** performs security verifications 🚨 to ensure the incoming transaction does not contain any malicious code.
+8. **Fee-payer** simulates (Enforcing Mode) to catch errors before paying fees
+9. **Fee-payer** signs the transaction envelope and submits
+
+### Simulation modes: Recording vs Enforcing
+
+Transaction simulation has two modes that are critical to understand:
+
+| Mode | When used | What it does |
+| --- | --- | --- |
+| **Recording Mode** | First simulation, before signing | Returns the auth entries that need signatures. Skips `require_auth` validation. |
+| **Enforcing Mode** | Second simulation, after signing | Validates signatures and executes `__check_auth`. Returns accurate resource estimates. |
+
+:::warning Enforcing Mode simulation is required for submission
+
+The first simulation (Recording Mode) **does not execute** the `require_auth` checks — it only records which auth entries are needed. This means the resource estimates from the first simulation are **incomplete**.
+
+The **fee-payer** must simulate in Enforcing Mode, and the **client** is strongly recommended to simulate as well to ensure fees and auth checks are correct when the contract enforces signatures:
+
+| Who | Why |
+| --- | --- |
+| **Client** | Validates signatures before sending to fee-payer and ensures auth enforcement succeeds before it leaves the client. |
+| **Fee-payer** | Verifies the transaction will succeed before submitting and ensures auth enforcement will pass before paying fees. |
+
+Running Enforcing Mode simulation provides two critical benefits:
+
+- **Validates signatures and execution** — Catches auth errors and contract failures before submission. Failed simulations cost nothing; failed submissions cost real fees.
+- **Returns accurate resource estimates** — Recording Mode underestimates fees because it skips auth validation.
+
+See [Transaction Simulation - Authorization](../../../learn/fundamentals/contract-development/contract-interactions/transaction-simulation.mdx#authorization) for more details.
+
+:::
+
+### Auth entry structure
+
+An auth entry signature authorizes a specific invocation tree and includes:
+
+- **Address**: The account authorizing the invocation
+- **Signature expiration ledger**: When the signature becomes invalid (ledger-based, not timestamp)
+- **Nonce**: A unique value for replay protection
+- **Signature**: Signs the SHA-256 hash of the `ENVELOPE_TYPE_SOROBAN_AUTHORIZATION` preimage
+
+:::note Signature expiration
+
+Auth entry signatures expire based on ledger numbers, not timestamps. A typical offset is between 12 and 60 ledgers (approximately 1-5 minutes). The signature is valid until and including the `signatureExpirationLedger`, but invalid at `signatureExpirationLedger + 1`.
+
+Keep expiration windows as small as viable – shorter windows are safer and result in lower transaction costs.
+
+:::
+
+### Code example: Using `AssembledTransaction`
+
+This example shows a token transfer where the sender (client) uses `AssembledTransaction` to build and sign auth entries, then sends the transaction XDR to a fee-payer for submission.
+
+#### Step 1: Client builds and signs auth entries
+
+```typescript
+import { Keypair, Networks, nativeToScVal } from "@stellar/stellar-sdk";
+import {
+  AssembledTransaction,
+  basicNodeSigner,
+} from "@stellar/stellar-sdk/contract";
+import { Api } from "@stellar/stellar-sdk/rpc";
+
+const rpcUrl = "https://soroban-testnet.stellar.org";
+const networkPassphrase = Networks.TESTNET;
+
+// Client's keypair (authorizes the transfer)
+const senderKeypair = Keypair.fromSecret("S...");
+
+async function buildSignedAuthEntries(
+  tokenContractId: string,
+  recipientAddress: string,
+  amount: bigint,
+): Promise<string> {
+  // Build transaction using AssembledTransaction
+  const tx = await AssembledTransaction.build({
+    contractId: tokenContractId,
+    method: "transfer",
+    args: [
+      nativeToScVal(senderKeypair.publicKey(), { type: "address" }),
+      nativeToScVal(recipientAddress, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ],
+    networkPassphrase,
+    rpcUrl,
+    parseResultXdr: (result) => result,
+  });
+
+  // Check simulation result (Recording Mode)
+  if (Api.isSimulationError(tx.simulation)) {
+    throw new Error(`Simulation failed: ${tx.simulation.error}`);
+  }
+
+  // Check who needs to sign
+  const missingSigners = tx.needsNonInvokerSigningBy();
+  if (!missingSigners.includes(senderKeypair.publicKey())) {
+    throw new Error("Sender not in required signers");
+  }
+
+  // Sign auth entries using basicNodeSigner
+  const signer = basicNodeSigner(senderKeypair, networkPassphrase);
+  await tx.signAuthEntries({
+    address: senderKeypair.publicKey(),
+    signAuthEntry: signer.signAuthEntry,
+    expiration: tx.simulation.latestLedger + 60, // ~5 minutes
+  });
+
+  // Re-simulate to validate signatures (📌 Enforcing Mode)
+  await tx.simulate();
+  if (Api.isSimulationError(tx.simulation)) {
+    throw new Error(`Signature validation failed: ${tx.simulation.error}`);
+  }
+
+  // Verify all signatures collected
+  if (tx.needsNonInvokerSigningBy().length > 0) {
+    throw new Error("Missing signatures");
+  }
+
+  // Return transaction XDR for fee-payer
+  return tx.built!.toXDR();
+}
+```
+
+#### Step 2: Fee-payer rebuilds and submits
+
+```typescript
+import {
+  Keypair,
+  Networks,
+  Operation,
+  Transaction,
+  TransactionBuilder,
+  xdr,
+} from "@stellar/stellar-sdk";
+import { Api, assembleTransaction, Server } from "@stellar/stellar-sdk/rpc";
+
+const rpcUrl = "https://soroban-testnet.stellar.org";
+const networkPassphrase = Networks.TESTNET;
+
+const server = new Server(rpcUrl);
+const feePayerKeypair = Keypair.fromSecret("S...");
+
+async function submitWithSignedAuth(
+  transactionXdr: string,
+): Promise<Api.SendTransactionResponse> {
+  // Parse client's transaction to extract operation and Soroban data
+  const clientTx = new Transaction(transactionXdr, networkPassphrase);
+  const txEnvelope = xdr.TransactionEnvelope.fromXDR(transactionXdr, "base64");
+  const sorobanData = txEnvelope.v1()?.tx()?.ext()?.sorobanData();
+
+  if (!sorobanData) {
+    throw new Error("Missing Soroban data");
+  }
+
+  const invokeOp = clientTx.operations[0] as Operation.InvokeHostFunction;
+
+  // 🚨 SECURITY: Verify the transaction/operation source is not the fee-payer's account, and that the auth entries do not reference the fee-payer's account
+
+  // Rebuild transaction with fee-payer as source
+  const feePayerAccount = await server.getAccount(feePayerKeypair.publicKey());
+
+  const rebuiltTx = new TransactionBuilder(feePayerAccount, {
+    fee: clientTx.fee,
+    networkPassphrase,
+    sorobanData,
+  })
+    .setTimeout(30)
+    .addOperation(
+      Operation.invokeHostFunction({
+        func: invokeOp.func,
+        auth: invokeOp.auth || [],
+        source: invokeOp.source,
+      }),
+    )
+    .build();
+
+  // 📌 Simulate before submitting to catch errors without paying fees (Enforcing Mode)
+  const simResult = await server.simulateTransaction(rebuiltTx);
+  if (Api.isSimulationError(simResult)) {
+    throw new Error(`Fee-payer simulation failed: ${simResult.error}`);
+  }
+
+  const assembledTx = assembleTransaction(rebuiltTx, simResult).build();
+
+  // Fee-payer signs and submits
+  assembledTx.sign(feePayerKeypair);
+  return await server.sendTransaction(assembledTx);
+}
+```
+
+### Key characteristics
+
+- **Sequence number**: Consumed from the fee-payer account
+- **Fees**: Paid by the fee-payer account (in XLM)
+- **Client authorization**: Explicit via signed auth entries (separate from transaction signature)
+- **Flexibility**: Works with both G-accounts and C-accounts (contract accounts)
+- **Use case**: Sponsored transactions, relayed transactions, smart wallets, multi-party authorization, fine-grained authorization control
+
+### C-account (smart wallet) authorization
+
+C-accounts (contract accounts starting with `C`) cannot sign transaction envelopes—they can **only** authorize via auth entries. This is because C-accounts don't have traditional keypairs; their authorization logic is defined by the contract code itself (e.g., a smart wallet contract that verifies passkey signatures).
+
+For C-accounts:
+
+- The auth entry signature is produced by the contract's authentication mechanism (e.g., passkeys, multisig logic)
+- A separate G-account must always act as the transaction source to pay fees
+- Wallet interfaces and signing utilities provide `signAuthEntry` APIs for this purpose
+
+#### Signing auth entries with different methods
+
+**Using `basicNodeSigner` for G-accounts (Node.js/backend)**
+
+The `basicNodeSigner` utility creates signing functions from a keypair, providing both `signAuthEntry` and `signTransaction` methods. This is useful for backend services or testing.
+
+```typescript
+import { Keypair } from "@stellar/stellar-sdk";
+import { basicNodeSigner } from "@stellar/stellar-sdk/contract";
+
+const keypair = Keypair.fromSecret("S...");
+const networkPassphrase = "Test SDF Network ; September 2015";
+
+// Create a signer that provides both auth entry and transaction signing
+const signer = basicNodeSigner(keypair, networkPassphrase);
+
+// Sign an auth entry
+const signedAuthEntry = await signer.signAuthEntry(authEntry);
+
+// Sign a transaction envelope
+const signedTransaction = await signer.signTransaction(transactionXDR);
+```
+
+**Using Freighter for C-accounts (browser/wallet)**
+
+Wallet interfaces like [Freighter](../freighter/sign-auth-entries.mdx) provide `signAuthEntry` for C-accounts (smart wallets) where the signing logic is defined by the contract.
+
+```typescript
+import freighterApi from "@stellar/freighter-api";
+
+// Freighter's signAuthEntry returns the signed auth entry
+const signedAuthEntry = await freighterApi.signAuthEntry(preimageXdr);
+```
+
+:::caution[C-account limitations]
+
+C-accounts:
+
+- Cannot be the transaction source account
+- Cannot sign transaction envelopes
+- Must rely on a G-account to pay fees and submit transactions
+- Require their auth entries to be signed according to their contract logic
+
+:::
+
+## Comparison summary
+
+| Aspect | Transaction signing | Auth-entry signing |
+| --- | --- | --- |
+| **Transaction source** | Client (G-account) | Fee-payer (G-account) |
+| **Sequence consumed from** | Client | Fee-payer |
+| **Who signs auth entries?** | N/A (implicit via tx signature) | Client (G or C-account) |
+| **Who signs tx envelope?** | Client | Fee-payer |
+| **Account types supported** | G-accounts only | G and C-accounts |
+
+### Visual: Transaction signing
+
+```
+┌───────────────────────────────────────────────────┐
+│               Transaction Envelope                │
+│  ┌─────────────────────────────────────────────┐  │
+│  │  Source: Client G-account                   │  │
+│  │  Fees: Paid by client                       │  │
+│  │  ┌───────────────────────────────────────┐  │  │
+│  │  │   invokeHostFunction Operation        │  │  │
+│  │  │   Auth: Source account credential     │  │  │
+│  │  └───────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────┘  │
+│  Envelope signature: Client 🔑                    │
+└───────────────────────────────────────────────────┘
+```
+
+### Visual: Auth-entry signing
+
+```
+┌───────────────────────────────────────────────────┐
+│               Transaction Envelope                │
+│  ┌─────────────────────────────────────────────┐  │
+│  │  Source: Fee-payer G-account                │  │
+│  │  Fees: Paid by fee-payer                    │  │
+│  │  ┌───────────────────────────────────────┐  │  │
+│  │  │   invokeHostFunction Operation        │  │  │
+│  │  │   Auth: Signed auth entries ◄─────────┼──┼─── Client signs 🔑
+│  │  │         (G or C-account)              │  │  │
+│  │  └───────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────┘  │
+│  Envelope signature: Fee-payer 🔑                 │
+└───────────────────────────────────────────────────┘
+```
+
+## Real-world use case: Sponsored transactions
+
+A common pattern in payment protocols is for a fee-payer to submit transactions on behalf of users:
+
+1. **Client** builds a transaction and simulates it (Recording Mode)
+2. **Client** signs the auth entries (authorizing the payment)
+3. **Client** optionally re-simulates (Enforcing Mode) to validate signatures
+4. **Client** sends the signed auth entries to the fee-payer service
+5. **Fee-payer** rebuilds the transaction with its own G-account as source
+6. **Fee-payer** re-simulates (Enforcing Mode) to get accurate resource estimates and validate signatures
+7. **Fee-payer** signs the transaction envelope and submits
+
+This allows the fee-payer to sponsor fees while the client retains exclusive control over authorizing their funds.
+
+## Note on Fee-bump transactions
+
+Regardless of the method, the user can still use fee bump transactions as an additional layer in order to separate the account spending their sequence number from the account paying the fees.
+
+More info on fee bump transactions can be found in the [Fee-bump transactions](./fee-bump-transactions.mdx) guide.
+
+## Common pitfalls and gotchas
+
+- **Using Horizon URLs**: Soroban signing requires Soroban RPC, not Horizon. Refer to [Soroban RPC Providers](../../../data/apis/rpc/providers.mdx) for the correct URL to use.
+- **Forgetting to assemble**: Fee-payer flows must `assembleTransaction` after simulation to apply footprint + resource fees.
+- **Missing auth on rebuilt ops**: When rebuilding, include `sorobanData` in the `invokeHostFunction` operation.
+- **Wrong signer**: C-accounts cannot sign envelopes, only auth entries.
+- **Stale auth expiration**: Keep `signatureExpirationLedger` short and aligned with expected submission time.
+
+## Further reading
+
+- [Transaction simulation](../../../learn/fundamentals/contract-development/contract-interactions/transaction-simulation.mdx) — Details on simulation and authorization modes
+- [Multi-party auth example](../../../learn/fundamentals/contract-development/contract-interactions/transaction-simulation.mdx#example-2-multi-party-authentication) — Walkthrough of multi-party signing in simulation using full transaction signing
+- [Contract authorization](../auth/contract-authorization.mdx) — How `require_auth` works in contracts
+- [Sign authorization entries with Freighter](../freighter/sign-auth-entries.mdx) — Wallet integration for auth entry signing
+- [Send to and receive from C-accounts](./send-and-receive-c-accounts.mdx) — Working with contract accounts
+- [Fee-bump transactions](./fee-bump-transactions.mdx) — Using fee bump transactions to pay for transaction fees on behalf of another account without re-signing the transaction
+- [Stellar auth example (community)](https://github.com/fazzatti/stellar-auth-example) — End-to-end auth-entry signing walkthrough
+- [Stellar Asset Contract (SAC)](../tokens/stellar-asset-contract.mdx) — Background on the SAC `transfer`, used in the code examples above
