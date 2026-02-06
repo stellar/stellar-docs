@@ -24,7 +24,7 @@ const config: Config = {
   trailingSlash: false,
   onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
-  favicon: "icons/favicon-96x96.png",
+  favicon: "icons/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   // i18n: {
@@ -164,8 +164,8 @@ const config: Config = {
     navbar: {
       logo: {
         width: 100,
-        src: "icons/stellar-logo.svg",
-        srcDark: "icons/stellar-logo-dark.svg",
+        src: "icons/docusaurus/stellar-logo.svg",
+        srcDark: "icons/docusaurus/stellar-logo-dark.svg",
         href: "/",
       },
       items: [
