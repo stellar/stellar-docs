@@ -1,13 +1,13 @@
 import React from "react";
 import BrowserOnly from '@docusaurus/BrowserOnly';
 import {useColorMode} from '@docusaurus/theme-common';
-import Kotlin from '@site/static/img/docusaurus/kt.png';
-import KotlinDark from '@site/static/img/docusaurus/kt-dark.png';
-import Typescript from '@site/static/img/docusaurus/ts.png';
-import Flutter from '@site/static/img/docusaurus/flutter.png';
-import FlutterDark from '@site/static/img/docusaurus/flutter-dark.png';
-import Swift from '@site/static/img/docusaurus/swift.png';
-import SwiftDark from '@site/static/img/docusaurus/swift-dark.png';
+import Kotlin from '@site/static/icons/docusaurus/kt.png';
+import KotlinDark from '@site/static/icons/docusaurus/kt-dark.png';
+import Typescript from '@site/static/icons/docusaurus/ts.png';
+import Flutter from '@site/static/icons/docusaurus/flutter.png';
+import FlutterDark from '@site/static/icons/docusaurus/flutter-dark.png';
+import Swift from '@site/static/icons/docusaurus/swift.png';
+import SwiftDark from '@site/static/icons/docusaurus/swift-dark.png';
 
 export const LanguageButtons = () => {
     const {colorMode} = useColorMode();
