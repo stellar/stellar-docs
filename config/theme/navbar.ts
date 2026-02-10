@@ -1,4 +1,5 @@
-import type { NavbarItem } from '@docusaurus/theme-common'
+import type { NavbarItem } from '@docusaurus/theme-common';
+import { GOOGLE_TRANSLATE_ELEMENT } from '../constants';
 
 const build: NavbarItem = {
   type: 'dropdown',
@@ -77,6 +78,11 @@ const build: NavbarItem = {
       to: '/docs/build/apps/dapp-frontend',
       label: 'Tutorial: Dapp Frontend',
       activeBasePath: 'docs/build/apps/dapp-frontend',
+    },
+    {
+      to: '/docs/build/apps/zk',
+      label: 'ZK Proofs on Stellar',
+      activeBasePath: 'docs/build/apps/zk',
     },
     {
       type: 'html',
@@ -360,11 +366,6 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/indexers/build-your-own'
     },
     {
-      to: '/docs/data/indexers/indexer-providers',
-      label: 'Providers',
-      activeBasePath: 'docs/data/indexers/indexer-providers'
-    },
-    {
       type: 'html',
       value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
       className:'subtitle'
@@ -408,6 +409,11 @@ const tools: NavbarItem = {
       to: '/docs/tools/quickstart',
       label: 'Quickstart',
       activeBasePath: 'docs/tools/quickstart'
+    },
+    {
+      to: '/docs/tools/openzeppelin-relayer',
+      label: 'OpenZeppelin Relayer',
+      activeBasePath: 'docs/tools/openzeppelin-relayer'
     },
     {
       to: '/docs/tools/openzeppelin-contracts',
@@ -510,6 +516,23 @@ const validators: NavbarItem = {
   ]
 }
 
+const translation: NavbarItem[] = [
+  {
+    type: 'html',
+    position: 'right',
+    value: '<div id="google_translate_element"></div>',
+  },
+  {
+    type: 'html',
+    position: 'right',
+    value: GOOGLE_TRANSLATE_ELEMENT,
+  },
+  // {
+  //   type: 'localeDropdown',
+  //   position: 'right',
+  // },
+]
+
 export default {
   build,
   learn,
@@ -518,4 +541,5 @@ export default {
   tools,
   networks,
   validators,
+  translation,
 }
