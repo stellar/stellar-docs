@@ -1,4 +1,5 @@
-import type { NavbarItem } from '@docusaurus/theme-common'
+import type { NavbarItem } from '@docusaurus/theme-common';
+import { GOOGLE_TRANSLATE_ELEMENT } from '../constants';
 
 const build: NavbarItem = {
   type: 'dropdown',
@@ -79,9 +80,9 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/apps/dapp-frontend',
     },
     {
-      to: '/docs/build/apps/smart-wallets',
-      label: 'Smart Wallets',
-      activeBasePath: 'docs/build/apps/smart-wallets',
+      to: '/docs/build/apps/zk',
+      label: 'ZK Proofs on Stellar',
+      activeBasePath: 'docs/build/apps/zk',
     },
     {
       type: 'html',
@@ -92,6 +93,11 @@ const build: NavbarItem = {
       to: '/docs/build/guides/auth',
       label: 'Contract Authorization',
       activeBasePath: 'docs/build/guides/auth',
+    },
+    {
+      to: '/docs/build/guides/contract-accounts',
+      label: 'Contract Accounts',
+      activeBasePath: 'docs/build/guides/contract-accounts',
     },
     {
       to: '/docs/build/guides/conventions',
@@ -360,11 +366,6 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/indexers/build-your-own'
     },
     {
-      to: '/docs/data/indexers/indexer-providers',
-      label: 'Providers',
-      activeBasePath: 'docs/data/indexers/indexer-providers'
-    },
-    {
       type: 'html',
       value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
       className:'subtitle'
@@ -410,6 +411,11 @@ const tools: NavbarItem = {
       activeBasePath: 'docs/tools/quickstart'
     },
     {
+      to: '/docs/tools/openzeppelin-relayer',
+      label: 'OpenZeppelin Relayer',
+      activeBasePath: 'docs/tools/openzeppelin-relayer'
+    },
+    {
       to: '/docs/tools/openzeppelin-contracts',
       label: 'OpenZeppelin Contracts',
       activeBasePath: 'docs/tools/openzeppelin-contracts'
@@ -434,7 +440,7 @@ const tools: NavbarItem = {
       label: 'MoneyGram Ramps',
       activeBasePath: '/docs/tools/ramps/moneygram'
     },
-                {
+    {
       type: 'html',
       value: '<hr><small>Infra Tools</small>',
       className: 'subtitle',
@@ -450,11 +456,15 @@ const tools: NavbarItem = {
       className: 'subtitle',
     },
     {
-      to: "/platforms/anchor-platform",
+      type: 'docSidebar',
+      // docId: "docs/platforms/anchor-platform/README",
+      sidebarId: 'anchor_platform',
       label: "Anchor Platform",
     },
     {
-      to: "/platforms/stellar-disbursement-platform",
+      type: 'docSidebar',
+      // docId: "docs/platforms/stellar-disbursement-platform/README",
+      sidebarId: 'stellar_disbursement_platform',
       label: "Stellar Disbursement Platform",
     },
   ]
@@ -506,6 +516,23 @@ const validators: NavbarItem = {
   ]
 }
 
+const translation: NavbarItem[] = [
+  {
+    type: 'html',
+    position: 'right',
+    value: '<div id="google_translate_element"></div>',
+  },
+  {
+    type: 'html',
+    position: 'right',
+    value: GOOGLE_TRANSLATE_ELEMENT,
+  },
+  // {
+  //   type: 'localeDropdown',
+  //   position: 'right',
+  // },
+]
+
 export default {
   build,
   learn,
@@ -514,4 +541,5 @@ export default {
   tools,
   networks,
   validators,
+  translation,
 }

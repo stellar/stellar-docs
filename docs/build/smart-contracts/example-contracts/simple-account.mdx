@@ -1,0 +1,175 @@
+---
+title: Simple Account
+sidebar_label: Simple Account
+description: A minimal contract account secured by a single ed25519 public key.
+sidebar_position: 15
+---
+
+<head>
+  <title>Simple Account</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Minimal contract account secured by a single ed25519 public key."
+  />
+  <meta
+    property="og:description"
+    content="Walk through the simple Soroban account example to see how __check_auth can be implemented with one key."
+  />
+</head>
+
+This example implements the smallest possible [contract account](../../../learn/glossary.mdx#contract-account): each `require_auth` call delegates to one ed25519 public key. It shows how to store that key, run `__check_auth`, and surface authorization failures. Use this as the baseline before moving to the [Complex Account example](./complex-account.mdx) for multisig or policy enforcement.
+
+:::danger
+
+Implementing a contract account requires a very good understanding of authentication and authorization and requires rigorous testing and review. The example here is _not_ a full-fledged account contract - use it as an API reference only.
+
+:::
+
+:::caution
+
+While contract accounts are supported by the Stellar protocol and Soroban SDK, the full client support (such as transaction simulation) is still under development.
+
+:::
+
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
+
+## Run the Example
+
+1. Finish the [Setup] checklist to install the Stellar CLI, Rust target, and required environment variables.
+2. Clone the `soroban-examples` repository at the `v23.0.0` tag:
+
+```sh
+git clone -b v23.0.0 https://github.com/stellar/soroban-examples
+```
+
+3. If you prefer not to install anything locally, launch the repo in [GitHub Codespaces][open-in-github-codespaces] or [Codeanywhere][open-in-code-anywhere].
+
+Run the tests from the `simple_account` directory:
+
+```sh
+cd simple_account
+cargo test
+```
+
+Expected output:
+
+```
+running 1 test
+test test::test_account ... ok
+```
+
+[setup]: ../getting-started/setup.mdx
+
+## How it Works
+
+Open `simple_account/src/lib.rs`. The contract keeps one piece of state: the owner's ed25519 public key.
+
+### Initialize the owner
+
+```rust title="simple_account/src/lib.rs"
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    Owner,
+}
+
+#[contractimpl]
+impl SimpleAccount {
+    pub fn init(env: Env, public_key: BytesN<32>) {
+        if env.storage().instance().has(&DataKey::Owner) {
+            panic!("owner is already set");
+        }
+        env.storage().instance().set(&DataKey::Owner, &public_key);
+    }
+```
+
+Call `init` once to persist the owner's public key. Subsequent calls panic to prevent replacement of the key.
+
+### Implement `__check_auth`
+
+```rust title="simple_account/src/lib.rs"
+    #[allow(non_snake_case)]
+    pub fn __check_auth(
+        env: Env,
+        signature_payload: BytesN<32>,
+        signature: BytesN<64>,
+        _auth_context: Vec<Context>,
+    ) {
+        let public_key: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owner)
+            .unwrap();
+        env.crypto()
+            .ed25519_verify(&public_key, &signature_payload.into(), &signature);
+    }
+}
+```
+
+`__check_auth` runs whenever another contract invokes `require_auth` on this contract address. The implementation loads the stored key, verifies the signature, and panics on failure so the upstream `require_auth` call rejects. Once you need multiple keys or policy logic, follow the same pattern shown in Complex Account.
+
+## Tests
+
+Open `simple_account/src/test.rs`. `__check_auth` is not exposed as a regular entry point, so tests call `env.try_invoke_contract_check_auth` to emulate the Soroban host and exercise the same path Soroban runs during `require_auth`.
+
+```rust title="simple_account/src/test.rs"
+#[test]
+fn test_account() {
+    let env = Env::default();
+    let account_contract = SimpleAccountClient::new(&env, &env.register(SimpleAccount, ()));
+
+    let signer = Keypair::generate(&mut thread_rng());
+    account_contract.init(&signer.public.to_bytes().into_val(&env));
+
+    let payload = BytesN::random(&env);
+    env.try_invoke_contract_check_auth::<Error>(
+        &account_contract.address,
+        &payload,
+        sign(&env, &signer, &payload),
+        &vec![&env],
+    )
+    .unwrap();
+
+    assert!(env
+        .try_invoke_contract_check_auth::<Error>(
+            &account_contract.address,
+            &payload,
+            BytesN::<64>::random(&env).into(),
+            &vec![&env],
+        )
+        .is_err());
+}
+```
+
+`try_invoke_contract_check_auth` mimics the host path for `require_auth`, so the test proves both the success case and a failure case with random bytes.
+
+Follow the same structure for any account:
+
+- create a keypair and store the expected signer (for example, with `init`)
+- call `try_invoke_contract_check_auth` with a valid signature and assert it succeeds
+- call it again with an invalid signature or payload and assert it fails
+
+## Build the Contract
+
+To produce the Wasm executable, run:
+
+```sh
+stellar contract build
+# add --package soroban-simple-account-contract when building inside the soroban-examples workspace
+```
+
+The compiled file appears at `target/wasm32v1-none/release/simple_account.wasm` (the exact filename depends on your crate name).
+
+## Further Reading
+
+- [Complex account example] – adds multisig support and spend limits.
+- [BLS signature contract](./bls-signature.mdx) – demonstrates custom signature schemes inside `__check_auth`.
+
+[Complex account example]: ./complex-account.mdx
+[simple account example]: https://github.com/stellar/soroban-examples/tree/v23.0.0/simple_account

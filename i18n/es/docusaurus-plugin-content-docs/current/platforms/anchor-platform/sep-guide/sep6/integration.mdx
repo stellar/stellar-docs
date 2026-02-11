@@ -1,0 +1,897 @@
+---
+title: Integración
+sidebar_position: 30
+---
+
+import Security from "../../admin-guide/component/security/security.mdx";
+import UsingApiKey from "../../admin-guide/component/security/api_key.mdx";
+import UsingJwt from "../../admin-guide/component/security/jwt.mdx";
+import Rpc from "../../admin-guide/component/rpc/rpc.mdx";
+import RpcRequest from "../../admin-guide/component/rpc/request.mdx";
+import RpcResponse from "../../admin-guide/component/rpc/response.mdx";
+import RpcError from "../../admin-guide/component/rpc/error.mdx";
+import Observer from "../../admin-guide/component/observer/observer.mdx";
+
+Uno de los puntos principales de interacción con Anchor Platform es notificar a la Plataforma sobre eventos relacionados con las transacciones.
+
+En general, querrás proporcionar actualizaciones para los siguientes eventos.
+
+- Tu negocio requiere que el usuario envíe información KYC para procesar una transacción
+- Tu negocio actualizó las cantidades de entrada/salida/comisión para una transacción
+- Tu negocio está listo para recibir fondos del usuario
+- Tu negocio ha recibido fondos del usuario
+- Tu negocio ha enviado fondos al usuario
+- Tu negocio ha procesado un reembolso para la transacción del usuario
+- Tu negocio experimentó un error inesperado
+
+Esto se realiza haciendo solicitudes JSON-RPC al punto final de la API de la Plataforma. Las solicitudes JSON-RPC te permiten actualizar el estado de la transacción. Para mover la transacción a un estado específico, es necesario hacer una solicitud JSON-RPC correspondiente y pasar los datos requeridos por el método RPC.
+
+La API JSON-RPC de Anchor Platform está diseñada para notificar a la plataforma sobre cambios en el estado de la transacción. Dado esto, la API será llamada cada vez que un usuario o el anchor tome alguna acción que progrese el estado de la transacción en el flujo.
+
+La comunicación desde Anchor Platform sobre actualizaciones de transacciones, actualizaciones de clientes y creación de cotizaciones se maneja a través del servicio de eventos. Esta es una función opcional que debe configurarse separadamente de la integración SEP-6. Para más información, consulta [Manejo de Eventos][event-handling].
+
+Puedes obtener más información sobre el flujo y los estados de la transacción en el [documento del protocolo SEP-6][sep-6].
+
+## Callbacks
+
+Anchor Platform depende del servidor del negocio para proporcionar y almacenar información sobre clientes y cotizaciones.
+
+### Información del Cliente
+
+Anchor Platform no almacena información del cliente. En cambio, reenvía todas las solicitudes SEP-12 de clientes al servidor del negocio. El servidor del negocio es responsable de almacenar y gestionar esta información. Por lo tanto, tu servidor del negocio debe implementar las [APIs de cliente][customer-callback] para manejar actualizaciones KYC.
+
+### Cotizaciones y Tarifas
+
+Para admitir el intercambio de activos no equivalentes, Anchor Platform expone una API compatible con SEP-38 para proporcionar cotizaciones del exchange. La API de cotizaciones se usa para proporcionar al usuario la cantidad esperada del activo que recibirá a cambio del activo que está enviando. La API de cotizaciones también se usa para proporcionar al usuario las tarifas esperadas para la transacción. Por lo tanto, tu servidor del negocio debe implementar la [API de tarifas][rate-callback] para proporcionar cotizaciones a Anchor Platform.
+
+## Asegurar la API de la Plataforma
+
+<Security />
+
+### Uso de Clave API
+
+<UsingApiKey />
+
+### Uso de JWT
+
+<UsingJwt />
+
+## Realizando solicitudes JSON-RPC
+
+<Rpc />
+
+### Solicitud JSON-RPC
+
+<RpcRequest />
+
+### Respuesta JSON-RPC
+
+<RpcResponse />
+
+### Códigos de error
+
+<RpcError />
+
+## Actualizando Transacción de Depósito (Exchange) vía JSON-RPC
+
+El diagrama del flujo de depósito SEP-6 define las secuencias/reglas de la transición de estados de la transacción y un conjunto de métodos JSON-RPC que deben llamarse para cambiar ese estado. No puedes definir el estado que quieres establecer para una transacción específica en tus solicitudes. Cada método JSON-RPC define las estructuras de datos que espera en la solicitud. Si la solicitud no contiene atributos requeridos, Anchor Platform devolverá un error y no cambiará el estado de la transacción.
+
+El flujo de depósito exchange es igual que el flujo de depósito, excepto que no será necesario recalcular las cantidades al solicitar fondos fuera de cadena, si el usuario ha proporcionado una cotización firme del anchor.
+
+[![sep6 deposit flow](/assets/ap/sep6-deposit-flow-diagram.png)](/assets/ap/sep6-deposit-flow-diagram.png)
+
+:::tip
+
+Los estados en <span style={{color: "green"}}>verde</span> son obligatorios y definen el camino más corto.
+
+Los estados en <span style={{color: "#B0BF1A"}}>amarillo</span> son opcionales y pueden omitirse.
+
+Los estados en <span style={{color: "red"}}>rojo</span> indican que la transacción está en un estado de error o ha caducado.
+
+:::
+
+### Verificación de Información KYC
+
+Aunque Anchor Platform no requiere que un cliente tenga su información KYC recopilada antes de iniciar un depósito, tu negocio puede querer recolectar esta información antes de que el cliente haga una transferencia. Escuchando eventos de creación de transacciones, o consultando el punto final [`GET /transactions`][get-transactions], puedes determinar si una transacción requiere que el cliente actualice su información. Los campos requeridos SEP-9 pueden comunicarse al usuario devolviendo un estado `NEEDS_INFO` con los campos requeridos en el atributo `fields`.
+
+Después de que el usuario haya enviado su información KYC, llama al método JSON-RPC `notify_customer_info_updated` para actualizar el estado de la transacción. Además, llama a este método siempre que el estado SEP-12 de un cliente cambie, por ejemplo, cuando la información del cliente está siendo validada y el estado cambia de `NEEDS_INFO` a `PROCESSING`. Esto asegura que cualquier cliente configurado con una URL de callback sea notificado del último estado del cliente, permitiendo que el cliente solicite al usuario actualizar su información.
+
+<CodeExample>
+
+```json
+// notify-customer-info-updated.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_customer_info_updated",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Customer info updated",
+      "customer_id": "45f8884d-d6e1-477f-a680-503179263359",
+      "customer_type": "sep6-deposit" // or sep6-withdrawal
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh notify-customer-info-updated.json
+```
+
+</CodeExample>
+
+### Listo para Recibir Fondos
+
+Después de que el usuario haya enviado su información KYC, el anchor puede notificar a la Plataforma que está listo para recibir fondos. El anchor debe usar el RPC `request_offchain_funds` para proporcionar las cantidades finales al usuario. Para ello, realiza la siguiente solicitud JSON-RPC.
+
+<CodeExample>
+
+```json
+// request-offchain-funds.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "request_offchain_funds",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Request offchain funds",
+      "amount_in": {
+        "amount": 10,
+        "asset": "iso4217:USD"
+      },
+      "amount_out": {
+        "amount": 9,
+        "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+      },
+      "fee_details": {
+        "total": 1,
+        "asset": "iso4217:USD"
+      },
+      "amount_expected": {
+        "amount": 10
+      },
+      "instructions": {
+        "organization.bank_number": {
+          "value": "123456789",
+          "description": "US Bank routing number"
+        },
+        "organization.bank_account_number": {
+          "value": "123456789",
+          "description": "US Bank account number"
+        }
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `amount_in` es la cantidad que el usuario debe enviar al negocio.
+- `amount_out` es la cantidad que el usuario recibirá.
+- `fee_details` es la cantidad total de comisiones recogidas por el negocio.
+- `asset` es parte del campo `amount_x` y está en formato SEP-38. En este ejemplo, está configurado en USD, asumiendo que el usuario realizó una transferencia bancaria al sistema usando USD.
+- `instructions` es el conjunto de campos estándar SEP-9 que el usuario debe usar para enviar fondos al negocio. En este ejemplo, el usuario debe enviar fondos a la cuenta bancaria con el número de ruta `123456789` y número de cuenta `123456789`.
+
+La información sobre las cantidades (entrada/salida/comisión) es obligatoria si quieres mover la transacción al estado `pending_user_transfer_start`.
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh request-offchain-funds.json
+```
+
+</CodeExample>
+
+:::caution
+
+Para depósitos exchange con cotización firme (la solicitud está asociada con un `quote_id`), no deben proporcionarse cantidades.
+
+:::
+
+### Fondos Recibidos
+
+Si se recibieron fondos fuera de cadena, querrás proporcionar información actualizada de la transacción.
+
+<CodeExample>
+
+```json
+// offchain-funds-received.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_received",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds received",
+      "funds_received_at": "2023-07-04T12:34:56Z",
+      "external_transaction_id": "7...9",
+      "amount_in": {
+        "amount": 10
+      },
+      "amount_out": {
+        "amount": 9
+      },
+      "fee_details": {
+        "total": 1
+      },
+      "amount_expected": {
+        "amount": 10
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `funds_received_at` es la fecha y hora de recepción de los fondos.
+- `external_transaction_id` es el ID de la transacción en la red externa.
+
+Los campos de cantidad son opcionales. Si se omiten, se usarán los valores anteriores a esta solicitud.
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-received.json
+```
+
+</CodeExample>
+
+### Esperando Fondos del Usuario
+
+En el mundo real, el proceso de confirmación de transferencia puede llevar tiempo. En tales casos, las transacciones deben establecerse en un nuevo estado que indique que la confirmación de la transferencia ha sido recibida pero los fondos aún no han sido recibidos.
+
+<CodeExample>
+
+```json
+// offchain-funds-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds sent",
+      "funds_received_at": "2023-07-04T12:34:56Z",
+      "external_transaction_id": "7...9"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-sent.json
+```
+
+</CodeExample>
+
+### Enviando Fondos Onchain
+
+Luego, envía una transacción en la red Stellar para cumplir con el depósito del usuario. Después de que la transacción Stellar haya sido enviada, es necesario enviar la solicitud JSON-RPC `notify_onchain_funds_sent` para notificar al usuario que los fondos fueron enviados exitosamente.
+
+<CodeExample>
+
+```json
+// onchain-funds-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_onchain_funds_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Onchain funds sent",
+      "stellar_transaction_id": "7...9"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `stellar_transaction_id` es el ID de la transacción en la red Stellar de la transferencia.
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh onchain-funds-sent.json
+```
+
+</CodeExample>
+
+Después de esta solicitud JSON-RPC, la transacción cambiará al estado `completed`.
+
+### Confianza Pendiente
+
+Este estado debe establecerse si un pago requiere una trustline de activo que el usuario no ha configurado. Hay dos formas en que la transacción puede moverse al estado `pending_trust`. La primera es cuando el servidor del negocio detecta que la trustline no está configurada. La segunda es cuando el negocio mismo detecta que falta la trustline y quiere notificar al usuario que debe configurarla. Para mover la transacción al estado `pending_trust`, realiza la siguiente solicitud JSON-RPC.
+
+<CodeExample>
+
+```json
+// request-trust.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "request_trust",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Asset trustine not configured"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh request-trust.json
+```
+
+</CodeExample>
+
+:::info
+
+El sistema de procesamiento de pagos verifica periódicamente si la trustline fue configurada. Si lo estuvo, enviará automáticamente un pago y cambiará el estado de la transacción a `pending_stellar`.
+
+:::
+
+### Trust Set
+
+Este estado debe establecerse si el negocio ha detectado que la trustline fue o no configurada por el usuario.
+
+<CodeExample>
+
+```json
+// trust-set.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_trust_set",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Asset trustine set",
+      "success": "true"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- Flag `success` que define si la trustline fue o no configurada por el usuario
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh trust-set.json
+```
+
+</CodeExample>
+
+:::info
+
+Dependiendo del flag `success`, el estado de la transacción cambiará a `pending_stellar` si la trustline fue configurada o a `pending_anchor` si no lo fue.
+
+:::
+
+### Reembolso Enviado
+
+A veces, es necesario devolver fondos al usuario (reembolso). Puedes reembolsar la suma total (reembolso completo) o hacer varios reembolsos parciales a la `source_account` usando el `refund_memo` y `refund_memo_type` asociados con la transacción, si están presentes. Además, si el usuario envió más dinero del esperado, puedes reembolsar una parte al usuario y enviar el resto como fondos onchain.
+
+<CodeExample>
+
+```json
+// refund-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_refund_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Refund sent",
+      "refund": {
+        "id": "1c186184-09ee-486c-82a6-aa7a0ab1119c",
+        "amount": {
+          "amount": 10,
+          "asset": "iso4217:USD"
+        },
+        "fee_details": {
+          "total": 1,
+          "asset": "iso4217:USD"
+        }
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh refund-sent.json
+```
+
+</CodeExample>
+
+:::info
+
+Si la suma de los reembolsos es menor que `amount_in`, el estado de la transacción será `pending_anchor`. Solo si la suma de los reembolsos es igual a `amount_in`, el estado de la transacción será `refunded`.
+
+:::
+
+### Reembolso Pendiente
+
+Este es similar a [Reembolso Enviado](#refund-sent), pero maneja el caso cuando un reembolso ha sido enviado a la red externa pero aún no confirmado. El estado de la transacción se establece en `pending_external`. Este es el estado que se configurará cuando se espere que Bitcoin u otra red externa de cripto complete una transacción, o cuando se espere una transferencia bancaria.
+
+### Error de Transacción
+
+Si encuentras un error irrecuperable al procesar la transacción, es necesario configurar el estado de la transacción a `error`. Puedes usar el campo mensaje para describir los detalles del error.
+
+<CodeExample>
+
+```json
+// transaction-error.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_error",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Error occurred"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-error.json
+```
+
+</CodeExample>
+
+:::tip
+
+Si un usuario hizo una transferencia, debes hacer una recuperación de la transacción, y luego puedes reintentar procesarla o iniciar un reembolso.
+
+:::
+
+### Transacción Caducada
+
+Tu negocio puede querer manejar transacciones abandonadas expirándolas después de que permanezcan inactivas por un periodo determinado. Para lograrlo, verifica el estado de la transacción usando el punto final `GET /transactions` y ordena los resultados por la marca temporal `user_action_required_by`. Si la marca temporal ha pasado, ejecuta manualmente la lógica correspondiente, como caducar la transacción o iniciar un reembolso automático, basado en el estado actual de la transacción.
+
+<CodeExample>
+
+```json
+// transaction-expired.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_expired",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction expired"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-expired.json
+```
+
+</CodeExample>
+
+:::tip
+
+Este método JSON-RPC no puede usarse después de que el usuario haya hecho una transferencia.
+
+:::
+
+### Recuperación de Transacción
+
+El estado de la transacción puede cambiarse de `error/expired` a `pending_anchor`. Después de la recuperación, puedes reembolsar los activos recibidos o continuar con el procesamiento de la transacción. Para recuperar una transacción, realiza la siguiente solicitud JSON-RPC.
+
+<CodeExample>
+
+```json
+// transaction-recovery.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_recovery",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction recovered"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-recovery.json
+```
+
+</CodeExample>
+
+## Actualizando Transacción de Retirada (Exchange) vía JSON-RPC
+
+El diagrama del flujo de retirada SEP-6 define la secuencia/reglas de la transición de estados de la transacción. No puedes definir el estado que quieres establecer para una transacción específica en tus solicitudes. Cada método JSON-RPC define las estructuras de datos que espera en la solicitud. Si la solicitud no contiene atributos requeridos, Anchor Platform devolverá un error y no cambiará el estado de la transacción.
+
+El flujo de retirada exchange es igual que el flujo de retirada, excepto que no será necesario recalcular las cantidades al solicitar fondos onchain, si el usuario ha proporcionado una cotización firme del anchor.
+
+[![sep6 withdrawal flow](/assets/ap/sep6-withdrawal-flow-diagram.png)](/assets/ap/sep6-withdrawal-flow-diagram.png)
+
+:::tip
+
+Los estados en <span style={{color: "green"}}>verde</span> son obligatorios y definen el camino más corto.
+
+Los estados en <span style={{color: "#B0BF1A"}}>amarillo</span> son opcionales y pueden omitirse.
+
+Los estados en <span style={{color: "red"}}>rojo</span> indican que la transacción está en un estado de error o ha caducado.
+
+:::
+
+Una vez que el flujo de retirada ha terminado, implementar la retirada es sencillo. Algunas partes del flujo son similares y pueden reutilizarse.
+
+El punto de partida tanto para retirada como para depósito es el mismo.
+
+### Listo para Recibir Fondos
+
+De manera similar al depósito, el paso después de que se ha recopilado KYC es notificar al usuario que el anchor está listo para recibir fondos. Sin embargo, como tu servicio estará recibiendo transacciones sobre la red Stellar, la solicitud RPC será diferente. El anchor debe usar el RPC `request_onchain_funds` para proporcionar las cantidades finales al usuario. Para ello, realiza la siguiente solicitud JSON-RPC.
+
+<CodeExample>
+
+```json
+// request-onchain-funds.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "request_onchain_funds",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Request onchain funds",
+      "amount_in": {
+        "amount": 10,
+        "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+      },
+      "amount_out": {
+        "amount": 9,
+        "asset": "iso4217:USD"
+      },
+      "fee_details": {
+        "total": 1,
+        "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+      },
+      "amount_expected": {
+        "amount": 10
+      },
+      "destination_account": "GD...G",
+      "memo": "12345",
+      "memo_type": "id"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `amount_in` es la cantidad que el usuario debe enviar al negocio.
+- `amount_out` es la cantidad que el usuario recibirá.
+- `fee_details` es la cantidad total de comisiones recogidas por el negocio.
+- `asset` es parte del campo `amount_x` y está en formato SEP-38. En este ejemplo, está configurado en USD, asumiendo que el usuario realizó una transferencia bancaria al sistema usando USD.
+- `memo` es el memo que el usuario debe usar al enviar sus fondos onchain al anchor.
+- `memo_type` es el tipo de memo que el usuario debe usar al enviar sus fondos onchain al anchor.
+- `destination_account` es la cuenta a la que el usuario debe enviar los fondos.
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh request-onchain-funds.json
+```
+
+</CodeExample>
+
+:::caution
+
+Para retiradas exchange con cotización firme (la solicitud está asociada con un `quote_id`), no deben proporcionarse cantidades.
+
+:::
+
+:::tip
+
+Configurar `memo`, `memo_type` y `destination_account` es opcional.
+
+Si la integración con un custodio tercero está habilitada, Anchor Platform puede generar `memo`, `memo_type` y `destination_address` si se elige un `deposit_info_generator_type` correspondiente. También puedes proporcionar `memo` y `memo_type` a la solicitud como se muestra arriba. Nota que el memo debe ser único, esto ayuda a asociar transacciones Stellar con transacciones SEP.
+
+Si tu negocio administra los activos, Anchor Platform puede generar memos por ti. Cuando el estado cambia a `pending_user_transfer_start`, Anchor Platform asigna automáticamente `memo` y `memo_type` (solo si no están incluidos en la solicitud).
+
+:::
+
+:::note
+
+Debe configurarse la cuenta Stellar que se usará para recibir fondos.
+
+:::
+
+### Fondos Recibidos
+
+Si se recibieron fondos onchain, necesitas proporcionar las cantidades y cambiar el estado de la transacción a `pending_anchor`.
+
+<CodeExample>
+
+```json
+// onchain-funds-received.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_onchain_funds_received",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Onchain funds received",
+      "stellar_transaction_id": "7...9",
+      "amount_in": {
+        "amount": 10
+      },
+      "amount_out": {
+        "amount": 9
+      },
+      "fee_details": {
+        "total": 1
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh onchain-funds-received.json
+```
+
+</CodeExample>
+
+:::tip
+
+Este método será llamado por el observador de pagos Stellar cuando detecte que se han recibido fondos onchain.
+
+:::
+
+### Cantidad Actualizada
+
+Si se recibieron fondos onchain, pero por alguna razón `amount_in` difiere de lo especificado en el flujo interactivo (`amount_expected`), puedes actualizar `amount_out` y `fee_details` para que correspondan al `amount_in` real. El estado de la transacción en este caso no cambiará y seguirá siendo `pending_anchor`.
+
+<CodeExample>
+
+```json
+// amounts-updated.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_amounts_updated",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Amounts updated",
+      "amount_out": {
+        "amount": 9
+      },
+      "fee_details": {
+        "total": 1
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh amounts-updated.json
+```
+
+</CodeExample>
+
+:::note
+
+Solo `amount_out` y `fee_details` pueden actualizarse usando esta solicitud JSON-RPC, y no necesitas especificar los activos de las cantidades.
+
+:::
+
+### Fondos Fuera de Cadena Disponibles
+
+Puedes mover el estado de la transacción a `pending_user_transfer_complete` si se enviaron fondos fuera de cadena y está listo para que el usuario/beneficiario los recoja.
+
+<CodeExample>
+
+```json
+// offchain-funds-available.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_available",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds available",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-available.json
+```
+
+</CodeExample>
+
+### Fondos Fuera de Cadena Pendientes
+
+Otra opción es mover el estado de la transacción a `pending_external`. Este estado significa que el pago se ha enviado a una red externa, pero aún no está confirmado.
+
+<CodeExample>
+
+```json
+// offchain-funds-pending.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_pending",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds pending",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-pending.json
+```
+
+</CodeExample>
+
+### Fondos Fuera de Cadena Enviados
+
+Para completar la transacción y cambiar su estado a `completed`, necesitas hacer la solicitud JSON-RPC `notify_offchain_funds_sent`.
+
+<CodeExample>
+
+```json
+// offchain-funds-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds sent",
+      "funds_sent_at": "2023-07-04T12:34:56Z",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+Para procesar esto, necesitas ejecutar:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-sent.json
+```
+
+</CodeExample>
+
+### Reembolso Enviado
+
+La lógica de reembolso funciona de la misma manera que en el flujo de depósito. Para más detalles, consulta [Reembolso Enviado](#refund-sent) del flujo de depósito.
+
+### Error de Transacción
+
+Funciona de la misma manera que en el flujo de depósito. Para más detalles, consulta [Error de Transacción](#transaction-error) del flujo de depósito.
+
+### Transacción Caducada
+
+Funciona de la misma manera que en el flujo de depósito. Para más detalles, consulta [Transacción Caducada](#expired-transaction) del flujo de depósito.
+
+### Recuperación de Transacción
+
+Funciona de la misma manera que en el flujo de depósito. Para más detalles, consulta [Recuperación de Transacción](#transaction-recovery) del flujo de depósito.
+
+## Seguimiento de Transacciones Stellar
+
+<Observer />
+
+[sep-6]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0006.md
+[manejo-de-eventos]: ../../admin-guide/events/README.mdx
+[callbacks-de-cliente]: ../../api-reference/callbacks/README.mdx
+[callbacks-de-tarifa]: ../../api-reference/callbacks/README.mdx
+[obtencion-de-transacciones]: ../../api-reference/platform/transactions/get-transactions.api.mdx

@@ -3,32 +3,19 @@ title: CDP Consumer Pipeline Sample Code
 sidebar_position: 30
 ---
 
-Complete code for a small sample of CDP consumer pipeline of Stellar network ledger metadata using the Stellar Go [Ingest SDK](overview.mdx#the-ingestion-sdk-packages) paired with new [CDP SDK](https://github.com/stellar/go/tree/master/ingest/cdp) to demonstrate data pipeline from ledger metadata to derived data model with event-driven, distributed processing to sample microservice (Python script) as subscriber.
+Complete code for a small sample of a consumer pipeline of Stellar network ledger metadata using the Stellar Go [Ingest SDK](overview.mdx#the-ingestion-sdk-packages) to demonstrate data pipeline from ledger metadata to derived data model with event-driven, distributed processing to sample microservice (Python script) as subscriber.
 
 This example uses the ZeroMQ [goczmq](https://github.com/zeromq/goczmq) Go wrapper SDK, which requires a few o/s [dependent libraries to also be installed on the host machine](https://github.com/zeromq/goczmq?tab=readme-ov-file#dependencies).
 
-Steps:  
-#1 - Put these files in a directory  
-#2 - compile and run with `go mod tidy;go build -o pipeline ./.; ./pipeline`  
-#3 - in separate terminal, run `python distributed_payment_subsciber.py`, this will perform distributed pipeline topology, as it receives messages with payment info from the pipeline process and does additional processing(printing it to console).
+This example requires having access to a public ledger metadata lake that is actively populated with latest ledgers from Stellar mainnet. For purposes of the example it uses a reference data lake hosted on [AWS Open Data S3](../../../data/apis/rpc/admin-guide/data-lake-integration#1-accessing-a-data-lake)
 
-### `go.mod`
+### Step# 1 - Create example directory and copy following files to your workstation.
 
 <CodeExample>
+```bash
+mkdir pipeline-example; cd pipeline-example
 
-```
-module example/pipeline
-
-go 1.22
-
-toolchain go1.22.1
-
-require (
-        github.com/stellar/go v0.0.0-20241008214914-7950d4254e6a
-        github.com/zeromq/goczmq v4.1.0+incompatible
-)
-```
-
+````
 </CodeExample>
 
 ### `main.go`
@@ -44,20 +31,20 @@ import (
   "encoding/json"
   "fmt"
   "io"
-  "log"
   "os"
   "os/signal"
 
   "github.com/pelletier/go-toml"
   "github.com/pkg/errors"
-  "github.com/stellar/go/amount"
-  "github.com/stellar/go/historyarchive"
-  "github.com/stellar/go/ingest"
-  "github.com/stellar/go/ingest/ledgerbackend"
-  "github.com/stellar/go/network"
-  "github.com/stellar/go/support/datastore"
-  "github.com/stellar/go/support/storage"
-  "github.com/stellar/go/xdr"
+  "github.com/stellar/go-stellar-sdk/amount"
+  "github.com/stellar/go-stellar-sdk/historyarchive"
+  "github.com/stellar/go-stellar-sdk/ingest"
+  "github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/support/datastore"
+  "github.com/stellar/go-stellar-sdk/support/storage"
+  "github.com/stellar/go-stellar-sdk/xdr"
+  "github.com/stellar/go-stellar-sdk/support/log"
 
   "github.com/zeromq/goczmq"
 )
@@ -113,6 +100,7 @@ func (transformer *AppPaymentTransformer) Process(ctx context.Context, msg Messa
   closeTime := uint(ledgerCloseMeta.LedgerHeaderHistoryEntry().Header.ScpValue.CloseTime)
 
   // scan all transactions in a ledger for payments to derive new model from
+  counter := 0
   transaction, err := ledgerTxReader.Read()
   for ; err == nil; transaction, err = ledgerTxReader.Read() {
     for _, op := range transaction.Envelope.Operations() {
@@ -134,12 +122,16 @@ func (transformer *AppPaymentTransformer) Process(ctx context.Context, msg Messa
         for _, processor := range transformer.processors {
           processor.Process(ctx, Message{Payload: jsonBytes})
         }
+        counter++
       }
     }
   }
+
   if err != io.EOF {
     return errors.Wrapf(err, "failed to read transaction from ledger %v", ledgerCloseMeta.LedgerSequence())
   }
+
+  log.Infof("Published %v payments from ledger sequnce %v", counter, ledgerCloseMeta.LedgerSequence())
   return nil
 }
 
@@ -178,7 +170,7 @@ func (adapter *LedgerMetadataInboundAdapter) Run(ctx context.Context) error {
     BufferedStorageConfig: ingest.DefaultBufferedStorageBackendConfig(1),
   }
 
-  fmt.Printf("beginning payments stream, starting at ledger %v ...\n", latestNetworkLedger)
+  log.Infof("beginning payments stream, starting at ledger %v ...\n", latestNetworkLedger)
   return ingest.ApplyLedgerMetadata(ledgerRange, pubConfig, ctx,
       func(lcm xdr.LedgerCloseMeta) error {
           for _, processor := range adapter.processors {
@@ -194,6 +186,7 @@ func main() {
   // run a data pipeline that transforms Pubnet ledger metadata into payment events
   ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
   defer stop()
+  log.SetLevel(log.InfoLevel)
 
   cfg, err := toml.LoadFile("config.toml")
   if err != nil {
@@ -221,7 +214,7 @@ func main() {
   // publishes application data model as messages to a broker
   publisher, err := goczmq.NewPub("tcp://127.0.0.1:5555")
   if err != nil {
-    log.Printf("error creating 0MQ publisher: %v\n", err)
+    log.Infof("error creating 0MQ publisher: %v\n", err)
     return
   }
   defer publisher.Destroy()
@@ -230,24 +223,30 @@ func main() {
   // wire up the ingestion pipeline and let it run
   appTransformer.Subscribe(outboundAdapter)
   ledgerMetadataInboundAdapter.Subscribe(appTransformer)
-  log.Printf("Payment ingestion pipeline ended %v\n", ledgerMetadataInboundAdapter.Run(ctx))
+  log.Infof("Payment ingestion pipeline ended %v\n", ledgerMetadataInboundAdapter.Run(ctx))
 }
 
-```
+````
 
 </CodeExample>
 
 ### `config.toml`
 
-The CDP configuration settings, this file defines the data storage which contains the pre-generated Ledger Metadata files. Google Cloud storage is used in this example.
+The CDP configuration settings, this file defines the data storage which contains the pre-generated Ledger Metadata files. The [S3 Public Blockchain](https://registry.opendata.aws/aws-public-blockchain/) bucket for [Stellar Pubnet](hhttps://aws-public-blockchain.s3.us-east-2.amazonaws.com/index.html#v1.1/stellar/ledgers/pubnet/) is used in this example.
 
 <CodeExample>
 
 ```
-type = "GCS"
+type = "S3"
 
 [params]
-destination_bucket_path = "my-gcs-bucketname/prefix1/prefix2"
+destination_bucket_path = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+region = "us-east-2"
+
+# this is the schema specific to the public s3 data lake being used
+[schema]
+ledgers_per_file = 1
+files_per_partition = 64000
 
 ```
 
@@ -282,3 +281,21 @@ while True:
 ```
 
 </CodeExample>
+
+### Step# 2 - Compile and run the ingestion pipeline example.
+
+<CodeExample>
+```bash 
+go mod init example/pipeline
+go get github.com/stellar/go-stellar-sdk@latest github.com/zeromq/goczmq@v4.1.0
+go mod tidy 
+go build -o pipeline ./. 
+AWS_SHARED_CREDENTIALS_FILE=/dev/null ./pipeline
+
+```
+</CodeExample>
+
+### Step# 3 - Run the distributed pipeline consumer
+
+In separate terminal, run `python distributed_payment_subsciber.py`, this will perform distributed pipeline topology, as it receives messages with payment info from the pipeline process and does additional processing(printing it to console).
+```

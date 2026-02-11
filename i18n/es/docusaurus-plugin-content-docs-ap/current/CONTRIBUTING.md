@@ -8,6 +8,12 @@ draft: true
 
 Estamos muy contentos de tenerte aquí, y esperamos que este documento te ayude a entender cómo (y lo más importante, _donde_) hacer los cambios necesarios en nuestra documentación. Comencemos con un poco de vocabulario de Docusaurus, ¿te parece?
 
+## ¡AVISO! AP HA SIDO DESVERSIONADO
+
+La documentación de Anchor Platform ha sido desversionada, y a partir de ahora solo mantenemos una versión "actual" de los documentos. Por lo tanto, cualquier cosa en esta página que haga referencia a crear una nueva versión, actualizar versiones antiguas, etc., puede ser ignorada.
+
+Sin embargo, los documentos de Anchor Platform _todavía_ permanecen en su propia instancia de docusaurus. Así que la información aquí sobre vinculación entre/entre instancias sigue siendo relevante. (Esto no será así para siempre, pero por ahora, lo es.)
+
 ## Resumen
 
 - Para versiones _no publicadas_ de Anchor Platform:
@@ -34,6 +40,7 @@ yarn ap:versions:regen
 
 ## Tabla de Contenidos <!-- omit in toc -->
 
+- [¡AVISO! AP HA SIDO DESVERSIONADO](#notice-ap-has-been-de-versioned)
 - [Resumen](#tldr)
 - [Más sobre Docusaurus de lo que nunca quisiste saber](#more-about-docusaurus-than-you-ever-wanted-to-know)
   - [Nomenclatura de Versiones](#versions-nomenclature)
@@ -93,19 +100,21 @@ Así que, en términos prácticos:
 
 Esto debería ayudarte a aclarar un poco.
 
-- Quiero enlazar _desde_ el documento MDX `/platforms/anchor-platform/admin-guide/sep6/configuration.mdx` _hasta_ el documento MDX `/platforms/anchor-platform/api-reference/platform/rpc/methods/notify_amounts_updated.mdx`:
+- Quiero enlazar _desde_ el documento MDX
+  `/platforms/anchor-platform/sep-guide/sep6/configuration.mdx` _hacia_ el documento MDX
+  `/platforms/anchor-platform/api-reference/platform/rpc/methods/notify_amounts_updated.mdx`:
   - Estamos en la misma instancia de plugin `/platforms/anchor-platform`
   - Usa una _ruta de archivo relativa_
   - Enlaza a ella `[algo como esto](../../api-reference/platform/rpc/methods/notify_amounts_updated.mdx)`
 - Quiero enlazar _desde_ el documento MDX `/docs/learn/fundamentals/anchors.mdx` _hasta_ el documento MDX `/platforms/anchor-platform/admin-guide/getting-started.mdx`
   - Estamos "cruzando" entre las instancias de plugin `/docs` y `/platforms/anchor-platform`
-  - Usa una _ruta URL absoluta_
+  - Usa una ruta de URL **absoluta**
   - Enlaza a ella `[algo como esto](/platforms/anchor-platform/admin-guide/getting-started)` (nota que no hay extensión `.mdx`)
-- Quiero enlazar _desde_ el documento MDX `/platforms/anchor-platform/custody/README.mdx` _hasta_ el documento MDX `/docs/tools/developer-tools/wallets.mdx`
+- Quiero vincular _desde_ el documento MDX `/platforms/anchor-platform/README.mdx` _a_ el documento MDX `/docs/tools/developer-tools/wallets.mdx`
   - Estamos "cruzando" entre las instancias de plugin `/platforms/anchor-platform` y `/docs`
   - Usa una _ruta URL absoluta_
   - Enlaza a ella `[algo como esto](/docs/tools/developer-tools/wallets)` (nota que no hay extensión `.mdx`)
-- ¡Wildcard! Quiero enlazar _desde_ el documento MDX `/platforms/anchor-platform/admin-guide/custody-services/configuration.mdx` _hasta_ el documento MDX `/platforms/stellar-disbursement-platform/admin-guide/60-anchor-platform-integration-points.mdx`
+- ¡Wildcard! Quiero vincular _desde_ el documento MDX `/platforms/anchor-platform/admin-guide/events/configuration.mdx` _a_ el documento MDX `/platforms/stellar-disbursement-platform/admin-guide/60-anchor-platform-integration-points.mdx`
   - Estamos "cruzando" entre las instancias de plugin `/platforms/anchor-platform` y `/platforms/stellar-disbursement-platform`
   - Usa una _ruta URL absoluta_
   - Enlaza a ella `[algo como esto](/platforms/stellar-disbursement-platform/admin-guide/anchor-platform-integration-points)` (nota que no hay extensión `.mdx`)
