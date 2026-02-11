@@ -1,0 +1,176 @@
+---
+title: Preparar tu Wallet para SDP
+sidebar_position: 80
+---
+
+Recuerda que cualquier instancia de SDP necesitará un acuerdo con un proveedor de wallet antes de enviar desembolsos a esa wallet. Esto asegura que las wallets estén cómodas recibiendo fondos de tu organización y regula cualquier arreglo comercial entre las organizaciones. La wallet necesitará incluir en su lista blanca el dominio del SDP antes de que el SDP pueda enviar desembolsos a esa wallet. Cuando se añade el dominio de la wallet a un SDP, se está incluyendo efectivamente en la lista blanca por parte del SDP. Ambas partes listando a la otra les permite recuperar el archivo stellar.toml y verificar la clave de firma necesaria para el handshake [SEP-10].
+
+En esta página, cubriremos los aspectos técnicos de la integración SDP-Wallet, incluyendo cómo añadir una Wallet en la base de datos del SDP, cómo validar y soportar los enlaces de registro usando [deep linking] de aplicaciones móviles, cómo iniciar el flujo de registro de usuario en la wallet usando [SEP-24], y un enfoque recomendado para manejar [deferred deep linking].
+
+## Agregar una Wallet a un SDP
+
+La lista predeterminada de wallets SDP depende de qué red se esté usando (testnet o pubnet). La red se pasa como variable de entorno y luego la lista de wallets se puede inicializar apropiadamente al iniciar el SDP mediante el comando CLI `./stellar-disbursement-platform db setup-for-network`, de acuerdo con una lista fija de wallets conocidas. Alternativamente, las wallets se pueden insertar directamente en la base de datos del SDP mediante un comando SQL. Ambos métodos requieren añadir el nombre de la wallet, página principal, dominio cliente SEP-10 y esquema de deep link.
+
+Para insertarlo directamente en la base de datos, actualiza tus valores y ejecuta la siguiente consulta en Postgres. Asegúrate de revisar primero tu base de datos y el espacio de nombres.
+
+<CodeExample>
+
+```sql
+INSERT INTO wallets (name, homepage, deep_link_schema, sep_10_client_domain)
+VALUES ('Vibrant Assist', 'https://vibrantapp.com', 'https://vibrantapp.com/sdp', 'api.vibrantapp.com');
+```
+
+</CodeExample>
+
+Para configurar una wallet mediante código, añádela a la sección de testnet o pubnet de `DefaultWalletsNetworkMap`. Esto se usará cuando ejecutes el comando CLI `./stellar-disbursement-platform db setup-for-network`, que actualiza la base de datos SDP y hace que la wallet esté disponible para nuevos desembolsos. Añade tu nueva wallet siguiendo el mismo formato ya presente en el código.
+
+<CodeExample>
+
+```go
+var DefaultWalletsNetworkMap = WalletsNetworkMapType{
+	utils.PubnetNetworkType: {
+		{
+			Name:              "Vibrant Assist",
+			Homepage:          "https://vibrantapp.com/assist",
+			DeepLinkSchema:    "https://vibrantapp.com/sdp",
+			SEP10ClientDomain: "api.vibrantapp.com",
+		},
+	},
+	utils.TestnetNetworkType: {
+		{
+			Name:              "Vibrant Assist",
+			Homepage:          "https://vibrantapp.com",
+			DeepLinkSchema:    "https://vibrantapp.com/sdp-dev",
+			SEP10ClientDomain: "api-dev.vibrantapp.com",
+		},
+		{
+			Name:              "Demo Wallet",
+			Homepage:          "https://demo-wallet.stellar.org",
+			DeepLinkSchema:    "https://demo-wallet.stellar.org",
+			SEP10ClientDomain: "demo-wallet-server.stellar.org",
+		},
+	},
+}
+```
+
+</CodeExample>
+
+## Experiencia de Registro del Receptor
+
+La experiencia de registro del receptor es fundamental para que esta aplicación sea fluida y fácil de usar. Esto requiere que la wallet soporte [deferred deep linking], que se discutirá en una sección posterior. Una buena descripción de la experiencia de registro es la siguiente:
+
+1. El receptor recibe un mensaje de invitación notificándole que tiene un pago pendiente de la organización y se le invita a hacer clic en un [deep link] para abrir o instalar y abrir una aplicación de wallet
+
+2. Cuando el receptor abre la aplicación de wallet, la wallet inmediatamente integra al receptor, crea una cuenta Stellar y trustline para el activo deseado, inicia una transacción de depósito [SEP-24] con el SDP, y abre la página web de registro del SDP como una pantalla superpuesta/iframe dentro de la app.
+
+3. El usuario confirma su número de teléfono y fecha de nacimiento directamente con el SDP, sin compartir datos con la wallet, y después de concluir el registro, se le redirige a la aplicación de wallet. Aquí están las pantallas que demuestran estos pasos:
+
+   ![Flujo de Registro](/assets/SDP/SDP25.png)
+
+4. El usuario recibe el pago en segundos
+
+## Enlace Profundo de Registro
+
+Una vez que el usuario ha instalado la aplicación de wallet, esta debe ser capaz de interpretar un [deep link] que siga el formato registrado en el SDP para iniciar el [Procedimiento de Registro de Wallet](#wallet-registration-procedure). El formato del deep link soportado por el SDP sigue este formato:
+
+```url
+https://<host-with-optional-path>?asset=<asset>&domain=<domain>&name=<name>&signature=<signature>
+```
+
+- `asset`: el activo Stellar.
+- `domain`: el dominio que aloja el archivo `stellar.toml` del SDP. La wallet necesitará usarlo tanto para obtener el archivo `stellar.toml`, como para rellenar el campo `home_domain` en la transacción GET challenge [SEP-10].
+- `name`: el nombre de la organización que envía los pagos.
+- `signature`: una firma de la clave de firma [SEP-10] del SDP.
+
+:::info
+
+Ten en cuenta que el deep link es específico para cada SDP, organización pagadora y activo. No es específico para cada receptor individual. No hay riesgo en compartir el enlace con receptores que forman parte del mismo desembolso. El enlace será el mismo para múltiples receptores, y estos probarán su identidad como parte del flujo de depósito [SEP-24].
+
+:::
+
+A continuación, un ejemplo de enlace de registro (firmado)
+
+```url
+https://vibrantapp.com/sdp-dev?asset=USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5&domain=ap-stellar-disbursement-platform-backend-dev.stellar.org&name=Stellar+Test&signature=fea6c5e805a29b903835bea2f6c60069113effdf1c5cb448d4948573c65557b1d667bcd176c24a94ed9d54a1829317c74f39319076511512a3e697b4b746ae0a
+```
+
+En este ejemplo, el host es `https://vibrantapp.com/sdp-dev` y la firma es el resultado de firmar la URL (sin firma) abajo usando la clave de firma [SEP-10] `SBUSPEKAZKLZSWHRSJ2HWDZUK6I3IVDUWA7JJZSGBLZ2WZIUJI7FPNB5`, con la clave pública siendo `GBFDUUZ5ZYC6RAPOQLM7IYXLFHYTMCYXBGM7NIC4EE2MWOSGIYCOSN5F`:
+
+```url
+https://vibrantapp.com/sdp-dev?asset=USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5&domain=ap-stellar-disbursement-platform-backend-dev.stellar.org&name=Stellar+Test
+```
+
+En este ejemplo, la firma es `fea6c5e805a29b903835bea2f6c60069113effdf1c5cb448d4948573c65557b1d667bcd176c24a94ed9d54a1829317c74f39319076511512a3e697b4b746ae0a`.
+
+A continuación, un fragmento JavaScript demostrando cómo verificar la firma:
+
+```js
+#!/usr/bin/env node
+
+const { Keypair } = require("stellar-sdk");
+
+// The SDP's stellar.toml SIGNING_KEY
+//
+// For security, this should ideally be fetched from
+// https://<domain>/.well-known/stellar.toml on demand
+const keypair = Keypair.fromPublicKey(
+  "GBFDUUZ5ZYC6RAPOQLM7IYXLFHYTMCYXBGM7NIC4EE2MWOSGIYCOSN5F",
+);
+console.log("public key:", keypair.publicKey());
+
+let url =
+  "https://vibrantapp.com/sdp-dev?asset=USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5&domain=ap-stellar-disbursement-platform-backend-dev.stellar.org&name=Stellar%20Test";
+let signature =
+  "fea6c5e805a29b903835bea2f6c60069113effdf1c5cb448d4948573c65557b1d667bcd176c24a94ed9d54a1829317c74f39319076511512a3e697b4b746ae0a";
+
+console.log(
+  "verified:",
+  keypair.verify(
+    Buffer.from(url.toString(), "utf8"),
+    Buffer.from(signature, "hex"),
+  ),
+);
+```
+
+### Procedimiento de Registro de Wallet
+
+Al abrir el [deep link] de registro, estos son los pasos que la wallet debe seguir para aplicar las medidas de seguridad y privacidad esperadas en este flujo, y para permitir que el usuario ingrese su información directamente con el SDP:
+
+1. 🚨 Confirma que el `domain` del deep link esté en la lista blanca (allowlist) de la wallet. Esto es crucial para autenticar desde una wallet confiable.🚨
+2. Obtén el archivo toml del SDP en `{domain}/.well-known/stellar.toml` y confirma que la variable `SIGNING_KEY` esté poblada.
+3. Verifica que la firma del enlace de registro haya sido realizada usando `SIGNING_KEY`, similar a la función `keypairPk.verify(...)` en el fragmento arriba, y que la firma sea válida con el contenido del enlace.
+4. Revisa el `asset` del enlace y confirma que el usuario receptor tenga una trustline para ese activo. Crea una si no existe.
+5. (Opcional) Usa el `name` del enlace para actualizar la interfaz de usuario de la wallet.
+6. Inicia el flujo de depósito [SEP-24] con ese activo usando el valor `TRANSFER_SERVER_SEP0024` del archivo toml del SDP.
+   - Esto incluye usar [SEP-10] para autenticar al usuario con el servidor SDP. Ten en cuenta que el SDP requiere que los campos `client_domain` y `home_domain` sean proporcionados en la solicitud `GET <WEB_AUTH_ENDPOINT>`, y deberían establecerse como sigue:
+     - `client_domain`: el dominio del servidor de wallet que expone el archivo `stellar.toml` del servidor de wallet.
+   - `home_domain`: el dominio del servidor SDP que estaba presente en el enlace de registro.
+   - `account`: la cuenta Stellar de la wallet del receptor.
+7. Lanza el flujo de depósito en un navegador _in-app_ dentro de tu aplicación móvil, siguiendo las instrucciones en la especificación [SEP-24].
+   - ATENCIÓN: la wallet no debe, bajo ninguna circunstancia, extraer o intentar extraer contenido del navegador _in-app_ para obtener información del receptor.
+   - NOTA: se recomienda altamente usar un navegador _in-app_ en lugar de un webview.
+8. 🎉 ¡Felicidades! El usuario receptor ahora puede completar los formularios en el navegador _in-app_ y registrarse para recibir su pago 🎉.
+
+Además, la wallet debería guardar el enlace y/o los atributos del enlace y asociarlos con el usuario receptor individual por estas razones:
+
+1. Así es como la wallet sabrá que el usuario está asociado con cierta organización o SDP.
+2. Guardar la información es útil para reportes y solución de problemas, especialmente si la wallet necesita justificar la fuente de fondos por regulaciones o propósitos fiscales.
+3. Si la organización pagadora quiere cubrir cualquier comisión de pago cobrada por la wallet o el offramp, la wallet necesitará saber qué usuarios y transacciones deben ser facturados upstream.
+
+### Enlaces diferidos (Deferred Deep Links)
+
+Es muy probable que el receptor no tenga la aplicación wallet necesaria instalada en su dispositivo. Por esta razón, las wallets deberían soportar el concepto de [deferred deep linking], que permite el siguiente flujo:
+
+1. La acción inicial del receptor al hacer clic en el deep link debería redirigirlo a la tienda de aplicaciones apropiada para descargar la aplicación wallet.
+2. Después de instalar y abrir la aplicación, el receptor debería ser redirigido al flujo típico de integración de wallet.
+3. Una vez que el usuario se haya integrado con éxito, la wallet debería usar la información incluida en el deep link para iniciar el [Procedimiento de Registro de Wallet](#wallet-registration-procedure).
+
+El deferred deep linking es una característica común soportada por numerosas soluciones móviles de deep linking; existen servicios de terceros que se pueden usar para implementar esta funcionalidad, como Singular, Branch, AppsFlyer, Adjust, entre otros. [Aquí](https://medium.com/bumble-tech/universal-links-for-android-and-ios-1ddb1e70cab0) hay una publicación de blog con más información sobre cómo implementar [deferred deep linking].
+
+El SDP soporta un formato básico de enlace, tal como `https://<host-con-ruta-opcional>`. Si el sistema de deep linking de tu wallet necesita una estructura más compleja, deberás gestionarlo con una aplicación web. Esta aplicación debería ser propiedad del proveedor de la wallet, y debería ser capaz de recibir el deep link, interpretarlo y dirigir al usuario a la ubicación correcta.
+
+[deferred deep linking]: https://en.wikipedia.org/wiki/Mobile_deep_linking#Deferred_deep_linking
+[deep link]: https://en.wikipedia.org/wiki/Mobile_deep_linking
+[deep linking]: https://en.wikipedia.org/wiki/Mobile_deep_linking
+[sep-10]: https://stellar.org/protocol/sep-10
+[sep-24]: https://stellar.org/protocol/sep-24

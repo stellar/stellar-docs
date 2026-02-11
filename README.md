@@ -15,8 +15,6 @@ Welcome to the official home repository for [Documentation][docs] for the [Stell
 - [Using Markdown](#using-markdown)
   - [Markdown Basics](#markdown-basics)
   - [Custom Markdown](#custom-markdown)
-    - [Alert](#alert)
-    - [Code Example](#code-example)
 
 ## Contributing
 
@@ -151,44 +149,39 @@ Our repository uses some custom React components that can be used inside the
 **Make sure that there is an empty line within the wrapper.** For example,
 
 ```text
-<Alert>
+<CodeExample>
 <!-- EMPTY LINE AFTER THE COMPONENT'S OPENING TAG IS REQUIRED -->
 
-Note: the testnet is reset every three months, so when building on it, make sure you have a plan to recreate necessary accounts and other data. For more info, check out the [best practices for using the testnet](../../learn/fundamentals/networks.mdx).
-
-<!-- EMPTY LINE BEFORE THE COMPONENT'S CLOSING TAG IS REQUIRED -->
-</Alert>
+```javascript
+console.log("hello world");
 ```
 
-#### Alert
+```python
+print("hello world")
+```
 
-![Testnet reset alert](./readme-imgs/alert.png)
-
-`<Alert />` is used to convey hints, warnings, etc. For example,
-[Build a SEP-31 Anchor on Testnet][alert-example]
-
-```markdown
-import { Alert } from "@site/src/components/Alert";
-
-<Alert>
-
-Note: the testnet is reset every three months, so when building on it, make sure you have a plan to recreate necessary accounts and other data. For more info, check out the [best practices for using the testnet](../../fundamentals-and-concepts/testnet-and-pubnet).
-
-</Alert>
+<!-- EMPTY LINE BEFORE THE COMPONENT'S CLOSING TAG IS REQUIRED -->
+</CodeExample>
 ```
 
 #### Code Example
 
 ![Create account code example](./readme-imgs/code-example.png)
 
-`<CodeExample />` is a code snippet component. You can include snippets for more
-than one language. See an example including a snippet for `JavaScript` and
-`Python` below. It is using [Prism React Renderer][prism] for syntax
-highlighting.
+`<CodeExample />` is a code snippet component. You can use this component when
+you want to include snippets for more than one language. See an example
+including a snippet for `JavaScript` and `Python` below. It is using [Prism
+React Renderer][prism] for syntax highlighting. If you're only making a code
+snippet for a _single programming language_, you should just stick with a
+"normal" markdown code fence using backticks.
+
+> [!NOTE]
+> The `CodeExample` component has been added to the list of globally available
+> components, in `/src/theme/MDXComponents.ts`. This means it's not required to
+> `import { CodeExample } ...` in a page if you're planning to use it. It's just
+> always available in MDX file.
 
 ````markdown
-import { CodeExample } from "@site/src/components/CodeExample";
-
 <CodeExample>
 
 ```js
@@ -222,14 +215,20 @@ Languages that are currently being used in Documentation and API Reference are
 below:
 
 ```js
-// https://github.com/stellar/stellar-docs/blob/main/src/components/CodeExample.js
+// https://github.com/stellar/stellar-docs/blob/main/config/constants.ts
 
-const CODE_LANGS = {
+export const CODE_LANGS = {
   bash: 'bash',
   cpp: 'C++',
   curl: 'cURL',
+  dart: 'Flutter',
+  flutter: 'Flutter',
+  swift: 'Swift',
+  docker: 'Dockerfile',
   go: 'Go',
   html: 'html',
+  kotlin: 'Kotlin',
+  kt: 'Kotlin',
   java: 'Java',
   javascript: 'JavaScript',
   js: 'JavaScript',
@@ -237,6 +236,9 @@ const CODE_LANGS = {
   json5: 'JSON5',
   python: 'Python',
   scss: 'SCSS',
+  sql: 'SQL',
+  rust: 'Rust',
+  php: 'PHP',
   toml: 'TOML',
   ts: 'TypeScript',
   tsx: 'TSX',
@@ -248,7 +250,6 @@ const CODE_LANGS = {
 **Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
 
 [docs]: https://developers.stellar.org/docs
-[api]: https://developers.stellar.org/docs/data/apis
 [stellar]: https://stellar.org
 [contrib]: https://github.com/stellar/.github/blob/master/CONTRIBUTING.md
 [coc]: https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md

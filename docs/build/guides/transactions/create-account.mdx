@@ -6,9 +6,6 @@ description: Learn about creating Stellar accounts, keypairs, funding, and accou
 
 # Create an Account
 
-import { CodeExample } from "@site/src/components/CodeExample";
-import { Alert } from "@site/src/components/Alert";
-
 _Before we get started with working with Stellar in code, consider going through the following examples using the [Stellar Lab](https://lab.stellar.org). The lab allows you to create accounts, fund accounts on the Stellar test network, build transactions, run any operation, and inspect responses from Horizon via the Endpoint Explorer._
 
 [Accounts](../../../learn/fundamentals/stellar-data-structures/accounts.mdx) are a fundamental building block of Stellar: they hold all your balances, allow you to send and receive payments, and let you place offers to buy and sell assets. Since pretty much everything on Stellar is in some way tied to an account, the first thing you generally need to do when you start developing is create one. This beginner-level tutorial walks through the three building blocks you'll need: [generating keys](#create-a-keypair), [funding an account](#create-an-account), and [fetching balances](#fetch-balances).
@@ -279,11 +276,11 @@ import (
   "strings"
   "time"
 
-  "github.com/stellar/go/amount"
-  "github.com/stellar/go/keypair"
-  "github.com/stellar/go/network"
-  "github.com/stellar/go/txnbuild"
-  "github.com/stellar/go/xdr"
+  "github.com/stellar/go-stellar-sdk/amount"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
 
   "github.com/stellar/stellar-rpc/client"
   "github.com/stellar/stellar-rpc/protocol"
@@ -621,6 +618,96 @@ public final class main {
   private static void log(String format, Object... args) {
     System.out.println(String.format(format, args));
   }
+}
+```
+
+```rust
+use std::{cell::RefCell, rc::Rc, time::Duration};
+
+use soroban_client::{
+    account::{Account, AccountBehavior},
+    asset::{Asset, AssetBehavior},
+    keypair::{Keypair, KeypairBehavior},
+    network::{NetworkPassphrase, Networks},
+    operation::{self, Operation},
+    transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
+    xdr, Options, Server,
+};
+
+const TESTNET_USDC_ISSUER: &str = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server_url = "https://soroban-testnet.stellar.org";
+    let server = Server::new(server_url, Options::default()).expect("Cannot create server");
+
+    //
+    // Generate keypairs
+    //
+    let parent = Keypair::random()?;
+    println!("Secret: {}", parent.secret_key()?);
+    println!("Public: {}", parent.public_key());
+
+    //
+    // Fund a new account via friendbot
+    //
+    let account_data = server.request_airdrop(&parent.public_key()).await?;
+    println!("SUCCESS! You have a new account:\n{account_data:?}");
+
+    let child = Keypair::random()?;
+    let mut parent_account =
+        Account::new(&parent.public_key(), &account_data.sequence_number()).unwrap();
+
+    //
+    // Fund a new account via CreateAccount operation
+    //
+    let mut builder = TransactionBuilder::new(&mut parent_account, Networks::testnet(), None);
+    builder.fee(1000u32);
+    builder.add_operation(
+        Operation::new()
+            .create_account(&child.public_key(), operation::ONE * 5)
+            .unwrap(),
+    );
+
+    let mut tx = builder.build();
+    tx.sign(&[parent]);
+
+    let response = server.send_transaction(tx).await?;
+    let hash = response.hash;
+    println!("Tx hash: {}", hash);
+
+    //
+    // Polling for transaction completion
+    //
+    server
+        .wait_transaction(&hash, Duration::from_secs(15))
+        .map_err(|_| "Failed to create account")
+        .await?;
+
+    //
+    // Fetch native and USDC balances for account
+    //
+    let account_id = child.xdr_account_id();
+    let ledger_key = xdr::LedgerKey::Account(xdr::LedgerKeyAccount { account_id });
+    let response = server.get_ledger_entries(vec![ledger_key]).await?;
+    if let xdr::LedgerEntryData::Account(account) = response.entries.unwrap()[0].to_data() {
+        // Convert the balance from stroops
+        let balance = account.balance / operation::ONE;
+        println!("XLM: {balance}");
+    }
+
+    let account_id = child.xdr_account_id();
+    let asset = Asset::new("USDC", Some(TESTNET_USDC_ISSUER))?.into();
+    let ledger_key = xdr::LedgerKey::Trustline(xdr::LedgerKeyTrustLine { account_id, asset });
+    let response = server.get_ledger_entries(vec![ledger_key]).await?;
+    let entries = response.entries.unwrap_or_default();
+        let usdc_balance = match entries.first().map(|e| e.to_data()) {
+        Some(xdr::LedgerEntryData::Trustline(t)) => t.balance,
+        _ => 0,
+    };
+    println!("USDC trustline balance (raw): {}", usdc_balance);
+
+    Ok(())
 }
 ```
 
