@@ -494,6 +494,28 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Reports",
+      link: {
+        type: "doc",
+        id: "platforms/stellar-disbursement-platform/api-reference/reports",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-statement-export",
+          label: "Get Statement (PDF)",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-payment-export",
+          label: "Get Payment Transaction Notice (PDF)",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "Users",
       link: {
         type: "doc",
