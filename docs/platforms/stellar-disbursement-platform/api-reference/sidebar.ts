@@ -472,28 +472,6 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
-      label: "Statistics",
-      link: {
-        type: "doc",
-        id: "platforms/stellar-disbursement-platform/api-reference/statistics",
-      },
-      items: [
-        {
-          type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/retrieve-all-statistics",
-          label: "Retrieve All Statistics",
-          className: "api-method get",
-        },
-        {
-          type: "doc",
-          id: "platforms/stellar-disbursement-platform/api-reference/retrieve-disbursement-statistics",
-          label: "Retrieve Disbursement Statistics",
-          className: "api-method get",
-        },
-      ],
-    },
-    {
-      type: "category",
       label: "Reports",
       link: {
         type: "doc",
@@ -510,6 +488,28 @@ const sidebar: SidebarsConfig = {
           type: "doc",
           id: "platforms/stellar-disbursement-platform/api-reference/get-payment-export",
           label: "Get Payment Transaction Notice (PDF)",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "Statistics",
+      link: {
+        type: "doc",
+        id: "platforms/stellar-disbursement-platform/api-reference/statistics",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/retrieve-all-statistics",
+          label: "Retrieve All Statistics",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/retrieve-disbursement-statistics",
+          label: "Retrieve Disbursement Statistics",
           className: "api-method get",
         },
       ],
