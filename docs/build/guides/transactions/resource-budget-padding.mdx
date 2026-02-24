@@ -1,0 +1,76 @@
+---
+title: "JS SDK: Adjusting resource budget padding near network limits"
+hide_table_of_contents: true
+description: "Learn how to manually override the JS SDK's automatic CPU instruction padding when your contract's resource usage approaches the network's hard limit."
+sidebar_position: 70
+---
+
+## Overview
+
+When the Stellar JavaScript SDK assembles a transaction from a simulation result, it automatically pads the CPU instruction budget by approximately 23% above what the simulation reported. This safety margin protects against minor undercounting between simulation and on-chain execution — for most contracts using 50M or 100M instructions, the padding is invisible.
+
+However, if your simulated instruction usage is already close to the network's hard limit of **400 million instructions**, that padding will push the declared budget over the limit. The network rejects the transaction immediately, even though the actual on-chain execution would have succeeded.
+
+## Why the SDK adds padding
+
+Simulation estimates resource usage against the current ledger state. The actual on-chain execution can vary slightly because ledger state may change between simulation and apply time. The default padding prevents rare failures caused by these small discrepancies — it is a sensible default for the vast majority of contracts.
+
+## The problem: padding pushes past the hard limit
+
+|                         | Instructions         |
+| ----------------------- | -------------------- |
+| Network hard limit      | 400,000,000          |
+| Example simulated usage | 398,000,000          |
+| After ~23% SDK padding  | ~490,000,000         |
+| Result                  | Transaction rejected |
+
+This failure mode can be tricky to diagnose: CLI invocations work because the CLI calls the RPC method directly without the SDK's assembly padding. Frontend transactions that go through `assembleTransaction` or `prepareTransaction` fail with a `Budget exceeded` error, even though the simulation itself passed.
+
+## The fix: cap instructions after assembly
+
+After assembling the transaction, inspect the resource data and clamp the instruction count back to the network limit before signing and submitting:
+
+```javascript
+import { SorobanDataBuilder, rpc as StellarRpc } from "@stellar/stellar-sdk";
+
+// Simulate the transaction
+const simResult = await server.simulateTransaction(tx);
+
+// Assemble using the simulation result
+const assembled = StellarRpc.assembleTransaction(tx, simResult);
+
+// Check if SDK padding pushed instructions over the network hard limit
+const data = assembled.transactionData.build();
+const resources = data.resources();
+
+if (resources.instructions() > 400_000_000) {
+  assembled.transactionData = new SorobanDataBuilder(data.toXDR()).setResources(
+    400_000_000, // cap to the network hard limit
+    resources.diskReadBytes(),
+    resources.writeBytes(),
+  );
+}
+
+// Sign and submit as normal
+const signedTx = assembled.build();
+```
+
+:::caution
+
+Only apply this cap when your simulated instruction count is genuinely under 400M. Removing the SDK padding eliminates the guard against simulation undercounting. If actual on-chain execution costs more than the capped value, the transaction will still fail.
+
+:::
+
+## When to use this
+
+Apply this pattern when:
+
+- Your simulation reports CPU instruction usage above roughly 320M (less headroom than the ~23% padding would add)
+- You are working with computation-heavy contracts such as ZK proof verifiers or complex cryptographic operations
+- You see `Budget exceeded` errors on submitted transactions but the same invocation succeeds via the Stellar CLI
+
+## Related resources
+
+- [Network resource limits reference](../../../networks/resource-limits-fees.mdx)
+- [simulateTransaction deep dive](./simulateTransaction-Deep-Dive.mdx)
+- [Fees and resource metering](../../../learn/fundamentals/fees-resource-limits-metering.mdx)
