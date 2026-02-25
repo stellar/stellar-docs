@@ -166,7 +166,7 @@ print("hello world")
 
 #### Code Example
 
-![Create account code example](./readme-imgs/code-example.png)
+![Create account code example](./static/img/github/code-example.png)
 
 `<CodeExample />` is a code snippet component. You can use this component when
 you want to include snippets for more than one language. See an example
