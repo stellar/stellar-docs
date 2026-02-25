@@ -168,7 +168,7 @@ This should help to make it a bit clearer.
   - We're "crossing" between the `/platforms/anchor-platform` and `/docs` plugin
     instances
   - Use an **absolute URL** path
-  - Link to it `[something like this](/docs/tools/developer-tools/wallets)`
+  - Link to it `[something like this](/docs/tools/developer-tools/wallets.mdx)`
     (note that there is no `.mdx` extension)
 - Wildcard! I want to link _from_ the MDX document
   `/platforms/anchor-platform/admin-guide/events/configuration.mdx` _to_ the MDX
