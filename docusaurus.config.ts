@@ -24,7 +24,7 @@ const config: Config = {
   trailingSlash: false,
   onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
-  favicon: "img/docusaurus/favicon-96x96.png",
+  favicon: "icons/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
   // i18n: {
@@ -100,7 +100,7 @@ const config: Config = {
       "classic",
       {
         blog: {
-          path: 'meeting-notes',
+          path: 'meetings',
           blogTitle: 'Meeting Notes',
           blogDescription: 'Notes and recordings from the Stellar protocol & developers meetings',
           blogSidebarTitle: 'All meetings',
@@ -108,6 +108,9 @@ const config: Config = {
           postsPerPage: 12,
           routeBasePath: 'meetings',
           onUntruncatedBlogPosts: 'ignore',
+          showReadingTime: false,
+          authorsMapPath: 'authors.yml',
+          exclude: ['**/README.md'],
         },
         docs: {
           showLastUpdateTime: true,
@@ -157,15 +160,15 @@ const config: Config = {
         autoCollapseCategories: false,
       },
     },
-    image: 'img/docusaurus/dev-docs-preview.png',
+    image: 'icons/docusaurus/social-card.png',
     metadata: [
       { name: 'facebook-domain-verification', content: 'd0o7hha86jfxvtqyxz3d9i5wtfanmy' }
     ],
     navbar: {
       logo: {
         width: 100,
-        src: "img/docusaurus/stellar-logo.svg",
-        srcDark: "img/docusaurus/stellar-logo-dark.svg",
+        src: "icons/docusaurus/stellar-logo.svg",
+        srcDark: "icons/docusaurus/stellar-logo-dark.svg",
         href: "/",
       },
       items: [
