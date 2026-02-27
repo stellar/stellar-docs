@@ -49,7 +49,7 @@ const fullHelpDocsContent = fs.readFileSync(fullHelpDocsPath, "utf8");
 
 const modifiedContent = `---
 sidebar_position: 10
-description: This document contains the help content for the stellar command-line program.
+description: This document contains the help content for the Stellar command-line program.
 ---
 
 ${fullHelpDocsContent}
