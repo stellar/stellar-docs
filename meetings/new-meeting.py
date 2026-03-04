@@ -25,6 +25,10 @@ SUMMARY_KEYWORDS = {
 
 youtubeIdRE = re.compile(r"(?:v=|\/)([0-9A-Za-z_-]{11})(?:\?|&|\/|$)")
 vttTimeRE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$")
+scriptsDir = pathlib.Path(__file__).resolve().parents[1] / "scripts"
+if str(scriptsDir) not in sys.path:
+  sys.path.insert(0, str(scriptsDir))
+import transcript_core as transcriptCore
 
 def extractVideoId(urlOrId: str) -> Optional[str]:
   s = urlOrId.strip()
@@ -54,17 +58,7 @@ def parseVttTime(ts: str) -> float:
   return hours * 3600 + minutes * 60 + seconds + (millis / 1000.0)
 
 def cleanCaptionText(text: str) -> str:
-  text = re.sub(r"<[^>]+>", "", text)
-  text = re.sub(r"AGT;+", "", text)
-  text = re.sub(r"\b(?:um+|uh+|erm+|hmm+|mm+)\b[,.]?", "", text, flags=re.IGNORECASE)
-  text = re.sub(r"\b(cap|sep|slp)s?\b", lambda m: m.group(1).upper() + ("s" if m.group(0).lower().endswith("s") else ""), text)
-  text = re.sub(r"\bprotocol\s+(\d+)\b", lambda m: f"Protocol {m.group(1)}", text, flags=re.IGNORECASE)
-  text = re.sub(r"\bstella?r\b", "Stellar", text, flags=re.IGNORECASE)
-  text = re.sub(r"\bopen\s*(?:zeppelin|zepplin|zepelin|rubin)\b", "OpenZeppelin", text, flags=re.IGNORECASE)
-  text = re.sub(r"\b(sorond|soron|soran|soroban|orb[áa]n|soro?b[oa]n)\b", "Soroban", text, flags=re.IGNORECASE)
-  text = text.replace("\n", " ")
-  text = re.sub(r"\s+", " ", text)
-  return text.strip()
+  return transcriptCore.processCaptionText(text)
 
 def formatTimestamp(seconds: int) -> str:
   mins = seconds // 60
@@ -112,34 +106,7 @@ def spellcheckText(text: str, enabled: bool) -> str:
   return LANGUAGE_TOOL.correct(text)
 
 def dedupeRepeatedPhrases(text: str) -> str:
-  tokens = text.split()
-  if len(tokens) < 6:
-    return text
-  maxWindow = 8
-  maxPasses = 3
-  for _ in range(maxPasses):
-    i = 0
-    changed = False
-    while i < len(tokens):
-      window = min(maxWindow, (len(tokens) - i) // 2)
-      matched = False
-      for n in range(window, 1, -1):
-        a = tokens[i:i + n]
-        b = tokens[i + n:i + 2 * n]
-        if len(b) < n:
-          continue
-        normA = [re.sub(r"^\W+|\W+$", "", t).lower() for t in a]
-        normB = [re.sub(r"^\W+|\W+$", "", t).lower() for t in b]
-        if normA == normB and any(normA):
-          del tokens[i + n:i + 2 * n]
-          changed = True
-          matched = True
-          break
-      if not matched:
-        i += 1
-    if not changed:
-      break
-  return " ".join(tokens)
+  return transcriptCore.dedupeRepeatedPhrases(text)
 
 def splitSentences(text: str) -> List[str]:
   parts = re.split(r"(?<=[.!?])\s+", text.strip())
@@ -289,6 +256,7 @@ def vttToMinuteBlocks(vttPath: pathlib.Path, blockSeconds: int, punctuate: bool,
     joined = punctuateText(joined, punctuate)
     joined = spellcheckText(joined, spellcheck)
     joined = dedupeRepeatedPhrases(joined)
+    joined = transcriptCore.dedupeRepeatedWords(joined)
     norm = re.sub(r"\s+", " ", joined).strip().lower()
     if norm and norm == lastNorm:
       continue
