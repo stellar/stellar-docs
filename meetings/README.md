@@ -48,7 +48,7 @@ Java install (any platform):
 Run and answer the prompts:
 
 ```bash
-python meetings/add-transcript-box.py
+python meetings/new-meeting.py
 ```
 
 <!-- removable -->
@@ -56,7 +56,7 @@ python meetings/add-transcript-box.py
 Or pass values directly:
 
 ```bash
-python meetings/add-transcript-box.py \
+python meetings/new-meeting.py \
   --video VIDEO_ID \
   --authors name-slug \
   --tags developer
@@ -64,7 +64,7 @@ python meetings/add-transcript-box.py \
 
 This will:
 
-- Download captions into memory (no `transcripts_out/` file by default)
+- Download captions into memory (deleted without ``)
 - Create `meetings/YYYY-MM-DD.mdx` using the YouTube upload date
 
 ## Notes
