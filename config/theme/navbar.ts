@@ -80,6 +80,11 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/apps/dapp-frontend',
     },
     {
+      to: '/docs/build/apps/x402',
+      label: 'x402 on Stellar',
+      activeBasePath: 'docs/build/apps/x402',
+    },
+    {
       to: '/docs/build/apps/zk',
       label: 'ZK Proofs on Stellar',
       activeBasePath: 'docs/build/apps/zk',
