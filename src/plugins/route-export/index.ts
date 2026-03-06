@@ -25,7 +25,15 @@ export default async function routeExportPlugin(
     name: 'stellar-docs-route-export-plugin',
 
     async postBuild({ routesPaths }) {
-      // Get all routes from Docusaurus
+      const { i18n } = context;
+      const current = i18n?.currentLocale;
+      const def = i18n?.defaultLocale;
+
+      if (current && def && current !== def) {
+        console.log(`ℹ️ Skipping route export for locale ${current} (default is ${def})`);
+        return;
+      }
+
       const routes = routesPaths.map(route => {
         // Ensure routes are relative to the site URL
         return route.startsWith('/') ? route : `/${route}`;
