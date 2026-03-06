@@ -147,7 +147,7 @@ Never remove a version branch from `read_data` while old entries of that version
 
 Testing data migration requires simulating state written by an old contract version and verifying that the new contract reads it correctly.
 
-The Soroban test environment allows you to set storage state directly. Use this to write `DataV1` entries (without a `DataVersion` key) and verify that `read_data` up-converts them correctly:
+Register the contract with `env.register(Contract, ())` to obtain a `contract_id`, then use `env.as_contract(&contract_id, || { ... })` whenever you need to touch storage or call internal helpers. This mirrors the execution context the contract runs in on-chain and avoids panics that occur when storage is accessed outside a contract context.
 
 ```rust
 #[cfg(test)]
@@ -157,14 +157,17 @@ use soroban_sdk::Env;
 #[test]
 fn test_reads_v1_entry_as_v2() {
     let env = Env::default();
+    let contract_id = env.register(Contract, ());
     let id: u32 = 42;
 
     // Simulate what the old contract wrote: a DataV1 payload,
     // no DataVersion entry (old contracts did not write one).
-    let v1_data = DataV1 { a: 10, b: 20 };
-    env.storage().persistent().set(&DataKey::Data(id), &v1_data);
+    env.as_contract(&contract_id, || {
+        let v1_data = DataV1 { a: 10, b: 20 };
+        env.storage().persistent().set(&DataKey::Data(id), &v1_data);
+    });
 
-    let result = read_data(&env, id);
+    let result = env.as_contract(&contract_id, || read_data(&env, id));
 
     assert_eq!(result.a, 10);
     assert_eq!(result.b, 20);
@@ -174,12 +177,15 @@ fn test_reads_v1_entry_as_v2() {
 #[test]
 fn test_reads_v2_entry_correctly() {
     let env = Env::default();
+    let contract_id = env.register(Contract, ());
     let id: u32 = 99;
 
-    let v2_data = DataV2 { a: 1, b: 2, c: Some(3) };
-    write_data(&env, id, &v2_data);
+    env.as_contract(&contract_id, || {
+        let v2_data = DataV2 { a: 1, b: 2, c: Some(3) };
+        write_data(&env, id, &v2_data);
+    });
 
-    let result = read_data(&env, id);
+    let result = env.as_contract(&contract_id, || read_data(&env, id));
 
     assert_eq!(result.a, 1);
     assert_eq!(result.b, 2);
@@ -189,26 +195,33 @@ fn test_reads_v2_entry_correctly() {
 #[test]
 fn test_write_upgrades_v1_entry_to_v2() {
     let env = Env::default();
+    let contract_id = env.register(Contract, ());
     let id: u32 = 7;
 
     // Write a v1 entry directly, as the old contract would have.
-    let v1_data = DataV1 { a: 5, b: 6 };
-    env.storage().persistent().set(&DataKey::Data(id), &v1_data);
+    env.as_contract(&contract_id, || {
+        let v1_data = DataV1 { a: 5, b: 6 };
+        env.storage().persistent().set(&DataKey::Data(id), &v1_data);
+    });
 
     // Read it — lazy migration produces a DataV2 in memory.
-    let migrated = read_data(&env, id);
+    let migrated = env.as_contract(&contract_id, || read_data(&env, id));
     assert_eq!(migrated.c, None);
 
     // Write it back — this stamps the entry as version 2.
-    write_data(&env, id, &migrated);
+    env.as_contract(&contract_id, || {
+        write_data(&env, id, &migrated);
+    });
 
-    let stored_version: u32 = env.storage().persistent()
-        .get(&DataKey::DataVersion(id))
-        .unwrap();
+    let stored_version: u32 = env.as_contract(&contract_id, || {
+        env.storage().persistent()
+            .get(&DataKey::DataVersion(id))
+            .unwrap()
+    });
     assert_eq!(stored_version, 2);
 
     // Subsequent reads should take the v2 branch.
-    let result = read_data(&env, id);
+    let result = env.as_contract(&contract_id, || read_data(&env, id));
     assert_eq!(result.a, 5);
     assert_eq!(result.b, 6);
     assert_eq!(result.c, None);
