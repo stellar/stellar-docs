@@ -75,7 +75,7 @@ Once all the prerequisites have been installed, you can run the following comman
 git clone https://github.com/stellar/stellar-docs
 cd stellar-docs
 yarn install
-npx docusaurus start
+yarn start
 ```
 
 This will begin the development server, and open a browser window/tab pointing
@@ -86,8 +86,8 @@ After you've made your changes, use the following commands to ensure the consist
 MDX file formatting and style across the repository:
 
 ```bash
-npm run check:mdx # this will search for problems in the MDX files
-npm run format:mdx # this will fix any problems that were found
+yarn check:mdx # this will search for problems in the MDX files
+yarn format:mdx # this will fix any problems that were found
 ```
 
 After that you need to build the `routes.txt` file, to do that run the next command
@@ -258,7 +258,6 @@ export const CODE_LANGS = {
 [commonmark]: https://commonmark.org/help/
 [tutorial]: https://www.markdowntutorial.com/
 [guide]: https://www.markdownguide.org/
-[alert-example]: https://developers.stellar.org/docs/anchoring-assets/enabling-cross-border-payments/setting-up-test-server
 [prism]: https://github.com/FormidableLabs/prism-react-renderer
 [open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web
 [open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs
