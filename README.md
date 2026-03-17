@@ -3,7 +3,7 @@
 [![Apache 2.0 licensed](https://img.shields.io/badge/license-apache%202.0-blue.svg)](LICENSE)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/stellar/stellar-docs)
 
-Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
+Welcome to the official home repository for [Documentation](https://developers.stellar.org/docs) for the [Stellar network](https://en.wikipedia.org/wiki/Stellar_(payment_network)).
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -20,12 +20,12 @@ Welcome to the official home repository for [Documentation][docs] for the [Stell
 
 Contributions are more than welcome! Thank you! 🎉
 
-Before diving in, please read our [Stellar Contribution Guide][contrib] for
+Before diving in, please read our [Stellar Contribution Guide](https://github.com/stellar/.github/blob/master/CONTRIBUTING.md) for
 details on contributing to Stellar's various repositories. Please take special
-note of the [code of conduct][coc].
+note of the [code of conduct](https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md).
 
-Our documentation site is built using [Docusaurus][docusaurus]. The content is
-written in [MDX][mdx], which adds a lot of cool possibilities. Even if you're
+Our documentation site is built using [Docusaurus](https://docusaurus.io). The content is
+written in [MDX](https://mdxjs.com), which adds a lot of cool possibilities. Even if you're
 unfamiliar with plain markdown, do not fear! You can still contribute in a
 helpful and meaningful way. Markdown is super easy to learn, and will come quite
 naturally after only a bit of practice. You can always help fix typos, spelling,
@@ -53,9 +53,9 @@ If you have questions, feel free to ask in the [Stellar Developer Discord](https
 
 ## Quick Start
 
-[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web)
 
-[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)](https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs)
 
 ### Prerequisites
 
@@ -137,9 +137,9 @@ If you're unfamiliar with Markdown, there are **loads** of good tutorials and
 cheat sheets out there. Check out some of these resources to get a handle on the
 basics:
 
-- [CommonMark cheat sheet and tutorial][commonmark]
-- [Interactive markdown tutorial][tutorial]
-- [The markdown guide][guide]
+- [CommonMark cheat sheet and tutorial](https://commonmark.org/help/)
+- [Interactive markdown tutorial](https://www.markdowntutorial.com/)
+- [The markdown guide](https://www.markdownguide.org/)
 
 ### Custom Markdown
 
@@ -171,7 +171,7 @@ print("hello world")
 `<CodeExample />` is a code snippet component. You can use this component when
 you want to include snippets for more than one language. See an example
 including a snippet for `JavaScript` and `Python` below. It is using [Prism
-React Renderer][prism] for syntax highlighting. If you're only making a code
+React Renderer](https://github.com/FormidableLabs/prism-react-renderer) for syntax highlighting. If you're only making a code
 snippet for a _single programming language_, you should just stick with a
 "normal" markdown code fence using backticks.
 
@@ -248,17 +248,3 @@ export const CODE_LANGS = {
 ```
 
 **Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
-
-[docs]: https://developers.stellar.org/docs
-[stellar]: https://stellar.org
-[contrib]: https://github.com/stellar/.github/blob/master/CONTRIBUTING.md
-[coc]: https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md
-[docusaurus]: https://docusaurus.io
-[mdx]: https://mdxjs.com
-[commonmark]: https://commonmark.org/help/
-[tutorial]: https://www.markdowntutorial.com/
-[guide]: https://www.markdownguide.org/
-[alert-example]: https://developers.stellar.org/docs/anchoring-assets/enabling-cross-border-payments/setting-up-test-server
-[prism]: https://github.com/FormidableLabs/prism-react-renderer
-[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web
-[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs

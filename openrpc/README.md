@@ -20,7 +20,7 @@ If you're here to add a new method to one of the specfiles, you'll want to:
 
 1. Create a new `<method_name>.json` file in the relevant
    `/openrpc/src/{stellar-rpc,anchor-platform}/methods` directory. Follow the
-   OpenRPC specification concerning [method objects] for defining this file.
+   OpenRPC specification concerning [method objects](https://spec.open-rpc.org/#method-object) for defining this file.
 2. Feel free to use any existing (or create new) `$ref` objects along the way.
    More about them [later on](#json-refs).
 3. Once your method is defined the way you want it, run the [build](#building)
@@ -117,7 +117,7 @@ OpenRPC specification. Here are the pieces you'll need to know about:
 
 ### Methods (`/openrpc/src/methods/*`)
 
-This collection of JSON files define the [method objects] that will go into the
+This collection of JSON files define the [method objects](https://spec.open-rpc.org/#method-object) that will go into the
 generated specification file. The methods can be considered the container that
 will ultimately hold _all_ of the details about how the method works (parameter
 types, return types, examples, etc.). The following properties are required in
@@ -129,7 +129,7 @@ the method object:
 
 ### Content Descriptors (`/openrpc/src/contentDescriptors/*`)
 
-This collection of JSON files define the [contentDescriptor objects] that will
+This collection of JSON files define the [contentDescriptor objects](https://spec.open-rpc.org/#content-descriptor-object) that will
 go into the generated specification file. A content descriptor is a reusable way
 of describing either parameters or results. (Though, I've found they're best
 used as items in a method's `params` list). The following property are required
@@ -141,13 +141,13 @@ in the content descriptor object:
 
 ### Schemas (`/openrpc/src/schemas/*`)
 
-This collection of JSON files define the [schema objects] that will go into the
+This collection of JSON files define the [schema objects](https://spec.open-rpc.org/#schema-object) that will go into the
 generated specification file. These schemas allow us to define input and output
-data types. These schemas **MUST** follow the [JSON Schema Specification 7]
+data types. These schemas **MUST** follow the [JSON Schema Specification 7](https://json-schema.org/draft-07/json-schema-release-notes.html)
 
 ### Examples (`/openrpc/src/examples/*`)
 
-This collection of JSON files define the [example objects] that will go into the
+This collection of JSON files define the [example objects](https://spec.open-rpc.org/#example-object) that will go into the
 generated specification file. These objects define an example that is consistent
 and matches the `schema` of a given content descriptor. These example objects
 can act as either a parameter or result. The `value` property of the example
@@ -155,7 +155,7 @@ object allows us to embed a literal example of what the schema can look like.
 
 ### Example Pairings (`/openrpc/src/examplePairingObjects/*`)
 
-This collection of JSON files define the [example pairing objects] that will go
+This collection of JSON files define the [example pairing objects](https://spec.open-rpc.org/#example-pairing-object) that will go
 into the generated specification file. The example pairing objects make up a
 complete example request to the Stellar RPC service. This is where you can
 specify a set of `params` that were supplied in the request, as well as the
@@ -171,9 +171,3 @@ required in the example pairing objects:
 > Stellar RPC doesn't make use of any methods as notifications, so we've listed
 > it as required here.
 
-[method objects]: https://spec.open-rpc.org/#method-object
-[contentDescriptor objects]: https://spec.open-rpc.org/#content-descriptor-object
-[schema objects]: https://spec.open-rpc.org/#schema-object
-[JSON Schema Specification 7]: https://json-schema.org/draft-07/json-schema-release-notes.html
-[example objects]: https://spec.open-rpc.org/#example-object
-[example pairing objects]: https://spec.open-rpc.org/#example-pairing-object
