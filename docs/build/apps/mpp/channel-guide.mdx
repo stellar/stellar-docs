@@ -6,6 +6,8 @@ sidebar_position: 30
 
 This guide explains how to use MPP **channel mode** with `stellar-mpp-sdk`. Channel payments use a [one-way payment channel](https://github.com/stellar-experimental/one-way-channel) Soroban contract — the funder deposits tokens once, then makes many off-chain payments by signing cumulative commitments. No on-chain transaction is needed per payment, making this ideal for high-frequency AI agent interactions.
 
+This worked example assumes the channel is funded in USDC. Commitment amounts and prices below are therefore denominated in USDC, because channel commitments always use the asset deposited into the channel.
+
 ## How channel payments work
 
 ```
@@ -23,7 +25,7 @@ Client (Funder)           Server (Recipient)
   |<-----------------------------|
   |                              |
   | Sign commitment off-chain    |
-  | (cumulative: 0.1 XLM)        |
+  | (cumulative: 0.1 USDC)       |
   |----------------------------->|
   |                              |
   | Verify ed25519 sig, 200 OK   |
@@ -32,11 +34,11 @@ Client (Funder)           Server (Recipient)
   | GET /resource                |
   |----------------------------->|
   |                              |
-  | 402 (cumulative: 0.1 XLM)    |
+  | 402 (cumulative: 0.1 USDC)   |
   |<-----------------------------|
   |                              |
   | Sign commitment              |
-  | (cumulative: 0.2 XLM)        |
+  | (cumulative: 0.2 USDC)       |
   |----------------------------->|
   |                              |
   | Verify, 200 OK               |
@@ -53,7 +55,7 @@ Each commitment is cumulative. The server tracks the highest commitment it has s
 Before using channel mode, you need a deployed [one-way-channel contract](https://github.com/stellar-experimental/one-way-channel) on Stellar Testnet or Mainnet. The contract is initialized with:
 
 - A **commitment key** — an ed25519 keypair. The client signs commitments with the private key; the contract verifies with the public key.
-- A **token deposit** — the funder's initial XLM or USDC balance in the channel.
+- A **token deposit** — the funder's initial balance in the channel asset. This example uses USDC.
 
 See the [one-way-channel repo](https://github.com/stellar-experimental/one-way-channel) for deployment instructions.
 
@@ -70,9 +72,15 @@ import { StrKey } from '@stellar/stellar-sdk'
 const PORT = 3001
 const CHANNEL_CONTRACT = process.env.CHANNEL_CONTRACT   // C... (56 chars)
 const COMMITMENT_PUBKEY = process.env.COMMITMENT_PUBKEY // 64-char hex ed25519 public key
+const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY       // Shared secret for MPP credential verification
 
 if (!CHANNEL_CONTRACT || !COMMITMENT_PUBKEY) {
   console.error('Set CHANNEL_CONTRACT and COMMITMENT_PUBKEY environment variables')
+  process.exit(1)
+}
+
+if (!MPP_SECRET_KEY) {
+  console.error('Set MPP_SECRET_KEY to a strong secret for MPP credential verification')
   process.exit(1)
 }
 
@@ -82,7 +90,7 @@ const commitmentPublicKeyG = StrKey.encodeEd25519PublicKey(
 )
 
 const mppx = Mppx.create({
-  secretKey: process.env.MPP_SECRET_KEY ?? 'my-channel-secret',
+  secretKey: MPP_SECRET_KEY,
   methods: [
     stellar.channel({
       channel: CHANNEL_CONTRACT,
@@ -96,15 +104,25 @@ const mppx = Mppx.create({
 const app = express()
 
 app.get('/my-service', async (req, res) => {
+  const headers = new Headers()
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value == null) continue
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        headers.append(key, entry)
+      }
+    } else {
+      headers.set(key, value)
+    }
+  }
+
   const webReq = new Request(`http://localhost:${PORT}${req.url}`, {
     method: req.method,
-    headers: Object.fromEntries(
-      Object.entries(req.headers).filter(([, v]) => v != null),
-    ),
+    headers,
   })
 
   const result = await mppx.channel({
-    amount: '0.1',              // 0.1 XLM per request (human-readable)
+    amount: '0.1',              // 0.1 USDC per request (human-readable)
     description: 'API call',
   })(webReq)
 
@@ -129,7 +147,7 @@ app.listen(PORT, () => {
 Start the server:
 
 ```bash
-CHANNEL_CONTRACT=CABC... COMMITMENT_PUBKEY=<64-hex-chars> node channel-server.js
+CHANNEL_CONTRACT=CABC... COMMITMENT_PUBKEY=<64-hex-chars> MPP_SECRET_KEY=replace-me node channel-server.js
 ```
 
 ## Channel client
@@ -170,10 +188,10 @@ Mppx.create({
       onProgress(event) {
         switch (event.type) {
           case 'challenge':
-            console.log(`Challenge: ${event.amount} XLM via channel ${event.channel.slice(0, 12)}...`)
+            console.log(`Challenge: ${event.amount} base units via channel ${event.channel.slice(0, 12)}...`)
             break
           case 'signed':
-            console.log(`Commitment signed (cumulative: ${event.cumulativeAmount} stroops)`)
+            console.log(`Commitment signed (cumulative: ${event.cumulativeAmount} base units)`)
             break
         }
       },
