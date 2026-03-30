@@ -85,6 +85,11 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/apps/x402',
     },
     {
+      to: '/docs/build/apps/mpp',
+      label: 'MPP on Stellar',
+      activeBasePath: 'docs/build/apps/mpp',
+    },
+    {
       to: '/docs/build/apps/zk',
       label: 'ZK Proofs on Stellar',
       activeBasePath: 'docs/build/apps/zk',
