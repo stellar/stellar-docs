@@ -82,6 +82,25 @@ const config: Config = {
         } satisfies Plugin.PluginOptions,
       },
     ],
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        redirects: [
+          {
+            from: '/docs/build/apps/x402',
+            to: '/docs/build/agentic-payments/x402',
+          },
+          {
+            from: '/docs/build/apps/x402/built-on-stellar',
+            to: '/docs/build/agentic-payments/x402/built-on-stellar',
+          },
+          {
+            from: '/docs/build/apps/x402/quickstart-guide',
+            to: '/docs/build/agentic-payments/x402/quickstart-guide',
+          },
+        ],
+      },
+    ],
     './src/plugins/route-export/index.ts',
     './src/plugins/analytics-module/index.ts',
   ],
