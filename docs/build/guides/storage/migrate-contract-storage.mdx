@@ -4,65 +4,139 @@ hide_table_of_contents: true
 description: Use the version marker pattern to safely read and migrate stored data when a contract upgrade changes a data structure
 ---
 
-When a contract is upgraded and a stored data structure gains new fields, the data already written to the ledger still uses the old layout. Naively reading those old entries with the new type causes the host to trap. This guide explains why that happens, introduces the version marker pattern as the correct solution, and covers lazy versus eager migration strategies and how to test them.
+When a contract is upgraded and a stored data structure gains new fields, the data already written to the ledger still uses the old layout. Naively reading those old entries with the new type causes the host to trap. This guide introduces the version marker pattern as the correct solution, covers lazy versus eager migration strategies and how to test them, and explains why the "intuitive" approach fails.
 
-## Why intuitive approaches fail
+## Versioned Enum Pattern
 
 Suppose a contract stores `DataV1` entries and is upgraded to use `DataV2`, which adds an optional field `c`:
 
 ```rust
 #[contracttype]
-pub struct Data { a: i64, b: i64 }
+pub struct DataV1 { a: i64, b: i64 }
 
 #[contracttype]
 pub struct DataV2 { a: i64, b: i64, c: Option<i64> }
 ```
 
-### Approach 1: Read old entries directly with the new type
-
-The most natural approach is to read the stored bytes directly as `DataV2` and expect `c` to default to `None`:
+The recommended approach in this circumstance is to implement a versioned enum that can hold either a `V1` or `V2` data struct.
 
 ```rust
-// Reading a DataV1 entry with the DataV2 type.
-// A developer might expect c = None for old entries — but this traps.
-let data: DataV2 = env.storage().persistent().get(&key).unwrap();
-// Error(Object, UnexpectedSize)
-```
+#[contracttype]
+pub enum Data {
+    V1(DataV1),
+    V2(DataV2),
+}
 
-This traps with `Error(Object, UnexpectedSize)`. The Soroban host validates the field count of the XDR-encoded value against the type definition before returning anything to the contract. Because `DataV1` has two fields and `DataV2` has three, the host rejects the entry before the SDK can handle it.
-
-### Approach 2: Use `try_from_val` as a fallback
-
-Another approach is to use `try_from_val` expecting to catch a deserialization error and recover:
-
-```rust
-let raw: Val = env.storage().persistent().get(&key).unwrap();
-if let Ok(v2) = DataV2::try_from_val(&env, &raw) {
-    v2
-} else {
-    // This branch is never reached — the host traps before returning Err.
-    let v1 = DataV1::try_from_val(&env, &raw).unwrap();
-    DataV2 { a: v1.a, b: v1.b, c: None }
+#[contracttype]
+pub enum DataKey {
+    Data(u64),
 }
 ```
 
-This also traps at the host level. The field count validation happens in the host environment during deserialization — it does not produce a Rust `Err` that the SDK can intercept. There is no way to catch or recover from the mismatch at the contract level.
+### Migration Logic
 
-The root issue is that a contract cannot determine which type an existing storage entry was written as just by reading it. That information must be stored explicitly.
+The migration logic enumerates the two data formats and converts `V1` data to `V2` format, and passes `V2` format through. If it's already `V1`, it maps fields `a` and `b` over and sets the new `c` field to `None` (the field that was added in `V2`). If it's already `V2`, it passes through unchanged. This is a lazy migration - old data is upgraded on read, not in a bulk migration.
+
+```rust
+impl Data {
+    pub fn into_v2(self) -> DataV2 {
+        match self {
+            Data::V1(v1) => DataV2 { a: v1.a, b: v1.b, c: None },
+            Data::V2(v2) => v2,
+        }
+    }
+}
+```
+
+### Reading with version awareness
+
+The value is read from storage and then `into_v2()` ensures that the returned value is in the `V2` format.
+
+```rust
+pub fn read_data(e: Env, id: u32) -> Option<DataV2> {
+    let data_enum: Data = e.storage().persistent().get(&DataKey::Data(id))?;
+    Some(data_enum.into_v2())
+}
+```
+
+### Writing always uses the current version
+
+The write function `write_data()` takes a data argument in the `DataV2` format.
+
+```rust
+pub fn write_data(e: Env, id: u32, data: DataV2) {
+    e.storage().persistent().set(&DataKey::Data(id), &Data::V2(data));
+}
+```
+
+### Testing migrations
+
+Testing data migration requires simulating state written by an old contract version and verifying that the new contract reads it correctly.
+
+In this test data in the `V1` format is first stored. Then it's read using the `read_data` function, which converts data in the `V1` format to V2 format with `into_v2()` before returning the result. The result is tested with `assert_eq!()`, and stored with the same `id` as it was stored with, which means the `V1` formatted data is overwritten with the same data in `V2` format.
+
+Then the data is read from storage to verify it's stored in the `V2` format, and finally the data is read using the `read_data()` function to verify that the data is also returned in the `V2` format by the read function.
+
+```rust
+#[test]
+fn test_write_upgrades_v1_entry_to_v2_1() {
+    let env = Env::default();
+    let id: u32 = 7;
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    // Inject a V1 entry directly, simulating legacy on-chain state.
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Data(id), &Data::V1(DataV1 { a: 5, b: 6 }));
+    });
+
+    // Read it - into_v2() migrates lazily; c must be None.
+    let migrated = client.read_data(&id).unwrap();
+    assert_eq!(migrated.a, 5);
+    assert_eq!(migrated.b, 6);
+    assert_eq!(migrated.c, None);
+
+    // Write it back - write_data always stores Data::V2(...).
+    client.write_data(&id, &migrated);
+
+    // Confirm the stored enum variant is now V2, not V1.
+    let stored: Data = env.as_contract(&contract_id, || {
+        env.storage().persistent().get(&DataKey::Data(id))
+    })
+    .unwrap();
+
+    match stored {
+        Data::V2(v2) => {
+            assert_eq!(v2.a, 5);
+            assert_eq!(v2.b, 6);
+            assert_eq!(v2.c, None);
+        }
+        Data::V1(_) => panic!("expected Data::V2 after write_data, found Data::V1"),
+    }
+
+    // Subsequent reads go through the V2 branch and return identical values.
+    let result = client.read_data(&id).unwrap();
+    assert_eq!(result.a, 5);
+    assert_eq!(result.b, 6);
+    assert_eq!(result.c, None);
+}
+```
 
 ## Version Marker Pattern
 
-The solution is to store a version number alongside each data entry, keyed by the same identifier. The contract reads the version first, then branches on the result to decode the payload with the correct type.
+An alternative solution is to store a version number alongside each data entry, keyed by the same identifier. The contract reads the version first, then branches on the result to decode the payload with the correct type.
 
 ### Key layout
 
-Define two variants in your key enum — one for the version marker and one for the payload — both keyed by the same `id`:
+Define two variants in your key enum - one for the version marker and one for the payload - both keyed by the same `id`:
 
 ```rust
 #[contracttype]
 pub enum DataKey {
-    DataVersion(u32),  // version marker keyed by id
-    Data(u32),         // data keyed by id
+    DataVersion(u32),  // version marker, keyed by id
+    Data(u32),         // data, keyed by the same id
 }
 ```
 
@@ -70,7 +144,7 @@ Each logical record occupies two storage slots. Because the version is stored pe
 
 ### Reading with version awareness
 
-Before decoding a storage entry, read its version marker. Use `unwrap_or(1)` to handle entries that were written before versioning was introduced — the absence of a version key is itself a signal that the entry is version 1:
+Before decoding a storage entry, read its version marker. Use `unwrap_or(1)` to handle entries that were written before versioning was introduced. The absence of a version key is itself a signal that the entry is version 1:
 
 ```rust
 fn read_data(env: &Env, id: u32) -> DataV2 {
@@ -105,7 +179,7 @@ Once version-aware read/write logic is in place, there are two strategies for co
 
 #### Lazy migration (convert on read)
 
-In lazy migration, old entries are left untouched on the ledger. When a record is read, its version is detected and it is up-converted in memory. When that record is later written back, it is stamped with the new version. No explicit migration step is needed — conversion happens as records are accessed in normal contract use.
+In lazy migration, old entries are left untouched on the ledger. When a record is read, its version is detected and it is up-converted in memory. When that record is later written back, it is stamped with the new version. No explicit migration step is needed - conversion happens as records are accessed in normal contract use.
 
 Lazy migration is generally preferred on blockchains. Leaving old entries untouched has no upfront cost and no risk of hitting instruction or ledger-entry limits at upgrade time. Records that are never accessed again are never migrated, which is usually acceptable.
 
@@ -133,7 +207,7 @@ pub fn migrate_all(env: &Env, ids: Vec<u32>) {
 }
 ```
 
-Eager migration is rarely practical for large datasets on Soroban. Each rewrite consumes fees and burns instructions, and a single transaction cannot migrate an unbounded number of records — the contract will hit instruction or ledger-entry limits. If the batch must span multiple transactions, the contract is in a mixed-version state throughout the window, which means version-aware read logic is still required anyway.
+Eager migration is rarely practical for large datasets on Soroban. Each rewrite consumes fees and burns instructions, and a single transaction cannot migrate an unbounded number of records - the contract will hit instruction or ledger-entry limits. If the batch must span multiple transactions, the contract is in a mixed-version state throughout the window, which means version-aware read logic is still required anyway.
 
 Eager migration is occasionally appropriate when the total number of records is small and known in advance (for example, a fixed registry of a few dozen entries), or when you need to permanently drop old version branches from the read path.
 
@@ -205,11 +279,11 @@ fn test_write_upgrades_v1_entry_to_v2() {
         env.storage().persistent().set(&DataKey::Data(id), &v1_data);
     });
 
-    // Read it — lazy migration produces a DataV2 in memory.
+    // Read it - lazy migration produces a DataV2 in memory.
     let migrated = read_data(&env, id);
     assert_eq!(migrated.c, None);
 
-    // Write it back — this stamps the entry as version 2.
+    // Write it back - this stamps the entry as version 2.
     write_data(&env, id, &migrated);
 
     env.as_contract(&contract_id, || {
@@ -233,110 +307,45 @@ The three test cases cover the three states a record can be in after an upgrade:
 - A `DataV2` entry written by the new contract
 - A `DataV1` entry that is read and then written back (the lazy migration round-trip)
 
-## Versioned Enum Pattern
+## Why intuitive approaches fail
 
-Another approach is to implement a versioned enum that can hold either a `V1` or `V2` data struct.
+The techniques presented here may not immediately seem necessary. The "apparent" obvious solutions may be to programmatically handle the discrepancies in data types, rather than modify any of the underlying data structures, or adjust how the storage entries are read or written.
+
+:::warning
+
+We've outlined a couple of the more "obvious" approaches to this problem, to illustrate _why_ these anti-patterns are not ideal. Please do not use the following code snippets as examples to be emulated. Rather, read the context of them, and learn why to avoid them.
+
+:::
+
+### Approach 1: Read old entries directly with the new type
+
+You may think the most natural approach is to read the stored bytes directly as `DataV2` and expect `c` to default to `None`:
 
 ```rust
-#[contracttype]
-pub enum Data {
-    V1(DataV1),
-    V2(DataV2),
-}
+let key = DataKey::DataV2(1u32);
+// Reading a DataV1 entry with the DataV2 type.
+// A developer might expect c = None for old entries - but this traps.
+let data: DataV2 = env.storage().persistent().get(&key).unwrap();
+// Error(Object, UnexpectedSize)
+```
 
-#[contracttype]
-pub enum DataKey {
-    Data(u64),
+This traps with `Error(Object, UnexpectedSize)`. The Soroban host validates the field count of the XDR-encoded value against the type definition before returning anything to the contract. Because `DataV1` has two fields and `DataV2` has three, the host rejects the entry before the SDK can handle it.
+
+### Approach 2: Use `try_from_val` as a fallback
+
+Another approach is to use `try_from_val` expecting to catch a deserialization error and recover:
+
+```rust
+let raw: Val = env.storage().persistent().get(&key).unwrap();
+if let Ok(v2) = DataV2::try_from_val(&env, &raw) {
+    v2
+} else {
+    // This branch is never reached - the host traps before returning Err.
+    let v1 = DataV1::try_from_val(&env, &raw).unwrap();
+    DataV2 { a: v1.a, b: v1.b, c: None }
 }
 ```
 
-### Migration Logic
+This also traps at the host level. The field count validation happens in the host environment during deserialization - it does not produce a Rust `Err` that the SDK can intercept. There is no way to catch or recover from the mismatch at the contract level.
 
-The migration logic enumerates the two data formats and converts `V1` data to `V2` format, and passes `V2` format through. If it's already `V1`, it maps fields `a` and `b` over and sets the new `c` field to `None` (the field that was added in `V2`). If it's already `V2`, it passes through unchanged. This is a lazy migration — old data is upgraded on read, not in a bulk migration.
-
-```rust
-impl Data {
-    pub fn into_v2(self) -> DataV2 {
-        match self {
-            Data::V1(v1) => DataV2 { a: v1.a, b: v1.b, c: None },
-            Data::V2(v2) => v2,
-        }
-    }
-}
-```
-
-### Reading with version awareness
-
-The value is read from storage and then `into_v2()` ensures that the returned value is in the `V2` format.
-
-```rust
-pub fn read_data(e: Env, id: u32) -> Option<DataV2> {
-    let data_enum: Data = e.storage().persistent().get(&DataKey::Data(id))?;
-    Some(data_enum.into_v2())
-}
-```
-
-### Writing always uses the current version
-
-The write function `write_data()` takes a data argument in the `DataV2` format.
-
-```rust
-pub fn write_data(e: Env, id: u32, data: DataV2) {
-    e.storage().persistent().set(&DataKey::Data(id), &Data::V2(data));
-}
-```
-
-### Testing migrations
-
-Testing data migration requires simulating state written by an old contract version and verifying that the new contract reads it correctly.
-
-In this test data in the `V1` format is first stored. Then it's read using the `read_data` function, which converts data in the `V1` format to V2 format with `into_v2()` before returning the result. The result is tested with `assert_eq!()`, and stored with the same `id` as it was stored with, which means the `V1` formatted data is overwritten with the same data in `V2` format.
-
-Then the data is read from storage to verify it's stored in the `V2` format, and finally the data is read using the `read_data()` function to verify that the data is also returned in the `V2` format by the read function.
-
-```rust
-#[test]
-fn test_write_upgrades_v1_entry_to_v2_1() {
-    let env = Env::default();
-    let id: u32 = 7;
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    // Inject a V1 entry directly, simulating legacy on-chain state.
-    env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Data(id), &Data::V1(DataV1 { a: 5, b: 6 }));
-    });
-
-    // Read it — into_v2() migrates lazily; c must be None.
-    let migrated = client.read_data(&id).unwrap();
-    assert_eq!(migrated.a, 5);
-    assert_eq!(migrated.b, 6);
-    assert_eq!(migrated.c, None);
-
-    // Write it back — write_data always stores Data::V2(...).
-    client.write_data(&id, &migrated);
-
-    // Confirm the stored enum variant is now V2, not V1.
-    let stored: Data = env.as_contract(&contract_id, || {
-        env.storage().persistent().get(&DataKey::Data(id))
-    })
-    .unwrap();
-
-    match stored {
-        Data::V2(v2) => {
-            assert_eq!(v2.a, 5);
-            assert_eq!(v2.b, 6);
-            assert_eq!(v2.c, None);
-        }
-        Data::V1(_) => panic!("expected Data::V2 after write_data, found Data::V1"),
-    }
-
-    // Subsequent reads go through the V2 branch and return identical values.
-    let result = client.read_data(&id).unwrap();
-    assert_eq!(result.a, 5);
-    assert_eq!(result.b, 6);
-    assert_eq!(result.c, None);
-}
-```
+The root issue is that a contract cannot determine which type an existing storage entry was written as just by reading it. That information must be stored explicitly.
