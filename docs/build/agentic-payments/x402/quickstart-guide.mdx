@@ -1,0 +1,248 @@
+---
+title: x402 Quickstart Guide
+description: Build a paid x402 API with Node.js, Express, and Stellar settlement.
+sidebar_position: 20
+keywords: [x402, x402 quickstart, x402 tutorial, 402]
+---
+
+This tutorial shows how to build the simplest possible paid API with Node.js and Express using the x402 packages with settlement on the Stellar network.
+
+To follow this guide, you will need [Node.js](https://nodejs.org/) installed locally. Recommend using the latest LTS version.
+
+## Create A Project
+
+Create a new folder for the tutorial and initialize a Node.js project:
+
+```bash
+mkdir x402-quickstart-guide
+cd x402-quickstart-guide
+npm init -y
+npm pkg set type=module
+```
+
+The `type=module` setting lets you run the `import` syntax used in the example files below.
+
+Install the npm packages used by the server and client examples:
+
+```bash
+npm install express dotenv @stellar/stellar-sdk @x402/core @x402/express @x402/fetch @x402/stellar
+```
+
+This installs everything needed for both `server.js` and `client.js`.
+
+## Create `server.js`
+
+Create a file named `server.js` and paste in the following code:
+
+```js title="server.js"
+import express from "express";
+import { paymentMiddlewareFromConfig } from "@x402/express";
+import { HTTPFacilitatorClient } from "@x402/core/server";
+import { ExactStellarScheme } from "@x402/stellar/exact/server";
+
+// Set up configuration
+const PORT = "3001";
+const ROUTE_PATH = "/my-service";
+const PRICE = "$0.01"; // price in USDC
+const NETWORK = "stellar:testnet"; // Use pubnet for mainnet
+const FACILITATOR_URL = "https://www.x402.org/facilitator";
+const PAY_TO = "GABC123...YOURADDRESS...123ABC"; // Add Stellar Address
+
+const app = express();
+
+// Return information for /
+app.get("/", (_, res) =>
+  res.json({ route: ROUTE_PATH, price: PRICE, network: NETWORK }),
+);
+
+// Create x402 middleware config
+app.use(
+  paymentMiddlewareFromConfig(
+    {
+      [`GET ${ROUTE_PATH}`]: {
+        accepts: {
+          scheme: "exact",
+          price: PRICE,
+          network: NETWORK,
+          payTo: PAY_TO,
+        },
+      },
+    },
+    new HTTPFacilitatorClient({ url: FACILITATOR_URL }),
+    [{ network: NETWORK, server: new ExactStellarScheme() }],
+  ),
+);
+
+// Attach x402 middleware config
+app.get(ROUTE_PATH, (_, res) => res.json({ secret: "valuable content" }));
+
+// Start server
+app.listen(Number(PORT), () => {
+  console.log(`x402 server listening on http://localhost:${PORT}${ROUTE_PATH}`);
+});
+```
+
+Update `PAY_TO` with the Stellar address that should receive USDC funds whenever a client pays for your service. Your wallet will need a testnet trustline setup for USDC. More information here: [Setting up a testnet wallet](#setting-up-a-testnet-wallet)
+
+`FACILITATOR_URL` points to a managed facilitator endpoint that handles verification and settlement. In this example, the facilitator is Coinbase's testnet facilitator.
+
+Start the API locally:
+
+```bash
+node server.js
+```
+
+When a client requests your endpoint, your server responds with a `402 Payment Required` status. The response includes headers that describe the payment requirements so that a compliant client can build a signed payment payload and retry the request.
+
+Behind the scenes, the facilitator handles verification and onchain settlement. You do not need to run your own blockchain nodes or build raw transactions yourself. A managed facilitator service takes the signed payment payload from the client, verifies it against the specified network and asset, settles the transaction, and returns verification to your server so it can complete the request.
+
+The client generates a signed payment payload that authorizes a stablecoin transfer, the facilitator verifies and settles that payload on the Stellar network, and the server returns a `200` response with the protected data.
+
+The funds settle directly to the wallet address in `PAY_TO`.
+
+## Create `client.js`
+
+With your Express server running, create a file named `client.js` and paste in the following code:
+
+```js title="client.js"
+import dotenv from "dotenv";
+import { Transaction, TransactionBuilder } from "@stellar/stellar-sdk";
+import { x402Client, x402HTTPClient } from "@x402/fetch";
+import { createEd25519Signer, getNetworkPassphrase } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { fileURLToPath } from "node:url";
+
+// Load environment variables
+dotenv.config({
+  path: fileURLToPath(new URL("./.env", import.meta.url)),
+  quiet: true,
+});
+
+// Set up configuration
+const STELLAR_PRIVATE_KEY = process.env.STELLAR_PRIVATE_KEY;
+const RESOURCE_SERVER_URL = "http://localhost:3001"; // host and port
+const ENDPOINT_PATH = "/my-service";
+const NETWORK = "stellar:testnet"; // use pubnet for mainnet
+const STELLAR_RPC_URL = "https://soroban-testnet.stellar.org";
+
+async function main() {
+  // Setup x402Client configuration
+  const url = new URL(ENDPOINT_PATH, RESOURCE_SERVER_URL).toString();
+  const signer = createEd25519Signer(STELLAR_PRIVATE_KEY, NETWORK);
+  const rpcConfig = STELLAR_RPC_URL ? { url: STELLAR_RPC_URL } : undefined;
+  const client = new x402Client().register(
+    "stellar:*",
+    new ExactStellarScheme(signer, rpcConfig),
+  );
+  const httpClient = new x402HTTPClient(client);
+  console.log(`Target: ${url}\nClient address: ${signer.address}`);
+
+  // Try without payment
+  const firstTry = await fetch(url);
+  console.log(`Payment requested: ${firstTry.status}`);
+  // Grab response which includes instructions for payment
+  const paymentRequired = httpClient.getPaymentRequiredResponse((name) =>
+    firstTry.headers.get(name),
+  );
+  // Create payment payload
+  let paymentPayload = await client.createPaymentPayload(paymentRequired);
+  const networkPassphrase = getNetworkPassphrase(NETWORK);
+  const tx = new Transaction(
+    paymentPayload.payload.transaction,
+    networkPassphrase,
+  );
+  const sorobanData = tx.toEnvelope().v1()?.tx()?.ext()?.sorobanData();
+  // Configure fee to 1 stroop, prevents testnet facilitator limit issue
+  if (sorobanData) {
+    paymentPayload = {
+      ...paymentPayload,
+      payload: {
+        ...paymentPayload.payload,
+        transaction: TransactionBuilder.cloneFrom(tx, {
+          fee: "1",
+          sorobanData,
+          networkPassphrase,
+        })
+          .build()
+          .toXDR(),
+      },
+    };
+  }
+  const paymentHeaders =
+    httpClient.encodePaymentSignatureHeader(paymentPayload);
+  // Send request
+  const paidResponse = await fetch(url, {
+    method: "GET",
+    headers: paymentHeaders,
+  });
+  const text = await paidResponse.text();
+  const paymentResponse = httpClient.getPaymentSettleResponse((name) =>
+    paidResponse.headers.get(name),
+  );
+  // Log response
+  console.log("Settlement response:", paymentResponse);
+  console.log(`Access Granted! ${paidResponse.status} "${text}"`);
+}
+
+main().catch((error) => {
+  console.error("Client failed:", error);
+  process.exit(1);
+});
+```
+
+### Setting up a testnet wallet
+
+Next, create a fresh account and fund it with testnet XLM and testnet USDC using Stellar Lab:
+
+- [Fund a testnet account in Stellar Lab](https://lab.stellar.org/account/fund)
+
+1. Create a new keypair using Stellar Lab: https://lab.stellar.org/account/create
+2. Fund with testnet XLM (Native Stellar Token): https://lab.stellar.org/account/fund
+3. Create the USDC trustline (there's a button on the fund page above), sign and submit that transaction
+4. Visit the circle faucet, select Stellar Testnet from the networks and add your public key for the wallet address input: https://faucet.circle.com
+
+Create a local environment file for the client and add your Stellar testnet secret key:
+
+```bash title=".env"
+STELLAR_PRIVATE_KEY=S...
+```
+
+Edit `.env` and replace `S...` with the secret key for the account that will sign transactions and pay for the resource.
+
+:::caution
+
+Secret keys provide full access to any digital assets held within the wallet. Use `.env` files only for hot wallets in testnet deployments.
+
+:::
+
+## Run The Client
+
+Once the account is funded and the secret key is in `.env`, run the client in a second terminal:
+
+```bash
+node client.js
+```
+
+This sends `$0.01` of testnet USDC from the client account to the server account.
+
+The client then receives the protected JSON data: `{ secret: "valuable content" }`
+
+The server is set up as an MVP for machine-to-machine payments. If you want to enable human payments, the next step is to build a paywall. Take a look at the demo code for examples: https://github.com/stellar/x402-stellar/tree/main/examples/simple-paywall
+
+## Additional Documentation
+
+- [OpenZeppelin x402 Facilitator Plugin Source Code](https://github.com/OpenZeppelin/relayer-plugin-x402-facilitator)
+- [OpenZeppelin x402 Facilitator Docs](https://docs.openzeppelin.com/relayer/1.4.x/guides/stellar-x402-facilitator-guide)
+- [OpenZeppelin Stellar Relayer SDK](https://github.com/OpenZeppelin/openzeppelin-relayer-sdk)
+- [OpenZeppelin Stellar Relayer Docs](https://docs.openzeppelin.com/relayer/1.4.x)
+- [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account)
+
+## Learn more
+
+- [x402 on Stellar (Landing page)](https://stellar.org/x402) - Stellar x402 overview and resources
+- [x402 on Stellar (Blog)](https://stellar.org/blog/foundation-news/x402-on-stellar) - Foundation news and announcement
+- [x402 protocol (Coinbase Developer Platform)](https://docs.cdp.coinbase.com/x402) - Official x402 protocol overview and spec
+- [x402 protocol specification](https://www.x402.org/) - x402 Specification and Whitepaper
+- [Coinbase x402 GitHub](https://github.com/coinbase/x402) - Official x402 Protocol GitHub Repo
+- [x402-stellar (npm)](https://www.npmjs.com/package/x402-stellar) - npm package for x402 on Stellar
+- [Signing Soroban invocations](../../guides/transactions/signing-soroban-invocations.mdx) - Auth-entry signing and transaction signing on Stellar
