@@ -80,14 +80,24 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/apps/dapp-frontend',
     },
     {
-      to: '/docs/build/apps/x402',
-      label: 'x402 on Stellar',
-      activeBasePath: 'docs/build/apps/x402',
-    },
-    {
       to: '/docs/build/apps/zk',
       label: 'ZK Proofs on Stellar',
       activeBasePath: 'docs/build/apps/zk',
+    },
+    {
+      type: 'html',
+      value: '<hr><a href="/docs/build/agentic-payments" class="subtitle"><small>Agentic Payments</small>',
+      className: 'subtitle',
+    },
+    {
+      to: '/docs/build/agentic-payments/x402',
+      label: 'x402 on Stellar',
+      activeBasePath: 'docs/build/agentic-payments/x402',
+    },
+    {
+      to: '/docs/build/agentic-payments/mpp',
+      label: 'MPP on Stellar',
+      activeBasePath: 'docs/build/agentic-payments/mpp',
     },
     {
       type: 'html',

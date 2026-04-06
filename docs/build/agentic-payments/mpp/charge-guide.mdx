@@ -1,0 +1,305 @@
+---
+title: MPP Charge Guide
+description: Build a paid API with Node.js and Stellar settlement using the Machine Payments Protocol (MPP).
+sidebar_position: 10
+---
+
+The [**charge** intent](https://mpp.dev/intents/charge) is for immediate, one-time payments. Each API request triggers a Soroban SAC `transfer` that settles on-chain individually — no channel setup, no pre-funding, and no external facilitator required. This is the simplest way to get started with MPP on Stellar.
+
+## How charge payments work
+
+```
+Client (Payer)            Server (Recipient)         Soroban RPC / Network
+  |                              |                          |
+  | GET /resource                |                          |
+  |----------------------------->|                          |
+  |                              |                          |
+  | 402 Payment Required         |                          |
+  | (currency, amount, recipient,|                          |
+  |  network)                    |                          |
+  |<-----------------------------|                          |
+  |                              |                          |
+  | Build Soroban SAC transfer   |                          |
+  | Simulate (prepareTransaction)|                          |
+  |----------------------------------------------------->   |
+  |                              |              Simulation  |
+  |<-----------------------------------------------------   |
+  |                              |                          |
+  | Sign transaction envelope    |                          |
+  | Send signed XDR credential   |                          |
+  |----------------------------->|                          |
+  |                              |                          |
+  |                              | Verify SAC invocation    |
+  |                              | Simulate + validate      |
+  |                              |   transfer events        |
+  |                              |------------------------->|
+  |                              |<-------------------------|
+  |                              |                          |
+  |                              | Broadcast transaction    |
+  |                              |------------------------->|
+  |                              |                          |
+  |                              | Poll until confirmed     |
+  |                              |<-------------------------|
+  |                              |                          |
+  | 200 OK + receipt             |                          |
+  |<-----------------------------|                          |
+```
+
+In **pull** mode (default), the client builds and signs the full transaction envelope; the server validates the SAC transfer via simulation, then broadcasts. With **sponsored fees**, the client signs only the Soroban auth entries and the server rebuilds the transaction with its own account as source. In **push** mode, the client broadcasts the transaction itself and sends the transaction hash for server verification.
+
+This tutorial walks through building a payment-gated API with Node.js and Express using `@stellar/mpp`.
+
+To follow this guide, you will need [Node.js](https://nodejs.org/) installed locally. Recommend using the latest LTS version.
+
+## Create a project
+
+Create a new folder for the tutorial and initialize a Node.js project:
+
+```bash
+mkdir mpp-quickstart
+cd mpp-quickstart
+npm init -y
+npm pkg set type=module
+```
+
+The `type=module` setting lets you use ES module `import` syntax in the examples below.
+
+Install the npm packages used by the server and client:
+
+```bash
+npm install express @stellar/mpp mppx @stellar/stellar-sdk
+```
+
+## Create `server.js`
+
+Create a file named `server.js` and paste in the following code:
+
+```js title="server.js"
+import express from "express";
+import { Mppx } from "mppx/server";
+import { stellar } from "@stellar/mpp/charge/server";
+import { USDC_SAC_TESTNET } from "@stellar/mpp";
+
+const PORT = 3001;
+const RECIPIENT = process.env.STELLAR_RECIPIENT; // Your Stellar public key (G...)
+const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY; // Shared secret for MPP credential verification
+
+if (!RECIPIENT) {
+  console.error("Set STELLAR_RECIPIENT to a Stellar public key (G...)");
+  process.exit(1);
+}
+
+if (!MPP_SECRET_KEY) {
+  console.error(
+    "Set MPP_SECRET_KEY to a strong secret for MPP credential verification",
+  );
+  process.exit(1);
+}
+
+// Create the MPP server instance
+const mppx = Mppx.create({
+  secretKey: MPP_SECRET_KEY,
+  methods: [
+    stellar.charge({
+      recipient: RECIPIENT,
+      currency: USDC_SAC_TESTNET,
+      network: "stellar:testnet",
+    }),
+  ],
+});
+
+const app = express();
+
+// Payment-gated endpoint
+app.get("/my-service", async (req, res) => {
+  // Convert Node.js IncomingMessage to Web Request
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        headers.append(key, entry);
+      }
+    } else {
+      headers.set(key, value);
+    }
+  }
+
+  const webReq = new Request(`http://localhost:${PORT}${req.url}`, {
+    method: req.method,
+    headers,
+  });
+
+  const result = await mppx.charge({
+    amount: "0.01",
+    description: "Premium API access",
+  })(webReq);
+
+  if (result.status === 402) {
+    const challenge = result.challenge;
+    challenge.headers.forEach((value, key) => res.setHeader(key, value));
+    return res.status(402).send(await challenge.text());
+  }
+
+  const response = result.withReceipt(
+    Response.json({ secret: "valuable content" }),
+  );
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  return res.status(response.status).send(await response.text());
+});
+
+app.listen(PORT, () => {
+  console.log(`MPP server listening on http://localhost:${PORT}/my-service`);
+});
+```
+
+Set `STELLAR_RECIPIENT` to the Stellar public key (`G...`) for the account that should receive USDC payments. Your account will need a testnet USDC trustline — see [Setting up a testnet wallet](#setting-up-a-testnet-wallet) below.
+
+Start the API locally:
+
+```bash
+STELLAR_RECIPIENT=GYOUR_PUBLIC_KEY MPP_SECRET_KEY=replace-me node server.js
+```
+
+When a client requests your endpoint, the server responds with `402 Payment Required`, including headers that describe the payment requirements. A compliant client builds a signed Soroban SAC transfer and retries the request — no external facilitator needed. The server verifies and broadcasts the transaction directly.
+
+## Create `client.js`
+
+### Setting up a testnet wallet
+
+Create a fresh account and fund it with testnet XLM and testnet USDC using Stellar Lab:
+
+1. Create a new keypair: https://lab.stellar.org/account/create
+2. Fund with testnet XLM (Friendbot): https://lab.stellar.org/account/fund
+3. Create the USDC trustline (there's a button on the fund page above)
+4. Get testnet USDC from the Circle faucet — select **Stellar Testnet** and paste in your public key: https://faucet.circle.com
+
+Create a `.env` file and add your testnet secret key:
+
+```bash title=".env"
+STELLAR_SECRET=S...
+```
+
+:::caution
+
+Secret keys provide full access to any digital assets held in the wallet. Use `.env` files only for hot wallets in testnet deployments.
+
+:::
+
+### Client code
+
+With your server running, create a file named `client.js` and paste in the following code:
+
+```js title="client.js"
+import { Keypair } from "@stellar/stellar-sdk";
+import { Mppx } from "mppx/client";
+import { stellar } from "@stellar/mpp/charge/client";
+import { readFileSync } from "node:fs";
+
+// Load .env manually (no dotenv package needed)
+const env = Object.fromEntries(
+  readFileSync(".env", "utf-8")
+    .split("\n")
+    .filter((l) => l.includes("="))
+    .map((l) => l.split("=")),
+);
+const STELLAR_SECRET = env.STELLAR_SECRET?.trim();
+
+if (!STELLAR_SECRET) {
+  console.error("Add STELLAR_SECRET=S... to .env");
+  process.exit(1);
+}
+
+const keypair = Keypair.fromSecret(STELLAR_SECRET);
+console.log(`Using Stellar account: ${keypair.publicKey()}`);
+
+// Polyfill global fetch — 402 responses are handled automatically
+Mppx.create({
+  methods: [
+    stellar.charge({
+      keypair,
+      mode: "pull", // server broadcasts the signed transaction
+      onProgress(event) {
+        console.log(`[${event.type}]`, event);
+      },
+    }),
+  ],
+});
+
+// Make the request — payment is handled transparently on 402
+const response = await fetch("http://localhost:3001/my-service");
+const data = await response.json();
+
+console.log(`Response (${response.status}):`, data);
+```
+
+## Run the client
+
+Once the account is funded and the secret key is in `.env`, run the client in a second terminal:
+
+```bash
+node client.js
+```
+
+The client:
+
+1. Makes a `GET /my-service` request
+2. Receives a `402 Payment Required` with payment details in the response headers
+3. Builds and signs a Soroban SAC `transfer` on Stellar Testnet
+4. Retries the request with the signed credential
+5. Receives `200 OK` with the protected content: `{ secret: 'valuable content' }`
+
+The 0.01 USDC settles directly to the `STELLAR_RECIPIENT` wallet. No facilitator, no extra infrastructure.
+
+## Sponsored fees (optional)
+
+By default, the client pays Stellar network fees. To have the server pay fees on behalf of the client, configure a `feePayer` on the server:
+
+```js
+import { Keypair } from "@stellar/stellar-sdk";
+import { Mppx } from "mppx/server";
+import { stellar } from "@stellar/mpp/charge/server";
+import { USDC_SAC_TESTNET } from "@stellar/mpp";
+
+const RECIPIENT = process.env.STELLAR_RECIPIENT;
+const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY;
+const FEE_PAYER_SECRET = process.env.FEE_PAYER_SECRET;
+
+if (!MPP_SECRET_KEY) {
+  throw new Error(
+    "Set MPP_SECRET_KEY to a strong secret for MPP credential verification",
+  );
+}
+
+if (!FEE_PAYER_SECRET) {
+  throw new Error("Set FEE_PAYER_SECRET to a Stellar secret key (S...)");
+}
+
+const mppx = Mppx.create({
+  secretKey: MPP_SECRET_KEY,
+  methods: [
+    stellar.charge({
+      recipient: RECIPIENT,
+      currency: USDC_SAC_TESTNET,
+      network: "stellar:testnet",
+      feePayer: {
+        envelopeSigner: Keypair.fromSecret(FEE_PAYER_SECRET), // pays tx fees
+      },
+    }),
+  ],
+});
+```
+
+Set `FEE_PAYER_SECRET` before running the server if you use sponsored fees.
+
+When `feePayer` is configured, the server automatically signals fee sponsorship to the client via the challenge. The client then signs only the Soroban auth entries (not the full transaction envelope). The server rebuilds the transaction with the `envelopeSigner`'s account as source and broadcasts it. Optionally, add `feeBumpSigner` inside `feePayer` to wrap the transaction in a fee bump.
+
+## Learn more
+
+- [@stellar/mpp on GitHub](https://github.com/stellar/stellar-mpp-sdk) — Full API reference, channel mode, and examples
+- [@stellar/mpp (npm)](https://www.npmjs.com/package/@stellar/mpp) — npm package for MPP on Stellar
+- [MPP Specification](https://mpp.dev) — Official MPP protocol specification and whitepaper
+- [mppx (npm)](https://www.npmjs.com/package/mppx) — Core MPP framework library used by both server and client
+- [Signing Soroban invocations](../../guides/transactions/signing-soroban-invocations.mdx) — Auth-entry signing on Stellar
+- [one-way-channel contract](https://github.com/stellar-experimental/one-way-channel) — Soroban contract powering the channel payment mode
+- [MPP Session Guide](./channel-guide.mdx) — Set up off-chain payment channels for high-frequency payments
