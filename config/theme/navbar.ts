@@ -371,6 +371,11 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/apis/migrate-from-horizon-to-rpc'
     },
     {
+      to: '/docs/data/apis/wallet-backend',
+      label: 'Wallet Backend',
+      activeBasePath: 'docs/data/apis/wallet-backend'
+    },
+    {
       type: 'html',
       value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
       className:'subtitle'
