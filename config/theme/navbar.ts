@@ -86,6 +86,21 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
+      value: '<hr><a href="/docs/build/agentic-payments" class="subtitle"><small>Agentic Payments</small>',
+      className: 'subtitle',
+    },
+    {
+      to: '/docs/build/agentic-payments/x402',
+      label: 'x402 on Stellar',
+      activeBasePath: 'docs/build/agentic-payments/x402',
+    },
+    {
+      to: '/docs/build/agentic-payments/mpp',
+      label: 'MPP on Stellar',
+      activeBasePath: 'docs/build/agentic-payments/mpp',
+    },
+    {
+      type: 'html',
       value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small>',
       className: 'subtitle',
     },
