@@ -7,567 +7,356 @@ So, we now have all the pieces in place, and we're ready to connect the dots.
 
 ## Account type things
 
-Since we've just gone through all the passkeys setup, let's begin there. We'll create the functions that will be used to create the user's smart wallet, login with their smart wallet, and the logout functionality. We'll also add a "profile menu" that can drop down when a user is logged in and give them options for viewing their smart wallet on a block explorer, sending one of those all-important donations to our guestbook, requesting more (Testnet) funds, etc.
+Since we've just gone through the smart-account setup, let's begin there. We'll create the functions for signup, login, and the "profile menu" that drops down when a user is logged in (with buttons for viewing the wallet on a block explorer, sending a donation, requesting more Testnet funds, etc.).
 
 :::info
 
-We're using some pieces of [Svelte state](https://svelte.dev/docs/svelte/$state) to keep the value of the user's smart wallet contract address as well as the public key of their passkey. Your implementation of keeping this state may differ depending on your chosen frontend, state management, and project design. Hopefully, in any situation, you can draw inspiration from the way we've done it for this tutorial.
+We're using [Svelte state](https://svelte.dev/docs/svelte/$state) to keep the user's smart-account contract address and credential ID in a little store. Your implementation may differ depending on your frontend, state management, and project design. Draw inspiration from the pattern rather than the exact code.
 
 :::
 
-### Connect Buttons Setup
+### Connect Buttons setup
 
-We have a component in `$lib/components/connectButtons.svelte` that houses all the signup, login, and logout functionality. This gets put into the header component, and is available throughout the entirety of the dapp. The basic premise of this component is that we have a collection of buttons, as well as the corresponding functions that should take place when the button is clicked.
+The `ConnectButtons.svelte` component shows either the Signup/Login buttons (when logged out) or a Settings popover (when logged in). It also silently reconnects on page load if we have a saved credential ID:
 
-The buttons themselves are simple enough:
+```svelte title="src/lib/components/ConnectButtons/ConnectButtons.svelte"
+<script lang="ts">
+    import { user } from '$lib/state/UserState.svelte';
+    import { account } from '$lib/passkeyClient';
 
-```html title="src/lib/components/connectButtons.svelte"
+    import Settings from './Settings.svelte';
+    import Signup from './Signup.svelte';
+    import Login from './Login.svelte';
+    import { onMount } from 'svelte';
+
+    onMount(async () => {
+        if (!user.keyId) return;
+
+        try {
+            // Silent reconnect using the credentialId saved in localStorage.
+            // No passkey prompt on page reload.
+            const result = await account.connectWallet({ credentialId: user.keyId });
+            if (!result) return;
+
+            user.set({
+                keyId: result.credentialId,
+                contractAddress: result.contractId,
+            });
+        } catch (err) {
+            // Credential is cached but SAK can't resolve it (stale session,
+            // different device, etc.). Keep the cached address so Settings
+            // still renders.
+            console.warn('[connect] silent reconnect failed:', err);
+        }
+    });
+</script>
+
 <div class="flex space-x-1 md:space-x-2">
-  <button class="btn variant-filled-primary" onclick="{signup}">Signup</button>
-  <button class="btn variant-soft-primary" onclick="{login}">Login</button>
-  <button class="btn variant-soft-error" onclick="{logout}">Logout</button>
+    {#if !user.contractAddress}
+        <Signup />
+        <Login />
+    {:else}
+        <Settings />
+    {/if}
 </div>
 ```
 
-If you look at the [source code](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/components/ConnectButtons.svelte) of this component, you will see that we do quite a bit more state-checking surrounding the display of the buttons. This makes it so a "login" button doesn't display when a user is already _logged in_, for example. For the purpose of this tutorial, though, we'll focus on the functions themselves, rather than the HTML of the buttons.
-
-Let's begin with the Signup function.
+Let's dig into each interaction.
 
 #### User signup
 
-In order to signup our user, we'll make use of the `account` instance of the `PasskeyKit` class from our `$lib/passkeyClient.ts` file. The `account` instance has a function called `createWallet` that will do most of the heavy lifting for us, we only need to make sure we call the function properly.
+For signup, we call `account.createWallet(appName, userName, { autoSubmit: true })`. Under the hood, Smart Account Kit:
 
-We do a little bit of error checking here, but not much. In practical applications, you would probably want to dive into the cause of any errors here, and ensure they are mitigated before telling a user to try again.
+1. Runs the WebAuthn ceremony to create a new passkey on the user's device,
+2. Builds a deploy transaction for a fresh [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) using the passkey's public key as the initial signer, and
+3. Because `autoSubmit: true`, submits the deploy transaction through our `/api/relay` proxy.
 
-```js title="src/lib/components/connectButtons.svelte"
-import { account, send, fundContract } from "$lib/passkeyClient";
-import { keyId } from "$lib/stores/keyId";
-import { contractId } from "$lib/stores/contractId";
+Once the wallet is deployed we call `fundContract(contractId)` to airdrop 25 Testnet XLM into it.
 
-async function signup() {
-  console.log("signing up");
-  try {
-    // The createWallet function takes two strings, an app name and a user name.
-    // It returns the public key of the passkey, a contract address which will
-    // be the user's wallet, and a built transaction (ready to submit) to create
-    // the smart wallet on-chain.
-    const {
-      keyId_base64,
-      contractId: cid,
-      built,
-    } = await account.createWallet("Ye Olde Guestbook", "User Name Goes Here");
+```svelte title="src/lib/components/ConnectButtons/Signup.svelte"
+<script lang="ts">
+    import { toaster } from '$lib/toaster';
+    import { account, fundContract } from '$lib/passkeyClient';
+    import { user } from '$lib/state/UserState.svelte';
 
-    // Store the key ID and contract address in our localStorage stores
-    keyId.set(keyId_base64);
-    contractId.set(cid);
+    let username: string = $state('');
 
-    if (!built) {
-      error(500, {
-        message: "built transaction missing",
-      });
+    async function signup() {
+        try {
+            const result = await account.createWallet('Ye Olde Guestbook', username, {
+                autoSubmit: true,
+            });
+
+            if (result.submitResult && !result.submitResult.success) {
+                throw new Error(result.submitResult.error ?? 'wallet deploy failed');
+            }
+
+            user.set({
+                keyId: result.credentialId,
+                contractAddress: result.contractId,
+            });
+
+            await fundContract(result.contractId);
+        } catch (err) {
+            console.error(err);
+            toaster.error({
+                title: 'Error',
+                description: 'Something went wrong signing up. Please try again later.',
+            });
+        }
     }
-
-    // Send the transaction, fund the smart wallet, refresh the balance
-    await send(built);
-    await fundContract($contractId);
-    getBalance();
-  } catch (err) {
-    console.log(err);
-    toastStore.trigger({
-      message: "Something went wrong signing up. Please try again later.",
-      background: "variant-filled-error",
-    });
-  }
-}
+</script>
 ```
 
 #### User login
 
-Awesome! The user signs up and gets some (Testnet) lumens all in one go. Let's give them a way to login now with the passkey they've already associated with the smart wallet.
+For returning users, `account.connectWallet({ prompt: true })` prompts the browser's passkey picker, and Smart Account Kit uses the selected credential to look up the corresponding smart-account contract in IndexedDB.
 
-```js title="src/lib/components/connectButtons.svelte"
-import { getContractId } from "$lib/passkeyClient";
-
-async function login() {
-  console.log("logging in");
-  try {
-    // The connectWallet function requires us to pass a function that can
-    // be used to reverse-lookup the smart wallet address, provided we know
-    // the passkey's ID (the user supplies that during the function's execution)
-    const { keyId_base64, contractId: cid } = await account.connectWallet({
-      getContractId,
-    });
-
-    // Store the key ID and contract address in our localStorage stores
-    keyId.set(keyId_base64);
-    console.log($keyId);
-    contractId.set(cid);
-    console.log($contractId);
-  } catch (err) {
-    console.log(err);
-    toastStore.trigger({
-      message: "Something went wrong logging in. Please try again later.",
-      background: "variant-filled-error",
-    });
-  }
-}
-```
-
-Similar, yet simpler, when compared with our `signup` function. We're using the `account.connectWallet` function. This function will:
-
-1. Trigger the user to authenticate, providing the passkey's ID along the way,
-2. Use Mercury to reverse-lookup the contract ID given that passkey ID, and finally
-3. Return the passkey ID and smart wallet address to our dapp.
-
-Great! Let's get the user logged out when they need to.
-
-#### User logout
-
-This is quite a bit easier than either signup or login functions. We don't really need to communicate with the Stellar network or Mercury here. All we'll do is clear out the user state, essentially.
-
-```js title="src/lib/components/connectButtons.svelte"
-async function logout() {
-  try {
-    // Reset the localStorage entry for the keyId
-    keyId.reset();
-    localStorage.removeItem("yog:keyId");
-
-    // Set the contract address store to an empty string
-    contractId.set("");
-
-    // Refresh the page, just for good measure
-    window.location.reload();
-  } catch (err) {
-    console.log(err);
-    toastStore.trigger({
-      message: "Something went wrong logging out. Please try again later.",
-      background: "variant-filled-error",
-    });
-  }
-}
-```
-
-With those three functions, our dapp is ready for users to authenticate with the dapp! Much easier than you probably expected it to be, right!?
-
-### The "profile menu"
-
-Still in our `connectButtons.svelte` component, we also have a collection of buttons and functions that represent a "profile menu" of sorts. The user can use these buttons to view their smart wallet balance, see it on [Stellar Expert](https://stellar.expert), send a donation to our (humble) guestbook maintainer, request more (Testnet) funding, etc. Much of this is unnecessary to dive into here in this tutorial, though I highly recommend taking a look at the [source code](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/components/ConnectButtons.svelte) to get a better understanding of this functionality.
-
-However, we will look into the `donate` function here. This is a really useful example of how a dapp can enable their smart wallet users to interact with any asset on the Stellar network. (Here, we are using Testnet XLM for our asset, but the flow would be identical for _any_ asset you may want to use.)
-
-The button is still pretty simple, just like the authentication buttons. We are adding some "loading" logic for when the transaction is taking place, though. So, it's got a _few_ more bells and whistles.
-
-```html title="src/lib/components/connectButtons.svelte"
+```svelte title="src/lib/components/ConnectButtons/Login.svelte"
 <script lang="ts">
-  import LoaderCircle from "lucide-svelte/icons/loader-circle";
-  import HelpingHand from "lucide-svelte/icons/helping-hand";
+    import { account } from '$lib/passkeyClient';
+    import { toaster } from '$lib/toaster';
+    import { user } from '$lib/state/UserState.svelte';
 
-  let isDonating: boolean = false;
-</script>
+    async function login() {
+        try {
+            const result = await account.connectWallet({ prompt: true });
+            if (!result) throw new Error('wallet connection was cancelled');
 
-<button
-  class="btn variant-soft-surface w-full"
-  onclick="{donate}"
-  disabled="{isDonating}"
->
-  <span>
-    {#if isDonating}
-    <LoaderCircle class="animate-spin" />
-    {:else}
-    <HelpingHand />
-    {/if}
-  </span>
-  <span>Send Donation</span>
-</button>
-```
-
-The `donate` function takes advantage of the `native` SAC client we made in the `$lib/passkeyClient.ts` file. This allows us to call the transfer function of the contract just like any other JavaScript function.
-
-```js title="src/lib/components/connectButtons.svelte"
-import { account, send, native } from '$lib/passkeyClient';
-import { keyId } from '$lib/stores/keyId';
-import { contractId } from '$lib/stores/contractId';
-
-async function donate() {
-    console.log('starting donation process');
-    isDonating = true;
-    try {
-        const user = prompt("Give this passkey a name")
-        const at = await native.transfer({
-            to: networks.testnet.contractId,
-            from: $contractId,
-            amount: BigInt(donation * 10_000_000),
-        });
-
-        await account.sign(at, { keyId: $keyId });
-        const res = await send(at.built!);
-        console.log(res);
-
-        toastStore.trigger({
-            message: 'Donation received! You really ARE the goat.',
-            background: 'variant-filled-success',
-        });
-        getBalance();
-    } catch (err) {
-        console.log(err);
-        toastStore.trigger({
-            message: 'Something went wrong donating. Please try again later.',
-            background: 'variant-filled-error',
-        });
-    } finally {
-        isDonating = false;
+            user.set({
+                keyId: result.credentialId,
+                contractAddress: result.contractId,
+            });
+        } catch (err) {
+            console.error(err);
+            toaster.error({
+                title: 'Error',
+                description: 'Something went wrong logging in. Please try again later.',
+            });
+        }
     }
-}
+</script>
 ```
 
 :::info
 
-We're simplifying this function _just a bit_ for this tutorial. In the [real dapp](https://github.com/ElliotFriend/ye-olde-guestbook/blob/1a55a5238a71b624b789dfd82a6d7fd996407bd7/src/lib/components/ConnectButtons.svelte#L138), we're using a modal to retrieve the user's input. That ends up looking a bit too cluttered for here, though.
+No reverse-lookup indexer is needed for login. Earlier iterations of this tutorial used Mercury/Zephyr to resolve a passkey credential to a contract address; Smart Account Kit instead keeps that mapping in the browser's IndexedDB, which is written whenever a wallet is created or connected.
 
 :::
 
-All in, that's a pretty easy invocation of the SAC's `transfer` function. We just pass the `from`, `to`, and `amount` fields. Then, we sign the transaction with our `account` instance, providing our passkey ID in the arguments. Finally, we send the transaction using our helper function, which will fire off the request to Launchtube, and we'll be good to go. In this case, we're not really stressed about the return value. We'll just catch any errors, and notify the user with a toast message.
+#### User logout
 
-Enough of the account and asset things, let's get to the guestbook entries!
+Logout is just clearing local state:
+
+```ts title="src/lib/state/UserState.svelte.ts"
+reset = () => {
+    this.keyId = null;
+    this.contractAddress = null;
+    window.localStorage.clear();
+    window.location.reload();
+};
+```
+
+With those three flows our dapp is ready to onboard users.
+
+### The "profile menu"
+
+When a user is logged in, the Settings popover shows their balance, their contract address, and buttons for funding, donating, and logging out. Two flows here are worth a look: reading the balance (no signing), and sending a donation (the first user-signed transaction in the tutorial).
+
+#### Reading the balance
+
+The SAC stores each holder's balance in a `ContractData` ledger entry keyed by `['Balance', ownerAddress]`. We read it directly with `rpc.getLedgerEntries` — no simulation, no signing, and importantly no `contract.Client.from()` (whose SAC-spec round-trip trips the browser bundle).
+
+```ts title="src/lib/components/ConnectButtons/Settings.svelte"
+import { rpc } from '$lib/passkeyClient';
+import { Address, Asset, xdr, scValToNative } from '@stellar/stellar-sdk';
+import { PUBLIC_STELLAR_NETWORK_PASSPHRASE } from '$env/static/public';
+
+async function getBalance() {
+    const nativeContractId = Asset.native().contractId(PUBLIC_STELLAR_NETWORK_PASSPHRASE);
+    const ownerScVal = new Address(user.contractAddress!).toScVal();
+    const balanceKey = xdr.LedgerKey.contractData(
+        new xdr.LedgerKeyContractData({
+            contract: new Address(nativeContractId).toScAddress(),
+            key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Balance'), ownerScVal]),
+            durability: xdr.ContractDataDurability.persistent(),
+        }),
+    );
+
+    const { entries } = await rpc.getLedgerEntries(balanceKey);
+    if (entries.length === 0) return '0';
+    const data = entries[0].val.contractData().val();
+    const record = scValToNative(data) as { amount?: bigint };
+    return (record.amount ?? 0n).toString();
+}
+```
+
+A freshly-deployed wallet with no transfers yet has no `Balance(...)` entry at all, which is why we handle `entries.length === 0` as "balance is zero."
+
+#### Sending a donation
+
+The donate button is a simple dialog with a number input. The interesting piece is `sendDonation`: we build the SAC `transfer(from, to, amount)` call directly with `contract.AssembledTransaction.build()`, passing explicit `ScVal` args so we don't need the SAC spec. Then `send(at)` hands the transaction to Smart Account Kit's `signAndSubmit`, which runs the passkey ceremony and submits through `/api/relay`.
+
+```ts title="src/lib/components/ConnectButtons/DonateButton.svelte"
+import { SAK_DEPLOYER_PUBLIC_KEY, send } from '$lib/passkeyClient';
+import { networks } from 'ye_olde_guestbook';
+import { user } from '$lib/state/UserState.svelte';
+import { Address, Asset, contract, xdr } from '@stellar/stellar-sdk';
+import {
+    PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+    PUBLIC_STELLAR_RPC_URL,
+} from '$env/static/public';
+
+let donation: number | undefined = $state();
+
+async function sendDonation() {
+    if (!donation) throw new Error('undefined donation amount');
+
+    const nativeContractId = Asset.native().contractId(PUBLIC_STELLAR_NETWORK_PASSPHRASE);
+    const amountI128 = xdr.ScVal.scvI128(
+        new xdr.Int128Parts({
+            hi: xdr.Int64.fromString('0'),
+            lo: xdr.Uint64.fromString(BigInt(Math.round(donation * 10_000_000)).toString()),
+        }),
+    );
+
+    const at = await contract.AssembledTransaction.build({
+        contractId: nativeContractId,
+        method: 'transfer',
+        args: [
+            new Address(user.contractAddress!).toScVal(), // from: smart account
+            new Address(networks.testnet.contractId).toScVal(), // to: guestbook
+            amountI128,
+        ],
+        rpcUrl: PUBLIC_STELLAR_RPC_URL,
+        networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+        // G-address stand-in for the source — stellar-sdk's Account rejects
+        // C-addresses. signAndSubmit re-signs with its own deployer before
+        // submitting, so this only affects the initial simulation.
+        publicKey: SAK_DEPLOYER_PUBLIC_KEY,
+        timeoutInSeconds: 60,
+        parseResultXdr: (result: xdr.ScVal) => result,
+    });
+
+    await send(at);
+}
+```
+
+The `from` argument is the user's smart account `C...` address — that's what the SAC checks against when enforcing authorization, via the smart account's passkey-signed auth entry. `send()` hands the assembled transaction to Smart Account Kit's `signAndSubmit`, which signs the auth entry, re-simulates, and submits via `/api/relay` → OZ Channels.
 
 ## Sign the guestbook
 
-First, we'll need a page that allows us to actually _sign_ the guestbook. We'll have a form that takes a `title` and `message` field, and then we'll submit the transaction with the `send` helper function, just like we did with the XLM transfer previously.
+Now the main event: writing a guestbook entry. The page has a simple form with title + message inputs:
 
-The form is pretty simple, and it's barely worth mentioning. We have a text input, a textarea input, and a button. Some checks are performed to see if the button should be enabled (if a user is not logged in, for example). Otherwise, it's pretty unremarkable:
-
-```html title="src/routes/sign/+page.svelte"
-<script lang="ts">
-  import Signature from "lucide-svelte/icons/signature";
-  import LoaderCircle from "lucide-svelte/icons/loader-circle";
-
-  let messageTitle: string;
-  let messageText: string;
-  let isLoading: boolean = false;
-</script>
-
+```svelte title="src/routes/sign/+page.svelte"
 <label class="label">
-  <span>Title</span>
-  <input
-    bind:value="{messageTitle}"
-    class="input"
-    type="text"
-    placeholder="Title"
-  />
+    <span class="label-text">Title</span>
+    <input bind:value={messageTitle} class="input" type="text" placeholder="Title" />
 </label>
 
 <label class="label">
-  <span>Message</span>
-  <textarea
-    bind:value="{messageText}"
-    class="textarea"
-    rows="4"
-    placeholder="Write your message here"
-  ></textarea>
+    <span class="label-text">Message</span>
+    <textarea bind:value={messageText} class="textarea" rows="4" placeholder="Write your message here"></textarea>
 </label>
 
-<button
-  on:click="{signGuestbook}"
-  type="button"
-  class="btn variant-filled-primary"
-  disabled="{signButtonDisabled}"
->
-  <span>
-    {#if isLoading}
-    <LoaderCircle class="animate-spin" />
-    {:else}
-    <Signature />
-    {/if}
-  </span>
-  <span>Sign!</span>
+<button onclick={signGuestbook} type="button" class="btn preset-filled-primary-500" disabled={signButtonDisabled}>
+    <span>Sign!</span>
 </button>
 ```
 
-The `signGuestbook` function (which is executed when the button is clicked), is where the more interesting bits are. Even still, it looks quite similar to the other transactions we've submitted (account creation and XLM transfers).
+The `signGuestbook` function is where the contract call happens. It looks identical in shape to the `sendDonation` function — just pointed at a different contract:
 
-```js title="src/routes/sign/+page.svelte"
+```ts title="src/routes/sign/+page.svelte"
 import ye_olde_guestbook from '$lib/contracts/ye_olde_guestbook';
-import { contractId } from '$lib/stores/contractId';
-import { keyId } from '$lib/stores/keyId';
-import { account, send } from '$lib/passkeyClient';
+import { send } from '$lib/passkeyClient';
+import { user } from '$lib/state/UserState.svelte';
 
 async function signGuestbook() {
     try {
         isLoading = true;
         const at = await ye_olde_guestbook.write_message({
-            author: $contractId,
+            author: user.contractAddress!,
             title: messageTitle,
             text: messageText,
         });
 
-        let txn = await account.sign(at.built!, { keyId: $keyId });
-        const { returnValue } = await send(txn.built!);
-        const messageId = xdr.ScVal.fromXDR(returnValue, 'base64').u32();
+        await send(at);
 
-        toastStore.trigger({
-            message: 'Huzzah!! You signed my guestbook! Thanks.',
-            background: 'variant-filled-success',
-        });
-        goto(`/read/${messageId}`);
+        // The AssembledTransaction's result is a Rust-flavored Result<u32>
+        // from the contract bindings. Unwrap it to get the message id.
+        const messageId = at.result.unwrap();
+
+        goto(resolve(`/read/${messageId}`));
     } catch (err) {
-        console.log(err);
-        toastStore.trigger({
-            message: 'Something went wrong signing the guestbook. Please try again later.',
-            background: 'variant-filled-error',
-        });
+        console.error(err);
     } finally {
         isLoading = false;
     }
 }
 ```
 
-The heart and soul of this function is to invoke the `write_message` function from our contract. Thanks to our generated bindings, that's really easily done.
+The `write_message` function comes from our generated contract bindings. Thanks to those bindings, invoking a Soroban function looks like any other typed TypeScript call.
 
-We get the message ID as the return value, and then redirect the user to the page where they can read _that_ particular entry.
-
-How does this page read the guestbook entry? Excellent timing for that question!
+The contract returns the message ID, and we redirect the user to the page for that particular entry.
 
 ## Read guestbook entries
 
 ### Read a single entry
 
-The first page we'll create is one that reads and displays a single guestbook message from the smart contract storage. We'll use a server-side function for this. That way, if we were using a paid RPC provider, we could have this function run on the server and return the relevant data to the client.
+We use a server-side `load` function so this query runs on the server (and could benefit from caching if we were using a paid RPC). The `[id]` in the filename is a path parameter.
 
-:::info
-
-This `+page.server.ts` is a Svelte way of saying "every time this page is requested by a user, run this function on the server, and give the data to the client."
-
-The `[id]` part of the filename tells this route that we expect to have a path-based parameter, and we can use it as `id`.
-
-:::
-
-```js title="src/routes/read/[id]/+page.server.ts"
-import { error } from "@sveltejs/kit";
-import guestbook from "$lib/contracts/ye_olde_guestbook";
-import type { PageServerLoad } from "./$types";
+```ts title="src/routes/read/[id]/+page.server.ts"
+import { error } from '@sveltejs/kit';
+import guestbook from '$lib/contracts/ye_olde_guestbook';
+import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params }) => {
-  try {
-    let { result } = await guestbook.read_message({
-      message_id: parseInt(params.id),
-    });
+    try {
+        const { result } = await guestbook.read_message({
+            message_id: parseInt(params.id),
+        });
 
-    return {
-      id: params.id,
-      message: result.unwrap(),
-    };
-  } catch (err) {
-    error(500, {
-      message:
-        "Sorry, something went wrong. Most likely, the message you're looking for doesn't exist.",
-    });
-  }
+        return {
+            id: params.id,
+            message: result.unwrap(),
+        };
+    } catch (err) {
+        error(500, {
+            message: "Sorry, something went wrong. Most likely, the message you're looking for doesn't exist.",
+        });
+    }
 };
 ```
 
-You can see here we're using one of the contract functions, `read_message` to get the data. This is a "read-only" function, meaning that no on-chain state is modified when it's run. So, we can just simulate the invocation, which is already done for you when the bindings-generated function is called, and just take the data from the simulation response! Pretty neat, right?!
+`read_message` is a read-only function, so we can return the simulation result directly — no signing or submission needed.
 
-We pass the resulting message details back to the page, where it will be displayed.
+The page component displays the message using a shared `GuestbookMessage` component:
 
-```html title="src/routes/read/[id]/+page.svelte"
+```svelte title="src/routes/read/[id]/+page.svelte"
 <script lang="ts">
-  import GuestbookMessage from "$lib/components/GuestbookMessage.svelte";
-  import type { PageData } from "./$types";
+    import GuestbookMessage from '$lib/components/GuestbookMessage.svelte';
+    import type { PageData } from './$types';
 
-  export let data: PageData;
+    let { data }: { data: PageData } = $props();
 </script>
 
 <h1 class="h1">Read Message {data.id}</h1>
-<p>
-  You're viewing just message {data.id}. You can
-  <a class="anchor" href="/read">read all of them here</a>, as well.
-</p>
-
-<!-- This component is just a wrapper with a bunch of divs. We won't worry about it right now -->
-<GuestbookMessage message="{data.message}" messageId="{parseInt(data.id)}" />
+<GuestbookMessage message={data.message} messageId={parseInt(data.id)} />
 ```
 
 ### Read all entries
 
-Great! If you know the ID of the entry you want to read. Most of the time, you probably wouldn't. Let's make a page that can read/display all of the guestbook entries.
-
-For this, we'll (again) keep as much of the query logic server-side as possible. These ledger entry results can be cached. And, the client doesn't need to make even more round trips just to query these entries. The route that performs this query is another `+page.server.ts` file:
-
-```js title="src/routes/read/+page.server.ts"
-import {
-  getAllMessages,
-  getWelcomeMessage,
-} from "$lib/server/getLedgerEntries";
-import type { PageServerLoad } from "./$types";
-
-export const load: PageServerLoad = async () => {
-  return {
-    welcomeMessage: await getWelcomeMessage(),
-    messages: await getAllMessages(),
-  };
-};
-```
-
-We're making use of two functions that we've defined elsewhere. The `welcomeMessage` will **always** have ID 1, and we want to _always_ display it at the top of the page. The two functions are defined like this:
-
-```js title="src/lib/server/getLedgerEntries.ts"
-
-import { rpc } from '$lib/passkeyClient';
-// notice our bindings re-exports the Stellar SDK, so we don't even really need
-// to import any Stellar-related classes or functions from elsewhere.
-import { Address, networks, Contract, type Message, xdr, scValToNative } from 'ye_olde_guestbook';
-
-// First, we need a function to build these LedgerKeys so we can query the network
-function buildMessageLedgerKey(messageId: number) {
-    const ledgerKey = xdr.LedgerKey.contractData(
-        new xdr.LedgerKeyContractData({
-            contract: new Address(networks.testnet.contractId).toScAddress(),
-            key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Message'), xdr.ScVal.scvU32(messageId)]),
-            durability: xdr.ContractDataDurability.persistent(),
-        }),
-    );
-
-    return ledgerKey;
-}
-
-// To get our welcome message, we use the `getLedgerEntries` function
-// from the RPC instance.
-export async function getWelcomeMessage(): Promise<Message> {
-    const result = await rpc.getLedgerEntries(buildMessageLedgerKey(1));
-    return scValToNative(result.entries[0].val.contractData().val());
-}
-
-// Our contract stores the number of guestbook messages in its instance
-// storage. So, we have a function to query exactly how many messages we
-// need to retrieve.
-export async function getMessageCount() {
-    const result = await rpc.getLedgerEntries(
-        new Contract(networks.testnet.contractId).getFootprint(),
-    );
-
-    const messageCount = result.entries[0].val
-        .contractData()
-        .val()
-        .instance()
-        .storage()
-        ?.filter((item) => item.val().switch().name === 'scvU32');
-
-    return messageCount![0].val().value() as number;
-}
-
-// Now we can iterate and make ledger key for each relevant message,
-// and add that to our getLedgerEntries query. The maximum number of ledger entries
-// to query is 200.
-export async function getAllMessages(): Promise<Message[]> {
-    const totalCount = await getMessageCount();
-    const ledgerKeysArray = [];
-    for (let messageId = 2; messageId <= totalCount; messageId++) {
-        ledgerKeysArray.push(buildMessageLedgerKey(messageId));
-    }
-
-    const result = await rpc.getLedgerEntries(...ledgerKeysArray);
-    const messages = result.entries.map((message) => {
-        return {
-            ...scValToNative(message.val.contractData().val()),
-        };
-    });
-
-    return messages;
-}
-```
-
-Did you catch all that?! Well done! That's the querying part of reading all messages. Now, to _display_ those messages, we get that data into our Svelte page.
-
-```html title="src/routes/read/+page.svelte"
-<script lang="ts">
-  import { SlideToggle } from "@skeletonlabs/skeleton";
-  import GuestbookMessage from "$lib/components/GuestbookMessage.svelte";
-
-  import type { PageData } from "./$types";
-  export let data: PageData;
-
-  let sortNewestFirst = true;
-  let messages = data.messages;
-
-  $: if (sortNewestFirst) {
-    messages = messages.sort((a, b) => b.ledger - a.ledger);
-  } else {
-    messages = messages.sort((a, b) => a.ledger - b.ledger);
-  }
-</script>
-
-<div
-  class="flex flex-col md:flex-row justify-start md:justify-between space-y-4"
->
-  <div class="space-y-4">
-    <h1 class="h1">Read the Book</h1>
-    <p>Take a gander at all these messages!</p>
-  </div>
-  <div class="md:self-end">
-    <SlideToggle
-      name="sort"
-      bind:checked="{sortNewestFirst}"
-      active="bg-primary-500"
-      size="sm"
-      >Showing
-      <code class="code">{sortNewestFirst ? 'Newest' : 'Oldest'}</code>
-      First</SlideToggle
-    >
-  </div>
-</div>
-
-<GuestbookMessage message="{data.welcomeMessage}" messageId="{1}" />
-<hr class="!border-t-2" />
-
-{#each messages as message, i (message.ledger)}
-<GuestbookMessage {message} messageId="{i" + 2} />
-{/each}
-```
-
-We're loading the data we retrieve from the server. We even include a little toggle switch so the user can decide if they want to see newer or older entries first. Then, it's time to display the messages.
-
-Again, we use the `GuestbookMessage` component. We display one instance of the component for each message entry.
+For the "list all entries" page, we keep the query logic server-side in `src/lib/server/getLedgerEntries.ts`. The implementation uses `rpc.getLedgerEntries()` to fetch the contract's instance storage (which holds the message count) and then a batched fetch for every message ID. See the [repository source](https://github.com/AshFrancis/ye-olde-guestbook/blob/main/src/lib/server/getLedgerEntries.ts) for the full implementation.
 
 ## Edit a guestbook entry
 
-If we take a brief look inside the [`GuestbookMessage` component](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/components/GuestbookMessage.svelte), we can see that we have some form fields in the event the user wants to edit a message. We limit the display of these parts of the component to cases where the _logged in_ user's smart wallet `C...` address matches the guestbook entry's `author` field.
+Inside the `GuestbookMessage` component, the logged-in author of a message can edit it. When they submit the edit, we call `edit_message` the same way we called `write_message` — build, send, done.
 
-The HTML of the page is outside of what we need to cover here, but suffice it to say when the user is editing an entry, the form fields behave pretty similar to the form on the "sign the guestbook" page. The functions are a bit more interesting, and more relevant to this tutorial.
-
-:::tip
-
-The benefit of including this functionality within the message-displaying component, is that the edit functions can be used wherever the user is reading the messages. Whether they're reading through _all_ the entries, or just a single entry, if they were the author of a message, the edit buttons will be available to them.
-
-:::
-
-```js title="src/lib/components/GuestbookMessage.svelte"
-import { account, send } from '$lib/passkeyClient';
-import { keyId } from '$lib/stores/keyId';
-
-// This is how we receive the "props" from the pages that instantiate this component
-export let message: Message;
-export let messageId: number;
-
-let editing: boolean;
-let isLoading: boolean;
-
-// Store the original values from the contract's storage. The form will be "bound"
-// to these values later on, when the user is modifying the entry.
-let messageTitle = message.title;
-let messageText = message.text;
-
-/**
- * If the user chooses to cancel the editing the message, we should revert the
- * message state back to the original values.
- */
-const cancelEdit = () => {
-    messageTitle = message.title;
-    messageText = message.text;
-    editing = false;
-};
+```ts title="src/lib/components/GuestbookMessage.svelte"
+import ye_olde_guestbook from '$lib/contracts/ye_olde_guestbook';
+import { send } from '$lib/passkeyClient';
 
 const submitEdit = async () => {
-    console.log('submitting message edit');
     isLoading = true;
     try {
         const at = await ye_olde_guestbook.edit_message({
@@ -576,26 +365,25 @@ const submitEdit = async () => {
             text: messageText,
         });
 
-        const txn = await account.sign(at.built!, { keyId: $keyId });
-        await send(txn.built!);
+        await send(at);
 
-        toastStore.trigger({
-            message: 'Message edited successfully.',
-            background: 'variant-filled-success',
+        toaster.success({
+            title: 'Success',
+            description: 'Message edited successfully.',
         });
     } catch (err) {
-        console.log(err);
-        toastStore.trigger({
-            message: 'Something went wrong editing your message. Please try again later.',
-            background: 'variant-filled-error',
+        console.error(err);
+        toaster.error({
+            title: 'Error',
+            description: 'Something went wrong editing your message. Please try again later.',
         });
     } finally {
-        editing = false;
-        isLoading.set(false);
+        isEditing = false;
+        isLoading = false;
     }
 };
 ```
 
-Notice that, unlike when we signed the guestbook in the first place, we don't have to supply an `author` argument. The smart contract is designed in a way that it looks for the author (and requires authentication) from _within_ its own storage. This ensures that the _original_ author of a guestbook entry is the **only** account authorized to make modifications to it.
+Notice we don't pass an `author` argument here. The contract's `edit_message` function reads the author from its own storage and requires authentication from _that_ specific smart account. This ensures the original author is the only account that can modify their entries — not even the guestbook host can change them.
 
-Not even our gracious guestbook host could modify an entry!
+That's the full flow. With `send(at)` as a one-liner for "sign with my smart account and submit via the relayer," wiring a Soroban dapp to a smart wallet becomes about as light as it gets.
