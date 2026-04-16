@@ -13,6 +13,11 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build',
     },
     {
+      to: '/docs/build/building-with-ai',
+      label: 'Building with AI',
+      activeBasePath: 'docs/build/building-with-ai',
+    },
+    {
       type: 'html',
       value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small>',
       className: 'subtitle',
