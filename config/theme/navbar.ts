@@ -80,6 +80,11 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/apps/dapp-frontend',
     },
     {
+      to: '/docs/build/apps/privacy',
+      label: 'Privacy on Stellar',
+      activeBasePath: 'docs/build/apps/privacy',
+    },
+    {
       to: '/docs/build/apps/zk',
       label: 'ZK Proofs on Stellar',
       activeBasePath: 'docs/build/apps/zk',
