@@ -1,6 +1,6 @@
 # Crowdin Translator How-To
 
-Stellar Developer Docs use [Crowdin](https://crowdin.com/) for localization. This document provides steps and resources for managing Stellar Docusaurus Crowdin translations as a Crowdin user with a Translator role.
+Stellar Developer Docs use [Crowdin](https://crowdin.com) for localization. This document provides steps and resources for managing Stellar Docusaurus Crowdin translations as a Crowdin user with a Translator role.
 
 ---
 
@@ -33,7 +33,7 @@ For more details on working within the editor, see the following documentation:
 [Working in the Editor](https://support.crowdin.com/for-translators/#working-in-the-editor) 
 
 For a more in-depth look, see: 
-[Online Editor Guide](https://support.crowdin.com/online-editor/)
+[Online Editor Guide](https://support.crowdin.com/online-editor)
 
 ---
 
@@ -46,7 +46,7 @@ Examples include:
 - Words or phrases that should not be translated at all. 
 
 For more information, see the following documentation: 
-[Glossary](https://support.crowdin.com/glossary/)
+[Glossary](https://support.crowdin.com/glossary)
 
 ---
 
