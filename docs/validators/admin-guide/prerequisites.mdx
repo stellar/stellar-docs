@@ -13,15 +13,23 @@ CPU, RAM, Disk and network depends on network activity. If you decide to colloca
 
 :::
 
-At the time of writing (April 2024), Stellar Core with PostgreSQL running on the same machine worked well on a [c5d.2xlarge](https://aws.amazon.com/ec2/instance-types/c5/) instance in AWS (8x Intel Xeon vCPUs at 3.4 GHz; 16 GB RAM; 100 GB NVMe SSD (10,000 iops)).
+:::tip For Tier 1 organizations
+
+[Tier 1 organizations](/docs/validators/tier-1-orgs) run three geographically dispersed Full Validators, each meeting these requirements independently. Each node needs its own hardware, its own unique validator key, and its own history archive. Plan for three times the resources listed below, spread across different data centers or cloud regions. See [Tier 1 Organizations](/docs/validators/tier-1-orgs) for the full requirements and onboarding path.
+
+:::
 
 Stellar Core is designed to run on relatively modest hardware so that a whole range of individuals and organizations can participate in the network, and basic nodes should be able to function pretty well without tremendous overhead. That said, the more you ask of your node, the greater the requirements.
 
+The following recommendations were verified against production nodes in April 2024. Hardware requirements grow with network activity; check the [stellar-core releases](https://github.com/stellar/stellar-core/releases) for any notes on updated requirements.
+
 | Node Type | CPU | RAM | Disk | AWS SKU | Google Cloud SKU |
 | --- | --- | --- | --- | --- | --- |
-| Core Validator Node | 8x Intel Xeon @ 3.4 GHz | 16 GB | 100 GB NVMe SSD | [c5d.2xlarge] | [n4-highcpu-8] |
+| Core Validator Node | 8 vCPUs @ 3.4 GHz | 16 GB | 100 GB NVMe SSD (10,000+ IOPS) | [c5d.2xlarge] | [n4-highcpu-8] |
 
-_\* Assuming a 30-day retention window for data storage._
+_\* Assuming a 30-day retention window (`AUTOMATIC_MAINTENANCE_COUNT` at default). See [Storage](#storage) below for details on disk sizing._
+
+<!-- Last verified: April 2024. If you're an SDF maintainer updating this, bump the date in the paragraph above. -->
 
 ## Stellar Network Access
 
@@ -60,13 +68,30 @@ If you need to expose this endpoint to other hosts in your local network, we str
 
 ## Storage
 
-Most storage needs come from stellar-core's database backend, which needs to store the entire ledger state. For the most part, the contents of both the database and related directories (such as `buckets`) can be ignored, since they are completely managed by Stellar Core. In terms of storage space, 100 GB is enough (as of April 2024).
+Stellar Core's storage needs come from two sources: the SQL database and the `buckets` directory. Both are managed entirely by Stellar Core. The 100 GB disk recommendation in the hardware table above accounts for both, with headroom for growth.
+
+### How storage breaks down
+
+| Component | Approximate Size (April 2024) | Notes |
+| --- | --- | --- |
+| Ledger state (buckets) | ~10 GB | Grows with the number of accounts, trustlines, and contract state on the network |
+| SQL database | ~20–40 GB | Depends on retention window (default: 30 days of ledger data for publishing to history archives) |
+| WAL logs, temp files | ~10–20 GB | PostgreSQL write-ahead logs and temporary space during maintenance |
+| **Headroom** | **20–30 GB** | **Buffer for growth between upgrades** |
+
+If you set `CATCHUP_COMPLETE=true` to sync full history from genesis, storage requirements are significantly higher — plan for 1 TB or more. For most validators, the default partial catchup is sufficient.
+
+:::tip Plan for growth
+
+The ledger grows as network usage increases. After Soroban's launch, contract state has become an additional driver of ledger size. We recommend provisioning at least 200 GB if you want to avoid resizing within the first year, especially for Tier 1 nodes that need high reliability.
+
+:::
 
 ### Database
 
-The database is consulted during consensus, and modified atomically when a transaction set is applied to the ledger. It's random access, fine-grained, and fast.
+The SQL database is consulted during consensus, and modified atomically when a transaction set is applied to the ledger. It's random access, fine-grained, and fast.
 
-As of August 2024, Stellar Core officially switched to BucketListDB as its primary database backend. Note that BucketListDB still requires SQL database, either SQLite or Postgres (recommended).
+As of August 2024, Stellar Core uses BucketListDB as its primary database backend. BucketListDB still requires a SQL database — either SQLite or PostgreSQL (recommended for production).
 
 If you're using PostgreSQL, we recommend you configure your local database to be accessed over a Unix domain socket, as well as updating the below PostgreSQL configuration parameters:
 
@@ -80,13 +105,15 @@ If you're using PostgreSQL, we recommend you configure your local database to be
 
 ### Buckets
 
-Stellar-core stores ledger state in the form of flat XDR files called "buckets." The bucket files are used for hashing and transmission of ledger differences to history archives. If BucketListDB is used, the `buckets` directory is also used as a primary database backend. If SQL is used, the `buckets` directory is only used for hashing and history archives, and simply represents a copy of the ledger state stored in SQL.
+Stellar Core stores ledger state in the form of flat XDR files called "buckets." These files are used for hashing and transmission of ledger differences to history archives. With BucketListDB (the default since August 2024), the `buckets` directory also serves as the primary database backend.
 
-Buckets should be stored on a fast, local disk with sufficient space to store several times the size of the current ledger. Current ledger size is approximately 10 GB (as of April 2024), so please plan accordingly.
+Buckets should be stored on a fast, local disk with sufficient space for several times the current ledger size. NVMe SSDs with 10,000+ IOPS are recommended for production validators.
 
 ## Kubernetes considerations
 
-We currently do not recommend running validator nodes in Kubernetes. If you choose to do so, consider the following:
+We currently do not recommend running validator nodes in Kubernetes. Standard VM-based deployments (bare metal or cloud instances) are the well-tested path for production validators.
+
+If you choose to use Kubernetes regardless, consider the following:
 
 - Sensitive data such as node seeds will be stored in Kubernetes etcd. Consider consuming credentials using tools like [vault agent](https://developer.hashicorp.com/vault/docs/platform/k8s/injector) or the [AWS Secrets Store CSI driver](https://github.com/aws/secrets-store-csi-driver-provider-aws) to improve security
 - Consider how external traffic will reach the pods. Tier 1 nodes need public DNS names and necessary ports must be accessible from the internet
