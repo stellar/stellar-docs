@@ -68,30 +68,35 @@ If you need to expose this endpoint to other hosts in your local network, we str
 
 ## Storage
 
-Stellar Core's storage needs come from two sources: the SQL database and the `buckets` directory. Both are managed entirely by Stellar Core. The 100 GB disk recommendation in the hardware table above accounts for both, with headroom for growth.
+Stellar Core's local storage needs come from two sources: the **buckets directory** (which serves as the primary database backend under BucketListDB, the default since stellar-core 21.0) and a much smaller **SQL database** for metadata. Both are managed entirely by Stellar Core. Local disk usage stays bounded over time — see [Why local disk stays bounded](#why-local-disk-stays-bounded) below.
 
 ### How storage breaks down
 
-| Component | Approximate Size (April 2024) | Notes |
+Approximate sizes for a current default-config validator on Mainnet. These figures should be treated as planning estimates rather than precise measurements.
+
+| Component | Approximate size | Notes |
 | --- | --- | --- |
-| Ledger state (buckets) | ~10 GB | Grows with the number of accounts, trustlines, and contract state on the network |
-| SQL database | ~20–40 GB | Depends on retention window (default: 30 days of ledger data for publishing to history archives) |
-| WAL logs, temp files | ~10–20 GB | PostgreSQL write-ahead logs and temporary space during maintenance |
-| **Headroom** | **20–30 GB** | **Buffer for growth between upgrades** |
+| Buckets directory (BucketListDB) | 20–40 GB | Primary store for live ledger state since stellar-core 21.0. |
+| SQL database | A few GB | Post-BucketListDB, used only for non-ledger metadata, transaction history within the retention window, and some DEX queries. Most ledger state tables are dropped at migration. |
+| WAL logs, temp files | 5–15 GB | PostgreSQL write-ahead logs and temporary space during maintenance operations. SQLite users will see lower numbers. |
 
-If you set `CATCHUP_COMPLETE=true` to sync full history from genesis, storage requirements are significantly higher — plan for 1 TB or more. For most validators, the default partial catchup is sufficient.
+A working set of roughly 30–60 GB is typical. The 100 GB local NVMe included with the recommended `c5d.2xlarge` (and comparable on Hetzner, OVH, Contabo, and others) leaves comfortable operational headroom on top of that — room for debug captures, re-syncs, and unforeseen operational needs.
 
-:::tip Plan for growth
+### Why local disk stays bounded
 
-The ledger grows as network usage increases. After Soroban's launch, contract state has become an additional driver of ledger size. We recommend provisioning at least 200 GB if you want to avoid resizing within the first year, especially for Tier 1 nodes that need high reliability.
+A common misconception is that validators need to provision storage proportional to network history. They do not.
 
-:::
+**Live ledger state is bounded by [state archival](https://developers.stellar.org/docs/learn/encyclopedia/storage/state-archival).** Every entry on the ledger has a rent balance; when the balance reaches zero, the entry is archived and removed from the live state. Validators store the live state plus a small "Hot Archive" of recently archived entries; when the Hot Archive fills, it is published to the History Archive, the validator retains only the Merkle root of the published tree, and the archived entries themselves are deleted from the validator. The result is that local validator state stays compact even as cumulative network history grows.
+
+**History archives live on object storage, not on the validator.** Full validators publish history archives to a separate object store (S3, R2, Backblaze B2, etc.) — that's where the multi-TB archive data lives. The validator process itself doesn't hold the archive on its local disk. See [Publishing History Archives](/docs/validators/admin-guide/publishing-history-archives) for the recommended setup.
+
+**`CATCHUP_COMPLETE=true` is almost never the right choice.** This setting makes the node sync the entire ledger from genesis on startup and is rarely appropriate for a validator. The standard pattern for new validators — including new Tier 1 candidates — is to sync against current network state, publish a history archive forward from that point, and use `stellar-archivist mirror` to backfill historical data into the published archive as a separate operation. The validator's local disk requirements are determined by the live state model above, not by historical depth.
 
 ### Database
 
-The SQL database is consulted during consensus, and modified atomically when a transaction set is applied to the ledger. It's random access, fine-grained, and fast.
+Even with BucketListDB as the primary store, Stellar Core still requires a SQL database — either SQLite or PostgreSQL (recommended for production) — for metadata and transaction history.
 
-As of August 2024, Stellar Core uses BucketListDB as its primary database backend. BucketListDB still requires a SQL database — either SQLite or PostgreSQL (recommended for production).
+The SQL database is consulted during consensus and modified atomically when a transaction set is applied to the ledger. Access patterns are random, fine-grained, and fast.
 
 If you're using PostgreSQL, we recommend you configure your local database to be accessed over a Unix domain socket, as well as updating the below PostgreSQL configuration parameters:
 
@@ -105,9 +110,21 @@ If you're using PostgreSQL, we recommend you configure your local database to be
 
 ### Buckets
 
-Stellar Core stores ledger state in the form of flat XDR files called "buckets." These files are used for hashing and transmission of ledger differences to history archives. With BucketListDB (the default since August 2024), the `buckets` directory also serves as the primary database backend.
+Stellar Core stores ledger state in the form of flat XDR files called "buckets." These files are used for hashing and transmission of ledger differences to history archives. Under BucketListDB (the default since stellar-core 21.0), the `buckets` directory also serves as the primary database backend — making it the largest single component of validator storage.
 
-Buckets should be stored on a fast, local disk with sufficient space for several times the current ledger size. NVMe SSDs with 10,000+ IOPS are recommended for production validators.
+Buckets should be stored on a fast, local disk with sufficient space for several times the current ledger size. NVMe SSDs with 10,000+ IOPS are recommended for production validators. Network-attached or remote storage is not recommended; latency on the buckets path directly affects consensus performance.
+
+{/\* Maintenance note for SDF docs maintainers:
+
+The size figures in the breakdown table above are estimates and should be re-verified periodically. The most reliable way to get current numbers is to ask one or more current Tier 1 operators (#validator on the Stellar Dev Discord) to share `du -sh` output of:
+
+    - the buckets directory
+    - the SQL database (PostgreSQL: pg_database_size, SQLite: file size)
+    - the full stellar-core data directory
+
+Last estimated: May 2026. Reflects post-BucketListDB defaults (stellar-core 21.0+) and the state archival design described in CAP-0046-12 / CAP-0057.
+
+NOTE: As of the original state archival announcement, the user-facing rent interface was live on mainnet but archived entries were not yet being deleted from validators. If full archival eviction has not yet shipped at the time this page is updated, the "Why local disk stays bounded" section may need to soften "are deleted from the validator" to "will be deleted from the validator under the state archival protocol." \*/}
 
 ## Kubernetes considerations
 
