@@ -1,4 +1,4 @@
-FROM ubuntu:24.04 AS build
+FROM ubuntu:26.04 AS build
 
 LABEL maintainer="SDF Ops Team <ops@stellar.org>"
 
