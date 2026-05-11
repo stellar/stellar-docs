@@ -263,7 +263,7 @@ const learn: NavbarItem = {
     },
     {
       to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
-      label: 'Stellar Decentralized Exchange',
+      label: 'Stellar Decentralized Exchange (SDEX)',
       activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
     },
     {
