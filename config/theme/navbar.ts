@@ -552,10 +552,6 @@ const translation: NavbarItem[] = [
     position: 'right',
     value: GOOGLE_TRANSLATE_ELEMENT,
   },
-  // {
-  //   type: 'localeDropdown',
-  //   position: 'right',
-  // },
 ]
 
 export default {
