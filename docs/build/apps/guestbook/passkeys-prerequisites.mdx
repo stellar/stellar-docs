@@ -3,93 +3,68 @@ title: Passkeys Prerequisites
 sidebar_position: 40
 ---
 
-Passkeys are an amazing way to help dapp developers (like yourself) connect users with their projects, protocols, applications, etc. Learn more on the [passkey wallet guide](../../guides/contract-accounts/smart-wallets.mdx).
+Passkeys are a great way to connect users with your dapp without the friction of seed phrases or browser extensions. Learn more on the [smart wallets guide](../../guides/contract-accounts/smart-wallets.mdx).
 
-We have been hard at work pioneering some tools to increase the adoption and ease-of-use for passkeys on Stellar. For this tutorial we'll be using the **incredible** [`passkey-kit` package](https://github.com/kalepail/passkey-kit), which takes SO MUCH of the headache and hassle out of the equation.
+For this tutorial we'll be using [Smart Account Kit](https://github.com/kalepail/smart-account-kit), which handles the WebAuthn ceremony, deploys an audited [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) per user, and stores credential metadata in IndexedDB so sessions survive page reloads.
 
-Before we get into the nitty gritty on passkeys, we have some chores to do. First, we'll set up Launchtube, a service that will help get our transactions on-chain without worrying about gas fees, sequence numbers, or source accounts. Really useful. Then, we'll create a Mercury indexing program, which will be used to keep track of the public key half of a user-generated passkey and then do a reverse lookup to see which smart wallet address the passkey has been added to.
+Before we wire up the SDK, we have two prerequisites to set up: an **OpenZeppelin Relayer API key** (so users don't pay their own fees), and a **funder G-account** (so we can drop some Testnet XLM into freshly-deployed smart wallets).
 
-## Launchtube
+## OpenZeppelin Relayer
 
-Let's start with [Launchtube](https://launchtube.xyz). As we mentioned earlier, Launchtube is similar to a "paymaster" service, if you're familiar with account abstraction in EVM networks. We won't actually need to interact with Launchtube _directly_. All that will be handled by the `passkey-kit` package. However, we'll need to get a JWT token that will allow us to authenticate our dapp with Launchtube.
+Previous iterations of this tutorial used Launchtube as a paymaster service. Launchtube has since been retired; its successor is the [OpenZeppelin Relayer](https://docs.openzeppelin.com/relayer/1.4.x/guides/stellar-channels-guide) with the Stellar Channels plugin. The relayer submits transactions for us through a pool of managed channel accounts, covering fees and sequence-number coordination.
 
-For Testnet Launchtube tokens, we can generate one any time we like. All you have to do is visit `https://testnet.launchtube.xyz/gen` to receive a JWT token that will be valid for three months, and will have 100 XLM in credits (these credits will be consumed when you submit network transactions through Launchtube). Go ahead, [give it a try](https://testnet.launchtube.xyz/gen)!
+We'll use the hosted Testnet relayer at `https://channels.openzeppelin.com/testnet`. To authenticate with it, you need an API key.
 
-:::tip
+1. Visit [https://channels.openzeppelin.com/testnet/gen](https://channels.openzeppelin.com/testnet/gen) to generate a Testnet key.
+2. Copy the key into your `.env` file:
 
-We do have Mainnet Launchtube tokens available! You can request a token in the [`#launchtube` channel](https://discord.com/channels/897514728459468821/1293204627361108141) on our [Stellar Developer Discord server](https://discord.gg/stellardev). In particular, pinging `@kalepail`, `@ElliotFriend`, or `@carsten.xlm` should get you on your way pretty quickly.
-
-:::
-
-Once you have your Launchtube token, copy/paste it into the `.env` file, as the `PRIVATE_LAUNCHTUBE_JWT` variable:
-
-```shell
-PRIVATE_LAUNCHTUBE_JWT=<insert_your_launchtube_jwt_here>
-```
+   ```shell
+   PRIVATE_RELAYER_BASE_URL="https://channels.openzeppelin.com/testnet"
+   PRIVATE_RELAYER_API_KEY=<paste-your-testnet-api-key>
+   ```
 
 :::info
 
-The `PRIVATE_` and `PUBLIC_` environment variables are a SvelteKit convention, allowing us to access these variables in appropriate places throughout our codebase using the [`$env/static/private`](https://svelte.dev/docs/kit/$env-static-private) and [`$env/static/public`](https://svelte.dev/docs/kit/$env-static-public) modules, respectively.
+The `PRIVATE_` and `PUBLIC_` prefixes are a SvelteKit convention. Variables prefixed `PRIVATE_` are only readable from server-side code via [`$env/static/private`](https://svelte.dev/docs/kit/$env-static-private), so the relayer key never ships to the browser. Variables prefixed `PUBLIC_` are bundled into the client via [`$env/static/public`](https://svelte.dev/docs/kit/$env-static-public).
 
 :::
 
-## Mercury
+:::warning Never expose the relayer key client-side
 
-Now, on to [Mercury](https://www.mercurydata.app/). This is a data indexer, running on both Testnet and Mainnet. The team is developing some bleeding-edge data tools that are beginning to redefine what's possible with network data. One such development is the [ZephyrVM](https://docs.mercurydata.app/zephyr-full-customization/introduction): Mercury's cloud execution environment. In short, Zephyr allows you to write (Rust) programs that will run at the close of _every_ ledger on the Stellar network. Inside that program, you can access any kind of current or past data, interact with external web services, create serverless functions, and populate databases. Similar to Launchtube, we won't be _directly_ interacting with Mercury inside the Ye Olde Guestbook dapp. Those interactions will be handled by the `passkey-kit` package. Also similar to Launchtube, this one takes some setting up.
+Any browser call to OpenZeppelin's Channels relayer has to carry the API key as a Bearer header, which would expose it to anyone inspecting network traffic. This tutorial keeps the key server-side by routing all submissions through a same-origin `/api/relay` proxy (implemented as a Cloudflare Pages Function). We'll build that proxy in the [next section](./setup-passkeys.mdx).
 
-The `passkey-kit` package doesn't "ship" with a Zephyr program in the published package, but it _does_ have all the Zephyr goodness you'll need in the source repository. Here's how you get that Zephyr program running on Mercury so you can access the indexed smart wallet events. By the way, these commands are probably best run _outside_ the directory where you're building your guestbook dapp.
+:::
 
-1. Clone the `passkey-kit` repository from GitHub and enter the `zephyr` directory within it:
+## Funder account
 
-   ```shell
-   git clone https://github.com/kalepail/passkey-kit
-   cd passkey-kit/zephyr
-   ```
+Friendbot only funds classic `G...` accounts, not contract `C...` accounts. So, when a new user signs up and their smart wallet is deployed, we need a way to drop a little XLM into it so they can transact. We handle this with a dedicated **funder** — a classic Stellar account holding some Testnet XLM that our server-side `/api/fund/[address]` endpoint uses to send 25 XLM to each freshly-created wallet.
 
-2. Get an authentication token from the Mercury website. You can login to the [Testnet dashboard](https://test.mercurydata.app/) here. Click on the **Get access token** button under the "Active subscriptions" section. You'll be given a JWT which will be valid for the next seven days.
-
-   ![Mercury Data JWT Token](/assets/guestbook/mercury_token.png)
-
-   Copy/paste this token into the `.env` file:
+1. Create a new Testnet keypair using the Stellar Lab or the Stellar CLI:
 
    ```shell
-   PRIVATE_MERCURY_JWT=<insert_your_mercury_jwt_here>
+   stellar keys generate funder --network testnet --fund
    ```
 
-3. (Optionally) You can get a [long-lasting authentication token](https://docs.mercurydata.app/get-started-with-mercury/authentication) for your account using this token, and making a request to Mercury's API:
+2. Grab the secret key:
 
    ```shell
-   curl -X POST https://api.mercurydata.app/v2/key \
-       -H "authorization: Bearer <insert_your_mercury_jwt_here>
+   stellar keys show funder
    ```
 
-   This will give you an API key that can also be added to your `.env` file. The benefit of this API key is that it will not expire until you generate another API key.
-
-   :::info
-
-   For this tutorial, you'll only need one of these. You can specify the JWT **or** the API key, and get things working exactly the same. In the `PasskeyServer`, though, make sure you specify the corresponding value.
-
-   :::
-
-4. Compile and deploy the event indexer Zephyr program to the Testnet network.
+3. Add it to `.env`:
 
    ```shell
-   cargo install mercury-cli
-   export MERCURY_JWT="<insert_your_mercury_jwt_here>"
-   # Make sure you're using Rust version 1.79.0 or newer
-   mercury-cli --jwt $MERCURY_JWT --local false --mainnet false deploy
+   PRIVATE_FUNDER_SECRET_KEY=S...ECRETKEY
    ```
 
-If everything succeeds, you're ready to go! Well done!
-
-You're now ready to dive into the actual passkey implementation and get your users authenticated with the guestbook dapp! Let's get to it!
+Smart Account Kit stores credential metadata in the browser's IndexedDB, so there's no passkey → contract reverse-lookup indexer to set up.
 
 ## Troubleshooting
 
-It's possible something has gone wrong during your execution of the processes above. Here are some general suggestions of fixes or things you can try if something goes wrong with your use of Launchtube or Mercury:
+Things that can trip you up while getting these prerequisites wired up:
 
-1. **Generate a new Launchtube token.** It's possible the Launchtube token you're using has run out of credits. Since we're using Testnet for this tutorial, there's no harm in generating a brand new token any time by visiting `https://testnet.launchtube.xyz/gen` in your browser.
-2. **Make sure your Zephyr program successfully deployed.** I've been stuck more than once with a not-working Mercury request because the Zephyr program hadn't actually deployed successfully. Make sure the `mercury-cli deploy` command's output doesn't have any errors in it.
-3. **Check the [Mercury documentation](https://docs.mercurydata.app/).** It's quite good and can help you get past a lot of the hurdles you might face.
+1. **Relayer key returns 401/403.** Regenerate the key at [https://channels.openzeppelin.com/testnet/gen](https://channels.openzeppelin.com/testnet/gen). The Testnet key is free to re-issue.
+2. **Funder account has no XLM.** Re-fund it via [Friendbot](https://friendbot.stellar.org) or `stellar keys fund funder --network testnet`. Each funding adds 10,000 XLM, which is plenty for this tutorial.
+3. **`PRIVATE_*` env vars come back undefined.** SvelteKit reads them from `.env` at build time. If you edit `.env` while `pnpm dev` is running, restart the dev server.
 
-In any case, feel free to ask questions or drop a chat in the [`#passkeys`](https://discord.com/channels/897514728459468821/1250851135561142423) and [`#launchtube`](https://discord.com/channels/897514728459468821/1293204627361108141) channels in the Stellar Developer Discord server. There's usually somebody around who's ready and willing to help out!
+If you get stuck, drop a question in the [`#passkeys`](https://discord.com/channels/897514728459468821/1250851135561142423) channel on the [Stellar Developer Discord](https://discord.gg/stellardev).
