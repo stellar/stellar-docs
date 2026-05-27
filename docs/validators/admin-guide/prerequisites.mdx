@@ -13,15 +13,25 @@ CPU, RAM, Disk and network depends on network activity. If you decide to colloca
 
 :::
 
-At the time of writing (April 2024), Stellar Core with PostgreSQL running on the same machine worked well on a [c5d.2xlarge](https://aws.amazon.com/ec2/instance-types/c5/) instance in AWS (8x Intel Xeon vCPUs at 3.4 GHz; 16 GB RAM; 100 GB NVMe SSD (10,000 iops)).
+:::tip For Tier 1 organizations
+
+[Tier 1 organizations](/docs/validators/tier-1-orgs) run three geographically dispersed Full Validators, each meeting these requirements independently. Each node needs its own hardware, its own unique validator key, and its own history archive. Plan for three times the resources listed below, spread across different data centers or cloud regions. See [Tier 1 Organizations](/docs/validators/tier-1-orgs) for the full requirements and onboarding path.
+
+:::
 
 Stellar Core is designed to run on relatively modest hardware so that a whole range of individuals and organizations can participate in the network, and basic nodes should be able to function pretty well without tremendous overhead. That said, the more you ask of your node, the greater the requirements.
 
+The following recommendations were verified against production nodes in April 2024. Hardware requirements grow with network activity; check the [stellar-core releases](https://github.com/stellar/stellar-core/releases) for any notes on updated requirements.
+
 | Node Type | CPU | RAM | Disk | AWS SKU | Google Cloud SKU |
 | --- | --- | --- | --- | --- | --- |
-| Core Validator Node | 8x Intel Xeon @ 3.4 GHz | 16 GB | 100 GB NVMe SSD | [c5d.2xlarge] | [n4-highcpu-8] |
+| Core Validator Node | 8 vCPUs @ 3.4 GHz | 16 GB | 100 GB NVMe SSD\* (10,000 IOPS) | [c5d.2xlarge] | [n4-highcpu-8] |
 
-_\* Assuming a 30-day retention window for data storage._
+PostgreSQL co-located on the same machine performs well at this spec — a separate database host is not required for a single validator.
+
+_\* Disk sizing assumes a 30-day retention window (`AUTOMATIC_MAINTENANCE_COUNT` at default). See [Storage](#storage) below for details._
+
+<!-- Last verified: April 2024. If you're an SDF maintainer updating this, bump the date in the paragraph above. -->
 
 ## Stellar Network Access
 
@@ -60,13 +70,37 @@ If you need to expose this endpoint to other hosts in your local network, we str
 
 ## Storage
 
-Most storage needs come from stellar-core's database backend, which needs to store the entire ledger state. For the most part, the contents of both the database and related directories (such as `buckets`) can be ignored, since they are completely managed by Stellar Core. In terms of storage space, 100 GB is enough (as of April 2024).
+Stellar Core's local storage needs come from two sources: the **buckets directory** (which serves as the primary database backend under BucketListDB, the default since stellar-core 21.0) and a much smaller **SQL database** for metadata. Both are managed entirely by Stellar Core. Local disk usage stays bounded over time — see [Why local disk stays bounded](#why-local-disk-stays-bounded) below.
+
+### How storage breaks down
+
+Approximate sizes for a current default-config validator on Mainnet. These figures should be treated as planning estimates rather than precise measurements.
+
+| Component | Approximate size | Notes |
+| --- | --- | --- |
+| Buckets directory (BucketListDB) | 20–40 GB | Primary store for live ledger state since stellar-core 21.0. |
+| SQL database | A few GB | Post-BucketListDB, used only for non-ledger metadata, transaction history within the retention window, and some DEX queries. Most ledger state tables are dropped at migration. |
+| WAL logs, temp files | 5–15 GB | PostgreSQL write-ahead logs and temporary space during maintenance operations. SQLite users will see lower numbers. |
+
+A working set of roughly 30–60 GB is typical. The 100 GB local NVMe included with the recommended `c5d.2xlarge` (and comparable on Hetzner, OVH, Contabo, and others) leaves comfortable operational headroom on top of that — room for debug captures, re-syncs, and unforeseen operational needs.
+
+### Why local disk stays bounded
+
+A common misconception is that validators need to provision storage proportional to network history. They do not.
+
+**Soroban (smart contract) state is bounded by [state archival](https://developers.stellar.org/docs/learn/encyclopedia/storage/state-archival).** Contract data and contract code entries carry a rent balance; when a Temporary entry's balance reaches zero, it is deleted from live state. Temporary entries are cheaper to create than Persistent entries and dominate total contract data volume, so as they expire and are removed, a significant amount of state is freed up — keeping the live state on disk from growing unboundedly.
+
+**Classic ledger entries — accounts, trustlines, offers, claimable balances, liquidity pool shares, and data entries — do not expire.** They persist on the live state indefinitely. They grow slowly, though, because [reserve requirements](/docs/learn/fundamentals/stellar-data-structures/accounts#base-reserves-and-subentries) act as anti-spam friction on creation. In practice, the resulting working set still lands in the 30–60 GB range cited above, so local validator state stays compact even as cumulative network history grows.
+
+**History archives live on object storage, not on the validator.** Full validators publish history archives to a separate object store (S3, R2, Backblaze B2, etc.) — that's where the multi-TB archive data lives. The validator process itself doesn't hold the archive on its local disk. See [Publishing History Archives](/docs/validators/admin-guide/publishing-history-archives) for the recommended setup.
+
+**`CATCHUP_COMPLETE=true` is almost never the right choice.** This setting makes the node sync the entire ledger from genesis on startup and is rarely appropriate for a validator. The standard pattern for new validators — including new Tier 1 candidates — is to sync against current network state, publish a history archive forward from that point, and use `stellar-archivist mirror` to backfill historical data into the published archive as a separate operation. The validator's local disk requirements are determined by the live state model above, not by historical depth.
 
 ### Database
 
-The database is consulted during consensus, and modified atomically when a transaction set is applied to the ledger. It's random access, fine-grained, and fast.
+Even with BucketListDB as the primary store, Stellar Core still requires a SQL database — either SQLite or PostgreSQL (recommended for production) — for metadata and transaction history.
 
-As of August 2024, Stellar Core officially switched to BucketListDB as its primary database backend. Note that BucketListDB still requires SQL database, either SQLite or Postgres (recommended).
+The SQL database is consulted during consensus and modified atomically when a transaction set is applied to the ledger. Access patterns are random, fine-grained, and fast.
 
 If you're using PostgreSQL, we recommend you configure your local database to be accessed over a Unix domain socket, as well as updating the below PostgreSQL configuration parameters:
 
@@ -80,13 +114,37 @@ If you're using PostgreSQL, we recommend you configure your local database to be
 
 ### Buckets
 
-Stellar-core stores ledger state in the form of flat XDR files called "buckets." The bucket files are used for hashing and transmission of ledger differences to history archives. If BucketListDB is used, the `buckets` directory is also used as a primary database backend. If SQL is used, the `buckets` directory is only used for hashing and history archives, and simply represents a copy of the ledger state stored in SQL.
+Stellar Core stores ledger state in the form of flat XDR files called "buckets." These files are used for hashing and transmission of ledger differences to history archives. Under BucketListDB (the default since stellar-core 21.0), the `buckets` directory also serves as the primary database backend — making it the largest single component of validator storage.
 
-Buckets should be stored on a fast, local disk with sufficient space to store several times the size of the current ledger. Current ledger size is approximately 10 GB (as of April 2024), so please plan accordingly.
+Buckets should be stored on a fast, local disk with sufficient space for several times the current ledger size. NVMe SSDs with 10,000+ IOPS are recommended for production validators. Network-attached or remote storage is not recommended; latency on the buckets path directly affects consensus performance.
+
+<!--
+  Maintenance note for SDF docs maintainers: the size figures in the
+  breakdown table above are estimates and should be re-verified
+  periodically. The most reliable way to get current numbers is to ask
+  one or more current Tier 1 operators (#validator on the Stellar Dev
+  Discord) to share du -sh output of the buckets directory, the SQL
+  database (PostgreSQL: pg_database_size, SQLite: file size), and the
+  full stellar-core data directory.
+
+  Last estimated: May 2026. Reflects post-BucketListDB defaults
+  (stellar-core 21.0+) and the state archival design described in
+  CAP-0046-12 / CAP-0057.
+
+  NOTE: As of the original state archival announcement, the user-facing
+  rent interface was live on mainnet but archived entries were not yet
+  being deleted from validators. If full archival eviction has not yet
+  shipped at the time this page is updated, the "Why local disk stays
+  bounded" section may need to soften "are deleted from the validator"
+  to "will be deleted from the validator under the state archival
+  protocol."
+-->
 
 ## Kubernetes considerations
 
-We currently do not recommend running validator nodes in Kubernetes. If you choose to do so, consider the following:
+We currently do not recommend running validator nodes in Kubernetes. Standard VM-based deployments (bare metal or cloud instances) are the well-tested path for production validators.
+
+If you choose to use Kubernetes regardless, consider the following:
 
 - Sensitive data such as node seeds will be stored in Kubernetes etcd. Consider consuming credentials using tools like [vault agent](https://developer.hashicorp.com/vault/docs/platform/k8s/injector) or the [AWS Secrets Store CSI driver](https://github.com/aws/secrets-store-csi-driver-provider-aws) to improve security
 - Consider how external traffic will reach the pods. Tier 1 nodes need public DNS names and necessary ports must be accessible from the internet
