@@ -27,6 +27,19 @@ const config: Config = {
   favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
+  customFields: {
+    // Algolia Agent Studio connection for the docs AI assistant.
+    // The search-only API key is safe to expose client-side. Override any of
+    // these with env vars at build time.
+    agentChat: {
+      appId: process.env.AGENT_CHAT_APP_ID || "VNSJF5AWIZ",
+      agentId:
+        process.env.AGENT_CHAT_AGENT_ID ||
+        "bf6c7577-d445-4132-9ad8-c349a0560621",
+      apiKey:
+        process.env.AGENT_CHAT_API_KEY || "86acea3d3ee70d36299b99fda5fdf092",
+    },
+  },
   // i18n: {
   //   defaultLocale: DEFAULT_LOCALE,
   //   locales: ["en", "es"],
