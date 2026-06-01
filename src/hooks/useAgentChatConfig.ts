@@ -10,5 +10,16 @@ import type { AgentChatConfig } from "@site/src/agent-chat";
  */
 export function useAgentChatConfig(): AgentChatConfig {
   const { siteConfig } = useDocusaurusContext();
-  return siteConfig.customFields!.agentChat as AgentChatConfig;
+  const config = siteConfig.customFields?.agentChat as
+    | AgentChatConfig
+    | undefined;
+
+  if (!config?.appId || !config?.agentId || !config?.apiKey) {
+    throw new Error(
+      "Agent Studio config is missing. Set `customFields.agentChat` " +
+        "({ appId, agentId, apiKey }) in docusaurus.config.ts.",
+    );
+  }
+
+  return config;
 }

@@ -31,6 +31,15 @@ export interface AgentChatProps {
    * for syntax highlighting that matches the site.
    */
   codeBlock?: CodeBlockComponent;
+  /**
+   * While an assistant message is streaming, hide its text until a tool call
+   * has occurred. This suppresses the "Let me find that…" status chatter that
+   * tool-using agents emit before each search. Defaults to `true`.
+   *
+   * Set to `false` for agents that answer **without** calling tools, otherwise
+   * their reply won't appear until streaming finishes.
+   */
+  hideStatusUntilToolCall?: boolean;
 }
 
 /** Collect every non-empty text segment of a message, in order. */
@@ -69,11 +78,16 @@ function hasToolCall(message: UIMessage): boolean {
 /**
  * Text to show for an assistant message. While it's still streaming, the
  * pre-tool status chatter ("Let me find that…") would otherwise flash in and
- * then vanish once a tool call arrives, so we reveal nothing until a tool call
- * has happened. Once streaming finishes, show the final answer regardless.
+ * then vanish once a tool call arrives, so (when `hideUntilTool`) we reveal
+ * nothing until a tool call has happened. Once streaming finishes, show the
+ * final answer regardless.
  */
-function visibleAnswer(message: UIMessage, streaming: boolean): string[] {
-  if (streaming && !hasToolCall(message)) {
+function visibleAnswer(
+  message: UIMessage,
+  streaming: boolean,
+  hideUntilTool: boolean,
+): string[] {
+  if (streaming && hideUntilTool && !hasToolCall(message)) {
     return [];
   }
   return answerParts(message);
@@ -84,16 +98,18 @@ function Message({
   markdownClassName,
   codeBlock,
   streaming,
+  hideStatusUntilToolCall,
 }: {
   message: UIMessage;
   markdownClassName?: string;
   codeBlock?: CodeBlockComponent;
   streaming: boolean;
+  hideStatusUntilToolCall: boolean;
 }) {
   const isUser = message.role === "user";
   const segments = isUser
     ? textParts(message)
-    : visibleAnswer(message, streaming);
+    : visibleAnswer(message, streaming, hideStatusUntilToolCall);
   if (segments.length === 0) {
     return null;
   }
@@ -144,18 +160,31 @@ export function AgentChat({
   suggestions,
   markdownClassName,
   codeBlock,
+  hideStatusUntilToolCall = true,
 }: AgentChatProps) {
   const { messages, sendMessage, status, error, stop, regenerate } =
     useAgentChat(config);
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Whether the user was at the bottom of the log before the latest update.
+  const atBottomRef = useRef(true);
 
   const isBusy = status === "submitted" || status === "streaming";
   const isEmpty = messages.length === 0;
 
-  useEffect(() => {
+  const handleScroll = () => {
     const el = scrollRef.current;
     if (el) {
+      atBottomRef.current =
+        el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    }
+  };
+
+  // Auto-scroll on new content, but only if the user hasn't scrolled up to
+  // read earlier messages.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && atBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages, status]);
@@ -185,13 +214,16 @@ export function AgentChat({
   // (covers: awaiting first token, and running tools before the answer starts).
   const showThinking =
     isBusy &&
-    (!last || last.role === "user" || visibleAnswer(last, true).length === 0);
+    (!last ||
+      last.role === "user" ||
+      visibleAnswer(last, true, hideStatusUntilToolCall).length === 0);
 
   return (
     <div className={clsx(styles.container, className)}>
       <div
         className={styles.messages}
         ref={scrollRef}
+        onScroll={handleScroll}
         role="log"
         aria-live="polite"
       >
@@ -224,6 +256,7 @@ export function AgentChat({
             markdownClassName={markdownClassName}
             codeBlock={codeBlock}
             streaming={message.id === streamingId}
+            hideStatusUntilToolCall={hideStatusUntilToolCall}
           />
         ))}
 

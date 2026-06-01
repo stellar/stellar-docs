@@ -44,14 +44,15 @@ import { AgentChatWidget } from "@site/src/agent-chat";
 
 ## Key props (`AgentChat`)
 
-| Prop                | Purpose                                                                                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config`            | `{ appId, agentId, apiKey, host?, stream? }` connection details.                                                                                                 |
-| `welcomeMessage`    | Shown on the empty state.                                                                                                                                        |
-| `suggestions`       | Starter prompt buttons.                                                                                                                                          |
-| `placeholder`       | Input placeholder.                                                                                                                                               |
-| `markdownClassName` | Class applied to rendered answers so they inherit the host's prose styling (e.g. Docusaurus `"markdown"`).                                                       |
-| `codeBlock`         | Component used for fenced code. Defaults to a built-in copyable block; pass the host's highlighter (e.g. Docusaurus `@theme/CodeBlock`) for syntax highlighting. |
+| Prop                      | Purpose                                                                                                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config`                  | `{ appId, agentId, apiKey, host?, stream? }` connection details.                                                                                                 |
+| `welcomeMessage`          | Shown on the empty state.                                                                                                                                        |
+| `suggestions`             | Starter prompt buttons.                                                                                                                                          |
+| `placeholder`             | Input placeholder.                                                                                                                                               |
+| `markdownClassName`       | Class applied to rendered answers so they inherit the host's prose styling (e.g. Docusaurus `"markdown"`).                                                       |
+| `codeBlock`               | Component used for fenced code. Defaults to a built-in copyable block; pass the host's highlighter (e.g. Docusaurus `@theme/CodeBlock`) for syntax highlighting. |
+| `hideStatusUntilToolCall` | Hide a streaming reply until a tool call occurs, suppressing pre-search "status" chatter. Defaults to `true`. Set `false` for agents that answer without tools.  |
 
 `AgentChatWidget` accepts all of the above plus `title`.
 
