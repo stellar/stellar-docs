@@ -84,6 +84,7 @@ const config: Config = {
     ],
     './src/plugins/route-export/index.ts',
     './src/plugins/analytics-module/index.ts',
+    './src/plugins/markdown-source-server/index.ts',
   ],
   markdown: {
     mermaid: true,
