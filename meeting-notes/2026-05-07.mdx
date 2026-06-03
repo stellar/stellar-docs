@@ -1,0 +1,97 @@
+---
+title: "2026-05-07"
+authors: kaankacar
+tags: [developer]
+---
+
+<iframe
+  src="https://www.youtube.com/embed/WHYHzDF8KJ8"
+  title="Stellar Developer Meeting 2026-05-07 recording"
+  width="640"
+  height="480"
+  allow="autoplay"
+></iframe>
+
+## Machine Payments Protocol: A Deep Dive
+
+This week's meeting is a hands-on walkthrough of the Machine Payments Protocol (MPP) on Stellar — what it is, when to reach for it, and the specific moment in your code where an operation becomes an MPP operation. The goal is to answer one question by the end: "So what? Why should I care about MPP?"
+
+MPP is the second of the two agentic-payment primitives covered in recent meetings. The first, x402, is the more familiar of the two — it's effectively a programmable paywall built on top of the long-standing HTTP `402 Payment Required` status. A human or an agent hits a route, gets a `402`, pays, and is allowed through. MPP is the less obvious sibling, and the value proposition only becomes clear once you understand its two modes.
+
+## Charge Mode vs. Channel Mode
+
+MPP has two payment modes, and the distinction is the entire point of the protocol.
+
+**Charge mode** is pay-per-request. A route returns a payment challenge, the caller pays for that single request, and the receipt unlocks the response. If you've worked with x402, charge mode will feel almost identical — it is the right choice when requests are infrequent or the underlying data isn't changing rapidly. One call, one transaction, one receipt.
+
+**Channel mode** is where MPP earns its keep. Imagine you're charging for access to a premium LLM that emits 50 tokens per second, and the underlying cost model is per-token rather than per-request. Pay-per-request breaks down immediately: you'd need the user to send a transaction every 1/50th of a second, which is impossible. Channel mode solves this by letting the user open a funded channel up front, spend against it at high frequency, and then settle in a single on-chain transaction when the channel closes. The channel can be closed manually (a button, an explicit "end session") or by a timeout — a timeout is usually the better default, because a user closing their laptop doesn't close the channel for them.
+
+The mental model: charge mode is a turnstile; channel mode is a bar tab. Both are useful, and a single tool can expose both — pick the mode that matches the cost shape of the underlying operation.
+
+## The Receipt Flow
+
+The channel-mode handshake is worth internalizing because it's where most of the "wait, how does this work?" questions come from:
+
+1. The client calls the MCP tool. The server returns `402 Payment Required` with a channel challenge.
+2. The client opens a channel against the server. The client's wallet receives a receipt for that channel.
+3. The client retries the call, this time presenting the receipt. The server returns `200` and serves the response.
+4. Subsequent high-frequency calls reuse the open channel — no new transaction per call.
+5. When the channel closes (button, timeout, or explicit end-session), a single settlement transaction lands on-chain.
+
+Charge mode collapses steps 2–5 into a single pay-and-go interaction — you pay, you get the receipt, you make the call, done.
+
+## Demo Walkthrough
+
+The full demo is on GitHub and the code is meant to be read alongside this video — it is intentionally not production-ready. The demo is an MCP server with four tools:
+
+- **`get_network_status`** — free, returns testnet liveness.
+- **`lookup_account`** — free, fetches live XLM balance for an account.
+- **`analyze_account_risk`** — paid, demonstrates charge mode.
+- **`explain_latest_transactions`** — paid, demonstrates channel mode.
+
+The free tools work the way you'd expect — `200 OK`, no payment required. They're effectively the free trial of the MCP.
+
+Calling `analyze_account_risk` without paying returns `402 Payment Required` with a charge-mode challenge: "100 base units to use this tool." Paying via the **Run Selected Tool** button produces a receipt, the call retries, and the server returns `200` with the result. Mode shown in the receipt: `charge`. One request, one transaction.
+
+Calling `explain_latest_transactions` after activating a channel session uses channel mode. The first call against an inactive channel returns `402`; opening the channel and retrying returns `200`, and subsequent calls against the same open channel don't require new transactions. The demo includes an explicit **Close Channel** button for clarity — in production you'd almost certainly use a timeout instead, so a user walking away doesn't leave a channel hanging open.
+
+## The Wallet Setup
+
+The demo uses four wallet roles, and the setup is worth calling out:
+
+- **Buyer wallet** — the end user paying for tool access.
+- **Seller wallet** — the MCP operator receiving payment.
+- **Fee payer wallet** — sponsors gas fees via OpenZeppelin's relayer. Not required for MPP to work, but heavily recommended for UX. In 2026 there's very little excuse to make users hold the native asset just to interact with your tool, and fee sponsorship is the cleanest way to remove that friction.
+- **Channel commitment key** — a separate wallet that holds the cumulative channel commitments. This is included to illustrate that the actors in an MPP setup can be decomposed — there are paths beyond "I get paid for my service" toward monetizing the commitment-holding role itself. The demo configuration here is illustrative, not best practice.
+
+The wallets live in-client (the same model used in the AK Gaming hackathon's game studio), so there's no browser extension or passkey prompt in this demo. That's a deliberate choice for clarity, not a recommendation — for anything heading toward production, look at OpenZeppelin's policy-based smart accounts (OZ Policy). With OZ Policy you can express rules like "any transaction over $10 requires my signature," which is most of what you actually want from a smart agent wallet.
+
+## The Exact Moment an Operation Becomes MPP
+
+The pivot of the video: where in the code does a regular HTTP handler turn into an MPP-gated handler?
+
+In the charge-mode handler, the route checks for a valid payment receipt. If the receipt is present and valid, the handler proceeds to the underlying business logic and returns the response. If it isn't, the handler returns a `402` with the charge challenge attached. That gating block — the small "molecule" sitting between the request and the response — is the entire MPP surface area for charge mode. Flipping the same handler from charge mode to channel mode is essentially a one-line change in the configuration of that gating block.
+
+If you've worked with x402, charge mode is going to feel like familiar territory. The thing to internalize is that channel mode is _not_ x402 with extra steps — it's a different settlement model for a different cost shape, and it's the reason MPP exists as its own primitive.
+
+## SDKs and Reference Implementations
+
+Two pointers for going deeper:
+
+- The MPP documentation on [developers.stellar.org](https://developers.stellar.org), including the list of supported MPP intents.
+- The recommended SDK for creating MPP patterns on Stellar — the easiest path to a working integration.
+
+For a better-looking, more-complete reference implementation than the demo shown in this stream, look up [@ElliotFriend](https://x.com/ElliotFriend) on X — Elliot's MPP demo (including `MPP Stellar Buzz`, a per-channel chatbot) is a strong example of channel mode used correctly: open a channel when the conversation starts, settle once when it ends, no per-token transaction overhead in between.
+
+## Where MPP Fits
+
+The use cases that map cleanly onto MPP all share one property: **high-frequency paid calls**. That keyword is the easiest filter. If your access pattern is bursty or per-token or per-tick, channel mode. If it's an occasional one-off charge for a piece of data, charge mode. If it's neither, you may not need MPP at all.
+
+Concrete examples worth thinking about:
+
+- **Paid data feeds and oracles** — charge per query, or open a channel for high-frequency consumers.
+- **Premium developer tools and analytics APIs** — the obvious one. Per-call billing for tools that today rely on API keys and out-of-band invoicing.
+- **AI-enabled explorers** — paste a wallet or contract address into a chatbot and have it narrate the on-chain activity. Open question on the table during the meeting — a strong opportunity for builders.
+- **AI auditing tools** — auditing a Soroban contract for vulnerabilities, with the caveat that no AI auditor should be the only thing standing between a project and mainnet.
+- **Agent service marketplaces** — agents paying agents per-call, with MPP as the settlement layer.
+- **Usage-based infrastructure** — anything where the cost shape is "metered, often, small."
