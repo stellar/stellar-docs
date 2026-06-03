@@ -4,7 +4,6 @@ import BrowserOnly from "@docusaurus/BrowserOnly";
 import { AgentChatWidget } from "@site/src/agent-chat";
 import { useAgentChatConfig } from "@site/src/hooks/useAgentChatConfig";
 import {
-  DocusaurusCodeBlock,
   AGENT_TITLE,
   AGENT_PLACEHOLDER,
   AGENT_WELCOME_MESSAGE,
@@ -21,7 +20,9 @@ function StellarAgentWidget() {
       welcomeMessage={AGENT_WELCOME_MESSAGE}
       suggestions={AGENT_SUGGESTIONS}
       markdownClassName="markdown"
-      codeBlock={DocusaurusCodeBlock}
+      // No codeBlock override here: Root mounts outside <Layout>, so Docusaurus
+      // theme context (ColorModeProvider) isn't available and @theme/CodeBlock
+      // would crash. The module's built-in plain CodeBlock is context-free.
     />
   );
 }
