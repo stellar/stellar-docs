@@ -124,7 +124,13 @@ async function processMdFiles(
       const dstPath = path.join(destDir, destName);
 
       const source = fs.readFileSync(srcPath, "utf-8");
-      const markdown = await renderToMarkdown(source);
+      let markdown: string;
+      try {
+        markdown = await renderToMarkdown(source);
+      } catch {
+        // Fall back to raw source if MDX parsing fails (e.g. invalid JS expressions)
+        markdown = source;
+      }
       fs.mkdirSync(path.dirname(dstPath), { recursive: true });
       fs.writeFileSync(dstPath, markdown, "utf-8");
       onProcess();
