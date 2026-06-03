@@ -1,46 +1,28 @@
 # Markdown File Extension Feature
 
-This implementation enables raw Markdown source access on all documentation pages via the `.md` file extension.
+This implementation enables raw Markdown source access on all documentation pages via the `.md` file extension, using Cloudflare's native markdown feature.
 
 ## How It Works
 
-### 1. Cloudflare Worker (`src/index.ts`)
-- Intercepts requests ending in `.md` (e.g., `/docs/build/smart-contracts/getting-started/setup.md`)
-- Removes the `.md` extension from the path
-- Adds the `Accept: text/markdown` header to the request
-- Proxies the request back to the origin server
-- Returns the response with `Content-Type: text/markdown`
-
-### 2. Nginx Configuration (`nginx/nginx.conf`)
-- Detects the `Accept: text/markdown` header
-- Serves the raw markdown source files (`.mdx` or `.md`) instead of the compiled HTML
+### 1. Nginx Configuration (`nginx/nginx.conf`)
+- When a request comes in for a path (e.g., `/docs/build/smart-contracts/getting-started/setup.md`), nginx first tries to serve it as-is
+- If that fails, nginx falls back to checking for markdown source files in `/docs-source/`
+- Serves the raw markdown source files (`.mdx` or `.md`) with proper `Content-Type: text/markdown` header
 - Markdown source files are located in `/usr/share/nginx/html/docs-source/`
-- Sets appropriate `Content-Type` and `Cache-Control` headers
 
-### 3. Docker Build (`Dockerfile`)
-- Copies the markdown source files to `/usr/share/nginx/html/docs-source/` during the build process
-- This makes the source files available to nginx for serving when requested
+### 2. Docker Build (`Dockerfile`)
+- Copies the markdown source files from `/docs/` to `/usr/share/nginx/html/docs-source/` during the build process
+- This makes the source files available to nginx for serving
+
+### 3. Cloudflare Markdown Feature
+- Cloudflare automatically detects `Content-Type: text/markdown` responses
+- Serves the raw markdown instead of rendering it as HTML
+- See: https://blog.cloudflare.com/markdown-for-agents/
 
 ## File Paths
 
-- Cloudflare Worker code: `src/index.ts`
-- Cloudflare configuration: `wrangler.toml`
 - Nginx configuration: `nginx/nginx.conf`
 - Docker configuration: `Dockerfile`
-
-## Deployment
-
-### Cloudflare Worker
-```bash
-# Preview deployment
-yarn worker:build
-
-# Production deployment
-yarn worker:deploy
-```
-
-### Docker Image
-The Docker image build automatically includes the markdown source files. No additional steps are needed beyond the standard Docker build process.
 
 ## Example Usage
 
@@ -48,16 +30,13 @@ The Docker image build automatically includes the markdown source files. No addi
 # Request rendered HTML
 curl https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup
 
-# Request raw markdown source
+# Request raw markdown source (Cloudflare serves the raw markdown)
 curl https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup.md
 ```
 
-## Cloudflare Configuration
+## Configuration
 
-The worker is configured to run on:
-- Production: `developers.stellar.org/*` (zone: `stellar.org`)
-
-Make sure to:
-1. Have the `wrangler` CLI configured with proper authentication
-2. Update the zone_name in `wrangler.toml` if using a different domain
-3. Configure environment secrets if needed for the worker
+The feature works automatically once deployed:
+1. Build and deploy the Docker image
+2. Cloudflare will detect markdown responses and serve them appropriately
+3. No additional configuration needed
