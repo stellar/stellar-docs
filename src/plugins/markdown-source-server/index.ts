@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import glob from 'glob';
+import { globSync } from 'glob';
 import type { LoadContext, Plugin } from '@docusaurus/types';
 
 export default function markdownSourceServerPlugin(
@@ -55,7 +55,7 @@ export default function markdownSourceServerPlugin(
       const docsDir = path.join(context.siteDir, 'docs');
       const pattern = path.join(docsDir, '**', '*.{md,mdx}');
 
-      const files = glob.sync(pattern);
+      const files = globSync(pattern);
 
       for (const file of files) {
         // Get the relative path from docs directory
