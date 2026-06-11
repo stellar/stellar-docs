@@ -108,6 +108,7 @@ const config: Config = {
           postsPerPage: 12,
           routeBasePath: 'meetings',
           onUntruncatedBlogPosts: 'ignore',
+          exclude: ['**/README.md'],
         },
         docs: {
           showLastUpdateTime: true,
