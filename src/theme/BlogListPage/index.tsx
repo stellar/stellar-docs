@@ -1,0 +1,63 @@
+import React, { type ReactNode } from "react";
+import clsx from "clsx";
+import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
+import {
+  HtmlClassNameProvider,
+  PageMetadata,
+  ThemeClassNames,
+} from "@docusaurus/theme-common";
+import type { Props } from "@theme/BlogListPage";
+import BlogListPageStructuredData from "@theme/BlogListPage/StructuredData";
+import BlogLayout from "@theme/BlogLayout";
+import BlogListPaginator from "@theme/BlogListPaginator";
+import BlogPostItems from "@theme/BlogPostItems";
+import SearchMetadata from "@theme/SearchMetadata";
+
+import MeetingIndexCard from "../../components/MeetingIndexCard";
+
+const MEETING_ROUTE = "/meetings";
+
+function BlogListPageMetadata(props: Props): ReactNode {
+  const { metadata } = props;
+  const {
+    siteConfig: { title: siteTitle },
+  } = useDocusaurusContext();
+  const { blogDescription, blogTitle, permalink } = metadata;
+  const isBlogOnlyMode = permalink === "/";
+  const title = isBlogOnlyMode ? siteTitle : blogTitle;
+
+  return (
+    <>
+      <PageMetadata title={title} description={blogDescription} />
+      <SearchMetadata tag="blog_posts_list" />
+    </>
+  );
+}
+
+function BlogListPageContent(props: Props): ReactNode {
+  const { metadata, items, sidebar } = props;
+  const showMeetingIntro = metadata.permalink === MEETING_ROUTE;
+
+  return (
+    <BlogLayout sidebar={sidebar}>
+      {showMeetingIntro ? <MeetingIndexCard /> : null}
+      <BlogPostItems items={items} />
+      <BlogListPaginator metadata={metadata} />
+    </BlogLayout>
+  );
+}
+
+export default function BlogListPage(props: Props): ReactNode {
+  return (
+    <HtmlClassNameProvider
+      className={clsx(
+        ThemeClassNames.wrapper.blogPages,
+        ThemeClassNames.page.blogListPage,
+      )}
+    >
+      <BlogListPageMetadata {...props} />
+      <BlogListPageStructuredData {...props} />
+      <BlogListPageContent {...props} />
+    </HtmlClassNameProvider>
+  );
+}
