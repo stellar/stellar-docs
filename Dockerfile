@@ -1,4 +1,4 @@
-FROM ubuntu:24.04 AS build
+FROM ubuntu:26.04 AS build
 
 LABEL maintainer="SDF Ops Team <ops@stellar.org>"
 
@@ -32,7 +32,7 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 #   fi
 RUN yarn build --no-minify
 
-FROM nginx:1.29
+FROM nginx:1.31
 
 COPY --from=build /app/build/ /usr/share/nginx/html/
 COPY nginx /etc/nginx/
