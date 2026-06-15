@@ -43,8 +43,10 @@ only _how you choose that set_ differs.
    link, e.g. crates.io, if no repo is linked). Do not use a hardcoded list —
    these pages are the inventory.
 
-2. **Check releases.** Confirm the working tree is clean and `main` is up to
-   date with the remote before starting. For each SDK, fetch the latest release
+2. **Check releases.** Confirm the working tree is clean and that you're working
+   from a current `upstream/main` — the canonical `stellar/stellar-docs` (if you
+   cloned the official repo directly rather than a fork, that's your
+   `origin/main`). For each SDK, fetch the latest release
    tag (`gh api repos/<owner>/<repo>/releases/latest`, falling back to the
    newest semver tag for repos without GitHub Releases, or the registry's
    latest version for registry-only entries). Compare against the state file.
@@ -52,8 +54,8 @@ only _how you choose that set_ differs.
    baseline and do not treat it as new.
 
 3. **For each SDK in scope** (a new release in release-diff mode; _every_ SDK in
-   full-audit mode) — process one SDK at a time, returning to `main` between
-   SDKs:
+   full-audit mode) — process one SDK at a time, starting each from a fresh
+   `upstream/main`:
    1. Read the release notes/changelog (every version between last-seen and
       latest in release-diff mode; the recent major-version history in full
       audit). Note breaking changes, deprecations, renames, and newly
@@ -80,12 +82,16 @@ only _how you choose that set_ differs.
       body, preserve the body by aliasing rather than rewriting it.
    4. If verified examples use removed, renamed, relocated, deprecated, or
       now-discouraged APIs, create a branch `chore/sdk-examples-<language>-<version>`
-      (use the current latest version) off `main` and update them. Only make
-      changes the facts justify — never restyle or rewrite examples that are
-      still correct.
+      (use the current latest version) off `upstream/main`
+      (`git switch -c chore/… upstream/main`) and update them. Only make changes
+      the facts justify — never restyle or rewrite examples that are still
+      correct.
    5. Commit with a message summarizing the SDK, the version (or relocation),
       and what changed. Do NOT push — branches are pushed manually after review.
-   6. Return to `main` and update the state file entry to the latest tag.
+   6. Update the state file entry to the latest tag. Start the next SDK's branch
+      from `upstream/main` again — do not check out a local `main` branch (it may
+      be checked out in another worktree, e.g. the scheduled runner's, and git
+      forbids the same branch in two worktrees).
 
 4. **Hands off the SDK pages.** `contract-sdks.mdx` and `client-sdks.mdx` must
    never gain release notes, version callouts, or deprecation warnings. Only
@@ -98,6 +104,29 @@ only _how you choose that set_ differs.
    and why (false positives, still-correct examples, third-party tutorials), so
    the human reviewer can second-guess those calls. If nothing needed changing,
    confirm briefly.
+
+## Running unattended
+
+On scheduled runs (e.g. the Monday-morning launchd job) there is **no human in
+the loop**, so adjust accordingly:
+
+- **Don't ask questions.** When a candidate edit is uncertain — ambiguous
+  changelog, a snippet that might belong to a third-party library, a version pin
+  that might be intentional — **skip it and note it in the report** rather than
+  guessing. A missed edit is recoverable on review; a wrong unattended edit is
+  not.
+- **Commit, never push.** Leave each `chore/…` branch for a human to review and
+  push. Pushing or opening PRs is out of scope.
+- **Expect a throwaway, detached checkout.** The runner puts you on a detached
+  `upstream/main` in a dedicated worktree — branch from `upstream/main`, never
+  check out a local `main`, and don't assume a clean interactive repo.
+- **SSH is unavailable** (see the gotcha below) — use HTTPS / `gh api`, and
+  don't treat the SSH failure as a blocker.
+- **Always produce the report**, even when nothing changed — it's the only
+  signal the run happened and what it decided.
+
+(How the schedule itself is wired up — launchd, cron, CI, etc. — is a
+per-machine deployment concern, not part of this skill.)
 
 ## Gotchas (learned from real runs)
 
