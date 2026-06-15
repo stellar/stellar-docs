@@ -1,6 +1,6 @@
 ---
 name: update-sdk-examples
-description: Use when checking whether Stellar SDKs listed in the docs have new releases, or when code examples in docs/ may use outdated, renamed, or deprecated SDK syntax. Run on a schedule or on demand.
+description: Use when checking whether Stellar SDKs listed in the docs have new releases, or when code examples in docs/ may use outdated, renamed, or deprecated SDK syntax. Runs per-release on a schedule, or as a full standing-correctness audit on demand.
 ---
 
 # Update SDK Examples
@@ -14,6 +14,27 @@ any code examples that use outdated or deprecated syntax.
   `docs/tools/sdks/client-sdks.mdx`
 - Release state file: `~/.claude/stellar-sdk-release-state.json`
   (maps repo/package URL → last-seen release tag)
+
+## Two modes
+
+Decide which mode you're in before starting:
+
+- **Release-diff (default, routine/scheduled runs).** Compare each SDK against
+  the state file and only inspect examples for SDKs with a _new_ release since
+  last seen. Cheap and fast.
+- **Full audit (first run, and periodically — e.g. monthly, or on request).**
+  Inspect _every_ SDK's examples against its **current** released API, ignoring
+  the state-file comparison. The state file only records "last tag seen for
+  release-diff purposes" — it does **not** certify that the existing examples
+  were ever correct. Most real staleness (package renames, repo relocations,
+  ancient version pins) predates any baseline you record, so a release-diff run
+  will never surface it. Do a full audit when first adopting the skill and on a
+  slower cadence thereafter. A full audit fans out well across parallel agents
+  (one per SDK/language) — but treat their findings as candidates, not edits
+  (see step 3.3).
+
+Steps 3–5 are identical in both modes once you have the set of SDKs to inspect;
+only _how you choose that set_ differs.
 
 ## Steps
 
@@ -30,30 +51,53 @@ any code examples that use outdated or deprecated syntax.
    If the state file is missing an entry, record the current latest tag as the
    baseline and do not treat it as new.
 
-3. **For each SDK with a new release** — process one SDK at a time, returning
-   to `main` between SDKs:
-   1. Read the release notes/changelog for every version between last-seen and
-      latest. Note breaking changes, deprecations, renames, and newly
-      recommended patterns.
-   2. Search the entire `docs/` directory for examples using that SDK: fenced
-      code blocks in its language, import/use/require statements, dependency
-      snippets, etc.
-   3. If any examples use removed, renamed, deprecated, or now-discouraged
-      APIs, create a branch `chore/sdk-examples-<language>-<version>` off
-      `main` and update them. Only make changes the release notes justify —
-      never restyle or rewrite examples that are still correct.
-   4. Commit with a message summarizing the SDK, the version range, and what
-      changed. Do NOT push — branches are pushed manually after review.
-   5. Return to `main` and update the state file entry to the latest tag.
+3. **For each SDK in scope** (a new release in release-diff mode; _every_ SDK in
+   full-audit mode) — process one SDK at a time, returning to `main` between
+   SDKs:
+   1. Read the release notes/changelog (every version between last-seen and
+      latest in release-diff mode; the recent major-version history in full
+      audit). Note breaking changes, deprecations, renames, and newly
+      recommended patterns. **Also check for relocations**, not just version
+      bumps: repo/org moves, renamed package coordinates, and changed
+      import/module paths. These never show up as a version diff but are the
+      most common source of broken examples (e.g. the JS package rename
+      `stellar-sdk` → `@stellar/stellar-sdk`, the Java group-id move to
+      `network.lightsail`, the Go RPC client moving into `go-stellar-sdk`).
+   2. Find the examples. Once you know the specific stale token (an import
+      string, a coordinate, a class name), `grep` the **entire** `docs/` tree
+      for it directly — do not rely on a partial file list, including one
+      produced by an audit sub-agent, which routinely both misses occurrences
+      and includes false matches. Scope edits to `docs/` only: the `i18n/`
+      translations mirror `docs/`, lag behind (they may still show APIs you've
+      already migrated), and are an unused holdover from previous translation
+      processes - ignore the `i18n/` directory altogether.
+   3. **Verify each candidate against the current source before editing.**
+      Changelogs and audit sub-agents over- and under-report. Confirm the API
+      against the actual released source/registry: e.g. is the symbol really
+      gone, or just re-exported elsewhere? Is the "stale" snippet actually part
+      of a third-party library's tutorial rather than this SDK? When the new
+      import path/package name differs from the old identifier used in the code
+      body, preserve the body by aliasing rather than rewriting it.
+   4. If verified examples use removed, renamed, relocated, deprecated, or
+      now-discouraged APIs, create a branch `chore/sdk-examples-<language>-<version>`
+      (use the current latest version) off `main` and update them. Only make
+      changes the facts justify — never restyle or rewrite examples that are
+      still correct.
+   5. Commit with a message summarizing the SDK, the version (or relocation),
+      and what changed. Do NOT push — branches are pushed manually after review.
+   6. Return to `main` and update the state file entry to the latest tag.
 
 4. **Hands off the SDK pages.** `contract-sdks.mdx` and `client-sdks.mdx` must
    never gain release notes, version callouts, or deprecation warnings. Only
    edit them if a link or short description is factually wrong, and match each
    page's existing formatting exactly.
 
-5. **Report.** End with a summary: SDKs checked, new releases found, branches
-   created (with files touched), and SDKs whose new release required no doc
-   changes. If nothing new was found, confirm briefly.
+5. **Report.** End with a summary: the mode you ran, SDKs checked, new releases
+   or relocations found, branches created (with files touched), and SDKs that
+   needed no doc changes. Also list candidates you deliberately did **not** edit
+   and why (false positives, still-correct examples, third-party tutorials), so
+   the human reviewer can second-guess those calls. If nothing needed changing,
+   confirm briefly.
 
 ## Gotchas (learned from real runs)
 
@@ -65,9 +109,24 @@ any code examples that use outdated or deprecated syntax.
 - Some repos have neither GitHub Releases nor tags (e.g. the Stellar Router
   SDK). Record `"none"` in the state file and treat the first tag that ever
   appears as a new release.
-- The Go SDK section also links the RPC client living in
-  `stellar/stellar-rpc` — track that repo too.
+- The Go SDK section links an RPC client that used to live in
+  `stellar/stellar-rpc` but **moved into `stellar/go-stellar-sdk`**
+  (`clients/rpcclient` + `protocols/rpc`) as of go-stellar-sdk v0.6.0 /
+  stellar-rpc v27 — the old `stellar-rpc/{client,protocol}` import paths now
+  404. `stellar/stellar-rpc` is still a real repo (the RPC server binary), so
+  keep tracking it, but its Go _client_ packages are gone. Treat repo/path
+  relocations like this as breaking changes even when the version number barely
+  moved.
 - When run headlessly from launchd, the SSH agent is unavailable, so
   `git fetch`/`git pull` over SSH fail. Verify `main` is current by comparing
   local HEAD against `gh api repos/stellar/stellar-docs/commits/main` instead,
-  and don't treat the SSH failure as a blocker.
+  and don't treat the SSH failure as a blocker. Note `origin` may be a personal
+  fork that lags upstream — branch off `upstream/main` (`stellar/stellar-docs`),
+  not a stale `origin/main`.
+- Applying edits: prefer the Edit tool, or `perl -i -pe 's|old|new|g' <file>`
+  with `|` delimiters — `perl`'s `s{}{}` form breaks on snippets containing
+  literal `{` (Cargo.toml tables, Go imports). In zsh, `for f in $files` does
+  **not** word-split an unquoted variable; list the files literally or use an
+  array (`files=(a b c)`). macOS BSD `sed -i` requires an explicit backup-suffix
+  argument (`sed -i ''`), which differs from GNU `sed` — `perl -i` sidesteps the
+  difference.
