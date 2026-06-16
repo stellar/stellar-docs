@@ -76,7 +76,7 @@ Create a file named `server.js` and paste in the following code:
 
 ```js title="server.js"
 import express from "express";
-import { Mppx } from "mppx/server";
+import { Mppx, AtomicStore } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 
@@ -99,6 +99,7 @@ if (!MPP_SECRET_KEY) {
 // Create the MPP server instance
 const mppx = Mppx.create({
   secretKey: MPP_SECRET_KEY,
+  store: new AtomicStore(), // Required by v0.7 for compare-and-set operations
   methods: [
     stellar.charge({
       recipient: RECIPIENT,
@@ -251,13 +252,121 @@ The client:
 
 The 0.01 USDC settles directly to the `STELLAR_RECIPIENT` wallet. No facilitator, no extra infrastructure.
 
+## Push mode
+
+The examples above use **pull mode** (default), where the server broadcasts the signed transaction. In **push mode**, the client broadcasts the transaction directly and sends the signed transaction hash to the server for verification.
+
+### Push mode client
+
+To use push mode, set `mode: "push"` in the client configuration and provide the keypair of the account sending the transaction on-chain. The client will then sign a `signedHash` credential containing the transaction hash:
+
+```js title="client.js (push mode)"
+import { Keypair } from "@stellar/stellar-sdk";
+import { Mppx } from "mppx/client";
+import { stellar } from "@stellar/mpp/charge/client";
+import { readFileSync } from "node:fs";
+
+// Load .env manually (no dotenv package needed)
+const env = Object.fromEntries(
+  readFileSync(".env", "utf-8")
+    .split("\n")
+    .filter((l) => l.includes("="))
+    .map((l) => l.split("=")),
+);
+const STELLAR_SECRET = env.STELLAR_SECRET?.trim();
+
+if (!STELLAR_SECRET) {
+  console.error("Add STELLAR_SECRET=S... to .env");
+  process.exit(1);
+}
+
+const keypair = Keypair.fromSecret(STELLAR_SECRET);
+console.log(`Using Stellar account: ${keypair.publicKey()}`);
+
+// Polyfill global fetch — 402 responses are handled automatically
+Mppx.create({
+  methods: [
+    stellar.charge({
+      keypair,
+      mode: "push", // client broadcasts the transaction
+      onProgress(event) {
+        console.log(`[${event.type}]`, event);
+      },
+    }),
+  ],
+});
+
+// Make the request — payment is handled transparently on 402
+const response = await fetch("http://localhost:3001/my-service");
+const data = await response.json();
+
+console.log(`Response (${response.status}):`, data);
+```
+
+### Push mode server
+
+On the server, enable push mode by setting `mode: "push"` in the charge configuration. You can optionally set `rejectUnsignedPush: true` to strictly reject any push-mode credentials that use the deprecated `{ type: 'hash' }` format (legacy) instead of the new `signedHash` format:
+
+```js title="server.js (push mode)"
+import express from "express";
+import { Mppx, AtomicStore } from "mppx/server";
+import { stellar } from "@stellar/mpp/charge/server";
+import { USDC_SAC_TESTNET } from "@stellar/mpp";
+
+const PORT = 3001;
+const RECIPIENT = process.env.STELLAR_RECIPIENT;
+const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY;
+
+if (!RECIPIENT) {
+  console.error("Set STELLAR_RECIPIENT to a Stellar public key (G...)");
+  process.exit(1);
+}
+
+if (!MPP_SECRET_KEY) {
+  console.error(
+    "Set MPP_SECRET_KEY to a strong secret for MPP credential verification",
+  );
+  process.exit(1);
+}
+
+const mppx = Mppx.create({
+  secretKey: MPP_SECRET_KEY,
+  store: new AtomicStore(),
+  methods: [
+    stellar.charge({
+      recipient: RECIPIENT,
+      currency: USDC_SAC_TESTNET,
+      network: "stellar:testnet",
+      mode: "push",
+      rejectUnsignedPush: true, // reject legacy unsigned hash credentials
+    }),
+  ],
+});
+
+// ... rest of server code
+```
+
+### Signed hash credentials
+
+In push mode, the client generates a `signedHash` credential by:
+
+1. Computing a hash of the transaction envelope
+2. Creating the string `"{challenge.id}:{hash}"` where `challenge.id` is the MPP challenge identifier
+3. Signing this string using the keypair of the account that sends the transaction on-chain
+
+The server verifies the signature against the public key of the account that will broadcast the transaction, ensuring the client authorized the specific hash.
+
+:::note
+The legacy `{ type: 'hash' }` credential format (unsigned hash only) is accepted in v0.7 with a deprecation warning. It will be rejected by default in v0.8 unless the server explicitly allows it via `rejectUnsignedPush: false`. New implementations should use the signed hash credential format.
+:::
+
 ## Sponsored fees (optional)
 
 By default, the client pays Stellar network fees. To have the server pay fees on behalf of the client, configure a `feePayer` on the server:
 
 ```js
 import { Keypair } from "@stellar/stellar-sdk";
-import { Mppx } from "mppx/server";
+import { Mppx, AtomicStore } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 
@@ -277,6 +386,7 @@ if (!FEE_PAYER_SECRET) {
 
 const mppx = Mppx.create({
   secretKey: MPP_SECRET_KEY,
+  store: new AtomicStore(),
   methods: [
     stellar.charge({
       recipient: RECIPIENT,
@@ -293,6 +403,10 @@ const mppx = Mppx.create({
 Set `FEE_PAYER_SECRET` before running the server if you use sponsored fees.
 
 When `feePayer` is configured, the server automatically signals fee sponsorship to the client via the challenge. The client then signs only the Soroban auth entries (not the full transaction envelope). The server rebuilds the transaction with the `envelopeSigner`'s account as source and broadcasts it. Optionally, add `feeBumpSigner` inside `feePayer` to wrap the transaction in a fee bump.
+
+:::info Channel open removal
+The channel `open` MPP action was removed in v0.7 as it was dead code — the Soroban contract has no on-chain open entrypoint. Channels are created on-chain directly by signing and broadcasting a deploy transaction. See the [MPP Session Guide](./channel-guide.mdx) for channel setup details.
+:::
 
 ## Learn more
 
