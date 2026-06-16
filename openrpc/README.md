@@ -72,7 +72,7 @@ complete spec can be compiled into a single document as follows. (Run this
 command from the root `soroban-docs` directory.)
 
 ```bash
-yarn rpcspec:build
+pnpm rpcspec:build
 # Build successful.
 ```
 
@@ -86,7 +86,7 @@ We have included a script which will test and validate the generated
 specification file.
 
 ```bash
-yarn rpcspec:validate
+pnpm rpcspec:validate
 # OpenRPC spec validated successfully.
 ```
 

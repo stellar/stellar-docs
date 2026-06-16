@@ -54,7 +54,7 @@ Once your changes are made, you'll need to do three quick things:
    existing generated files.
 
 ```bash
-yarn api:clean
+pnpm api:clean
 ```
 
 2. Bundle your changes into the `bundled.yml` file. We've gone over this a bit,
@@ -62,7 +62,7 @@ yarn api:clean
    components into the bundled file.
 
 ```bash
-yarn api:bundle
+pnpm api:bundle
 ```
 
 If you don't have `redocly` installed, you can use `npx` to accomplish the same
@@ -75,13 +75,13 @@ npx @redocly/cli@latest bundle openapi/main.yml --output openapi/bundled.yml
 3. Generate the new `.mdx` files that will be read and parsed for people to use.
 
 ```bash
-yarn api:gen
+pnpm api:gen
 ```
 
 4. Ooooorrr... You can use the shortcut that does all three of those at once:
 
 ```bash
-yarn api
+pnpm api
 ```
 
 Now you should be ready to preview your changes locally, fiddle with them, make
