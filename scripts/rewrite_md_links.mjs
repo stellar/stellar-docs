@@ -8,26 +8,29 @@
  * `.mdx`/`.md` paths. Requesting those `.mdx` URLs 404s (only the `.md` twin is
  * served), so an agent that follows links falls out of "markdown mode".
  *
- * This script rewrites relative markdown links INSIDE the generated
- * `build/**\/*.md` files so they point at the served `.md` twin. It does NOT
- * touch any source file in the repo and does NOT affect the HTML site — it only
- * post-processes generated build artifacts. (Verified: re-running it leaves every
- * build/**\/*.html byte-identical.)
+ * This script rewrites intra-doc links INSIDE the generated `build/**\/*.md`
+ * files to the FULL canonical URL of the served `.md` twin
+ * (e.g. `https://developers.stellar.org/docs/networks.md`) — self-contained, so
+ * an agent can fetch a linked page directly without resolving relative paths,
+ * and consistent with how `static/llms.txt` already references pages. The site
+ * origin + baseUrl are read from docusaurus.config.ts (single source of truth).
+ *
+ * It does NOT touch any source file in the repo and does NOT affect the HTML
+ * site — it only post-processes generated build artifacts. (Verified: re-running
+ * it leaves every build/**\/*.html byte-identical, and full-URL links are skipped
+ * as external on re-runs, so it is idempotent.)
  *
  * Correctness:
  *  - Every candidate link is resolved against the actual generated build tree; a
  *    link is rewritten only when the target `.md` genuinely exists, so we never
- *    introduce a broken link.
- *  - Mapping mirrors the plugin's output naming:
+ *    point at a missing page. Mapping mirrors the plugin's output naming:
  *      `foo.mdx` -> `foo.md`,  `foo/README.mdx` -> `foo.md`,  `foo/README.md` -> `foo.md`.
- *  - Section-index twins are tricky: the plugin collapses `dir/README.mdx` to
- *    `dir.md`, lifting it one directory up, which desyncs links authored relative
- *    to `dir/`. For any twin that has a sibling directory of the same name we
- *    therefore pick the resolution base (the twin's own dir vs. that sibling dir)
- *    that resolves the MOST links to real twins — a per-file vote that needs no
- *    assumption about README vs. category-page conventions. Output paths are
- *    always computed relative to the twin file's own location, so the rewritten
- *    link resolves correctly from the served `.md` URL.
+ *  - Section-index twins: the plugin collapses `dir/README.mdx` to `dir.md`,
+ *    lifting it one directory up, which desyncs links authored relative to
+ *    `dir/`. For any twin that has a sibling directory of the same name we pick
+ *    the resolution base (the twin's own dir vs. that sibling dir) that resolves
+ *    the MOST links to real twins — a per-file vote needing no assumption about
+ *    README vs. category-page conventions.
  *
  * Plain non-README `.md` links already resolve and are left untouched. Anchors
  * (`#section`) and queries (`?x=y`) are preserved; external, absolute-root and
@@ -47,9 +50,34 @@ import {
 import { dirname, join, resolve, relative } from 'node:path';
 
 const BUILD_DIR = 'build';
+const BUILD_ROOT = resolve(BUILD_DIR);
 
 // [text](target) and ![alt](target) — capture the bare target (no spaces/titles).
 const LINK_RE = /(!?\[[^\]]*\]\()([^)\s]+)(\))/g;
+
+/** Read the canonical site origin + baseUrl from docusaurus.config.ts. */
+function readSiteConfig() {
+  const fallback = { origin: 'https://developers.stellar.org', baseUrl: '/' };
+  try {
+    const cfg = readFileSync('docusaurus.config.ts', 'utf8');
+    const url = cfg.match(/\burl:\s*["']([^"']+)["']/)?.[1];
+    const baseUrl = cfg.match(/\bbaseUrl:\s*["']([^"']+)["']/)?.[1] ?? '/';
+    if (!url) return fallback;
+    return { origin: url.replace(/\/+$/, ''), baseUrl };
+  } catch {
+    return fallback;
+  }
+}
+
+const SITE = readSiteConfig();
+
+/** Canonical full URL for a twin file, derived from its path under build/. */
+function twinUrl(twinAbs) {
+  const rel = relative(BUILD_ROOT, twinAbs); // e.g. "docs/networks.md"
+  const base = SITE.baseUrl.endsWith('/') ? SITE.baseUrl : SITE.baseUrl + '/';
+  const path = (base + rel).replace(/\/{2,}/g, '/'); // "/docs/networks.md"
+  return SITE.origin + (path.startsWith('/') ? path : '/' + path);
+}
 
 /**
  * Map an absolute source-link path to its served `.md` twin (absolute), or null
@@ -98,14 +126,12 @@ function countResolvable(content, baseDirAbs) {
   return n;
 }
 
-function rewriteContent(content, resolveBaseAbs, linkFromDirAbs) {
+function rewriteContent(content, resolveBaseAbs) {
   let changed = 0;
   const out = content.replace(LINK_RE, (full, open, target, close) => {
     const r = resolveLink(target, resolveBaseAbs);
     if (!r) return full;
-    let rel = relative(linkFromDirAbs, r.twin);
-    if (!rel.startsWith('.')) rel = './' + rel;
-    const next = rel + r.suffix;
+    const next = twinUrl(r.twin) + r.suffix;
     if (next === target) return full;
     changed++;
     return open + next + close;
@@ -146,7 +172,7 @@ function main() {
       }
     }
 
-    const { out, changed } = rewriteContent(content, resolveBaseAbs, fileDirAbs);
+    const { out, changed } = rewriteContent(content, resolveBaseAbs);
     if (changed > 0) {
       writeFileSync(file, out);
       touchedFiles++;
@@ -155,7 +181,7 @@ function main() {
   }
 
   console.log(
-    `[rewrite-md-links] Rewrote ${touchedLinks} link(s) across ${touchedFiles} of ${files.length} generated markdown file(s).`,
+    `[rewrite-md-links] Rewrote ${touchedLinks} link(s) to ${SITE.origin} across ${touchedFiles} of ${files.length} generated markdown file(s).`,
   );
 }
 
