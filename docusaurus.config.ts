@@ -84,6 +84,21 @@ const config: Config = {
     ],
     './src/plugins/route-export/index.ts',
     './src/plugins/analytics-module/index.ts',
+    [
+      "docusaurus-plugin-llms",
+      {
+        generateLLMsTxt: false, // keep our curated static/llms.txt untouched
+        generateLLMsFullTxt: true,
+        docsDir: "docs",
+        llmsFullTxtFilename: "llms-full.txt",
+        title: "Stellar Developer Documentation",
+        description:
+          "Full text of the Stellar developer documentation, concatenated as Markdown for LLM ingestion.",
+        includeBlog: false,
+        excludeImports: true,
+        removeDuplicateHeadings: true,
+      },
+    ],
   ],
   markdown: {
     mermaid: true,
