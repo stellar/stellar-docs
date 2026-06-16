@@ -321,6 +321,10 @@ const tokens: NavbarItem = {
       to: '/docs/tokens/publishing-asset-info',
       label: 'Publish Asset Information',
     },
+    {
+      to: '/docs/tokens/cross-chain-transfers',
+      label: 'CCTP',
+    },
   ],
 }
 

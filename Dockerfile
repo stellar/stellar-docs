@@ -1,4 +1,4 @@
-FROM ubuntu:24.04 AS build
+FROM ubuntu:26.04 AS build
 
 LABEL maintainer="SDF Ops Team <ops@stellar.org>"
 
@@ -9,30 +9,31 @@ ENV INLINE_RUNTIME_CHUNK=false
 RUN apt-get update && apt-get install --no-install-recommends -y gpg curl git make ca-certificates apt-transport-https && \
     curl -sSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key|gpg --dearmor >/etc/apt/trusted.gpg.d/nodesource-key.gpg && \
     echo "deb https://deb.nodesource.com/node_24.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
-    curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg |gpg --dearmor >/etc/apt/trusted.gpg.d/yarnpkg.gpg && \
-    echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
-    apt-get update && apt-get install -y nodejs yarn && apt-get clean
+    apt-get update && apt-get install -y nodejs libatomic1 && apt-get clean
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME/bin:$PATH"
+RUN corepack enable
 
 COPY . /app/
 ARG BUILD_TRANSLATIONS="False"
 
-RUN yarn cache clean --all
-RUN yarn install --frozen-lockfile
+RUN pnpm ci
 RUN du -sh /app/*
-RUN yarn rpcspec:build --no-minify
-RUN yarn stellar-cli:build --no-minify --cli-ref=main
-RUN yarn stellar-cli:fix-links
+RUN pnpm rpcspec:build --no-minify
+RUN pnpm stellar-cli:build --no-minify --cli-ref=main
+RUN pnpm stellar-cli:fix-links
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 # RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
-#     yarn docusaurus build --no-minify; \
+#     pnpm docusaurus build --no-minify; \
 #   else \
 #     # In the preview build, we only want to build for English. Much quicker
-#     yarn build --no-minify; \
+#     pnpm build --no-minify; \
 #   fi
-RUN yarn build --no-minify
+RUN pnpm build --no-minify
 
-FROM nginx:1.29
+FROM nginx:1.31
 
 COPY --from=build /app/build/ /usr/share/nginx/html/
 COPY nginx /etc/nginx/
