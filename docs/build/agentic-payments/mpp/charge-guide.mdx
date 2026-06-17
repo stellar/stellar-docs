@@ -45,7 +45,7 @@ Client (Payer)            Server (Recipient)         Soroban RPC / Network
   |<-----------------------------|                          |
 ```
 
-In **pull** mode (default), the client builds and signs the full transaction envelope; the server validates the SAC transfer via simulation, then broadcasts. With **sponsored fees**, the client signs only the Soroban auth entries and the server rebuilds the transaction with its own account as source. In **push** mode, the client broadcasts the transaction itself and sends the transaction hash for server verification.
+In **pull** mode (default), the client builds and signs the full transaction envelope; the server validates the SAC transfer via simulation, then broadcasts. With **sponsored fees**, the client signs only the Soroban auth entries and the server rebuilds the transaction with its own account as source. In **push** mode, the client broadcasts the transaction itself and sends a `signedHash` credential — the transaction hash plus a signature proving control of the `from` account — for server verification.
 
 This tutorial walks through building a payment-gated API with Node.js and Express using `@stellar/mpp`.
 
@@ -254,11 +254,11 @@ The 0.01 USDC settles directly to the `STELLAR_RECIPIENT` wallet. No facilitator
 
 ## Push mode
 
-The examples above use **pull mode** (default), where the server broadcasts the signed transaction. In **push mode**, the client broadcasts the transaction directly and sends the signed transaction hash to the server for verification.
+The examples above use **pull mode** (default), where the server broadcasts the signed transaction. In **push mode**, the client broadcasts the transaction directly and sends a signed hash credential (`signedHash`) to the server for verification.
 
 ### Push mode client
 
-To use push mode, set `mode: "push"` in the client configuration and provide the keypair of the account sending the transaction on-chain. The client will then sign a `signedHash` credential containing the transaction hash:
+To use push mode, set `mode: "push"` in the client configuration and provide the keypair of the `from` account (the account funding the transfer). The client will then sign a `signedHash` credential containing the transaction hash:
 
 ```js title="client.js (push mode)"
 import { Keypair } from "@stellar/stellar-sdk";
@@ -305,7 +305,7 @@ console.log(`Response (${response.status}):`, data);
 
 ### Push mode server
 
-On the server, enable push mode by setting `mode: "push"` in the charge configuration. You can optionally set `rejectUnsignedPush: true` to strictly reject any push-mode credentials that use the deprecated `{ type: 'hash' }` format (legacy) instead of the new `signedHash` format:
+On the server, enable push mode by setting `mode: "push"` in the charge configuration. As of v0.7, push-mode credentials must be payer-authenticated (`signedHash`) by default — the server automatically rejects the legacy unsigned `{ type: 'hash' }` format, so no extra option is needed:
 
 ```js title="server.js (push mode)"
 import express from "express";
@@ -338,12 +338,23 @@ const mppx = Mppx.create({
       currency: USDC_SAC_TESTNET,
       network: "stellar:testnet",
       mode: "push",
-      rejectUnsignedPush: true, // reject legacy unsigned hash credentials
     }),
   ],
 });
 
 // ... rest of server code
+```
+
+Teams migrating from earlier SDK versions can temporarily re-enable the legacy unsigned `{ type: 'hash' }` format with `allowUnsignedPush: true`. This logs each acceptance for migration tracking and should be removed once all clients send `signedHash` credentials:
+
+```js title="server.js (temporary migration)"
+    stellar.charge({
+      recipient: RECIPIENT,
+      currency: USDC_SAC_TESTNET,
+      network: "stellar:testnet",
+      mode: "push",
+      allowUnsignedPush: true, // TEMPORARY: accept legacy unsigned push during migration
+    }),
 ```
 
 ### Signed hash credentials
@@ -352,11 +363,11 @@ In push mode, the client generates a `signedHash` credential by:
 
 1. Computing a hash of the transaction envelope
 2. Creating the string `"{challenge.id}:{hash}"` where `challenge.id` is the MPP challenge identifier
-3. Signing this string using the keypair of the account that sends the transaction on-chain
+3. Signing this string using the keypair of the `from` account
 
-The server verifies the signature against the public key of the account that will broadcast the transaction, ensuring the client authorized the specific hash.
+The server verifies the signature against the public key of the `from` account — the account funding the transfer — ensuring the client authorized the specific hash. With sponsored fees the transaction envelope is sourced by the fee payer, so the signature is always checked against the `from` account rather than whoever broadcasts.
 
-:::note The legacy `{ type: 'hash' }` credential format (unsigned hash only) is accepted in v0.7 with a deprecation warning. It will be rejected by default in v0.8 unless the server explicitly allows it via `rejectUnsignedPush: false`. New implementations should use the signed hash credential format. :::
+:::note As of v0.7, the legacy `{ type: 'hash' }` credential format (unsigned hash only) is **rejected by default** — this is a breaking change. Operators who need a temporary migration window can opt in with `allowUnsignedPush: true`, which accepts legacy push credentials and logs each acceptance for tracking. New implementations must use the `signedHash` credential format. :::
 
 ## Sponsored fees (optional)
 
