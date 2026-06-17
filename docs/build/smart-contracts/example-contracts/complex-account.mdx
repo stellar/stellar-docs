@@ -365,6 +365,50 @@ fn verify_authorization_policy(
 
 Then we check for the standard token function names and verify that for these function we don't exceed the spending limits.
 
+### Auth Delegation (v27+)
+
+Auth delegation, introduced in soroban-sdk v27 via CAP-71, allows a custom account contract to forward its `__check_auth` verification context to other registered addresses. This enables "modular" account contracts that do not perform all authentication themselves but instead delegate to one or more external signers (either G- or C-type addresses) that carry out the actual auth logic.
+
+Two new methods are available on `env.custom_account()`, and both may only be called from within `__check_auth`. Calling them outside of `__check_auth` will panic.
+
+- **`get_delegated_signers() -> Vec<Address>`** — Returns the list of delegate addresses that the user attached to the auth entry when building the transaction. These are user-supplied and are not sanitized by the host; the contract must verify that each address is actually a registered delegate before acting on it.
+
+- **`delegate_auth(&address)`** — Forwards the current `__check_auth` authorization context to the given address. The delegate runs its own auth check for the same context. Unlike `require_auth`, this does not count as a new contract invocation and does not require a separate auth entry in the transaction. Delegation can be nested recursively.
+
+The typical usage pattern is:
+
+1. Call `env.custom_account().get_delegated_signers()` to retrieve the user-provided delegates.
+2. Verify that each delegate is registered with this account (e.g. stored in contract state).
+3. Call `env.custom_account().delegate_auth(&delegate)` for each verified delegate.
+
+```rust
+fn __check_auth(
+    env: Env,
+    signature_payload: Hash<32>,
+    signature: BytesN<64>,
+    auth_contexts: Vec<Context>,
+) -> Result<(), ModularAccountError> {
+    // Perform the account's own verification if needed.
+    let public_key: BytesN<32> = env.storage().instance().get(&DataKey::PublicKey).unwrap();
+    env.crypto()
+        .ed25519_verify(&public_key, &signature_payload.into(), &signature);
+
+    // Retrieve the delegate addresses the user attached to the auth entry.
+    let delegates = env.custom_account().get_delegated_signers();
+    let signers: Vec<Address> = env.storage().instance().get(&DataKey::Signers).unwrap();
+
+    for delegate in delegates.iter() {
+        // Reject any delegate that is not registered with this account.
+        if !signers.contains(&delegate) {
+            return Err(ModularAccountError::UnknownDelegate);
+        }
+        // Forward the current authorization context to the verified delegate.
+        env.custom_account().delegate_auth(&delegate);
+    }
+    Ok(())
+}
+```
+
 ### Tests
 
 Open the [`account/src/test.rs`] file to follow along.
