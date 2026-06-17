@@ -305,7 +305,7 @@ console.log(`Response (${response.status}):`, data);
 
 ### Push mode server
 
-On the server, enable push mode by setting `mode: "push"` in the charge configuration. As of v0.7, push-mode credentials must be payer-authenticated (`signedHash`) by default — the server automatically rejects the legacy unsigned `{ type: 'hash' }` format, so no extra option is needed:
+On the server, enable push mode by setting `mode: "push"` in the charge configuration:
 
 ```js title="server.js (push mode)"
 import express from "express";
@@ -342,19 +342,47 @@ const mppx = Mppx.create({
   ],
 });
 
-// ... rest of server code
-```
+const app = express();
 
-Teams migrating from earlier SDK versions can temporarily re-enable the legacy unsigned `{ type: 'hash' }` format with `allowUnsignedPush: true`. This logs each acceptance for migration tracking and should be removed once all clients send `signedHash` credentials:
+app.get("/my-service", async (req, res) => {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        headers.append(key, entry);
+      }
+    } else {
+      headers.set(key, value);
+    }
+  }
 
-```js title="server.js (temporary migration)"
-    stellar.charge({
-      recipient: RECIPIENT,
-      currency: USDC_SAC_TESTNET,
-      network: "stellar:testnet",
-      mode: "push",
-      allowUnsignedPush: true, // TEMPORARY: accept legacy unsigned push during migration
-    }),
+  const webReq = new Request(`http://localhost:${PORT}${req.url}`, {
+    method: req.method,
+    headers,
+  });
+
+  const result = await mppx.charge({
+    amount: "0.01",
+    description: "Premium API access",
+  })(webReq);
+
+  if (result.status === 402) {
+    const challenge = result.challenge;
+    challenge.headers.forEach((value, key) => res.setHeader(key, value));
+    return res.status(402).send(await challenge.text());
+  }
+
+  const response = result.withReceipt(
+    Response.json({ secret: "valuable content" }),
+  );
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  return res.status(response.status).send(await response.text());
+});
+
+app.listen(PORT, () => {
+  console.log(`MPP server listening on http://localhost:${PORT}/my-service`);
+});
 ```
 
 ### Signed hash credentials
@@ -366,8 +394,6 @@ In push mode, the client generates a `signedHash` credential by:
 3. Signing this string using the keypair of the `from` account
 
 The server verifies the signature against the public key of the `from` account — the account funding the transfer — ensuring the client authorized the specific hash. With sponsored fees the transaction envelope is sourced by the fee payer, so the signature is always checked against the `from` account rather than whoever broadcasts.
-
-:::note As of v0.7, the legacy `{ type: 'hash' }` credential format (unsigned hash only) is **rejected by default** — this is a breaking change. Operators who need a temporary migration window can opt in with `allowUnsignedPush: true`, which accepts legacy push credentials and logs each acceptance for tracking. New implementations must use the `signedHash` credential format. :::
 
 ## Sponsored fees (optional)
 
