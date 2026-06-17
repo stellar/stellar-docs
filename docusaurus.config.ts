@@ -14,7 +14,11 @@ import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 
 const config: Config = {
   // future: {
-  //   experimental_faster: true,
+  //   faster: true,
+  //   v4: {
+  //     removeLegacyPostBuildHeadAttribute: true,
+  //     mdx1CompatDisabledByDefault: true,
+  //   }
   // },
   title: "Stellar Docs",
   tagline:
@@ -88,9 +92,6 @@ const config: Config = {
   ],
   markdown: {
     mermaid: true,
-    mdx1Compat: {
-      headingIds: true,
-    },
     hooks: {
       onBrokenMarkdownLinks: 'throw',
     },
