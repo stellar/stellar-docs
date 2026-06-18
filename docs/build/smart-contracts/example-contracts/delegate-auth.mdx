@@ -54,7 +54,7 @@ Expected output:
 
 ```
 running 1 test
-test test::test_delegate_auth ... ok
+test test::test ... ok
 ```
 
 [setup]: ../getting-started/setup.mdx
@@ -74,17 +74,15 @@ use soroban_sdk::{
 #[contracterror]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum ModularAccountError {
+pub enum Error {
     UnknownDelegate = 1,
 }
 
 #[contracttype]
-pub enum DataKey {
-    // The set of addresses allowed to act as delegates for this account.
-    Signers,
-    // The authorization contexts this account has approved, used by the tests
-    // to verify what was authorized.
-    AuthorizedContexts,
+enum ModularAccountDataKey {
+    // Marks an address as a signer allowed to authenticate for the
+    // modular account.
+    Signer(Address),
 }
 
 #[contract]
@@ -92,53 +90,49 @@ pub struct ModularAccount;
 
 #[contractimpl]
 impl ModularAccount {
+    // Registers the addresses allowed to authenticate for this account.
     pub fn __constructor(env: Env, signers: Vec<Address>) {
-        env.storage().instance().set(&DataKey::Signers, &signers);
+        for signer in signers.iter() {
+            env.storage()
+                .persistent()
+                .set(&ModularAccountDataKey::Signer(signer), &());
+        }
     }
 }
 
 #[contractimpl]
 impl CustomAccountInterface for ModularAccount {
-    // This account holds no key of its own; it authenticates purely by
-    // delegating, so it carries no signature.
+    // The account verifies no signature of its own, so it carries no
+    // signature to check.
     type Signature = ();
-    type Error = ModularAccountError;
+    type Error = Error;
 
     fn __check_auth(
         env: Env,
         _signature_payload: Hash<32>,
-        _signature: (),
-        auth_contexts: Vec<Context>,
-    ) -> Result<(), ModularAccountError> {
-        record_authorized_contexts(&env, &auth_contexts);
-
-        // The signers the user attached to the auth entry for this account's
-        // authorization. These are unsanitized user input, so the account must
-        // verify each one against its own registered signers below.
+        _signatures: (),
+        _auth_contexts: Vec<Context>,
+    ) -> Result<(), Error> {
+        // The signers the user attached to the auth entry for this
+        // account's authorization.
         let delegates = env.custom_account().get_delegated_signers();
 
-        let signers: Vec<Address> = env.storage().instance().get(&DataKey::Signers).unwrap();
+        // Check if the delegates are accepted by the modular account.
         for delegate in delegates.iter() {
-            // The host can not validate the delegates, so the account has to
-            // check that each one is actually a registered signer.
-            if !signers.contains(&delegate) {
-                return Err(ModularAccountError::UnknownDelegate);
+            if !env
+                .storage()
+                .persistent()
+                .has(&ModularAccountDataKey::Signer(delegate.clone()))
+            {
+                return Err(Error::UnknownDelegate);
             }
-            // Forward the current authentication context to the delegate. Unlike
-            // `require_auth`, this does not start a new contract invocation and
-            // does not require a separate auth entry for the delegate in the
-            // transaction. Delegation is nestable: a delegate may further
-            // delegate.
+        }
+        // Forward the current authorization to each delegate.
+        for delegate in delegates.iter() {
             env.custom_account().delegate_auth(&delegate);
         }
         Ok(())
     }
-}
-
-fn record_authorized_contexts(env: &Env, auth_contexts: &Vec<Context>) {
-    env.storage()
-        .instance()
-        .set(&DataKey::AuthorizedContexts, auth_contexts);
 }
 
 mod test;
@@ -148,22 +142,29 @@ mod test;
 
 ### Data storage
 
-`DataKey::Signers` persists the set of `Address` values that are allowed to act as delegates. `DataKey::AuthorizedContexts` is a test helper — it records the authorization contexts this account approved so the test can assert the full delegation chain saw the same invocation. The account holds no key of its own; it authenticates purely by delegating, so `type Signature = ()`.
+Each allowed signer is stored as a `ModularAccountDataKey::Signer(address)` key in persistent storage. The account checks delegates against these entries before forwarding to them. The account holds no key of its own and verifies no signature, so `type Signature = ()`.
 
 ### Constructor
 
-The list of registered delegate addresses is written to instance storage at deployment. The delegate list is fixed at construction time; a more complete implementation might expose an admin function to update it.
+The constructor records each allowed signer address as a `Signer(address)` key. The signer set is fixed at construction time; a more complete implementation might expose an admin function to update it.
 
 ### `__check_auth`: delegation
 
 ```rust
 let delegates = env.custom_account().get_delegated_signers();
 
-let signers: Vec<Address> = env.storage().instance().get(&DataKey::Signers).unwrap();
+// Check if the delegates are accepted by the modular account.
 for delegate in delegates.iter() {
-    if !signers.contains(&delegate) {
-        return Err(ModularAccountError::UnknownDelegate);
+    if !env
+        .storage()
+        .persistent()
+        .has(&ModularAccountDataKey::Signer(delegate.clone()))
+    {
+        return Err(Error::UnknownDelegate);
     }
+}
+// Forward the current authorization to each delegate.
+for delegate in delegates.iter() {
     env.custom_account().delegate_auth(&delegate);
 }
 ```
@@ -181,33 +182,54 @@ Open [`modular_account/src/test.rs`]. The test defines two helper contracts:
 
 [`modular_account/src/test.rs`]: https://github.com/stellar/soroban-examples/tree/main/modular_account/src/test.rs
 
-- **`DelegateAccount`** — a simple ed25519 custom account that serves as a registered delegate signer.
+- **`DelegateAccount`** — a custom account that always approves the auth request and stores a copy of the auth context it received, so the test can verify the delegation reached it. It verifies no signature of its own (`type Signature = ()`).
 - **`Protected`** — a contract with one function that calls `account.require_auth()`, giving the test something to authorize.
 
-The test registers one `ModularAccount` with two `DelegateAccount` instances as its signers, then exercises two scenarios:
+The test registers one `ModularAccount` with a single `DelegateAccount` as its signer and calls `protected`. The authorization entry, built with `env.set_auths`, uses `AddressWithDelegates` credentials: the account attaches the delegate as a delegated signer. Because no contract verifies a signature, the signatures are `ScVal::Void`.
 
-**Negative case** — attaching an unregistered delegate address causes `ModularAccount.__check_auth` to return `UnknownDelegate` and the call fails.
-
-**Positive case** — both registered delegates sign the same payload; `ModularAccount` calls `delegate_auth` for each delegate; the test asserts that the account and both delegates each recorded the same authorization context — the full `Context::Contract`, including the contract address, function name, and arguments, not just the function name.
+It then asserts two things. First, that the account authorized the call — delegating to `delegate` is not recorded as a separate authorization:
 
 ```rust
-// The account and both delegates each observe the same single authorization
-// context: the call to `protected` with the account as its argument.
-let expected = vec![
-    &env,
-    Context::Contract(ContractContext {
-        contract: protected.clone(),
-        fn_name: Symbol::new(&env, "protected"),
-        args: (account.clone(),).into_val(&env),
-    }),
-];
-for addr in [&account, &delegate_a, &delegate_b] {
-    let contexts: Vec<Context> = env.as_contract(addr, || {
-        env.storage().instance().get(&DataKey::AuthorizedContexts).unwrap()
-    });
-    assert!(contexts == expected);
-}
+assert_eq!(
+    env.auths(),
+    std::vec![(
+        account.clone(),
+        AuthorizedInvocation {
+            function: AuthorizedFunction::Contract((
+                protected.clone(),
+                Symbol::new(&env, "protected"),
+                (account.clone(),).into_val(&env),
+            )),
+            sub_invocations: std::vec![],
+        }
+    )]
+);
 ```
+
+Second, that the delegation actually reached `delegate`, which recorded the full authorization context it approved — the entire `Context::Contract`, including the contract address, function name, and arguments, not just the function name:
+
+```rust
+let approved: Vec<Context> = env.as_contract(&delegate, || {
+    env.storage().instance().get(&DelegateAccountDataKey::ApprovedContexts).unwrap()
+});
+assert_eq!(
+    approved,
+    vec![
+        &env,
+        Context::Contract(ContractContext {
+            contract: protected.clone(),
+            fn_name: Symbol::new(&env, "protected"),
+            args: (account.clone(),).into_val(&env),
+        }),
+    ],
+);
+```
+
+:::note
+
+`Context` does not implement `Debug` in soroban-sdk 27.0.0-rc.1, so the runnable example compares the approved contexts with `assert!(approved == ...)` rather than `assert_eq!`.
+
+:::
 
 :::note
 
