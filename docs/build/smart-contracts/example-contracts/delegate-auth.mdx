@@ -18,9 +18,9 @@ sidebar_position: 17
   />
 </head>
 
-This example builds on the [Complex Account example](./complex-account.mdx) to show **auth delegation**: instead of verifying any signature itself, a `ModularAccount` contract forwards its `__check_auth` context entirely to one or more registered delegate signers. Each delegate runs its own `__check_auth` independently. The user chooses which registered signers to authenticate with by attaching them to the transaction's authorization payload.
+This example shows **auth delegation**: a `ModularAccount` contract performs no signature verification itself. Instead, it stores a set of registered signer addresses and, when `__check_auth` is called, forwards the authorization context to whichever of those signers the user attached to the transaction. Each delegate runs its own `__check_auth` independently.
 
-Auth delegation was introduced in soroban-sdk v27 via [CAP-71](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071.md).
+Auth delegation was introduced in soroban-sdk v27 via [CAP-71](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071.md). For a single-key account see the [Simple Account example](./simple-account.mdx), and for a multi-sig account with spend-limit policies see the [Complex Account example](./complex-account.mdx).
 
 :::danger
 
@@ -33,6 +33,13 @@ Implementing a contract account requires a very good understanding of authentica
 While contract accounts are supported by the Stellar protocol and Soroban SDK, the full client support (such as transaction simulation) is still under development.
 
 :::
+
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)][open-in-github-codespaces]
+
+[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)][open-in-code-anywhere]
+
+[open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/soroban-examples&editor=web
+[open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/soroban-examples
 
 ## Run the Example
 
@@ -127,10 +134,12 @@ impl CustomAccountInterface for ModularAccount {
                 return Err(Error::UnknownDelegate);
             }
         }
+
         // Forward the current authorization to each delegate.
         for delegate in delegates.iter() {
             env.custom_account().delegate_auth(&delegate);
         }
+
         Ok(())
     }
 }
@@ -140,30 +149,43 @@ mod test;
 
 ## How it Works
 
-### Data storage
+### Storage layout
 
-Each allowed signer is stored as a `ModularAccountDataKey::Signer(address)` key in persistent storage. The account checks delegates against these entries before forwarding to them. The account holds no key of its own and verifies no signature, so `type Signature = ()`.
+`ModularAccountDataKey::Signer(Address)` uses one persistent storage entry per allowed signer. Using a per-key entry makes registration and revocation O(1) lookups rather than scanning a list. The `()` value signals presence.
 
 ### Constructor
 
-The constructor records each allowed signer address as a `Signer(address)` key. The signer set is fixed at construction time; a more complete implementation might expose an admin function to update it.
+```rust
+pub fn __constructor(env: Env, signers: Vec<Address>) {
+    for signer in signers.iter() {
+        env.storage()
+            .persistent()
+            .set(&ModularAccountDataKey::Signer(signer), &());
+    }
+}
+```
 
-### `__check_auth`: delegation
+Each allowed delegate address is persisted individually at deployment. A production account would also expose an admin function to add or remove signers after deployment.
+
+### `type Signature = ()`
+
+```rust
+type Signature = ();
+```
+
+`ModularAccount` verifies no signature of its own — it relies entirely on its delegates. Setting `Signature = ()` tells the Soroban host that no signature data needs to be passed to `__check_auth`. The user's wallet still builds a full `SorobanAddressCredentialsWithDelegates` auth entry (see the test), but the account-level signature field is empty.
+
+### `__check_auth`: get → verify → forward
 
 ```rust
 let delegates = env.custom_account().get_delegated_signers();
 
-// Check if the delegates are accepted by the modular account.
 for delegate in delegates.iter() {
-    if !env
-        .storage()
-        .persistent()
-        .has(&ModularAccountDataKey::Signer(delegate.clone()))
-    {
+    if !env.storage().persistent().has(&ModularAccountDataKey::Signer(delegate.clone())) {
         return Err(Error::UnknownDelegate);
     }
 }
-// Forward the current authorization to each delegate.
+
 for delegate in delegates.iter() {
     env.custom_account().delegate_auth(&delegate);
 }
@@ -171,57 +193,52 @@ for delegate in delegates.iter() {
 
 Two methods on `env.custom_account()` drive delegation. Both may only be called from within `__check_auth`; calling either outside of it panics.
 
-- **`get_delegated_signers() -> Vec<Address>`** returns the delegate addresses the user attached to the transaction's auth entry. The contract must verify each one is actually allowed to be delegated to before forwarding.
+- **`get_delegated_signers() -> Vec<Address>`** returns the delegate addresses the user attached to the transaction's auth entry. These are unsanitized user input — the contract must verify each one is registered before forwarding.
 - **`delegate_auth(&address)`** forwards the current `__check_auth` authorization context to `address`. Unlike `require_auth`, this does not start a new contract invocation and does not require a separate auth entry for the delegate in the transaction. Delegation is nestable: a delegate may further delegate.
+
+The example makes two passes: first it validates all delegates, then it forwards to each. This ensures that an invalid delegate causes the whole check to fail before any forwarding occurs.
 
 ## Tests
 
-Open [`modular_account/src/test.rs`]. The test defines two helper contracts:
+Open [`modular_account/src/test.rs`][test-rs]. The test defines two helper contracts:
 
-[`modular_account/src/test.rs`]: https://github.com/stellar/soroban-examples/tree/main/modular_account/src/test.rs
+[test-rs]: https://github.com/stellar/soroban-examples/tree/main/modular_account/src/test.rs
 
-- **`DelegateAccount`** — a custom account that always approves the auth request and stores a copy of the auth context it received, so the test can verify the delegation reached it. It verifies no signature of its own (`type Signature = ()`). A real custom account would perform signature verification or further delegate to another account.
-- **`Protected`** — a contract with one function that calls `account.require_auth()`, giving the test something to authorize. A real contract would have other logic occur after the `require_auth` call.
+- **`DelegateAccount`** — a simple custom account with `type Signature = ()` that always approves, and stores the received `auth_contexts` in instance storage for later assertion.
+- **`Protected`** — a contract with one function that calls `account.require_auth()`.
 
-The test registers one `ModularAccount` with a single `DelegateAccount` as its signer and calls `protected`. The authorization entry, built with `env.set_auths`, uses `AddressWithDelegates` credentials: the account attaches the delegate as a delegated signer. Because no contract verifies a signature, the signatures are `ScVal::Void`.
-
-It then asserts two things. First, that the account authorized the call — delegating to `delegate` is not recorded as a separate authorization:
+The test registers one `ModularAccount` with one `DelegateAccount` as its allowed signer, builds an `AddressWithDelegates` auth entry by hand, and calls `Protected::protected`:
 
 ```rust
-assert_eq!(
-    env.auths(),
-    std::vec![(
-        account.clone(),
-        AuthorizedInvocation {
-            function: AuthorizedFunction::Contract((
-                protected.clone(),
-                Symbol::new(&env, "protected"),
-                (account.clone(),).into_val(&env),
-            )),
-            sub_invocations: std::vec![],
-        }
-    )]
-);
+env.set_auths(&[SorobanAuthorizationEntry {
+    credentials: SorobanCredentials::AddressWithDelegates(
+        SorobanAddressCredentialsWithDelegates {
+            address_credentials: SorobanAddressCredentials {
+                address: account_addr.clone(),
+                nonce: 1,
+                signature_expiration_ledger: 100,
+                // The account verifies no signature of its own.
+                signature: ScVal::Void,
+            },
+            delegates: std::vec![SorobanDelegateSignature {
+                address: delegate_addr,
+                signature: ScVal::Void,
+                nested_delegates: VecM::default(),
+            }]
+            .try_into()
+            .unwrap(),
+        },
+    ),
+    root_invocation: SorobanAuthorizedInvocation { /* ... */ },
+}]);
+
+ProtectedClient::new(&env, &protected).protected(&account);
 ```
 
-Second, that the delegation actually reached `delegate`, which recorded the full authorization context it approved — the entire `Context::Contract`, including the contract address, function name, and arguments, not just the function name:
+After the call, the test asserts two things:
 
-```rust
-let approved: Vec<Context> = env.as_contract(&delegate, || {
-    env.storage().instance().get(&DelegateAccountDataKey::ApprovedContexts).unwrap()
-});
-assert_eq!(
-    approved,
-    vec![
-        &env,
-        Context::Contract(ContractContext {
-            contract: protected.clone(),
-            fn_name: Symbol::new(&env, "protected"),
-            args: (account.clone(),).into_val(&env),
-        }),
-    ],
-);
-```
+1. `env.auths()` shows only the account authorizing `protected` — delegating to `DelegateAccount` is not recorded as a separate top-level authorization.
+2. `DelegateAccount`'s `ApprovedContexts` storage contains the same contract context, confirming the delegation actually reached it.
 
 :::note
 
