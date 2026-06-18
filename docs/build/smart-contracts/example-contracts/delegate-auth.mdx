@@ -18,7 +18,7 @@ sidebar_position: 17
   />
 </head>
 
-This example builds on the [Complex Account example](./complex-account.mdx) to show **auth delegation**: instead of performing all signature verification itself, a `ModularAccount` contract forwards its `__check_auth` context to one or more registered delegate signers. Each delegate runs its own `__check_auth` independently. The user chooses which registered signers to authenticate with by attaching them to the transaction's authorization payload.
+This example builds on the [Complex Account example](./complex-account.mdx) to show **auth delegation**: instead of verifying any signature itself, a `ModularAccount` contract forwards its `__check_auth` context entirely to one or more registered delegate signers. Each delegate runs its own `__check_auth` independently. The user chooses which registered signers to authenticate with by attaching them to the transaction's authorization payload.
 
 Auth delegation was introduced in soroban-sdk v27 via [CAP-71](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071.md).
 
@@ -68,7 +68,7 @@ use soroban_sdk::{
     auth::{Context, CustomAccountInterface},
     contract, contracterror, contractimpl, contracttype,
     crypto::Hash,
-    Address, BytesN, Env, Symbol, Vec,
+    Address, Env, Vec,
 };
 
 #[contracterror]
@@ -80,13 +80,11 @@ pub enum ModularAccountError {
 
 #[contracttype]
 pub enum DataKey {
-    // The account's own ed25519 public key.
-    PublicKey,
     // The set of addresses allowed to act as delegates for this account.
     Signers,
-    // A log of the function names this account has approved, used by the tests
+    // The authorization contexts this account has approved, used by the tests
     // to verify what was authorized.
-    AuthorizedCalls,
+    AuthorizedContexts,
 }
 
 #[contract]
@@ -94,31 +92,25 @@ pub struct ModularAccount;
 
 #[contractimpl]
 impl ModularAccount {
-    pub fn __constructor(env: Env, public_key: BytesN<32>, signers: Vec<Address>) {
-        env.storage()
-            .instance()
-            .set(&DataKey::PublicKey, &public_key);
+    pub fn __constructor(env: Env, signers: Vec<Address>) {
         env.storage().instance().set(&DataKey::Signers, &signers);
     }
 }
 
 #[contractimpl]
 impl CustomAccountInterface for ModularAccount {
-    type Signature = BytesN<64>;
+    // This account holds no key of its own; it authenticates purely by
+    // delegating, so it carries no signature.
+    type Signature = ();
     type Error = ModularAccountError;
 
     fn __check_auth(
         env: Env,
-        signature_payload: Hash<32>,
-        signature: BytesN<64>,
+        _signature_payload: Hash<32>,
+        _signature: (),
         auth_contexts: Vec<Context>,
     ) -> Result<(), ModularAccountError> {
-        // Even though we use delegated authentication, the account can still
-        // perform the regular verification if necessary.
-        let public_key: BytesN<32> = env.storage().instance().get(&DataKey::PublicKey).unwrap();
-        env.crypto()
-            .ed25519_verify(&public_key, &signature_payload.into(), &signature);
-        record_authorized_calls(&env, &auth_contexts);
+        record_authorized_contexts(&env, &auth_contexts);
 
         // The signers the user attached to the auth entry for this account's
         // authorization. These are unsanitized user input, so the account must
@@ -143,20 +135,10 @@ impl CustomAccountInterface for ModularAccount {
     }
 }
 
-fn record_authorized_calls(env: &Env, auth_contexts: &Vec<Context>) {
-    let mut calls: Vec<Symbol> = env
-        .storage()
-        .instance()
-        .get(&DataKey::AuthorizedCalls)
-        .unwrap_or_else(|| Vec::new(env));
-    for ctx in auth_contexts.iter() {
-        if let Context::Contract(c) = ctx {
-            calls.push_back(c.fn_name);
-        }
-    }
+fn record_authorized_contexts(env: &Env, auth_contexts: &Vec<Context>) {
     env.storage()
         .instance()
-        .set(&DataKey::AuthorizedCalls, &calls);
+        .set(&DataKey::AuthorizedContexts, auth_contexts);
 }
 
 mod test;
@@ -166,21 +148,11 @@ mod test;
 
 ### Data storage
 
-`DataKey::Signers` persists the set of `Address` values that are allowed to act as delegates. `DataKey::PublicKey` stores the account's own ed25519 key for its own verification step. `DataKey::AuthorizedCalls` is a test helper — it records which function names this account approved so the test can assert the full delegation chain saw the same invocation.
+`DataKey::Signers` persists the set of `Address` values that are allowed to act as delegates. `DataKey::AuthorizedContexts` is a test helper — it records the authorization contexts this account approved so the test can assert the full delegation chain saw the same invocation. The account holds no key of its own; it authenticates purely by delegating, so `type Signature = ()`.
 
 ### Constructor
 
-Both the account's public key and the list of registered delegate addresses are written to instance storage at deployment. The delegate list is fixed at construction time; a more complete implementation might expose an admin function to update it.
-
-### `__check_auth`: own verification
-
-```rust
-let public_key: BytesN<32> = env.storage().instance().get(&DataKey::PublicKey).unwrap();
-env.crypto()
-    .ed25519_verify(&public_key, &signature_payload.into(), &signature);
-```
-
-The account first verifies its own ed25519 signature. An account that wants to rely _entirely_ on its delegates could skip this step, but including it lets the account enforce its own key alongside any delegates.
+The list of registered delegate addresses is written to instance storage at deployment. The delegate list is fixed at construction time; a more complete implementation might expose an admin function to update it.
 
 ### `__check_auth`: delegation
 
@@ -216,16 +188,24 @@ The test registers one `ModularAccount` with two `DelegateAccount` instances as 
 
 **Negative case** — attaching an unregistered delegate address causes `ModularAccount.__check_auth` to return `UnknownDelegate` and the call fails.
 
-**Positive case** — both registered delegates sign the same payload; `ModularAccount` verifies its own key and then calls `delegate_auth` for each delegate; the test asserts that the account and both delegates each recorded the `protected` function name in their `AuthorizedCalls` log.
+**Positive case** — both registered delegates sign the same payload; `ModularAccount` calls `delegate_auth` for each delegate; the test asserts that the account and both delegates each recorded the same authorization context — the full `Context::Contract`, including the contract address, function name, and arguments, not just the function name.
 
 ```rust
-// Both account and its delegates observe a single call to `protected`.
-let expected = vec![&env, Symbol::new(&env, "protected")];
+// The account and both delegates each observe the same single authorization
+// context: the call to `protected` with the account as its argument.
+let expected = vec![
+    &env,
+    Context::Contract(ContractContext {
+        contract: protected.clone(),
+        fn_name: Symbol::new(&env, "protected"),
+        args: (account.clone(),).into_val(&env),
+    }),
+];
 for addr in [&account, &delegate_a, &delegate_b] {
-    let calls: Vec<Symbol> = env.as_contract(addr, || {
-        env.storage().instance().get(&DataKey::AuthorizedCalls).unwrap()
+    let contexts: Vec<Context> = env.as_contract(addr, || {
+        env.storage().instance().get(&DataKey::AuthorizedContexts).unwrap()
     });
-    assert_eq!(calls, expected);
+    assert!(contexts == expected);
 }
 ```
 
