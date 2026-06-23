@@ -14,6 +14,14 @@ any code examples that use outdated or deprecated syntax.
   `docs/tools/sdks/client-sdks.mdx`
 - Release state file: `~/.claude/stellar-sdk-release-state.json`
   (maps repo/package URL → last-seen release tag)
+- Additional packages with examples in `docs/` but **not** on the SDK listing
+  pages (so step 1 discovery misses them — include them in scope manually):
+  - npm: `@x402/stellar`, `@stellar/mpp`  (used by the agentic-payments examples)
+
+  These packages aren't vouched for by a listing page. Before using one as an
+  API source-of-truth, confirm its npm publisher/linked repo is the genuine
+  project (guards against typosquat names). Note `@x402/` is **not** the
+  `@stellar` org — verify it's the real x402 package, not a lookalike.
 
 ## Two modes
 
@@ -41,7 +49,10 @@ only _how you choose that set_ differs.
 1. **Discover SDKs.** Read the two source-of-truth pages and extract every
    SDK/crate/package along with its GitHub repository link (or package-registry
    link, e.g. crates.io, if no repo is linked). Do not use a hardcoded list —
-   these pages are the inventory.
+   these pages are the inventory. **Then add the "Additional packages" listed
+   in Context** — these have examples in `docs/` but are intentionally absent
+   from the SDK listing pages, so discovery alone misses them. Treat them
+   identically from step 2 onward.
 
 2. **Check releases.** Confirm the working tree is clean and that you're working
    from a current `upstream/main` — the canonical `stellar/stellar-docs` (if you
