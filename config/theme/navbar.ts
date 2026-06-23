@@ -19,7 +19,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small>',
+      value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small></a>',
       className: 'subtitle',
     },
     {
@@ -41,7 +41,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small>',
+      value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small></a>',
       className: 'subtitle',
     },
     {
@@ -96,7 +96,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/agentic-payments" class="subtitle"><small>Agentic Payments</small>',
+      value: '<hr><a href="/docs/build/agentic-payments" class="subtitle"><small>Agentic Payments</small></a>',
       className: 'subtitle',
     },
     {
@@ -111,7 +111,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small>',
+      value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small></a>',
       className: 'subtitle',
     },
     {
@@ -204,7 +204,7 @@ const learn: NavbarItem = {
   items: [
     {
       type: 'html',
-      value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small>',
+      value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small></a>',
       className: 'subtitle',
     },
     {
@@ -341,7 +341,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small>',
+      value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small></a>',
       className:'subtitle'
     },
     {
@@ -356,7 +356,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small>',
+      value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small></a>',
       className:'subtitle'
     },
     {
@@ -386,7 +386,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
+      value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small></a>',
       className:'subtitle'
     },
     {
@@ -396,7 +396,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
+      value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small></a>',
       className:'subtitle'
     },
     {
