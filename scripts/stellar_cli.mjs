@@ -1,6 +1,6 @@
 import fs from "fs-extra";
 import path from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
 
@@ -25,23 +25,26 @@ if (fs.existsSync(localRepoPath)) {
 
 // Perform a shallow clone of the repository
 console.log("Cloning repository...");
-execSync(`git clone ${repoUrl} ${localRepoPath}`);
-execSync(
-  `cd ${localRepoPath} && git fetch --all && git fetch origin '+refs/pull/*/merge:refs/remotes/origin/pr/*/merge'`,
+execFileSync("git", ["clone", repoUrl, localRepoPath]);
+execFileSync("git", ["fetch", "--all"], { cwd: localRepoPath });
+execFileSync(
+  "git",
+  ["fetch", "origin", "+refs/pull/*/merge:refs/remotes/origin/pr/*/merge"],
+  { cwd: localRepoPath },
 );
-const latestVersion = execSync(
-  `cd ${localRepoPath} && git tag | grep -v -E 'rc|preview' | tail -n1`,
-)
+const tag = execFileSync("git", ["tag"], { cwd: localRepoPath })
   .toString()
-  .substring(1)
-  .trim();
-
+  .trimEnd()
+  .split(/\r?\n/)
+  .filter((tag) => !tag.match(/rc|preview/))
+  .pop();
+const latestVersion = tag.toString().substring(1).trim();
 const cliRef = argv.cliRef || `v${latestVersion}`;
 
 console.log("the latest version is", latestVersion.toString());
 console.log("using cli ref to fetch cli docs: ", cliRef.toString());
 
-execSync(`cd ${localRepoPath} && git checkout --quiet ${cliRef}`);
+execFileSync("git", ["checkout", "--quiet", cliRef], { cwd: localRepoPath });
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
@@ -66,6 +69,6 @@ fs.cpSync(path.join(localRepoPath, "cookbook"), "docs/tools/cli/cookbook", {
   recursive: true,
 });
 
-execSync("pnpm format:mdx");
+execFileSync("pnpm", ["format:mdx"]);
 
 console.log("All files processed successfully.");
