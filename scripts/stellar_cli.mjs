@@ -23,7 +23,7 @@ if (fs.existsSync(localRepoPath)) {
   fs.removeSync(localRepoPath);
 }
 
-// Perform a shallow clone of the repository
+// Clone the repository
 console.log("Cloning repository...");
 execFileSync("git", ["clone", repoUrl, localRepoPath]);
 execFileSync("git", ["fetch", "--all"], { cwd: localRepoPath });
