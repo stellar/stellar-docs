@@ -5,16 +5,39 @@ import https from "https";
 // E.g. "user/repo"
 const excludePlugins = ["haqnawaz03329-debug/haqnawaz"];
 
-// GitHub repo descriptions are attacker-controlled (anyone can tag a repo with
-// the `stellar-cli-plugin` topic), and this content is injected into MDX, which
-// renders HTML/JSX. Neutralize characters that could execute as markup/script.
-function sanitize(value) {
-  return (value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/{/g, "&#123;")
-    .replace(/}/g, "&#125;");
+const MD_ENTITIES = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+  "*": "&#42;",
+  _: "&#95;",
+  "`": "&#96;",
+  "[": "&#91;",
+  "]": "&#93;",
+  "(": "&#40;",
+  ")": "&#41;",
+  "#": "&#35;",
+  "+": "&#43;",
+  "-": "&#45;",
+  ".": "&#46;",
+  "!": "&#33;",
+  "|": "&#124;",
+  "~": "&#126;",
+  "\\": "&#92;",
+  "{": "&#123;",
+  "}": "&#125;",
+  "=": "&#61;",
+  ":": "&#58;",
+  $: "&#36;",
+};
+
+function escape(value) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[&<>"'*_`\[\]()#+\-.!|~\\{}=:$]/g, (ch) => MD_ENTITIES[ch]);
 }
 
 function exportMDX(data) {
@@ -23,9 +46,9 @@ function exportMDX(data) {
       return buffer;
     }
 
-    const plugin = `### [${sanitize(item.full_name)}](${encodeURI(item.html_url)})
+    const plugin = `### [${escape(item.full_name)}](${encodeURI(item.html_url)})
 
-${sanitize(item.description)}
+<p>${escape(item.description)}</p>
 
 [${encodeURI(item.html_url)}](${encodeURI(item.html_url)})
 `;
