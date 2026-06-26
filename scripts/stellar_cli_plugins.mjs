@@ -48,7 +48,7 @@ function exportMDX(data) {
 
     const plugin = `### [${escape(item.full_name)}](${encodeURI(item.html_url)})
 
-${escape(item.description)}
+<p>${escape(item.description)}</p>
 
 [${encodeURI(item.html_url)}](${encodeURI(item.html_url)})
 `;
