@@ -12,6 +12,7 @@ export function YouTube({ ID }: { ID: string; }): ReactNode {
       <iframe
         src={`https://www.youtube-nocookie.com/embed/${ID}?controls=0&rel=0&modestbranding=1`}
         title="Informational explainer"
+        loading="lazy"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" // tilt screen
         allowFullScreen
         style={{
