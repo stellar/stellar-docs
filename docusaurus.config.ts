@@ -14,7 +14,11 @@ import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 
 const config: Config = {
   // future: {
-  //   experimental_faster: true,
+  //   faster: true,
+  //   v4: {
+  //     removeLegacyPostBuildHeadAttribute: true,
+  //     mdx1CompatDisabledByDefault: true,
+  //   }
   // },
   title: "Stellar Docs",
   tagline:
@@ -84,12 +88,25 @@ const config: Config = {
     ],
     './src/plugins/route-export/index.ts',
     './src/plugins/analytics-module/index.ts',
+    'docusaurus-markdown-source-plugin',
+    [
+      "docusaurus-plugin-llms",
+      {
+        generateLLMsTxt: false, // keep our curated static/llms.txt untouched
+        generateLLMsFullTxt: true,
+        docsDir: "docs",
+        llmsFullTxtFilename: "llms-full.txt",
+        title: "Stellar Developer Documentation",
+        description:
+          "Full text of the Stellar developer documentation, concatenated as Markdown for LLM ingestion.",
+        includeBlog: false,
+        excludeImports: true,
+        removeDuplicateHeadings: true,
+      },
+    ],
   ],
   markdown: {
     mermaid: true,
-    mdx1Compat: {
-      headingIds: true,
-    },
     hooks: {
       onBrokenMarkdownLinks: 'throw',
     },
@@ -148,10 +165,6 @@ const config: Config = {
   ],
   headTags: headTags,
   themeConfig: {
-    announcementBar: {
-      id: 'announcementBar-translation',
-      content: '<strong>Disclaimer:</strong> This documentation has been automatically translated and may contain inaccuracies. For the most accurate information, please refer to the original English version. We are not responsible for translation errors.',
-    },
     docs: {
       sidebar: {
         autoCollapseCategories: false,
