@@ -62,10 +62,7 @@ If you have questions, feel free to ask in the [Stellar Developer Discord](https
 To begin development on the documentation, you will first need to install the following:
 
 - Node.js (v24, or higher): see https://nodejs.org/en/download/package-manager for details for your system
-- npm: e.g. `sudo apt install npm` on Ubuntu
-- yarn: `npm install yarn`
-  - If you're getting dependency errors, try using `npm install yarn --legacy-peer-deps`
-  - After `install` command succeeds run `corepack enable && corepack prepare yarn@stable --activate` to actually get yarn
+- pnpm: e.g., `corepack enable pnpm`
 
 ### Development
 
@@ -74,26 +71,31 @@ Once all the prerequisites have been installed, you can run the following comman
 ```bash
 git clone https://github.com/stellar/stellar-docs
 cd stellar-docs
-yarn install
-yarn start
+pnpm install
+pnpm start
 ```
 
 This will begin the development server, and open a browser window/tab pointing
 to `http://localhost:3000/docs/`. This development server will auto-reload when
 it detects changes to the repository.
 
+> **Already cloned this repo before we moved to pnpm?** Delete the old
+> `node_modules` directory before running `pnpm install` — pnpm uses a different
+> `node_modules` layout than Yarn, so installing on top of an existing one can
+> fail.
+
 After you've made your changes, use the following commands to ensure the consistent
 MDX file formatting and style across the repository:
 
 ```bash
-yarn check:mdx # this will search for problems in the MDX files
-yarn format:mdx # this will fix any problems that were found
+pnpm check:mdx # this will search for problems in the MDX files
+pnpm format:mdx # this will fix any problems that were found
 ```
 
 After that you need to build the `routes.txt` file, to do that run the next command
 
 ```bash
-yarn build
+pnpm build
 ```
 
 ## Repository Structure
@@ -166,7 +168,7 @@ print("hello world")
 
 #### Code Example
 
-![Create account code example](./readme-imgs/code-example.png)
+![Create account code example](./static/img/github/code-example.png)
 
 `<CodeExample />` is a code snippet component. You can use this component when
 you want to include snippets for more than one language. See an example

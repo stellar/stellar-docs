@@ -3,7 +3,19 @@ import https from "https";
 
 // In case there are plugins to exclude from the list, add them here.
 // E.g. "user/repo"
-const excludePlugins = [];
+const excludePlugins = ["haqnawaz03329-debug/haqnawaz"];
+
+// GitHub repo descriptions are attacker-controlled (anyone can tag a repo with
+// the `stellar-cli-plugin` topic), and this content is injected into MDX, which
+// renders HTML/JSX. Neutralize characters that could execute as markup/script.
+function sanitize(value) {
+  return (value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/{/g, "&#123;")
+    .replace(/}/g, "&#125;");
+}
 
 function exportMDX(data) {
   const pluginsContent = data.items.reduce((buffer, item) => {
@@ -11,11 +23,11 @@ function exportMDX(data) {
       return buffer;
     }
 
-    const plugin = `### [${item.full_name}](${item.html_url})
+    const plugin = `### [${sanitize(item.full_name)}](${encodeURI(item.html_url)})
 
-${item.description || ""}
+${sanitize(item.description)}
 
-[${item.html_url}](${item.html_url})
+[${encodeURI(item.html_url)}](${encodeURI(item.html_url)})
 `;
 
     return buffer + plugin;
