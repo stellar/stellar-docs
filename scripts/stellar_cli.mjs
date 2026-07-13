@@ -66,6 +66,6 @@ fs.cpSync(path.join(localRepoPath, "cookbook"), "docs/tools/cli/cookbook", {
   recursive: true,
 });
 
-execSync("yarn format:mdx");
+execSync("pnpm format:mdx");
 
 console.log("All files processed successfully.");
