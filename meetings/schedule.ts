@@ -1,5 +1,5 @@
 export const MEETINGS_INFO = {
-  eventLink: "https://discord.com/invite/hAZTTvtq?event=1260569514056093706",
+  eventLink: "https://discord.com/invite/stellardev?event=1394227773765062677",
   timeZone: "America/Los_Angeles",
   weekday: "Thursday",
   hour: 13,
