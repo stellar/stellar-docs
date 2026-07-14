@@ -40,6 +40,7 @@ These guidelines exist because they're the difference between a PR that merges i
 - **Branch from current `main`, and don't stack.** Don't base a PR on another unmerged PR, and don't submit changes that depend on anchors, pages, or components that only exist in your other open PRs. Every PR must stand alone against `main`.
 - **Discuss before building, for anything non-trivial.** New components, styling that affects the whole site, tooling/config changes, restructured URLs — open an issue and get a nod before writing code. This protects your time more than ours.
 - **Keep a reasonable number of PRs in flight.** A handful of focused, active PRs gets better review attention than dozens of parallel ones.
+- **Don't edit files under `i18n/`.** The maintained Spanish translation is being sunset ([#2410](https://github.com/stellar/stellar-docs/pull/2410)), so the directory is on its way out — changes there will be discarded.
 
 ## Development Quickstart
 
