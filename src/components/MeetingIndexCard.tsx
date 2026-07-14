@@ -1,16 +1,14 @@
 import React from "react";
 import Link from "@docusaurus/Link";
 
-const MEETING_TIMEZONE = "America/Los_Angeles";
-const MEETING_WEEKDAY = "Thursday";
-const MEETING_HOUR = 13;
-const MEETING_MINUTE = 0;
+import { MEETINGS_INFO } from "../../meetings/schedule";
+
 const REFERENCE_MEETING_DATE = {
   year: 2024,
   month: 1,
   day: 4, // Thursday
-  hour: MEETING_HOUR,
-  minute: MEETING_MINUTE,
+  hour: MEETINGS_INFO.hour,
+  minute: MEETINGS_INFO.minute,
 } satisfies DateParts;
 
 type DateParts = {
@@ -46,7 +44,7 @@ export default function MeetingIndexCard(): React.ReactElement {
           These are archived discussions of open Stellar meetings. Anyone can
           attend them on {localMeetingTime ?? fallbackMeetingTime}. Join in the{" "}
           <Link
-            href="https://discord.com/invite/stellardev?event=1394227773765062677"
+            href={MEETINGS_INFO.eventLink}
             target="_blank"
             rel="noreferrer noopener"
           >
@@ -92,9 +90,9 @@ export default function MeetingIndexCard(): React.ReactElement {
 
 function formatMeetingTimeFallback(): string {
   return formatMeetingSchedule(
-    MEETING_WEEKDAY,
+    MEETINGS_INFO.weekday,
     formatMeetingTime(
-      makeDateInTimeZone(REFERENCE_MEETING_DATE, MEETING_TIMEZONE),
+      makeDateInTimeZone(REFERENCE_MEETING_DATE, MEETINGS_INFO.timeZone),
     ),
   );
 }
@@ -102,7 +100,7 @@ function formatMeetingTimeFallback(): string {
 function formatMeetingDisplay(date: Date): string {
   const formatter = new Intl.DateTimeFormat(undefined, {
     weekday: "long",
-    timeZone: MEETING_TIMEZONE,
+    timeZone: MEETINGS_INFO.timeZone,
   });
   const parts = formatter.formatToParts(date);
   const weekday = parts.find((part) => part.type === "weekday")?.value;
@@ -121,7 +119,7 @@ function formatMeetingTime(date: Date): string {
   const formatter = new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
     minute: "2-digit",
-    timeZone: MEETING_TIMEZONE,
+    timeZone: MEETINGS_INFO.timeZone,
     timeZoneName: "longGeneric",
   });
   return formatter.format(date);
@@ -202,7 +200,7 @@ function getTimeZoneParts(date: Date, timeZone: string): DateParts {
 }
 
 function getNextMeetingDate(now: Date): Date {
-  const ptParts = getTimeZoneParts(now, MEETING_TIMEZONE);
+  const ptParts = getTimeZoneParts(now, MEETINGS_INFO.timeZone);
   const weekdayOrder = [
     "Sunday",
     "Monday",
@@ -213,21 +211,21 @@ function getNextMeetingDate(now: Date): Date {
     "Saturday",
   ];
   const currentIndex = weekdayOrder.indexOf(ptParts.weekday ?? "");
-  const targetIndex = weekdayOrder.indexOf(MEETING_WEEKDAY);
+  const targetIndex = weekdayOrder.indexOf(MEETINGS_INFO.weekday);
   const rawDaysAhead = (targetIndex - currentIndex + 7) % 7;
   const hasMeetingPassedToday =
     rawDaysAhead === 0 &&
-    ((ptParts.hour ?? 0) > MEETING_HOUR ||
-      ((ptParts.hour ?? 0) === MEETING_HOUR &&
-        (ptParts.minute ?? 0) >= MEETING_MINUTE));
+    ((ptParts.hour ?? 0) > MEETINGS_INFO.hour ||
+      ((ptParts.hour ?? 0) === MEETINGS_INFO.hour &&
+        (ptParts.minute ?? 0) >= MEETINGS_INFO.minute));
   const daysAhead =
     rawDaysAhead === 0 && hasMeetingPassedToday ? 7 : rawDaysAhead;
   const nextMeetingPT = {
     year: ptParts.year,
     month: ptParts.month,
     day: ptParts.day + daysAhead,
-    hour: MEETING_HOUR,
-    minute: MEETING_MINUTE,
+    hour: MEETINGS_INFO.hour,
+    minute: MEETINGS_INFO.minute,
   };
-  return makeDateInTimeZone(nextMeetingPT, MEETING_TIMEZONE);
+  return makeDateInTimeZone(nextMeetingPT, MEETINGS_INFO.timeZone);
 }
