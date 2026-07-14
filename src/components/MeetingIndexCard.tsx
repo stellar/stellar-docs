@@ -93,6 +93,7 @@ function formatMeetingTimeFallback(): string {
     MEETINGS_INFO.weekday,
     formatMeetingTime(
       makeDateInTimeZone(REFERENCE_MEETING_DATE, MEETINGS_INFO.timeZone),
+      MEETINGS_INFO.timeZone,
     ),
   );
 }
@@ -100,7 +101,6 @@ function formatMeetingTimeFallback(): string {
 function formatMeetingDisplay(date: Date): string {
   const formatter = new Intl.DateTimeFormat(undefined, {
     weekday: "long",
-    timeZone: MEETINGS_INFO.timeZone,
   });
   const parts = formatter.formatToParts(date);
   const weekday = parts.find((part) => part.type === "weekday")?.value;
@@ -115,13 +115,18 @@ function formatMeetingSchedule(weekday: string, time: string): string {
   return `${weekday}s at ${time}`;
 }
 
-function formatMeetingTime(date: Date): string {
-  const formatter = new Intl.DateTimeFormat(undefined, {
+function formatMeetingTime(date: Date, timeZone?: string): string {
+  const options: Intl.DateTimeFormatOptions = {
     hour: "numeric",
     minute: "2-digit",
-    timeZone: MEETINGS_INFO.timeZone,
-    timeZoneName: "longGeneric",
-  });
+    timeZoneName: timeZone ? "longGeneric" : "short",
+  };
+
+  if (timeZone) {
+    options.timeZone = timeZone;
+  }
+
+  const formatter = new Intl.DateTimeFormat(undefined, options);
   return formatter.format(date);
 }
 
