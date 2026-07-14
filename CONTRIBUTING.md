@@ -70,14 +70,14 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 
 ### Images
 
-- Images live in `static/assets/` and are referenced by absolute path: `![alt text](/assets/section/image.png)`. Don't import images as variables or route them through `useBaseUrl`.
+- Prefer placing new images in `static/assets/` and referencing them by absolute path: `![alt text](/assets/section/image.png)`. Legacy images may live in `static/img/` and be referenced via `/img/...`. Avoid introducing new MDX image imports or `useBaseUrl` usage unless you need MDX-specific behavior (e.g., custom sizing).
 - Always include meaningful alt text.
 
 ### Code examples
 
 - Multi-language examples use the `<CodeExample>` component: a blank line after the opening tag, one fenced code block per language, a blank line before the closing tag.
 - In multi-part guides, show imports and shared setup in the first snippet; later snippets on the same page may assume them.
-- Generic example assets are `astroDollar` (and `astroPeso` when you need a second one).
+- Generic example assets are `astroDollar` (and use a second clearly named non-native asset when you need two).
 
 ### Terminology and style
 
