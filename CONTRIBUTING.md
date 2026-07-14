@@ -82,7 +82,6 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 ### Terminology and style
 
 - "Stellar network" — lowercase *network*. Likewise *asset* and *anchor* are not capitalized.
-- Prefer a named `baseFee` variable in code examples over hardcoding `100` — the base fee has changed before and can change again. <!-- TODO: confirm this ruling and align existing examples -->
 - Meeting notes (in `meeting-notes/`) use the date as the title (`2026-05-07`), uniformly across the series.
 
 ## Site Code and Infrastructure
