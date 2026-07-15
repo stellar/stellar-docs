@@ -3,10 +3,22 @@ import Link from "@docusaurus/Link";
 
 import { MEETINGS_INFO } from "../../meetings/schedule";
 
+const WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
+
+type Weekday = (typeof WEEKDAYS)[number];
+
 const REFERENCE_MEETING_DATE = {
-  year: 2024,
-  month: 1,
-  day: 4, // Thursday
+  year: 2019,
+  month: 11,
+  day: 4,
   hour: MEETINGS_INFO.hour,
   minute: MEETINGS_INFO.minute,
 } satisfies DateParts;
@@ -115,6 +127,16 @@ function formatMeetingSchedule(weekday: string, time: string): string {
   return `${weekday}s at ${time}`;
 }
 
+function getWeekdayIndex(weekday: string): number {
+  const index = WEEKDAYS.indexOf(weekday as Weekday);
+
+  if (index === -1) {
+    throw new RangeError(`Invalid meeting weekday: ${weekday}`);
+  }
+
+  return index;
+}
+
 function formatMeetingTime(date: Date, timeZone?: string): string {
   const options: Intl.DateTimeFormatOptions = {
     hour: "numeric",
@@ -206,17 +228,8 @@ function getTimeZoneParts(date: Date, timeZone: string): DateParts {
 
 function getNextMeetingDate(now: Date): Date {
   const ptParts = getTimeZoneParts(now, MEETINGS_INFO.timeZone);
-  const weekdayOrder = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  const currentIndex = weekdayOrder.indexOf(ptParts.weekday ?? "");
-  const targetIndex = weekdayOrder.indexOf(MEETINGS_INFO.weekday);
+  const currentIndex = getWeekdayIndex(ptParts.weekday ?? "");
+  const targetIndex = getWeekdayIndex(MEETINGS_INFO.weekday);
   const rawDaysAhead = (targetIndex - currentIndex + 7) % 7;
   const hasMeetingPassedToday =
     rawDaysAhead === 0 &&
