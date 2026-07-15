@@ -45,7 +45,7 @@ Client (Payer)            Server (Recipient)         Soroban RPC / Network
   |<-----------------------------|                          |
 ```
 
-In **pull** mode (default), the client builds and signs the full transaction envelope; the server validates the SAC transfer via simulation, then broadcasts. With **sponsored fees**, the client signs only the Soroban auth entries and the server rebuilds the transaction with its own account as source. In **push** mode, the client broadcasts the transaction itself and sends the transaction hash for server verification.
+In **pull** mode (default), the client builds and signs the full transaction envelope; the server validates the SAC transfer via simulation, then broadcasts. With **sponsored fees**, the client signs only the Soroban auth entries and the server rebuilds the transaction with its own account as source. In **push** mode, the client broadcasts the transaction itself and sends a `signedHash` credential — the transaction hash plus a signature proving control of the `from` account — for server verification.
 
 This tutorial walks through building a payment-gated API with Node.js and Express using `@stellar/mpp`.
 
@@ -76,7 +76,7 @@ Create a file named `server.js` and paste in the following code:
 
 ```js title="server.js"
 import express from "express";
-import { Mppx } from "mppx/server";
+import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 
@@ -104,6 +104,7 @@ const mppx = Mppx.create({
       recipient: RECIPIENT,
       currency: USDC_SAC_TESTNET,
       network: "stellar:testnet",
+      store: Store.memory(), // Required by v0.7 for replay protection
     }),
   ],
 });
@@ -251,13 +252,155 @@ The client:
 
 The 0.01 USDC settles directly to the `STELLAR_RECIPIENT` wallet. No facilitator, no extra infrastructure.
 
+## Push mode
+
+The examples above use **pull mode** (default), where the server broadcasts the signed transaction. In **push mode**, the client broadcasts the transaction directly and sends a signed hash credential (`signedHash`) to the server for verification.
+
+### Push mode client
+
+To use push mode, set `mode: "push"` in the client configuration and provide the keypair of the `from` account (the account funding the transfer). The SDK handles `signedHash` credential generation automatically — no manual signing code required:
+
+```js title="client.js (push mode)"
+import { Keypair } from "@stellar/stellar-sdk";
+import { Mppx } from "mppx/client";
+import { stellar } from "@stellar/mpp/charge/client";
+import { readFileSync } from "node:fs";
+
+// Load .env manually (no dotenv package needed)
+const env = Object.fromEntries(
+  readFileSync(".env", "utf-8")
+    .split("\n")
+    .filter((l) => l.includes("="))
+    .map((l) => l.split("=")),
+);
+const STELLAR_SECRET = env.STELLAR_SECRET?.trim();
+
+if (!STELLAR_SECRET) {
+  console.error("Add STELLAR_SECRET=S... to .env");
+  process.exit(1);
+}
+
+const keypair = Keypair.fromSecret(STELLAR_SECRET);
+console.log(`Using Stellar account: ${keypair.publicKey()}`);
+
+// Polyfill global fetch — 402 responses are handled automatically
+Mppx.create({
+  methods: [
+    stellar.charge({
+      keypair,
+      mode: "push", // client broadcasts the transaction
+      onProgress(event) {
+        console.log(`[${event.type}]`, event);
+      },
+    }),
+  ],
+});
+
+// Make the request — payment is handled transparently on 402
+const response = await fetch("http://localhost:3001/my-service");
+const data = await response.json();
+
+console.log(`Response (${response.status}):`, data);
+```
+
+### Push mode server
+
+The server accepts both pull and push credentials automatically — no extra configuration needed. The only change from the pull mode server is moving `store` into `stellar.charge()`:
+
+```js title="server.js (push mode)"
+import express from "express";
+import { Mppx, Store } from "mppx/server";
+import { stellar } from "@stellar/mpp/charge/server";
+import { USDC_SAC_TESTNET } from "@stellar/mpp";
+
+const PORT = 3001;
+const RECIPIENT = process.env.STELLAR_RECIPIENT;
+const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY;
+
+if (!RECIPIENT) {
+  console.error("Set STELLAR_RECIPIENT to a Stellar public key (G...)");
+  process.exit(1);
+}
+
+if (!MPP_SECRET_KEY) {
+  console.error(
+    "Set MPP_SECRET_KEY to a strong secret for MPP credential verification",
+  );
+  process.exit(1);
+}
+
+const mppx = Mppx.create({
+  secretKey: MPP_SECRET_KEY,
+  methods: [
+    stellar.charge({
+      recipient: RECIPIENT,
+      currency: USDC_SAC_TESTNET,
+      network: "stellar:testnet",
+      store: Store.memory(), // Required by v0.7 for replay protection
+    }),
+  ],
+});
+
+const app = express();
+
+app.get("/my-service", async (req, res) => {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        headers.append(key, entry);
+      }
+    } else {
+      headers.set(key, value);
+    }
+  }
+
+  const webReq = new Request(`http://localhost:${PORT}${req.url}`, {
+    method: req.method,
+    headers,
+  });
+
+  const result = await mppx.charge({
+    amount: "0.01",
+    description: "Premium API access",
+  })(webReq);
+
+  if (result.status === 402) {
+    const challenge = result.challenge;
+    challenge.headers.forEach((value, key) => res.setHeader(key, value));
+    return res.status(402).send(await challenge.text());
+  }
+
+  const response = result.withReceipt(
+    Response.json({ secret: "valuable content" }),
+  );
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  return res.status(response.status).send(await response.text());
+});
+
+app.listen(PORT, () => {
+  console.log(`MPP server listening on http://localhost:${PORT}/my-service`);
+});
+```
+
+### Signed hash credentials
+
+The SDK generates `signedHash` credentials automatically when `mode: "push"` is set — you do not write any signing code. Under the hood, the client:
+
+1. Computes a hash of the transaction envelope
+2. Creates the string `"{challenge.id}:{hash}"` where `challenge.id` is the MPP challenge identifier
+3. Signs this string using the keypair of the `from` account
+
+The server verifies the signature against the public key of the `from` account — the account funding the transfer — ensuring the client authorized the specific hash. With sponsored fees the transaction envelope is sourced by the fee payer, so the signature is always checked against the `from` account rather than whoever broadcasts.
+
 ## Sponsored fees (optional)
 
 By default, the client pays Stellar network fees. To have the server pay fees on behalf of the client, configure a `feePayer` on the server:
 
 ```js
 import { Keypair } from "@stellar/stellar-sdk";
-import { Mppx } from "mppx/server";
+import { Mppx, Store } from "mppx/server";
 import { stellar } from "@stellar/mpp/charge/server";
 import { USDC_SAC_TESTNET } from "@stellar/mpp";
 
@@ -282,6 +425,7 @@ const mppx = Mppx.create({
       recipient: RECIPIENT,
       currency: USDC_SAC_TESTNET,
       network: "stellar:testnet",
+      store: Store.memory(), // Required by v0.7 for replay protection
       feePayer: {
         envelopeSigner: Keypair.fromSecret(FEE_PAYER_SECRET), // pays tx fees
       },
@@ -293,6 +437,8 @@ const mppx = Mppx.create({
 Set `FEE_PAYER_SECRET` before running the server if you use sponsored fees.
 
 When `feePayer` is configured, the server automatically signals fee sponsorship to the client via the challenge. The client then signs only the Soroban auth entries (not the full transaction envelope). The server rebuilds the transaction with the `envelopeSigner`'s account as source and broadcasts it. Optionally, add `feeBumpSigner` inside `feePayer` to wrap the transaction in a fee bump.
+
+:::info Channel open removal The channel `open` MPP action was removed in v0.7 as it was dead code — the Soroban contract has no on-chain open entrypoint. Channels are created on-chain directly by signing and broadcasting a deploy transaction. See the [MPP Session Guide](./channel-guide.mdx) for channel setup details. :::
 
 ## Learn more
 
