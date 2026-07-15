@@ -16,7 +16,6 @@ ENV PATH="$PNPM_HOME/bin:$PATH"
 RUN corepack enable
 
 COPY . /app/
-ARG BUILD_TRANSLATIONS="False"
 
 RUN pnpm ci
 RUN du -sh /app/*
@@ -25,12 +24,6 @@ RUN pnpm stellar-cli:build --no-minify --cli-ref=main
 RUN pnpm stellar-cli:fix-links
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-# RUN if [ "$BUILD_TRANSLATIONS" = "True" ]; then \
-#     pnpm docusaurus build --no-minify; \
-#   else \
-#     # In the preview build, we only want to build for English. Much quicker
-#     pnpm build --no-minify; \
-#   fi
 RUN pnpm build --no-minify
 
 FROM nginx:1.31
