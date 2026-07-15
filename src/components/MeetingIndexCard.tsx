@@ -63,21 +63,21 @@ export default function MeetingIndexCard(): React.ReactElement {
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
           <Link
             className="button button--primary"
-            style={{ color: "#fff" }}
+            style={{ color: "var(--ifm-color-white)" }}
             to="/meetings"
           >
             Recent
           </Link>
           <Link
             className="button button--primary"
-            style={{ color: "#fff" }}
+            style={{ color: "var(--ifm-color-white)" }}
             to="/meetings/tags/developer"
           >
             Developer
           </Link>
           <Link
             className="button button--primary"
-            style={{ color: "#fff" }}
+            style={{ color: "var(--ifm-color-white)" }}
             to="/meetings/tags/protocol"
           >
             Protocol
