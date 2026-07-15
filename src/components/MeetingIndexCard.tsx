@@ -3,26 +3,6 @@ import Link from "@docusaurus/Link";
 
 import { MEETINGS_INFO } from "../../meetings/schedule";
 
-const WEEKDAYS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-] as const;
-
-type Weekday = (typeof WEEKDAYS)[number];
-
-const REFERENCE_MEETING_DATE = {
-  year: 2019,
-  month: 11,
-  day: 4,
-  hour: MEETINGS_INFO.hour,
-  minute: MEETINGS_INFO.minute,
-} satisfies DateParts;
-
 type DateParts = {
   year: number;
   month: number;
@@ -103,10 +83,7 @@ export default function MeetingIndexCard(): React.ReactElement {
 function formatMeetingTimeFallback(): string {
   return formatMeetingSchedule(
     MEETINGS_INFO.weekday,
-    formatMeetingTime(
-      makeDateInTimeZone(REFERENCE_MEETING_DATE, MEETINGS_INFO.timeZone),
-      MEETINGS_INFO.timeZone,
-    ),
+    formatMeetingTime(makeDateInTimeZone(), MEETINGS_INFO.timeZone),
   );
 }
 
@@ -127,16 +104,6 @@ function formatMeetingSchedule(weekday: string, time: string): string {
   return `${weekday}s at ${time}`;
 }
 
-function getWeekdayIndex(weekday: string): number {
-  const index = WEEKDAYS.indexOf(weekday as Weekday);
-
-  if (index === -1) {
-    throw new RangeError(`Invalid meeting weekday: ${weekday}`);
-  }
-
-  return index;
-}
-
 function formatMeetingTime(date: Date, timeZone?: string): string {
   const options: Intl.DateTimeFormatOptions = {
     hour: "numeric",
@@ -150,6 +117,17 @@ function formatMeetingTime(date: Date, timeZone?: string): string {
 
   const formatter = new Intl.DateTimeFormat(undefined, options);
   return formatter.format(date);
+}
+
+function datePartsToUtc(parts: DateParts): number {
+  return Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour ?? 0,
+    parts.minute ?? 0,
+    parts.second ?? 0,
+  );
 }
 
 function getTimeZoneOffset(date: Date, timeZone: string): number {
@@ -170,29 +148,28 @@ function getTimeZoneOffset(date: Date, timeZone: string): number {
     }
     return acc;
   }, {});
-  const asUtc = Date.UTC(
-    values.year,
-    values.month - 1,
-    values.day,
-    values.hour,
-    values.minute,
-    values.second,
-  );
+  const asUtc = datePartsToUtc({
+    year: values.year,
+    month: values.month,
+    day: values.day,
+    hour: values.hour,
+    minute: values.minute,
+    second: values.second,
+  });
   return (asUtc - date.getTime()) / 60000;
 }
 
-function makeDateInTimeZone(parts: DateParts, timeZone: string): Date {
-  const utcDate = new Date(
-    Date.UTC(
-      parts.year,
-      parts.month - 1,
-      parts.day,
-      parts.hour ?? 0,
-      parts.minute ?? 0,
-      parts.second ?? 0,
-    ),
-  );
-  const offsetMinutes = getTimeZoneOffset(utcDate, timeZone);
+function makeDateInTimeZone(
+  parts: DateParts = {
+    year: 2019,
+    month: 11,
+    day: 4,
+    hour: MEETINGS_INFO.hour,
+    minute: MEETINGS_INFO.minute,
+  },
+): Date {
+  const utcDate = new Date(datePartsToUtc(parts));
+  const offsetMinutes = getTimeZoneOffset(utcDate, MEETINGS_INFO.timeZone);
   return new Date(utcDate.getTime() - offsetMinutes * 60000);
 }
 
@@ -228,8 +205,17 @@ function getTimeZoneParts(date: Date, timeZone: string): DateParts {
 
 function getNextMeetingDate(now: Date): Date {
   const ptParts = getTimeZoneParts(now, MEETINGS_INFO.timeZone);
-  const currentIndex = getWeekdayIndex(ptParts.weekday ?? "");
-  const targetIndex = getWeekdayIndex(MEETINGS_INFO.weekday);
+  const weekdayOrder = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  const currentIndex = weekdayOrder.indexOf(ptParts.weekday ?? "");
+  const targetIndex = weekdayOrder.indexOf(MEETINGS_INFO.weekday);
   const rawDaysAhead = (targetIndex - currentIndex + 7) % 7;
   const hasMeetingPassedToday =
     rawDaysAhead === 0 &&
@@ -245,5 +231,5 @@ function getNextMeetingDate(now: Date): Date {
     hour: MEETINGS_INFO.hour,
     minute: MEETINGS_INFO.minute,
   };
-  return makeDateInTimeZone(nextMeetingPT, MEETINGS_INFO.timeZone);
+  return makeDateInTimeZone(nextMeetingPT);
 }
