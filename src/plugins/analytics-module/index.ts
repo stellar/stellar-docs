@@ -1,18 +1,13 @@
 import path from 'path';
 
-import type { LoadContext, Plugin } from '@docusaurus/types';
+import type { Plugin } from '@docusaurus/types';
 
-export default function analyticsModulePlugin(context: LoadContext): Plugin {
+export default function analyticsModulePlugin(): Plugin {
   return {
     name: 'stellar-docs-analytics-module-plugin',
 
     getClientModules() {
-      return [
-        path.join(
-          context.siteDir,
-          'src/plugins/analytics-module/gtag-stub.ts'
-        ),
-      ];
+      return [path.join(__dirname, 'gtag-stub.ts')];
     },
 
     injectHtmlTags() {
