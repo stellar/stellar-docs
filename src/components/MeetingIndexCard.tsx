@@ -42,15 +42,23 @@ export default function MeetingIndexCard(): React.ReactElement {
           >
             developer Discord
           </Link>
-          , and subscribe to the{" "}
+          , and follow{" "}
           <Link
-            href="https://groups.google.com/g/stellar-dev/search?q=subject%3Ameeting"
+            href={MEETINGS_INFO.xLink}
             target="_blank"
             rel="noreferrer noopener"
           >
-            mailing list
+            @BuildOnStellar
           </Link>{" "}
-          for reminders.
+          on X or the{" "}
+          <Link
+            href={MEETINGS_INFO.youtubeLink}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            Stellar Development Foundation
+          </Link>{" "}
+          on YouTube for streams and updates.
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
           <Link
