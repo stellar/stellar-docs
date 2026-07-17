@@ -3,15 +3,15 @@ import Link from "@docusaurus/Link";
 
 import { MEETINGS_INFO } from "../../meetings/schedule";
 
-type DateParts = {
-  year: number;
-  month: number;
-  day: number;
-  hour?: number;
-  minute?: number;
-  second?: number;
-  weekday?: string;
-};
+const WEEKDAY_ORDER = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
 
 export default function MeetingIndexCard(): React.ReactElement {
   const [localMeetingTime, setLocalMeetingTime] = React.useState<string | null>(
@@ -24,7 +24,7 @@ export default function MeetingIndexCard(): React.ReactElement {
       const nextMeeting = getNextMeetingDate(new Date());
       setLocalMeetingTime(formatMeetingDisplay(nextMeeting));
     } catch {
-      // Keep the fallback display if timezone calculation fails.
+      // Keep the UTC fallback if local formatting fails.
     }
   }, []);
 
@@ -91,7 +91,7 @@ export default function MeetingIndexCard(): React.ReactElement {
 function formatMeetingTimeFallback(): string {
   return formatMeetingSchedule(
     MEETINGS_INFO.weekday,
-    formatMeetingTime(makeDateInTimeZone(), MEETINGS_INFO.timeZone),
+    formatUtcMeetingTime(makeMeetingDate(2019, 0, 1)),
   );
 }
 
@@ -112,132 +112,45 @@ function formatMeetingSchedule(weekday: string, time: string): string {
   return `${weekday}s at ${time}`;
 }
 
-function formatMeetingTime(date: Date, timeZone?: string): string {
-  const options: Intl.DateTimeFormatOptions = {
+function formatMeetingTime(date: Date): string {
+  const formatter = new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
     minute: "2-digit",
-    timeZoneName: timeZone ? "longGeneric" : "short",
-  };
-
-  if (timeZone) {
-    options.timeZone = timeZone;
-  }
-
-  const formatter = new Intl.DateTimeFormat(undefined, options);
+    timeZoneName: "short",
+  });
   return formatter.format(date);
 }
 
-function datePartsToUtc(parts: DateParts): number {
-  return Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    parts.hour ?? 0,
-    parts.minute ?? 0,
-    parts.second ?? 0,
+function formatUtcMeetingTime(date: Date): string {
+  const formatter = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "UTC",
+    timeZoneName: "short",
+  });
+  return formatter.format(date);
+}
+
+function makeMeetingDate(year: number, month: number, day: number): Date {
+  return new Date(
+    Date.UTC(year, month, day, MEETINGS_INFO.hour, MEETINGS_INFO.minute),
   );
 }
 
-function getTimeZoneOffset(date: Date, timeZone: string): number {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const parts = dtf.formatToParts(date);
-  const values = parts.reduce<Record<string, number>>((acc, part) => {
-    if (part.type !== "literal") {
-      acc[part.type] = Number(part.value);
-    }
-    return acc;
-  }, {});
-  const asUtc = datePartsToUtc({
-    year: values.year,
-    month: values.month,
-    day: values.day,
-    hour: values.hour,
-    minute: values.minute,
-    second: values.second,
-  });
-  return (asUtc - date.getTime()) / 60000;
-}
-
-function makeDateInTimeZone(
-  parts: DateParts = {
-    year: 2019,
-    month: 11,
-    day: 4,
-    hour: MEETINGS_INFO.hour,
-    minute: MEETINGS_INFO.minute,
-  },
-): Date {
-  const utcDate = new Date(datePartsToUtc(parts));
-  const offsetMinutes = getTimeZoneOffset(utcDate, MEETINGS_INFO.timeZone);
-  return new Date(utcDate.getTime() - offsetMinutes * 60000);
-}
-
-function getTimeZoneParts(date: Date, timeZone: string): DateParts {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "long",
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const parts = dtf.formatToParts(date);
-  const values = parts.reduce<Record<string, string>>((acc, part) => {
-    if (part.type !== "literal") {
-      acc[part.type] = part.value;
-    }
-    return acc;
-  }, {});
-  return {
-    year: Number(values.year),
-    month: Number(values.month),
-    day: Number(values.day),
-    hour: Number(values.hour),
-    minute: Number(values.minute),
-    second: Number(values.second),
-    weekday: values.weekday,
-  };
-}
-
 function getNextMeetingDate(now: Date): Date {
-  const ptParts = getTimeZoneParts(now, MEETINGS_INFO.timeZone);
-  const weekdayOrder = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  const currentIndex = weekdayOrder.indexOf(ptParts.weekday ?? "");
-  const targetIndex = weekdayOrder.indexOf(MEETINGS_INFO.weekday);
+  const currentIndex = now.getUTCDay();
+  const targetIndex = WEEKDAY_ORDER.indexOf(MEETINGS_INFO.weekday);
   const rawDaysAhead = (targetIndex - currentIndex + 7) % 7;
   const hasMeetingPassedToday =
     rawDaysAhead === 0 &&
-    ((ptParts.hour ?? 0) > MEETINGS_INFO.hour ||
-      ((ptParts.hour ?? 0) === MEETINGS_INFO.hour &&
-        (ptParts.minute ?? 0) >= MEETINGS_INFO.minute));
+    (now.getUTCHours() > MEETINGS_INFO.hour ||
+      (now.getUTCHours() === MEETINGS_INFO.hour &&
+        now.getUTCMinutes() >= MEETINGS_INFO.minute));
   const daysAhead =
     rawDaysAhead === 0 && hasMeetingPassedToday ? 7 : rawDaysAhead;
-  const nextMeetingPT = {
-    year: ptParts.year,
-    month: ptParts.month,
-    day: ptParts.day + daysAhead,
-    hour: MEETINGS_INFO.hour,
-    minute: MEETINGS_INFO.minute,
-  };
-  return makeDateInTimeZone(nextMeetingPT);
+  return makeMeetingDate(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + daysAhead,
+  );
 }
