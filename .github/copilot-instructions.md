@@ -11,8 +11,12 @@ ecosystem fact you cannot confirm from these sources, say so and recommend human
 than guessing.
 
 ## 1. Mechanics
-- Internal links must be **relative** (no hard-coded `https://developers.stellar.org/...` for
-  in-repo pages); every link and `#anchor` must resolve to a real file/heading.
+- Links in `docs/**` markdown must be **relative** — flag both hard-coded
+  `https://developers.stellar.org/...` and root-absolute `/docs/...` links to in-repo pages.
+  **Exception:** files under `openapi/` and `openrpc/` *should* use full
+  `https://developers.stellar.org/...` URLs. Every link should resolve to a real file; treat
+  `#anchor` resolution as best-effort (MDX slugs are hard to predict, and a broken anchor
+  won't fail the build).
 - Heading levels sequential; frontmatter `sidebar_position` must not collide with sibling
   pages; no slug/anchor collisions.
 - Images exist and have alt text; code fences declare a language; MDX compiles (no unclosed
@@ -48,11 +52,13 @@ Prefer this repo's own pages — they are the living source of truth and update 
 - `docs/networks/README.mdx` — network passphrases and network IDs.
 - `docs/data/apis/` — RPC and Horizon guidance / status.
 - `docs/tools/sdks/` — the SDK list and canonical package names.
-- `CONTRIBUTING`, `.github/` — repo conventions.
+- `.github/` and the area `CONTRIBUTING.md` files under `docs/` — repo conventions.
 
-Authoritative external sources for anything not settled in-repo:
-- Published docs: https://developers.stellar.org/docs
-- Protocol upgrade announcements: https://stellar.org/blog
+Authoritative external sources for anything not settled in-repo (the repo itself is the source
+of truth for docs content — don't fetch the published site, it's just a build of these files
+and can lag the PR):
+- Protocol upgrade announcements: https://stellar.org/blog — fetch the list page and page one
+  or two `?page=n` deep for recent posts; don't rely on the RSS feed (it's truncated).
 - SEPs and CAPs: https://github.com/stellar/stellar-protocol
 - Core / SDK / CLI releases: the relevant repo under https://github.com/stellar
 
