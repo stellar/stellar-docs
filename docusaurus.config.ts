@@ -36,9 +36,6 @@ const config: Config = {
       async: true,
     },
   ],
-  clientModules: [
-    require.resolve('./src/clientModules/legacyMeetingRedirect.ts'),
-  ],
   plugins: [
     "docusaurus-plugin-sass",
     [
