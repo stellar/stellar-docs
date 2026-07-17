@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  discussions: read
   issues: read
   pull-requests: read
 
@@ -23,6 +24,7 @@ tools:
     # If in a private repo this has no particular effect.
     lockdown: false
     min-integrity: none # This workflow is allowed to examine and comment on any issues
+    toolsets: [default, discussions]
 
 safe-outputs:
   mentions: false
