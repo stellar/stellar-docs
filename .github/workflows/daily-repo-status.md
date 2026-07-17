@@ -29,7 +29,7 @@ safe-outputs:
   allowed-github-references: []
   create-issue:
     title-prefix: "[repo-status] "
-    labels: [report, daily-status]
+    labels: []
     close-older-issues: true
 source: githubnext/agentics/workflows/repo-status.md@1c6668b751c51af8571f01204ceffb19362e0f66
 ---
