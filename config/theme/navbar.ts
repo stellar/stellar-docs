@@ -229,6 +229,11 @@ const learn: NavbarItem = {
       className: 'has-nested-items',
     },
     {
+      to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
+      label: 'Stellar Decentralized Exchange (SDEX)',
+      activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
+    },
+    {
       to: '/docs/learn/fundamentals/transactions',
       label: 'Operations & Transactions',
       activeBasePath: 'docs/learn/fundamentals/transactions',
@@ -260,11 +265,6 @@ const learn: NavbarItem = {
       to: '/docs/learn/fundamentals/anchors',
       label: 'Ramps (anchors)',
       activeBasePath: 'docs/learn/fundamentals/anchors',
-    },
-    {
-      to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
-      label: 'SDEX',
-      activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
     },
     {
       type: 'html',
