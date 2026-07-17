@@ -65,7 +65,8 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 
 ### Page metadata
 
-- Sidebar ordering is declared with `sidebar_position` in each page's frontmatter. **Don't add `_category_.json` files.**
+- Sidebar ordering is declared with `sidebar_position` in each page's frontmatter.
+- **Prefer the `README.mdx` convention over `_category_.json` for category metadata.** A category's index `README.mdx` frontmatter drives its title, sidebar label, and position, so do as much as possible there. Add a `_category_.json` file only when something genuinely can't be expressed in `README.mdx` — e.g., overriding `collapsible`/`collapsed`, or setting a category `description` (which isn't hoisted from the `README.mdx` frontmatter) — and include only those necessary keys.
 - Every page should have a frontmatter `title` and `description` (used for SEO and link previews).
 
 ### Images
