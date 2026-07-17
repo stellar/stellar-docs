@@ -2,7 +2,6 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
-// import { makeEditUrl, DEFAULT_LOCALE, GOOGLE_TRANSLATE_ELEMENT } from './config/constants';
 import navbarItems from './config/theme/navbar';
 import footerColumns from './config/theme/footer';
 import { headTags } from './config/theme/headTags';
@@ -14,7 +13,11 @@ import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 
 const config: Config = {
   // future: {
-  //   experimental_faster: true,
+  //   faster: true,
+  //   v4: {
+  //     removeLegacyPostBuildHeadAttribute: true,
+  //     mdx1CompatDisabledByDefault: true,
+  //   }
   // },
   title: "Stellar Docs",
   tagline:
@@ -27,10 +30,6 @@ const config: Config = {
   favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
-  // i18n: {
-  //   defaultLocale: DEFAULT_LOCALE,
-  //   locales: ["en", "es"],
-  // },
   scripts: [
     {
       src: 'https://translate.google.com/translate_a/element.js',
@@ -84,12 +83,25 @@ const config: Config = {
     ],
     './src/plugins/route-export/index.ts',
     './src/plugins/analytics-module/index.ts',
+    'docusaurus-markdown-source-plugin',
+    [
+      "docusaurus-plugin-llms",
+      {
+        generateLLMsTxt: false, // keep our curated static/llms.txt untouched
+        generateLLMsFullTxt: true,
+        docsDir: "docs",
+        llmsFullTxtFilename: "llms-full.txt",
+        title: "Stellar Developer Documentation",
+        description:
+          "Full text of the Stellar developer documentation, concatenated as Markdown for LLM ingestion.",
+        includeBlog: false,
+        excludeImports: true,
+        removeDuplicateHeadings: true,
+      },
+    ],
   ],
   markdown: {
     mermaid: true,
-    mdx1Compat: {
-      headingIds: true,
-    },
     hooks: {
       onBrokenMarkdownLinks: 'throw',
     },
@@ -121,7 +133,6 @@ const config: Config = {
           rehypePlugins: [rehypeKatex],
           sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
-          // editUrl: makeEditUrl,
           editUrl: "https://github.com/stellar/stellar-docs/edit/main",
           exclude: ['**/component/**', '**/CONTRIBUTING.md'],
         },
@@ -148,10 +159,6 @@ const config: Config = {
   ],
   headTags: headTags,
   themeConfig: {
-    announcementBar: {
-      id: 'announcementBar-translation',
-      content: '<strong>Disclaimer:</strong> This documentation has been automatically translated and may contain inaccuracies. For the most accurate information, please refer to the original English version. We are not responsible for translation errors.',
-    },
     docs: {
       sidebar: {
         autoCollapseCategories: false,

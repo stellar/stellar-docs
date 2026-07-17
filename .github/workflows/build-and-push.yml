@@ -1,0 +1,76 @@
+name: Build and push stellar-docs
+
+# Deployed to: https://github.com/stellar/stellar-docs
+#
+# Converted from the Jenkins pipeline (Jenkinsfile-stellar-docs). On every push
+# to main (or manual dispatch) builds the stellar-docs docker image (with
+# translations), pushes it to the prd ECR repo (prd/stellar-docs:<sha>), and
+# also pushes it as dev/stellar-docs:latest for PR previews.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  SLACK_CHANNEL: docs-builds
+
+jobs:
+  build-and-push:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Determine image label
+        id: vars
+        run: echo "label=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: ECR login
+        id: ecr-login
+        uses: stellar/actions/sdf-ecr-login@main
+
+      - name: Build and push docker image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.ecr-registry }}
+          LABEL: ${{ steps.vars.outputs.label }}
+        run: |
+          set -eu
+          export TAG="${ECR_REGISTRY}/prd/stellar-docs:${LABEL}"
+          make docker-build
+          ecr-push "${TAG}"
+
+          # Push image with latest tag to dev registry for the PR previews.
+          DEV_TAG="${ECR_REGISTRY}/dev/stellar-docs:latest"
+          docker tag "${TAG}" "${DEV_TAG}"
+          ecr-push "${DEV_TAG}"
+
+      - name: Slack notification — success
+        if: success()
+        uses: slackapi/slack-github-action@0d95c9a7becc1e6e297d76df9bc735c44f4cbcbc # v3.0.5
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ env.SLACK_CHANNEL }}",
+              "text": "Docs build complete for ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}."
+            }
+
+      - name: Slack notification — failure
+        if: failure()
+        uses: slackapi/slack-github-action@0d95c9a7becc1e6e297d76df9bc735c44f4cbcbc # v3.0.5
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ env.SLACK_CHANNEL }}",
+              "text": "Docs build failed for ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}."
+            }
