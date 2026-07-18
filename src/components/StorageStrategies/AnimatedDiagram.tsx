@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import "./diagrams.css";
 
 interface AnimatedDiagramProps {
@@ -15,6 +15,10 @@ export default function AnimatedDiagram({
   children,
 }: AnimatedDiagramProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const [restored, setRestored] = useState({
+    instance: false,
+    persistent: false,
+  });
 
   useEffect(() => {
     const el = ref.current;
@@ -41,6 +45,7 @@ export default function AnimatedDiagram({
     if (!el) {
       return;
     }
+    setRestored({ instance: false, persistent: false });
     // Toggling .play only pauses/resumes; to restart from frame 0 the
     // animations themselves must be torn down and recreated.
     const anims = el.querySelectorAll<HTMLElement | SVGElement>(".anim");
@@ -54,11 +59,45 @@ export default function AnimatedDiagram({
     el.classList.add("play");
   };
 
+  const className = [
+    "ssd",
+    restored.instance ? "restored-instance" : "",
+    restored.persistent ? "restored-persistent" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="ssd" id={id} ref={ref}>
-      <button className="replay" type="button" onClick={replay}>
-        ↻ replay
-      </button>
+    <div className={className} id={id} ref={ref}>
+      <div className="diagram-controls">
+        {id === "d0" ? (
+          <>
+            <button
+              className="restore"
+              type="button"
+              aria-pressed={restored.instance}
+              onClick={() =>
+                setRestored((current) => ({ ...current, instance: true }))
+              }
+            >
+              Restore instance
+            </button>
+            <button
+              className="restore"
+              type="button"
+              aria-pressed={restored.persistent}
+              onClick={() =>
+                setRestored((current) => ({ ...current, persistent: true }))
+              }
+            >
+              Restore persistent entry
+            </button>
+          </>
+        ) : null}
+        <button className="replay" type="button" onClick={replay}>
+          ↻ Replay expiry
+        </button>
+      </div>
       {children}
       {caption ? <p className="caption">{caption}</p> : null}
     </div>

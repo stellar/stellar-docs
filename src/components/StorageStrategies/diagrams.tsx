@@ -2,178 +2,230 @@ import React from "react";
 import AnimatedDiagram from "./AnimatedDiagram";
 
 const CAPTIONS: Record<string, string> = {
-  d0: "The three tiers differ in lifecycle, not interface. No TTL ever extends itself — the refill shown is the contract calling extend_ttl(), a pattern used on persistent entries too. These colors mean the same thing in every diagram on this page.",
+  d0: "Automatic: simulate and submit the invocation; RPC adds archived dependencies to its restore list, and the network restores them before execution. Manual: submit RestoreFootprintOp for exact ledger keys (stellar contract restore). Temporary entries cannot be restored.",
 };
 
 const SVGS: Record<string, React.ReactNode> = {
   d0: (
     <svg
-      viewBox="0 0 660 210"
+      viewBox="0 0 660 192"
       role="img"
-      aria-label="Animation: the contract explicitly extends the instance entry's TTL on each call; persistent entries archive and can be restored; temporary entries are deleted forever."
+      aria-label="Interactive comparison of storage expiry outcomes and restoration methods. An expired contract instance entry is archived; contract code is a separate entry with its own TTL. An expired persistent key is archived individually. Either can be restored automatically through an invocation restore list or manually with RestoreFootprintOp. An expired temporary entry is deleted permanently."
     >
-      <text
-        x="95"
-        y="20"
-        textAnchor="middle"
-        className="lbl"
-        fill="var(--amber)"
-      >
+      <text x="105" y="16" textAnchor="middle" className="lbl">
         instance()
       </text>
+      <g className="d0-entry anim">
+        <rect
+          className="cell cell-inst"
+          x="30"
+          y="26"
+          width="150"
+          height="48"
+        />
+        <text x="105" y="48" textAnchor="middle" className="lbl-s">
+          contract instance
+        </text>
+        <text x="105" y="65" textAnchor="middle" className="lbl-s mono">
+          Admin, Config…
+        </text>
+      </g>
+      <rect className="ttl-track" x="30" y="82" width="150" height="6" />
       <rect
-        className="cell cell-inst"
-        x="35"
-        y="34"
-        width="120"
-        height="64"
-        rx="6"
-      />
-      <text x="95" y="60" textAnchor="middle" className="lbl-s">
-        contract instance
-      </text>
-      <text x="95" y="76" textAnchor="middle" className="lbl-s mono">
-        Admin, Config…
-      </text>
-      <circle
-        className="dot call anim"
-        cx="0"
-        cy="66"
-        r="4"
-        fill="var(--amber)"
-      />
-      <rect className="ttl-track" x="35" y="112" width="120" height="6" />
-      <rect
-        className="ttl-fill-inst bar b-inst anim"
-        x="35"
-        y="112"
-        width="120"
+        className="ttl-fill-inst bar anim"
+        x="30"
+        y="82"
+        width="150"
         height="6"
       />
-      <rect
-        className="ttl-fill-inst bar b-inst-refill anim"
-        x="35"
-        y="112"
-        width="120"
-        height="6"
-      />
-      <text x="118" y="140" textAnchor="middle" className="lbl-s">
-        contract calls extend_ttl() — never automatic
+      <line className="d0-arrow anim" x1="105" y1="94" x2="105" y2="110" />
+      <path className="d0-arrowhead anim" d="M101 106 L105 112 L109 106" />
+      <text x="105" y="104" textAnchor="middle" className="lbl-s d0-expiry">
+        TTL expires
       </text>
-      <text
-        x="95"
-        y="168"
-        textAnchor="middle"
-        className="lbl-s"
-        fill="var(--amber)"
-      >
-        one entry, loaded each call
-      </text>
+      <g className="d0-outcome d0-inst-archived anim">
+        <rect
+          className="cell d0-result-inst"
+          x="25"
+          y="119"
+          width="160"
+          height="68"
+        />
+        <text
+          x="105"
+          y="139"
+          textAnchor="middle"
+          className="lbl d0-result-title"
+        >
+          ARCHIVED
+        </text>
+        <text x="105" y="157" textAnchor="middle" className="lbl-s">
+          contract instance entry
+        </text>
+        <text x="105" y="177" textAnchor="middle" className="lbl-s">
+          code has its own TTL
+        </text>
+      </g>
+      <g className="d0-inst-restored">
+        <rect
+          className="cell d0-result-inst"
+          x="25"
+          y="119"
+          width="160"
+          height="68"
+        />
+        <text
+          x="105"
+          y="141"
+          textAnchor="middle"
+          className="lbl d0-result-title"
+        >
+          RESTORED
+        </text>
+        <text x="105" y="161" textAnchor="middle" className="lbl-s">
+          instance entry
+          <tspan x="105" dy="15">
+            + code, if also archived
+          </tspan>
+        </text>
+      </g>
 
-      <text
-        x="330"
-        y="20"
-        textAnchor="middle"
-        className="lbl"
-        fill="var(--teal)"
-      >
+      <text x="330" y="16" textAnchor="middle" className="lbl">
         persistent()
       </text>
-      <g className="pers-dim anim">
+      <g className="d0-entry anim">
         <rect
           className="cell cell-pers"
-          x="270"
-          y="34"
-          width="120"
-          height="64"
-          rx="6"
+          x="255"
+          y="26"
+          width="150"
+          height="48"
         />
-        <text x="330" y="60" textAnchor="middle" className="lbl-s mono">
+        <text x="330" y="48" textAnchor="middle" className="lbl-s mono">
           Balance(alice)
         </text>
-        <text x="330" y="76" textAnchor="middle" className="lbl-s mono">
+        <text x="330" y="65" textAnchor="middle" className="lbl-s mono">
           → 1_000_000
         </text>
       </g>
-      <g className="archived anim">
-        <line className="hatch" x1="276" y1="92" x2="330" y2="38" />
-        <line className="hatch" x1="296" y1="94" x2="352" y2="38" />
-        <line className="hatch" x1="318" y1="94" x2="374" y2="38" />
-        <line className="hatch" x1="340" y1="94" x2="386" y2="48" />
-        <text
-          x="330"
-          y="168"
-          textAnchor="middle"
-          className="lbl-s"
-          fill="var(--teal)"
-        >
-          archived — auto-restored on next use (rent re-paid)
-        </text>
-      </g>
-      <rect className="ttl-track" x="270" y="112" width="120" height="6" />
+      <rect className="ttl-track" x="255" y="82" width="150" height="6" />
       <rect
-        className="ttl-fill-pers bar b-pers anim"
-        x="270"
-        y="112"
-        width="120"
+        className="ttl-fill-pers bar anim"
+        x="255"
+        y="82"
+        width="150"
         height="6"
       />
-      <text x="330" y="140" textAnchor="middle" className="lbl-s">
-        TTL runs out…
+      <line className="d0-arrow anim" x1="330" y1="94" x2="330" y2="110" />
+      <path className="d0-arrowhead anim" d="M326 106 L330 112 L334 106" />
+      <text x="330" y="104" textAnchor="middle" className="lbl-s d0-expiry">
+        TTL expires
       </text>
+      <g className="d0-outcome d0-pers-archived anim">
+        <rect
+          className="cell d0-result-pers"
+          x="250"
+          y="119"
+          width="160"
+          height="68"
+        />
+        <text
+          x="330"
+          y="139"
+          textAnchor="middle"
+          className="lbl d0-result-title"
+        >
+          ARCHIVED
+        </text>
+        <text x="330" y="157" textAnchor="middle" className="lbl-s">
+          one persistent entry
+        </text>
+        <text x="330" y="177" textAnchor="middle" className="lbl-s">
+          independent TTL
+        </text>
+      </g>
+      <g className="d0-pers-restored">
+        <rect
+          className="cell d0-result-pers"
+          x="250"
+          y="119"
+          width="160"
+          height="68"
+        />
+        <text
+          x="330"
+          y="141"
+          textAnchor="middle"
+          className="lbl d0-result-title"
+        >
+          RESTORED
+        </text>
+        <text x="330" y="169" textAnchor="middle" className="lbl-s">
+          this exact key only
+        </text>
+      </g>
 
-      <text
-        x="565"
-        y="20"
-        textAnchor="middle"
-        className="lbl"
-        fill="var(--rose)"
-      >
+      <text x="555" y="16" textAnchor="middle" className="lbl">
         temporary()
       </text>
-      <g className="temp-cell anim">
+      <g className="d0-entry anim">
         <rect
           className="cell cell-temp"
-          x="505"
-          y="34"
-          width="120"
-          height="64"
-          rx="6"
+          x="480"
+          y="26"
+          width="150"
+          height="48"
         />
-        <text x="565" y="60" textAnchor="middle" className="lbl-s mono">
+        <text x="555" y="48" textAnchor="middle" className="lbl-s mono">
           Allowance(a,b)
         </text>
-        <text x="565" y="76" textAnchor="middle" className="lbl-s mono">
+        <text x="555" y="65" textAnchor="middle" className="lbl-s mono">
           → 500
         </text>
       </g>
-      <rect className="ttl-track" x="505" y="112" width="120" height="6" />
+      <rect className="ttl-track" x="480" y="82" width="150" height="6" />
       <rect
-        className="ttl-fill-temp bar b-temp anim"
-        x="505"
-        y="112"
-        width="120"
+        className="ttl-fill-temp bar anim"
+        x="480"
+        y="82"
+        width="150"
         height="6"
       />
-      <text x="565" y="140" textAnchor="middle" className="lbl-s">
-        TTL runs out…
+      <line className="d0-arrow anim" x1="555" y1="94" x2="555" y2="110" />
+      <path className="d0-arrowhead anim" d="M551 106 L555 112 L559 106" />
+      <text x="555" y="104" textAnchor="middle" className="lbl-s d0-expiry">
+        TTL expires
       </text>
-      <text
-        x="565"
-        y="168"
-        textAnchor="middle"
-        className="lbl-s deleted anim"
-        fill="var(--rose)"
-      >
-        deleted forever · half rent
-      </text>
+      <g className="d0-outcome anim">
+        <rect
+          className="cell d0-result-temp"
+          x="475"
+          y="119"
+          width="160"
+          height="68"
+        />
+        <text
+          x="555"
+          y="139"
+          textAnchor="middle"
+          className="lbl d0-result-title"
+        >
+          DELETED
+        </text>
+        <text x="555" y="157" textAnchor="middle" className="lbl-s">
+          permanent
+        </text>
+        <text x="555" y="177" textAnchor="middle" className="lbl-s">
+          no restore path
+        </text>
+      </g>
     </svg>
   ),
   d1: (
     <svg
       viewBox="0 0 660 170"
       role="img"
-      aria-label="Animation: every invocation loads the contract instance entry, and the config inside it comes along for free."
+      aria-label="Animation: every invocation loads the contract instance entry, so its config needs no separate footprint entry."
     >
       <text x="120" y="52" textAnchor="middle" className="lbl">
         invocations
@@ -232,7 +284,7 @@ const SVGS: Record<string, React.ReactNode> = {
         Reserve1
       </text>
       <text x="330" y="162" textAnchor="middle" className="lbl-s">
-        loaded on every call anyway → config rides along for free
+        loaded with each invocation → no separate config footprint entry
       </text>
     </svg>
   ),
@@ -240,7 +292,7 @@ const SVGS: Record<string, React.ReactNode> = {
     <svg
       viewBox="0 0 660 190"
       role="img"
-      aria-label="Animation: one shared map entry swells toward the 64-kibibyte cap, while one-entry-per-user stays small and parallel."
+      aria-label="Animation: one shared map entry swells toward the 64-kibibyte entry cap, while one-entry-per-user stays small and supports independent access."
     >
       <g className="badside anim">
         <text x="165" y="22" textAnchor="middle" className="lbl">
@@ -324,10 +376,10 @@ const SVGS: Record<string, React.ReactNode> = {
       </g>
       <g className="u4 anim">
         <text x="495" y="146" textAnchor="middle" className="lbl-s">
-          …one independent entry per user,
+          …one independently addressed entry per user,
         </text>
         <text x="495" y="162" textAnchor="middle" className="lbl-s">
-          touched only by that user's transactions
+          transactions touch only the entries they need
         </text>
       </g>
     </svg>
@@ -389,7 +441,7 @@ const SVGS: Record<string, React.ReactNode> = {
     <svg
       viewBox="0 0 660 200"
       role="img"
-      aria-label="Animation: a temporary allowance entry is deleted exactly when its TTL runs out, and a timestamp-keyed price history prunes itself."
+      aria-label="Animation: a temporary allowance entry is deleted when its TTL runs out, and timestamp-keyed price-history entries are deleted as their derived TTLs expire."
     >
       <g className="cell1 anim">
         <rect
@@ -416,7 +468,7 @@ const SVGS: Record<string, React.ReactNode> = {
         height="6"
       />
       <text x="40" y="122" className="lbl-s">
-        TTL set to the deadline itself
+        TTL aligned to the deadline when possible
       </text>
       <text
         x="135"
@@ -425,7 +477,7 @@ const SVGS: Record<string, React.ReactNode> = {
         className="lbl gonelbl anim"
         fill="var(--rose)"
       >
-        deleted — zero cleanup cost
+        deleted without a cleanup transaction
       </text>
 
       <text x="470" y="26" textAnchor="middle" className="lbl">
@@ -494,11 +546,11 @@ const SVGS: Record<string, React.ReactNode> = {
         one entry per price round, keyed by timestamp;
       </text>
       <text x="470" y="116" textAnchor="middle" className="lbl-s">
-        TTL = retention window → oldest rounds expire on their own
+        TTL derived from retention → old rounds can expire independently
       </text>
       <text x="330" y="180" textAnchor="middle" className="lbl-s">
-        the TTL <tspan fontStyle="italic">is</tspan> the business logic — expiry
-        does the cleanup for free, at half rent
+        temporary entries are deleted on expiry without a cleanup transaction;
+        rent is half the persistent rate
       </text>
     </svg>
   ),
@@ -506,7 +558,7 @@ const SVGS: Record<string, React.ReactNode> = {
     <svg
       viewBox="0 0 660 170"
       role="img"
-      aria-label="Animation: extend_ttl is a no-op while plenty of TTL remains, and refills the TTL to the bump amount once it drops below the threshold."
+      aria-label="Animation: extend_ttl is a no-op while plenty of TTL remains, and extends the TTL to the bump amount once it drops below the threshold."
     >
       <text x="60" y="30" className="lbl">
         TTL of <tspan className="mono">Balance(alice)</tspan>
@@ -535,7 +587,7 @@ const SVGS: Record<string, React.ReactNode> = {
         className="lbl-s"
         fill="var(--danger)"
       >
-        in this zone, access extends the TTL
+        in this zone, an extend_ttl() call extends the TTL
       </text>
       <rect
         className="ttl-fill-pers bar p1 anim"
@@ -577,13 +629,13 @@ const SVGS: Record<string, React.ReactNode> = {
         className="lbl-s"
         fill="var(--danger)"
       >
-        THRESHOLD (BUMP − 1 day)
+        THRESHOLD (BUMP − 17,280 ledgers)
       </text>
       <text x="60" y="110" className="lbl-s">
         0
       </text>
       <text x="600" y="110" textAnchor="end" className="lbl-s">
-        BUMP (e.g. 30 days)
+        BUMP (e.g. 518,400 ledgers)
       </text>
       <g className="bolt1 anim">
         <text
@@ -593,7 +645,7 @@ const SVGS: Record<string, React.ReactNode> = {
           className="lbl"
           fill="var(--ink)"
         >
-          ⚡ access
+          extend_ttl()
         </text>
       </g>
       <text x="470" y="132" textAnchor="middle" className="lbl-s noop anim">
@@ -607,7 +659,7 @@ const SVGS: Record<string, React.ReactNode> = {
           className="lbl"
           fill="var(--ink)"
         >
-          ⚡ access
+          extend_ttl()
         </text>
       </g>
       <text
@@ -617,12 +669,10 @@ const SVGS: Record<string, React.ReactNode> = {
         className="lbl-s bump anim"
         fill="var(--teal)"
       >
-        below threshold → refilled to BUMP · rent paid by the user who touched
-        it
+        below threshold → extended to BUMP · rent charged with transaction fees
       </text>
       <text x="330" y="160" textAnchor="middle" className="lbl-s">
-        applied on every read and write → at most one small extension per day
-        per active entry
+        if called on every access → at most one extension per 17,280 ledgers
       </text>
     </svg>
   ),
@@ -742,7 +792,7 @@ const SVGS: Record<string, React.ReactNode> = {
         className="lbl-s panic anim"
         fill="var(--danger)"
       >
-        panic! cap reached
+        rejected: cap reached
       </text>
       <text x="260" y="130" textAnchor="middle" className="lbl-s">
         whole list read in 1 footprint entry · iterate in memory
@@ -791,7 +841,7 @@ const SVGS: Record<string, React.ReactNode> = {
         className="lbl-s"
         fill="var(--ink)"
       >
-        health check = 1 read
+        all user positions = 1 read
       </text>
       <text x="165" y="150" textAnchor="middle" className="lbl-s u1 anim">
         any update rewrites the whole blob
@@ -841,7 +891,7 @@ const SVGS: Record<string, React.ReactNode> = {
         hot data updates without rewriting cold config
       </text>
       <text x="330" y="188" textAnchor="middle" className="lbl-s">
-        rule: what a transaction reads and writes together belongs together
+        heuristic: pack data usually read and written together
       </text>
     </svg>
   ),
@@ -975,7 +1025,7 @@ const SVGS: Record<string, React.ReactNode> = {
         className="lbl-s note1 anim"
         fill="var(--rose)"
       >
-        1 · delete C
+        1 · read the last item
       </text>
       <text
         x="489"
@@ -984,12 +1034,12 @@ const SVGS: Record<string, React.ReactNode> = {
         className="lbl-s note2 anim"
         fill="var(--teal)"
       >
-        2 · move last item into the hole · 3 · fix its reverse pointer · 4 · pop
-        the tail
+        2 · move it into the hole · 3 · fix its reverse pointer · 4 · remove the
+        tail
       </text>
       <text x="330" y="178" textAnchor="middle" className="lbl-s">
-        constant ~3 writes + 1 delete, regardless of set size — order is not
-        preserved
+        a constant number of entry updates, regardless of set size — order is
+        not preserved
       </text>
     </svg>
   ),
@@ -1019,7 +1069,7 @@ const SVGS: Record<string, React.ReactNode> = {
         height="8"
       />
       <text x="330" y="86" textAnchor="middle" className="lbl-s mono">
-        index: 1.0842… ↑ (advanced lazily, on first touch per block)
+        index: 1.0842… ↑ (advanced lazily when emissions are updated)
       </text>
 
       <g className="alice anim">
@@ -1094,7 +1144,7 @@ const SVGS: Record<string, React.ReactNode> = {
     <svg
       viewBox="0 0 660 210"
       role="img"
-      aria-label="Animation: a whole airdrop list collapses to a single 32-byte Merkle root on-chain; claimers bring the data plus a proof."
+      aria-label="Animation: a whole airdrop list collapses to a 32-byte Merkle root on-chain; claimers bring the data plus a proof, and successful claims add a claimed flag to the same instance entry."
     >
       <g className="leaves anim">
         <rect className="cell" x="60" y="140" width="100" height="30" rx="4" />
@@ -1150,10 +1200,11 @@ const SVGS: Record<string, React.ReactNode> = {
         RootHash
       </text>
       <text x="440" y="40" className="lbl-s onchain anim" fill="var(--ink)">
-        ← the ONLY entry on-chain: 32 bytes
+        ← 32-byte root in instance storage
       </text>
       <text x="440" y="60" className="lbl-s claim anim">
-        + one tiny <tspan className="mono">Claimed(i)</tspan> flag per claimer
+        + each <tspan className="mono">Claimed(i)</tspan> flag grows that same
+        entry
       </text>
     </svg>
   ),
@@ -1161,7 +1212,7 @@ const SVGS: Record<string, React.ReactNode> = {
     <svg
       viewBox="0 0 660 210"
       role="img"
-      aria-label="Animation: a factory contract deploys one contract per trading pair and keeps only a registry; each deployed contract gets its own storage domain."
+      aria-label="Animation: a factory contract deploys one contract per trading pair and keeps the pair registry plus factory configuration; each deployed contract gets its own storage domain."
     >
       <rect
         className="cell"
@@ -1182,7 +1233,7 @@ const SVGS: Record<string, React.ReactNode> = {
         factory
       </text>
       <text x="115" y="94" textAnchor="middle" className="lbl-s">
-        keeps only the registry:
+        registry + factory config
       </text>
       <g className="reg1 anim">
         <text x="115" y="114" textAnchor="middle" className="lbl-s mono">
@@ -1290,7 +1341,7 @@ const SVGS: Record<string, React.ReactNode> = {
           className="lbl-s"
           fill="var(--teal)"
         >
-          pair A never contends with pair B
+          pair-local entries do not conflict across pairs
         </text>
       </g>
     </svg>
