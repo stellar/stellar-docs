@@ -99,6 +99,8 @@ The same is true for Stellar RPC, and a subset of Anchor Platform functionality.
 
 To the extent possible, anything that changes a page's URL needs redirect coverage (`routes.txt` participates in CI route checking; server-side redirects live in `nginx/`). If your PR moves or renames pages, call it out explicitly in the description.
 
+Redirects written for nginx can be tricky. The syntax MUST be precise, and regular expressions don't always behave like they do elsewhere (e.g., regexes with curly braces `{}` must be fully contained by quotes `"`). If a URL rewrite is introduced using a regular expression, a close test and review from maintainers is required.
+
 ### Patches and swizzles are a last resort
 
 We keep the fork-surface of this site as small as possible. When something in a dependency is broken, work down this list and stop at the first rung that works:
