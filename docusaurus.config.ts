@@ -36,6 +36,7 @@ const config: Config = {
       async: true,
     },
   ],
+  clientModules: ["./src/clientModules/apiReferenceMarkdownButton.js"],
   plugins: [
     "docusaurus-plugin-sass",
     [
