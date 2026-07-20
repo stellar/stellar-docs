@@ -566,23 +566,7 @@ const SVGS: Record<string, React.ReactNode> = {
         in this zone, an extend_ttl() call extends the TTL
       </text>
       <rect
-        className="ttl-fill-pers bar p1 anim"
-        x="60"
-        y="70"
-        width="540"
-        height="14"
-        rx="3"
-      />
-      <rect
-        className="ttl-fill-pers bar p2 anim"
-        x="60"
-        y="70"
-        width="540"
-        height="14"
-        rx="3"
-      />
-      <rect
-        className="ttl-fill-pers bar p3 anim"
+        className="ttl-fill-pers bar pbar anim"
         x="60"
         y="70"
         width="540"
@@ -629,7 +613,7 @@ const SVGS: Record<string, React.ReactNode> = {
     <svg
       viewBox="0 0 660 160"
       role="img"
-      aria-label="Animation: a list inside one entry fills up to its hard cap; the next insert is rejected with a panic."
+      aria-label="Animation: a list inside one entry fills up to the hard cap the contract chose for itself; the next insert is rejected by contract code, not by a network limit."
     >
       <rect
         className="cell cell-pers"
@@ -728,11 +712,14 @@ const SVGS: Record<string, React.ReactNode> = {
       </g>
       <text
         x="558"
-        y="120"
+        y="114"
         textAnchor="middle"
         className="lbl-s panic anim fill-danger"
       >
-        rejected: cap reached
+        <tspan x="558">rejected: contract&apos;s own cap</tspan>
+        <tspan x="558" dy="14">
+          — not a network limit
+        </tspan>
       </text>
       <text x="260" y="130" textAnchor="middle" className="lbl-s">
         whole list read in 1 footprint entry · iterate in memory
