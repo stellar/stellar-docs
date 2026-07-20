@@ -6,13 +6,13 @@ description: Eleven storage layout strategies for Soroban contracts, with diagra
 
 import StorageDiagram from "@site/src/components/StorageStrategies";
 
-How experienced teams lay out contract state on Stellar — from a first counter to protocol-scale data layouts. These strategies are ordered from simplest to most complex and grounded in current production contracts and official examples.
+How experienced teams lay out contract state on Stellar — from a first counter to protocol-scale data layouts. The strategies below are ordered from simplest to most complex and grounded in current production contracts and official examples. They are not mutually exclusive: each one applies to a _piece_ of state, not to a whole contract, and production contracts routinely compose several — a single lending pool keeps its config in instance storage (Strategy 1), one entry per user position (Strategy 2), and a bounded reserve list (Strategy 6). Use the [decision path](#choosing-a-decision-path) to pick a strategy per piece of state.
 
 :::info Protocol and limits snapshot
 
-**Published:** July 17, 2026. **Protocol:** Stellar Protocol 27.
+**Checked:** July 20, 2026. **Protocol:** Stellar Protocol 27.
 
-Mainnet resource limits are network settings and can evolve. Re-evaluate reasoning tied to current values, such as the 200 disk-read-entry and 200 write-entry limits per transaction, against the current network configuration.
+Mainnet resource limits are network settings that validators can change, and the strategy list itself can grow with the ecosystem. Verify any limit quoted here — such as the 200 disk-read-entry and 200 write-entry caps per transaction — with `stellar network settings --network mainnet` or on [Stellar Laboratory](https://lab.stellar.org/network-limits). The current values are tabulated in the [appendix](#appendix-mainnet-limits).
 
 :::
 
@@ -20,21 +20,31 @@ Mainnet resource limits are network settings and can evolve. Re-evaluate reasoni
 
 ## Why storage is the hard part
 
-On Soroban, contract state is not a free-form database. It is a set of **ledger entries**: independent key→value pairs. Keys and values can be any Soroban-serializable type — built-ins such as `Symbol`, numbers, `Address`, bytes, vectors, and maps, or `#[contracttype]` structs and enums. The serialized contract-data ledger key, including its fixed fields and user key, is capped at **250 bytes**. The entire serialized contract-data ledger entry is capped at **64 KiB**, so the value has less than 64 KiB available after entry overhead. Each transaction declares the entries it may read and write in its _footprint_. Entries also have a TTL (time-to-live, in ledgers); rent is charged when an entry is created or grows and when its TTL is extended. On expiry, persistent and instance entries are archived, while temporary entries are deleted permanently.
+On Soroban, contract state is not a free-form database. It is a set of **ledger entries**: independent key→value pairs. Keys and values can be any Soroban-serializable type — built-ins such as `Symbol`, numbers, `Address`, bytes, vectors, and maps, or `#[contracttype]` structs and enums. The serialized contract-data ledger key, including its fixed fields and user key, is capped at **250 bytes**. The entire serialized contract-data ledger entry is capped at **64 KiB**, so the value has less than 64 KiB available after entry overhead. Each transaction declares the entries it may read and write in its _footprint_. Entries also have a TTL (time-to-live, in ledgers); **rent** is charged when an entry is created or grows and when its TTL is extended. On expiry, persistent and instance entries are archived, while temporary entries are deleted permanently.
 
 That model has three consequences that drive everything below:
 
 - **You cannot iterate what you cannot name.** There is no "give me all keys starting with X". To enumerate, you build the index yourself.
 
-- **Reads and writes are limited per transaction.** Under the current Mainnet settings, a transaction can read up to 200 entries from disk. It can write up to 200 entries.
+- **Reads and writes are limited per transaction.** Under the current Mainnet settings, a transaction can read up to 200 entries from disk and write up to 200 entries.
 
-- **State is not free forever.** Every byte kept alive has a recurring cost, and every entry needs a TTL story.
+- **State is not free forever.** Every byte kept alive has a recurring cost, and every entry needs a TTL management plan.
 
 ### The three storage tiers
 
 `env.storage()` gives you three APIs with the same interface but different _lifecycles_. Watch what happens to each tier's entry when its TTL runs out:
 
 <StorageDiagram n={0} />
+
+In the animation, expired instance and persistent entries end **archived** — no longer accessible to transactions, but recoverable — while an expired temporary entry gets **deleted**. The two restore buttons simulate restoration of archived instance/persistent entries. On the real network, there are two ways to restore an archived entry:
+
+- **Automatic** (since protocol 23): simulate and submit an ordinary invocation that touches the archived key. The RPC server adds that key — plus the contract code entry, if it is archived too — to the transaction's **restore list**, and the network restores everything on the list before the contract executes.
+
+- **Manual**: submit a `RestoreFootprintOp` naming the exact ledger keys; the CLI wraps this as `stellar contract restore`.
+
+Either way, restoration charges rent and resource fees, and the restored entry comes back at the minimum persistent TTL.
+
+Expiry and restoration are only part of the story. Side by side, here is how the three tiers compare across their whole lifecycle — where each one lives, what it costs, and roughly what it is good for:
 
 |  | **instance()** | **persistent()** | **temporary()** |
 | --- | --- | --- | --- |
@@ -47,52 +57,19 @@ That model has three consequences that drive everything below:
 | Loaded when | **every invocation of this contract** | only when in the footprint | only when in the footprint |
 | Right for | small, global, contract-lifetime config | data you must never lose | data with a natural deadline, or safely regenerable |
 
-Four subtleties that bite newcomers:
+Five subtleties that bite newcomers:
 
-- **Nothing extends a TTL automatically.** The host never bumps a TTL on access — on any tier. Every extension is an explicit `extend_ttl()` call by the contract (or a transaction operation). What looks automatic in well-run contracts is the bump-on-access pattern (Strategy 5), applied to instance and persistent entries alike.
+- **Nothing extends a TTL automatically.** The host never bumps a TTL on access — on any tier. Every extension is an explicit `extend_ttl()` call by the contract (or a transaction operation). What looks automatic in well-run contracts is the bump-on-access pattern (see Strategy 5), applied to instance and persistent entries alike.
 
-- **Instance storage is one entry.** Everything in it is loaded with each invocation of that contract and shares the 64 KiB entry cap. Since protocol 23 executes non-conflicting transactions in parallel, transactions that both write the same instance entry conflict. Keep it small and mostly read-only. `instance().extend_ttl()` applies the same extension policy to the contract code entry, with the threshold checked separately for each entry.
+- **Anyone can extend any entry's TTL.** `ExtendFootprintTTLOp` has no access control, so expiry is never a security boundary: if your logic assumes an authorization lapses when its entry expires, a bad actor can keep that entry alive indefinitely. A deadline your contract must enforce belongs in the entry's _value_, checked in code — the TTL only manages storage lifecycle (Strategy 4).
+
+- **Instance storage is one entry.** Everything in `instance()` shares the contract instance's single ledger entry: it is all loaded on every invocation, it must fit the 64 KiB cap together, and any two transactions that write it run sequentially (the network parallelizes only non-conflicting transactions). Keep it small and mostly read-only. TTLs are all-at-once too: `instance().extend_ttl()` extends everything together, and applies the same policy to the separate contract code entry with an independent threshold check.
 
 - **Temporary is not "scratch space".** It is durable across transactions until its TTL runs out — but expiry _permanently deletes_ it: no archive, no recovery. Use it only for data whose loss is acceptable or whose validity provably ends at a known ledger. In exchange it rents at half price and never needs restoring.
 
-- **Restoration is driven by the transaction, not by contract code.** Since protocol 23, archived entries named in an invocation's restore list are restored before execution; simulation normally builds that list. An archived key that is in the footprint but not in the restore list fails the transaction before the contract runs — contract code never observes, and cannot restore, an archived entry. Instance storage restores as one contract instance entry (contract code separately, if also archived); persistent entries restore per key. Manual restoration with `RestoreFootprintOp` remains available. Restoration charges rent and resource fees.
+- **Restoration is driven by the transaction, not by contract code.** An archived key that is in the footprint but not in the restore list fails the transaction before the contract runs — contract code never observes, and cannot restore, an archived entry. Instance storage restores as one contract instance entry (contract code separately, if also archived); persistent entries restore per key.
 
-### The limits (Mainnet, protocol 27, checked 2026-07-17)
-
-These values were read from Mainnet with `stellar network settings --network mainnet` and cross-checked against [Stellar Laboratory](https://lab.stellar.org/network-limits) on July 17, 2026. Network validators can change them; query the current settings before relying on them.
-
-| Per transaction | Limit | Practical meaning |
-| --- | --: | --- |
-| CPU instructions | 400,000,000 | compute budget for the whole invocation tree |
-| Memory | 40 MiB | host + guest memory |
-| **Footprint entries** (read + write) | **400** | max distinct entries one transaction may touch |
-| Disk-read entries / bytes | 200 / 200,000 | separate from the footprint cap; applies to disk-backed reads |
-| **Written entries / bytes** | **200** / 132,096 | distinct entries written; sum of written entry sizes (~129 KiB) |
-| Transaction size | 132,096 B | envelope incl. footprint — big footprints eat your payload |
-| Events + return value | 16,384 B | contract events plus the top-level return value in metadata |
-
-| Per ledger (target ~5 s today) |           Limit |
-| ------------------------------ | --------------: |
-| CPU instructions               |     580,000,000 |
-| Disk-read entries / bytes      | 1,000 / 400,000 |
-| Write entries / bytes          | 1,000 / 286,720 |
-| Smart-contract transactions    |           2,000 |
-| Soroban transaction bytes      |       266,240 B |
-
-| Sizes & TTLs                                   |                     Value |
-| ---------------------------------------------- | ------------------------: |
-| Max serialized contract-data ledger-key size   |                     250 B |
-| Max contract-data entry size                   |         65,536 B (64 KiB) |
-| Max contract Wasm size                         |       131,072 B (128 KiB) |
-| **Max entry TTL**                              | 3,110,400 ledgers ≈ 180 d |
-| Min TTL: persistent/instance create or restore | 2,073,600 ledgers ≈ 120 d |
-| Min TTL: temporary create                      |      17,280 ledgers ≈ 1 d |
-
-:::note
-
-Two numbers to remember: **`17,280` ledgers is about one day at today's ~5-second target close time**, and **64 KiB is the whole contract-data entry limit**. Close time is a network setting, so day-based TTL constants are approximations, not wall-clock guarantees. Many codebases define `DAY_IN_LEDGERS` for readability. Keep entries well below the size limit because large values increase read, write, and rent costs.
-
-:::
+That is the machinery every strategy below manages. The rest of this guide walks through the eleven strategies themselves, from simplest to most involved, each in the same shape: the situation you are in (**You need**), why the obvious approach hurts (**The catch**), the working code (**The pattern**), and what it costs (**Trade-offs**).
 
 {/* section:s1 */}
 
@@ -130,13 +107,13 @@ e.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMO
 
 **In the wild**
 
-- `stellar/soroban-examples` — `liquidity_pool/src/lib.rs` stores tokens, reserves, and total shares in instance storage; `account/src/lib.rs` stores its signer entries and signer count there.
+- [`stellar/soroban-examples`](https://github.com/stellar/soroban-examples) — [`liquidity_pool/src/lib.rs`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/liquidity_pool/src/lib.rs#L10-L26) stores tokens, reserves, and total shares in instance storage; [`account/src/lib.rs`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/account/src/lib.rs#L27-L53) stores its signer entries and signer count there.
 
-- `soroswap/core` — `contracts/pair/src/storage.rs` keeps `Token0/Token1/Reserve0/Reserve1/Factory/KLast` in instance storage: every swap touches reserves, so co-locating them minimizes footprint.
+- [`soroswap/core`](https://github.com/soroswap/core) — [`contracts/pair/src/storage.rs`](https://github.com/soroswap/core/blob/bb90a65556d8eee0dc698ac75de0f280e547fedc/contracts/pair/src/storage.rs#L7-L40) keeps `Token0/Token1/Reserve0/Reserve1/Factory/KLast` in instance storage: every swap touches reserves, so co-locating them minimizes footprint.
 
-- `blend-capital/blend-contracts-v2` — `pool/src/storage.rs`: admin, backstop, config under `Symbol` keys.
+- [`blend-capital/blend-contracts-v2`](https://github.com/blend-capital/blend-contracts-v2) — [`pool/src/storage.rs`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L208-L223): admin, backstop, config under `Symbol` keys.
 
-- `OpenZeppelin/stellar-contracts` — fungible-token metadata and the ownable `Owner` key use instance storage.
+- [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — fungible-token metadata in [`packages/tokens/src/fungible/storage.rs`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/tokens/src/fungible/storage.rs#L33-L126) and the ownable `Owner` key in [`packages/access/src/ownable/storage.rs`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/access/src/ownable/storage.rs#L13-L51) use instance storage.
 
 {/* section:s2 */}
 
@@ -146,7 +123,7 @@ _persistent · O(1) lookup · independently addressed entries · no enumeration_
 
 **You need.** Per-user (or per-asset, per-order, per-anything) state: balances, positions, configs. Unbounded population.
 
-**The catch.** A naive `Map<Address, i128>` under one key hits three walls: the 64 KiB entry cap, the write-bytes budget because every update rewrites the map, and contention because every user's transaction writes the same entry.
+**The catch.** A naive `Map<Address, i128>` under one key hits three walls: the 64 KiB entry cap; the write-bytes budget, because every update rewrites the map; and contention, because every user's transaction writes the same entry.
 
 <StorageDiagram n={2} />
 
@@ -169,7 +146,7 @@ pub fn read_balance(e: &Env, addr: Address) -> i128 {
 }
 ```
 
-Note the two idioms: **absent-means-default** (don't create entries to store zero) and **bump-on-access** (Strategy 5).
+Note the two idioms: **absent-means-default** (don't create entries to store zero) and **bump-on-access** (see Strategy 5).
 
 **Trade-offs**
 
@@ -177,17 +154,17 @@ Note the two idioms: **absent-means-default** (don't create entries to store zer
 
 - You lose enumeration entirely — there is no way to list all `Balance(..)` keys on-chain. If you need "all holders", add an index (Strategy 8) or index events off-chain.
 
-- Aggregate rent grows with users. The fee-paying account pays any rent charged when an entry is created, enlarged, restored, or extended.
+- Aggregate rent grows with the population — unbounded users mean an unbounded total — but per-interaction cost stays flat. Rent falls on the transaction's fee payer when an entry is created, enlarged, restored, or extended, so with bump-on-access each user funds their own entry.
 
 **In the wild**
 
-- `stellar/soroban-examples` — `token/src/balance.rs`, the canonical per-holder persistent balance layout; `liquidity_pool` (`Shares(Address)`).
+- [`stellar/soroban-examples`](https://github.com/stellar/soroban-examples) — [`token/src/balance.rs`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/token/src/balance.rs#L4-L22), the canonical per-holder persistent balance layout; [`liquidity_pool`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/liquidity_pool/src/lib.rs#L10-L62) (`Shares(Address)`).
 
-- `OpenZeppelin/stellar-contracts` — fungible `Balance(Address)` entries are persistent and extended explicitly.
+- [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — fungible [`Balance(Address)`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/tokens/src/fungible/storage.rs#L34-L60) entries are persistent and extended explicitly.
 
-- `blend-capital/blend-contracts-v2` — one persistent `Positions(Address)` entry per user and separate `ResConfig(Address)` and `ResData(Address)` entries per reserve.
+- [`blend-capital/blend-contracts-v2`](https://github.com/blend-capital/blend-contracts-v2) — one persistent [`Positions(Address)`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L176-L196) entry per user and separate [`ResConfig(Address)`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L338-L370) and [`ResData(Address)`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L432-L456) entries per reserve.
 
-- `kalepail/passkey-kit` — each wallet stores signers individually, with the caller selecting persistent or temporary storage.
+- [`kalepail/passkey-kit`](https://github.com/kalepail/passkey-kit) — each wallet stores signers individually in [`signer.rs`](https://github.com/kalepail/passkey-kit/blob/50981ccd5d2de654cf0e50633919cc9ba2df4e58/contracts/smart-wallet/src/signer.rs#L32-L62), with the caller selecting persistent or temporary storage.
 
 {/* section:s3 */}
 
@@ -211,12 +188,20 @@ pub struct AllowanceDataKey { pub from: Address, pub spender: Address }
 pub enum DataKey { Allowance(AllowanceDataKey) }
 ```
 
-A powerful refinement: put a **time bucket in the key** to get self-partitioning data. The mint-lock example keys per-epoch consumption as `MinterStats(contract, minter, epoch_length, epoch)` — a new epoch simply _starts writing a different key_, and old epochs can expire independently (Strategy 4):
+A positional tuple variant works just as well:
 
 ```rust
-let epoch = e.ledger().sequence() / config.epoch_length;
-let key = StorageKey::MinterStats(contract, minter, config.epoch_length, epoch);
+#[contracttype]
+pub enum DataKey { Allowance(Address, Address) } // (from, spender)
 ```
+
+The difference is size versus safety: the tuple form is smaller (120 B vs 160 B for this key — meaningful under the 250 B cap), while named fields won't let you accidentally swap `from` and `spender` when building the key.
+
+**Variation — time-bucketed keys.** When one dimension is time, put the bucket in the key so data self-partitions: each epoch writes a new key, and old buckets expire on their own (the lifecycle half is Strategy 4). With no enumeration, a bucket is readable only if you can recompute its key — so bucket by time only when old data is disposable or its keys are derivable. The [`mint-lock`](https://github.com/stellar/soroban-examples/tree/14c069cccf85e552d4d80c8122e00a61a5723aae/mint-lock) example implements this end-to-end:
+
+- [`StorageKey::MinterStats(contract, minter, epoch_length, epoch)`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/mint-lock/src/lib.rs#L28-L31) — `epoch_length` sits in the key, so a config change does not orphan old buckets.
+
+- [`mint()`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/mint-lock/src/lib.rs#L134-L163) — derives the epoch from the ledger sequence (`sequence / epoch_length`), tracks consumption under that key, and extends the temporary entry only to the end of its epoch.
 
 **Trade-offs**
 
@@ -228,13 +213,13 @@ let key = StorageKey::MinterStats(contract, minter, config.epoch_length, epoch);
 
 **In the wild**
 
-- `stellar/soroban-examples` — `token/src/allowance.rs` (`(from, spender)`), `mint-lock` (epoch-bucketed minter stats).
+- [`stellar/soroban-examples`](https://github.com/stellar/soroban-examples) — [`token/src/allowance.rs`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/token/src/allowance.rs#L5-L6) ([`(from, spender)`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/token/src/storage_types.rs#L12-L15)), [`mint-lock`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/mint-lock/src/lib.rs#L27-L28) (epoch-bucketed minter stats).
 
-- `blend-capital/blend-contracts-v2` — `UserBalance(PoolUserKey{pool,user})`, `UserEmis(UserReserveKey{user,reserve_id})`, and auctions keyed by user plus auction type.
+- [`blend-capital/blend-contracts-v2`](https://github.com/blend-capital/blend-contracts-v2) — [`UserBalance(PoolUserKey{pool,user})`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/backstop/src/storage.rs#L69-L77), [`UserEmis(UserReserveKey{user,reserve_id})`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L112-L138), and [auctions keyed by user plus auction type](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L119-L140).
 
-- `soroswap/core` — `PairAddressesByTokens(Pair)` with the sorted token tuple → O(1) pair lookup.
+- [`soroswap/core`](https://github.com/soroswap/core) — [`PairAddressesByTokens(Pair(Address, Address))`](https://github.com/soroswap/core/blob/bb90a65556d8eee0dc698ac75de0f280e547fedc/contracts/factory/src/storage.rs#L15) with the [sorted token tuple](https://github.com/soroswap/core/blob/bb90a65556d8eee0dc698ac75de0f280e547fedc/contracts/factory/src/pair.rs#L21-L27) → O(1) pair lookup.
 
-- `OpenZeppelin/stellar-contracts` — access-control membership uses `HasRole(Address, Symbol)`.
+- [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — access-control membership uses [`HasRole(Address, Symbol)`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/access/src/access_control/storage.rs#L23).
 
 {/* section:s4 */}
 
@@ -248,7 +233,7 @@ _temporary · half rent · deleted on TTL expiry_
 
 <StorageDiagram n={4} />
 
-**The pattern.** Use `temporary()` storage and align the TTL with the business deadline — then enforce that deadline in the value:
+**The pattern.** Use `temporary()` storage and align the TTL with the business deadline — then _enforce that deadline in the value_:
 
 ```rust
 // SEP-41 token allowance (SEP-41 is Soroban's standard token interface)
@@ -271,13 +256,13 @@ The TTL alone is not the whole guarantee, for two reasons: the network enforces 
 
 **In the wild**
 
-- `stellar/soroban-examples` — `token/src/allowance.rs`, the canonical example; `mint-lock` epoch stats extended to the end of each epoch.
+- [`stellar/soroban-examples`](https://github.com/stellar/soroban-examples) — [`token/src/allowance.rs`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/token/src/allowance.rs#L4-L47), the canonical example; [`mint-lock`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/mint-lock/src/lib.rs#L153-L163) epoch stats extended to the end of each epoch.
 
-- `reflector-network/reflector-contract` — `oracle/src/prices.rs` stores price updates in temporary entries keyed by timestamp. Its TTL is derived from the configured retention period, a five-second-ledger estimate, and a 2× safety factor; the instance cache is a bounded `Vec`.
+- [`reflector-network/reflector-contract`](https://github.com/reflector-network/reflector-contract) — [`oracle/src/prices.rs`](https://github.com/reflector-network/reflector-contract/blob/4c6368f5d66ae848adb9cfa2591198b54c4db6e1/oracle/src/prices.rs#L168-L188) stores price updates in temporary entries keyed by timestamp. Its TTL is [derived from the configured retention period, a five-second-ledger estimate, and a 2× safety factor](https://github.com/reflector-network/reflector-contract/blob/4c6368f5d66ae848adb9cfa2591198b54c4db6e1/oracle/src/prices.rs#L183-L184); the instance cache is a bounded `Vec`.
 
-- `blend-capital/blend-contracts-v2` — auctions, queued reserve configs, and `ProposedAdmin` use temporary storage; `ProposedAdmin` is initialized with a 10-day TTL.
+- [`blend-capital/blend-contracts-v2`](https://github.com/blend-capital/blend-contracts-v2) — [auctions](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L637-L647), [queued reserve configs](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L401-L408), and `ProposedAdmin` use temporary storage; [`ProposedAdmin` is initialized with a 10-day TTL](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L239-L247).
 
-- `OpenZeppelin/stellar-contracts` — fungible allowances and pending role or ownership transfers use temporary storage and enforce a stored `live_until_ledger`.
+- [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — [fungible allowances](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/tokens/src/fungible/storage.rs#L18-L20) and pending role or ownership transfers use temporary storage and enforce a [stored `live_until_ledger`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/access/src/role_transfer/storage.rs#L132-L134).
 
 {/* section:s5 */}
 
@@ -319,7 +304,7 @@ Blend uses longer TTL targets for user data than for shared entries: user positi
 
 - An `extend_ttl()` call is an explicit resource operation even when it is placed in a getter; rent is charged when it actually extends the TTL. Simulate the final transaction so its resource declaration and fees include the call.
 
-**In the wild.** The token example's `balance.rs` explicitly extends balance TTLs. Blend's `get_persistent_default()` and Soroswap's `get_persistent_extend_or_error()` similarly combine reads with explicit extensions.
+**In the wild.** The token example's [`balance.rs`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/token/src/balance.rs#L4-L14) explicitly extends balance TTLs. Blend's [`get_persistent_default()`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/backstop/src/storage.rs#L97-L112) and Soroswap's [`get_persistent_extend_or_error()`](https://github.com/soroswap/core/blob/bb90a65556d8eee0dc698ac75de0f280e547fedc/contracts/factory/src/storage.rs#L36-L49) similarly combine reads with explicit extensions.
 
 {/* section:s6 */}
 
@@ -365,7 +350,7 @@ The list entry stores only _identifiers_; per-item detail lives in its own entry
 
 **In the wild**
 
-- `blend-capital/blend-contracts-v2` — the pool stores reserve identifiers in one persistent `ResList` entry and rejects additions beyond 30 reserves. Reserve details remain in per-asset entries.
+- [`blend-capital/blend-contracts-v2`](https://github.com/blend-capital/blend-contracts-v2) — the pool stores reserve identifiers in one persistent [`ResList`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L480-L495) entry and [rejects additions beyond 30 reserves](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/constants.rs#L16). Reserve details remain in per-asset entries.
 
 {/* section:s7 */}
 
@@ -406,9 +391,9 @@ Bounded by the pool's `max_positions` config — Strategy 6 applied _inside_ an 
 
 **In the wild**
 
-- Packed: Blend stores a user's liabilities, collateral, and supply maps in one `Positions(Address)` entry; backstop shares and queued withdrawals share one `UserBalance` entry.
+- Packed: Blend stores a user's liabilities, collateral, and supply maps in one [`Positions(Address)`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/pool/user.rs#L11-L14) entry; backstop shares and queued withdrawals share one [`UserBalance`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/backstop/src/backstop/user.rs#L19-L21) entry.
 
-- Split: Blend `ResConfig`/`ResData` pairs; OZ fungible `Balance` vs `Allowance` vs `Meta`; every token's balance-per-entry layout.
+- Split: Blend [`ResConfig`/`ResData`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L126-L139) pairs; OZ fungible [`Balance` vs `Allowance` vs `Meta`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/tokens/src/fungible/storage.rs#L33-L37); every token's balance-per-entry layout.
 
 {/* section:s8 */}
 
@@ -461,9 +446,9 @@ In the double-map variant, each indexed item costs 2 entries (forward + reverse)
 
 **In the wild**
 
-- (a) `soroswap/core` — `contracts/factory/src/storage.rs`, the dual-index registry.
+- (a) [`soroswap/core`](https://github.com/soroswap/core) — [`contracts/factory/src/storage.rs`](https://github.com/soroswap/core/blob/bb90a65556d8eee0dc698ac75de0f280e547fedc/contracts/factory/src/storage.rs#L11-L19), the dual-index registry.
 
-- (b) `OpenZeppelin/stellar-contracts` — access-control role enumeration and `packages/tokens/src/non_fungible/extensions/enumerable/storage.rs` use forward and reverse indexes and move the last item into a removed slot.
+- (b) [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — [access-control role enumeration](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/access/src/access_control/storage.rs#L21-L29) and [`packages/tokens/src/non_fungible/extensions/enumerable/storage.rs`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/tokens/src/non_fungible/extensions/enumerable/storage.rs#L39-L45) use forward and reverse indexes and move the last item into a removed slot.
 
 {/* section:s9 */}
 
@@ -508,7 +493,7 @@ Time advances the _global_ index lazily; each user settles the delta since _thei
 
 **In the wild**
 
-- `blend-capital/blend-contracts-v2` — pool and backstop emissions each keep shared emission data and separate per-user emission data.
+- [`blend-capital/blend-contracts-v2`](https://github.com/blend-capital/blend-contracts-v2) — [pool](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L84-L98) and [backstop](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/backstop/src/storage.rs#L33-L51) emissions each keep shared emission data and separate per-user emission data; the settlement delta is computed in [`distributor.rs`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/emissions/distributor.rs#L200-L207).
 
 {/* section:s10 */}
 
@@ -550,9 +535,9 @@ The official example stores the root, token address, and claim flags in instance
 
 **In the wild**
 
-- `OpenZeppelin/stellar-contracts` — Governor proposal IDs and Timelock operation IDs are derived from caller-supplied inputs; the Timelock stores one ledger-number sentinel per operation. Its reusable `merkle_distributor` module is the unbounded-distribution variant: one persistent `Claimed(u32)` entry per claimed index.
+- [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — [Governor proposal IDs](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/governor/storage.rs#L771-L783) and [Timelock operation IDs](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/timelock/storage.rs#L403-L413) are derived from caller-supplied inputs; the Timelock stores [one ledger-number sentinel per operation](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/timelock/mod.rs#L353-L357). Its reusable [`merkle_distributor`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/contract-utils/src/merkle_distributor/storage.rs#L13-L18) module is the unbounded-distribution variant: one persistent [`Claimed(u32)`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/contract-utils/src/merkle_distributor/storage.rs#L18) entry per claimed index.
 
-- `stellar/soroban-examples` — `merkle_distribution/src/lib.rs` stores the root and `Claimed(index)` flags in instance storage; its claim count is bounded by the instance-entry size.
+- [`stellar/soroban-examples`](https://github.com/stellar/soroban-examples) — [`merkle_distribution/src/lib.rs`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/merkle_distribution/src/lib.rs#L19-L20) stores the root and `Claimed(index)` flags in instance storage; its claim count is bounded by the instance-entry size.
 
 {/* section:s11 */}
 
@@ -585,9 +570,9 @@ add_pair_to_all_pairs(&e, &pair_address);                           // index n -
 
 **In the wild**
 
-- `soroswap/core` — `contracts/factory`, `contracts/pair`, and `contracts/router`: the full Uniswap-v2 topology.
+- [`soroswap/core`](https://github.com/soroswap/core) — [`contracts/factory`](https://github.com/soroswap/core/blob/bb90a65556d8eee0dc698ac75de0f280e547fedc/contracts/factory/src/lib.rs#L275-L298), [`contracts/pair`](https://github.com/soroswap/core/blob/bb90a65556d8eee0dc698ac75de0f280e547fedc/contracts/pair/src/lib.rs#L86-L89), and [`contracts/router`](https://github.com/soroswap/core/blob/bb90a65556d8eee0dc698ac75de0f280e547fedc/contracts/router/src/storage.rs#L1-L8): the full Uniswap-v2 topology.
 
-- `kalepail/passkey-kit` — one smart-wallet contract per user, deployed on passkey registration.
+- [`kalepail/passkey-kit`](https://github.com/kalepail/passkey-kit) — [one smart-wallet contract per user](https://github.com/kalepail/passkey-kit/blob/50981ccd5d2de654cf0e50633919cc9ba2df4e58/src/kit/deploy-ops.ts#L62-L95), deployed on passkey registration.
 
 {/* section:path */}
 
@@ -626,7 +611,9 @@ For each piece of state, walk this list:
 | Oracle prices / regenerable caches | temporary | loss is cheap, freshness is the point |
 | Anything derivable (states, IDs, tallies pre-first-vote) | _none_ | recompute; hash-commit; lazy-create |
 
-### Mainnet numbers to memorize (2026-07 — check lab.stellar.org)
+### Mainnet numbers to memorize
+
+Condensed from the [appendix](#appendix-mainnet-limits); day conversions assume the current ~5 s close time.
 
 ```text
 1 day  ≈ 17,280 ledgers at today's ~5s target close time (can change)
@@ -684,6 +671,45 @@ Examples in current source use these approximate targets: **instance 7–31 d** 
 
 - Data paged across entries because it outgrew 64 KiB → first consider bounding it, splitting by access pattern, or sharding by contract.
 
+{/* section:limits */}
+
+## Appendix: Mainnet limits
+
+**Protocol 27, checked 2026-07-20.** Network validators can change these values — re-verify with `stellar network settings --network mainnet` or on [Stellar Laboratory](https://lab.stellar.org/network-limits).
+
+| Per transaction | Limit | Practical meaning |
+| --- | --: | --- |
+| CPU instructions | 400,000,000 | compute budget for the whole invocation tree |
+| Memory | 40 MiB | host + guest memory |
+| **Footprint entries** (read + write) | **400** | max distinct entries one transaction may touch |
+| Disk-read entries / bytes | 200 / 200,000 | separate from the footprint cap; applies to disk-backed reads |
+| **Written entries / bytes** | **200** / 132,096 | distinct entries written; sum of written entry sizes (~129 KiB) |
+| Transaction size | 132,096 B | envelope incl. footprint — big footprints eat your payload |
+| Events + return value | 16,384 B | contract events plus the top-level return value in metadata |
+
+| Per ledger (target ~5 s today) |           Limit |
+| ------------------------------ | --------------: |
+| CPU instructions               |     580,000,000 |
+| Disk-read entries / bytes      | 1,000 / 400,000 |
+| Write entries / bytes          | 1,000 / 286,720 |
+| Smart-contract transactions    |           2,000 |
+| Soroban transaction bytes      |       266,240 B |
+
+| Sizes & TTLs                                   |                     Value |
+| ---------------------------------------------- | ------------------------: |
+| Max serialized contract-data ledger-key size   |                     250 B |
+| Max contract-data entry size                   |         65,536 B (64 KiB) |
+| Max contract Wasm size                         |       131,072 B (128 KiB) |
+| **Max entry TTL**                              | 3,110,400 ledgers ≈ 180 d |
+| Min TTL: persistent/instance create or restore | 2,073,600 ledgers ≈ 120 d |
+| Min TTL: temporary create                      |      17,280 ledgers ≈ 1 d |
+
+:::note
+
+Two numbers to remember: **`17,280` ledgers is about one day at today's ~5-second target close time**, and **64 KiB is the whole contract-data entry limit**. Close time is a network setting, so day-based TTL constants are approximations, not wall-clock guarantees. Many codebases define `DAY_IN_LEDGERS` for readability. Keep entries well below the size limit because large values increase read, write, and rent costs.
+
+:::
+
 {/* section:repositories */}
 
 ## Repositories reviewed
@@ -701,4 +727,4 @@ Examples in current source use these approximate targets: **instance 7–31 d** 
 | [CometDEX/comet-contracts-v1](https://github.com/CometDEX/comet-contracts-v1) | Weighted AMM | Persistent LP-token balances, temporary composite-key allowances, and a factory pool registry |
 | [FredericRezeau/soroban-kit](https://github.com/FredericRezeau/soroban-kit) | Macro library | Type-safe storage macros that select instance, persistent, or temporary storage and bind key/value types |
 
-**Methodology.** Network values were read with `stellar network settings --network mainnet` and cross-checked against the Mainnet constants rendered by [Stellar Laboratory](https://lab.stellar.org/network-limits) on 2026-07-17. Repository claims above were checked against each repository's current default branch. Further reading: [state archival](../../../learn/fundamentals/contract-development/storage/state-archival.mdx) · [persisting data](../../../learn/fundamentals/contract-development/storage/persisting-data.mdx).
+**Methodology.** Network values were read with `stellar network settings --network mainnet` and cross-checked against the Mainnet constants rendered by [Stellar Laboratory](https://lab.stellar.org/network-limits) on 2026-07-20. Repository claims above were checked against each repository's current default branch. Further reading: [state archival](../../../learn/fundamentals/contract-development/storage/state-archival.mdx) · [persisting data](../../../learn/fundamentals/contract-development/storage/persisting-data.mdx).

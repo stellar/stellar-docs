@@ -1,9 +1,7 @@
 import React from "react";
 import AnimatedDiagram from "./AnimatedDiagram";
 
-const CAPTIONS: Record<string, string> = {
-  d0: "Automatic: simulate and submit the invocation; RPC adds archived dependencies to its restore list, and the network restores them before execution. Manual: submit RestoreFootprintOp for exact ledger keys (stellar contract restore). Temporary entries cannot be restored.",
-};
+const CAPTIONS: Record<string, string> = {};
 
 const SVGS: Record<string, React.ReactNode> = {
   d0: (
