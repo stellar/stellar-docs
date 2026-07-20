@@ -1,4 +1,5 @@
 import React from "react";
+import BrowserOnly from "@docusaurus/BrowserOnly";
 import Link from "@docusaurus/Link";
 
 import { MEETINGS_INFO } from "../../meetings/schedule";
@@ -14,27 +15,17 @@ const WEEKDAY_ORDER = [
 ] as const;
 
 export default function MeetingIndexCard(): React.ReactElement {
-  const [localMeetingTime, setLocalMeetingTime] = React.useState<string | null>(
-    null,
-  );
-  const fallbackMeetingTime = formatMeetingTimeFallback();
-
-  React.useEffect(() => {
-    try {
-      const nextMeeting = getNextMeetingDate(new Date());
-      setLocalMeetingTime(formatMeetingDisplay(nextMeeting));
-    } catch {
-      // Keep the UTC fallback if local formatting fails.
-    }
-  }, []);
-
   return (
     <div className="card margin-bottom--lg">
       <div className="card__body">
         <h2 className="margin-bottom--sm">Developer Meetings</h2>
         <p className="margin-bottom--sm" style={{ fontSize: "0.9rem" }}>
           These are archived discussions of open Stellar meetings. Anyone can
-          attend them on {localMeetingTime ?? fallbackMeetingTime}. Join in the{" "}
+          attend
+          <BrowserOnly fallback={null}>
+            {() => <> them on {getLocalMeetingSchedule()}</>}
+          </BrowserOnly>
+          . Join in the{" "}
           <Link
             href={MEETINGS_INFO.eventLink}
             target="_blank"
@@ -88,11 +79,14 @@ export default function MeetingIndexCard(): React.ReactElement {
   );
 }
 
-function formatMeetingTimeFallback(): string {
-  return formatMeetingSchedule(
-    MEETINGS_INFO.weekday,
-    formatUtcMeetingTime(makeMeetingDate(2019, 0, 1)),
-  );
+function getLocalMeetingSchedule(): string {
+  try {
+    return formatMeetingDisplay(getNextMeetingDate(new Date()));
+  } catch {
+    const hour = String(MEETINGS_INFO.hour).padStart(2, "0");
+    const minute = String(MEETINGS_INFO.minute).padStart(2, "0");
+    return `${MEETINGS_INFO.weekday}s at ${hour}:${minute} UTC`;
+  }
 }
 
 function formatMeetingDisplay(date: Date): string {
@@ -116,16 +110,6 @@ function formatMeetingTime(date: Date): string {
   const formatter = new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
     minute: "2-digit",
-    timeZoneName: "short",
-  });
-  return formatter.format(date);
-}
-
-function formatUtcMeetingTime(date: Date): string {
-  const formatter = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "UTC",
     timeZoneName: "short",
   });
   return formatter.format(date);
