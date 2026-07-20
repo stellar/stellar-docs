@@ -781,7 +781,7 @@ const SVGS: Record<string, React.ReactNode> = {
         rx="4"
       />
       <text x="495" y="84" textAnchor="middle" className="lbl-s mono">
-        ResConfig(asset) — cold, admin
+        ResConfig(asset) — admin, cold
       </text>
       <text x="495" y="150" textAnchor="middle" className="lbl-s u2 anim">
         hot data updates without rewriting cold config
@@ -793,9 +793,9 @@ const SVGS: Record<string, React.ReactNode> = {
   ),
   d8: (
     <svg
-      viewBox="0 0 660 190"
+      viewBox="0 0 660 214"
       role="img"
-      aria-label="Animation: swap-and-pop removal — the last item moves into the removed slot and the tail is deleted, all in constant time."
+      aria-label="Animation: swap-and-pop removal in four steps — read the last item, move it into the removed slot, fix its reverse pointer, remove the tail — all in constant time."
     >
       <text x="330" y="22" textAnchor="middle" className="lbl">
         remove C from &#123;A B C D E&#125; — swap-and-pop, O(1)
@@ -882,24 +882,19 @@ const SVGS: Record<string, React.ReactNode> = {
         height="40"
         rx="5"
       />
-      <text
-        x="357"
-        y="130"
-        textAnchor="middle"
-        className="lbl-s note1 anim fill-rose"
-      >
+      <text x="264" y="122" className="lbl-s note1 anim">
         1 · read the last item
       </text>
-      <text
-        x="489"
-        y="150"
-        textAnchor="middle"
-        className="lbl-s note2 anim fill-teal"
-      >
-        2 · move it into the hole · 3 · fix its reverse pointer · 4 · remove the
-        tail
+      <text x="264" y="138" className="lbl-s note2 anim">
+        2 · move it into the hole
       </text>
-      <text x="330" y="178" textAnchor="middle" className="lbl-s">
+      <text x="264" y="154" className="lbl-s note3 anim">
+        3 · fix its reverse pointer
+      </text>
+      <text x="264" y="170" className="lbl-s note4 anim">
+        4 · remove the tail
+      </text>
+      <text x="330" y="200" textAnchor="middle" className="lbl-s">
         a constant number of entry updates, regardless of set size — order is
         not preserved
       </text>

@@ -379,7 +379,7 @@ pub struct Positions {                       // ONE persistent entry per user
 }
 ```
 
-Bounded by the pool's `max_positions` config — Strategy 6 applied _inside_ an entry. Note the maps key by reserve index (`u32`), not `Address`: smaller entry, cross-referencing the Strategy 6 reserve list. Meanwhile Blend's reserves are _split_ into `ResConfig` and `ResData` entries per asset. Rate updates can therefore write `ResData` without rewriting the configuration.
+Two details keep Blend's packed `Positions` entry small. The maps key by reserve index (`u32`) rather than asset `Address` — a smaller map key that doubles as a pointer into the pool's bounded reserve list from Strategy 6. And the entry is explicitly capped: [`require_under_max`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/pool/pool.rs#L93-L98) rejects any action that would grow a user's count of liability plus collateral positions past the pool's [`max_positions`](https://github.com/blend-capital/blend-contracts-v2/blob/ba22b487b2c5057a4ecc28b05b5193c28e4bd117/pool/src/storage.rs#L26-L32) config — Strategy 6's hard cap applied _inside_ an entry. Blend's reserves show the split side of the same trade-off: each asset's state is divided into `ResConfig` (admin-set parameters, cold) and `ResData` (rates updated on every accrual, hot), so a rate update writes the small hot entry without rewriting the config.
 
 **Trade-offs**
 
@@ -389,7 +389,7 @@ Bounded by the pool's `max_positions` config — Strategy 6 applied _inside_ an 
 | Update one field | rewrite whole blob | 1 small write |
 | Invariant scope | one blob | contract coordinates across entries |
 | Parallelism between parts | none | possible when transactions do not overlap |
-| Size ceiling | 64 KiB for the whole entry | 64 KiB per entry |
+| Size ceiling | 64 KiB for the whole entry | 64 KiB per individual entry |
 
 **In the wild**
 
@@ -438,13 +438,13 @@ remove(OwnerTokens(owner, last_token_index));                      // pop tail
 
 **Trade-offs**
 
-| Variant | add | remove | contains | on-chain page read | keeps order |
-| --- | --- | --- | --- | --- | --- |
-| (a) counter + index | O(1) | ✗ (or tombstone) | via 2nd index | O(page) | yes |
-| (b) double map + swap-pop | O(1) | O(1) | O(1) | O(page) | no |
-| (c) events only | O(1) | O(1) | ✗ | ✗ | n/a |
+| Variant | add | remove | contains | on-chain page read | keeps order | entries / item |
+| --- | --- | --- | --- | --- | --- | --- |
+| (a) counter + index | O(1) | ✗ (or tombstone) | via 2nd index | O(page) | yes | ~1 |
+| (b) double map + swap-pop | O(1) | O(1) | O(1) | O(page) | no | 2 (forward + reverse) |
+| (c) events only | O(1) | O(1) | ✗ | ✗ | n/a | 0 |
 
-In the double-map variant, each indexed item costs 2 entries (forward + reverse) of rent — roughly 2× the storage of Strategy 2; variant (a) adds ~1 per item. Add an index only where the _contract itself_ needs the list.
+O(1) counts steps, not ledger I/O: the swap-and-pop above still writes at least three entries, and every entry touched counts toward the per-transaction read and write limits. The **entries / item** column is the rent side — the double map keeps two entries alive per item, roughly 2× the storage of Strategy 2. These write and rent costs are the reason to index only what the _contract itself_ needs to list on-chain; when only off-chain consumers read the list, variant (c) is enough.
 
 **In the wild**
 
