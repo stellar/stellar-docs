@@ -15,7 +15,7 @@ const SVGS: Record<string, React.ReactNode> = {
       <text x="105" y="16" textAnchor="middle" className="lbl">
         instance()
       </text>
-      <g className="d0-entry anim">
+      <g className="d0-entry d0-entry-inst anim">
         <rect
           className="cell cell-inst"
           x="30"
@@ -30,6 +30,12 @@ const SVGS: Record<string, React.ReactNode> = {
           Admin, Config…
         </text>
       </g>
+      <g className="d0-hatch d0-hatch-inst anim">
+        <line className="hatch" x1="42" y1="72" x2="86" y2="28" />
+        <line className="hatch" x1="74" y1="72" x2="118" y2="28" />
+        <line className="hatch" x1="106" y1="72" x2="150" y2="28" />
+        <line className="hatch" x1="138" y1="72" x2="176" y2="34" />
+      </g>
       <rect className="ttl-track" x="30" y="82" width="150" height="6" />
       <rect
         className="ttl-fill-inst bar anim"
@@ -38,8 +44,8 @@ const SVGS: Record<string, React.ReactNode> = {
         width="150"
         height="6"
       />
-      <line className="d0-arrow anim" x1="105" y1="94" x2="105" y2="110" />
-      <path className="d0-arrowhead anim" d="M101 106 L105 112 L109 106" />
+      <line className="d0-arrow" x1="105" y1="94" x2="105" y2="110" />
+      <path className="d0-arrowhead" d="M101 106 L105 112 L109 106" />
       <text x="105" y="104" textAnchor="middle" className="lbl-s d0-expiry">
         TTL expires
       </text>
@@ -93,7 +99,7 @@ const SVGS: Record<string, React.ReactNode> = {
       <text x="330" y="16" textAnchor="middle" className="lbl">
         persistent()
       </text>
-      <g className="d0-entry anim">
+      <g className="d0-entry d0-entry-pers anim">
         <rect
           className="cell cell-pers"
           x="255"
@@ -108,6 +114,12 @@ const SVGS: Record<string, React.ReactNode> = {
           → 1_000_000
         </text>
       </g>
+      <g className="d0-hatch d0-hatch-pers anim">
+        <line className="hatch" x1="267" y1="72" x2="311" y2="28" />
+        <line className="hatch" x1="299" y1="72" x2="343" y2="28" />
+        <line className="hatch" x1="331" y1="72" x2="375" y2="28" />
+        <line className="hatch" x1="363" y1="72" x2="401" y2="34" />
+      </g>
       <rect className="ttl-track" x="255" y="82" width="150" height="6" />
       <rect
         className="ttl-fill-pers bar anim"
@@ -116,8 +128,8 @@ const SVGS: Record<string, React.ReactNode> = {
         width="150"
         height="6"
       />
-      <line className="d0-arrow anim" x1="330" y1="94" x2="330" y2="110" />
-      <path className="d0-arrowhead anim" d="M326 106 L330 112 L334 106" />
+      <line className="d0-arrow" x1="330" y1="94" x2="330" y2="110" />
+      <path className="d0-arrowhead" d="M326 106 L330 112 L334 106" />
       <text x="330" y="104" textAnchor="middle" className="lbl-s d0-expiry">
         TTL expires
       </text>
@@ -168,7 +180,7 @@ const SVGS: Record<string, React.ReactNode> = {
       <text x="555" y="16" textAnchor="middle" className="lbl">
         temporary()
       </text>
-      <g className="d0-entry anim">
+      <g className="d0-entry d0-entry-temp anim">
         <rect
           className="cell cell-temp"
           x="480"
@@ -191,8 +203,8 @@ const SVGS: Record<string, React.ReactNode> = {
         width="150"
         height="6"
       />
-      <line className="d0-arrow anim" x1="555" y1="94" x2="555" y2="110" />
-      <path className="d0-arrowhead anim" d="M551 106 L555 112 L559 106" />
+      <line className="d0-arrow" x1="555" y1="94" x2="555" y2="110" />
+      <path className="d0-arrowhead" d="M551 106 L555 112 L559 106" />
       <text x="555" y="104" textAnchor="middle" className="lbl-s d0-expiry">
         TTL expires
       </text>
@@ -230,21 +242,9 @@ const SVGS: Record<string, React.ReactNode> = {
       <text x="120" y="52" textAnchor="middle" className="lbl">
         invocations
       </text>
-      <circle className="inv anim" cx="60" cy="86" r="5" fill="var(--ink)" />
-      <circle
-        className="inv inv2 anim"
-        cx="60"
-        cy="86"
-        r="5"
-        fill="var(--ink)"
-      />
-      <circle
-        className="inv inv3 anim"
-        cx="60"
-        cy="86"
-        r="5"
-        fill="var(--ink)"
-      />
+      <circle className="inv anim fill-ink" cx="60" cy="86" r="5" />
+      <circle className="inv inv2 anim fill-ink" cx="60" cy="86" r="5" />
+      <circle className="inv inv3 anim fill-ink" cx="60" cy="86" r="5" />
       <line className="wire" x1="52" y1="86" x2="196" y2="86" />
       <rect
         className="cell cell-inst box anim"
@@ -254,13 +254,7 @@ const SVGS: Record<string, React.ReactNode> = {
         height="112"
         rx="10"
       />
-      <text
-        x="330"
-        y="54"
-        textAnchor="middle"
-        className="lbl"
-        fill="var(--amber)"
-      >
+      <text x="330" y="54" textAnchor="middle" className="lbl fill-amber">
         contract instance — one entry
       </text>
       <rect className="cell" x="232" y="66" width="60" height="26" rx="4" />
@@ -317,20 +311,12 @@ const SVGS: Record<string, React.ReactNode> = {
         x="165"
         y="166"
         textAnchor="middle"
-        className="lbl warn anim"
-        fill="var(--danger)"
+        className="lbl warn anim fill-danger"
       >
         → 64 KiB cap · rewrites · contention
       </text>
 
-      <line
-        className="wire"
-        x1="330"
-        y1="30"
-        x2="330"
-        y2="160"
-        strokeDasharray="3 4"
-      />
+      <line className="wire dashed" x1="330" y1="30" x2="330" y2="160" />
 
       <text x="495" y="22" textAnchor="middle" className="lbl">
         ✓ one entry per holder
@@ -474,8 +460,7 @@ const SVGS: Record<string, React.ReactNode> = {
         x="135"
         y="70"
         textAnchor="middle"
-        className="lbl gonelbl anim"
-        fill="var(--rose)"
+        className="lbl gonelbl anim fill-rose"
       >
         deleted without a cleanup transaction
       </text>
@@ -572,21 +557,14 @@ const SVGS: Record<string, React.ReactNode> = {
         rx="3"
       />
       <rect
+        className="extend-zone"
         x="60"
         y="70"
         width="324"
         height="14"
         rx="3"
-        fill="var(--danger)"
-        opacity=".14"
       />
-      <text
-        x="222"
-        y="110"
-        textAnchor="middle"
-        className="lbl-s"
-        fill="var(--danger)"
-      >
+      <text x="222" y="110" textAnchor="middle" className="lbl-s fill-danger">
         in this zone, an extend_ttl() call extends the TTL
       </text>
       <rect
@@ -613,22 +591,8 @@ const SVGS: Record<string, React.ReactNode> = {
         height="14"
         rx="3"
       />
-      <line
-        x1="384"
-        y1="58"
-        x2="384"
-        y2="96"
-        stroke="var(--danger)"
-        strokeWidth="1.6"
-        strokeDasharray="4 3"
-      />
-      <text
-        x="384"
-        y="52"
-        textAnchor="middle"
-        className="lbl-s"
-        fill="var(--danger)"
-      >
+      <line className="threshold" x1="384" y1="58" x2="384" y2="96" />
+      <text x="384" y="52" textAnchor="middle" className="lbl-s fill-danger">
         THRESHOLD (BUMP − 17,280 ledgers)
       </text>
       <text x="60" y="110" className="lbl-s">
@@ -638,13 +602,7 @@ const SVGS: Record<string, React.ReactNode> = {
         BUMP (e.g. 518,400 ledgers)
       </text>
       <g className="bolt1 anim">
-        <text
-          x="470"
-          y="46"
-          textAnchor="middle"
-          className="lbl"
-          fill="var(--ink)"
-        >
+        <text x="470" y="46" textAnchor="middle" className="lbl fill-ink">
           extend_ttl()
         </text>
       </g>
@@ -652,13 +610,7 @@ const SVGS: Record<string, React.ReactNode> = {
         above threshold → extend_ttl is a no-op
       </text>
       <g className="bolt2 anim">
-        <text
-          x="270"
-          y="46"
-          textAnchor="middle"
-          className="lbl"
-          fill="var(--ink)"
-        >
+        <text x="270" y="46" textAnchor="middle" className="lbl fill-ink">
           extend_ttl()
         </text>
       </g>
@@ -666,8 +618,7 @@ const SVGS: Record<string, React.ReactNode> = {
         x="270"
         y="132"
         textAnchor="middle"
-        className="lbl-s bump anim"
-        fill="var(--teal)"
+        className="lbl-s bump anim fill-teal"
       >
         below threshold → extended to BUMP · rent charged with transaction fees
       </text>
@@ -690,13 +641,7 @@ const SVGS: Record<string, React.ReactNode> = {
         height="60"
         rx="8"
       />
-      <text
-        x="260"
-        y="30"
-        textAnchor="middle"
-        className="lbl"
-        fill="var(--teal)"
-      >
+      <text x="260" y="30" textAnchor="middle" className="lbl fill-teal">
         ResList — ONE entry, hard cap in code
       </text>
       <rect
@@ -767,20 +712,18 @@ const SVGS: Record<string, React.ReactNode> = {
       </text>
       <g className="reject anim">
         <rect
-          className="cell"
+          className="cell stroke-danger"
           x="530"
           y="54"
           width="56"
           height="32"
           rx="4"
-          stroke="var(--danger)"
         />
         <text
           x="558"
           y="75"
           textAnchor="middle"
-          className="lbl-s mono"
-          fill="var(--danger)"
+          className="lbl-s mono fill-danger"
         >
           #31
         </text>
@@ -789,8 +732,7 @@ const SVGS: Record<string, React.ReactNode> = {
         x="558"
         y="120"
         textAnchor="middle"
-        className="lbl-s panic anim"
-        fill="var(--danger)"
+        className="lbl-s panic anim fill-danger"
       >
         rejected: cap reached
       </text>
@@ -816,45 +758,20 @@ const SVGS: Record<string, React.ReactNode> = {
         height="92"
         rx="8"
       />
-      <text
-        x="165"
-        y="58"
-        textAnchor="middle"
-        className="lbl-s mono"
-        fill="var(--ink)"
-      >
+      <text x="165" y="58" textAnchor="middle" className="lbl-s mono fill-ink">
         Positions(user)
       </text>
-      <text
-        x="165"
-        y="78"
-        textAnchor="middle"
-        className="lbl-s mono"
-        fill="var(--ink)"
-      >
+      <text x="165" y="78" textAnchor="middle" className="lbl-s mono fill-ink">
         liabilities · collateral · supply
       </text>
-      <text
-        x="165"
-        y="98"
-        textAnchor="middle"
-        className="lbl-s"
-        fill="var(--ink)"
-      >
+      <text x="165" y="98" textAnchor="middle" className="lbl-s fill-ink">
         all user positions = 1 read
       </text>
       <text x="165" y="150" textAnchor="middle" className="lbl-s u1 anim">
         any update rewrites the whole blob
       </text>
 
-      <line
-        className="wire"
-        x1="330"
-        y1="30"
-        x2="330"
-        y2="170"
-        strokeDasharray="3 4"
-      />
+      <line className="wire dashed" x1="330" y1="30" x2="330" y2="170" />
 
       <text x="495" y="24" textAnchor="middle" className="lbl">
         split — updated independently
@@ -867,13 +784,7 @@ const SVGS: Record<string, React.ReactNode> = {
         height="24"
         rx="4"
       />
-      <text
-        x="495"
-        y="52"
-        textAnchor="middle"
-        className="lbl-s mono"
-        fill="var(--ink)"
-      >
+      <text x="495" y="52" textAnchor="middle" className="lbl-s mono fill-ink">
         ResData(asset) — rates, hot
       </text>
       <rect
@@ -927,13 +838,7 @@ const SVGS: Record<string, React.ReactNode> = {
         height="40"
         rx="5"
       />
-      <text
-        x="93"
-        y="87"
-        textAnchor="middle"
-        className="lbl mono"
-        fill="var(--ink)"
-      >
+      <text x="93" y="87" textAnchor="middle" className="lbl mono fill-ink">
         A
       </text>
       <rect
@@ -944,13 +849,7 @@ const SVGS: Record<string, React.ReactNode> = {
         height="40"
         rx="5"
       />
-      <text
-        x="225"
-        y="87"
-        textAnchor="middle"
-        className="lbl mono"
-        fill="var(--ink)"
-      >
+      <text x="225" y="87" textAnchor="middle" className="lbl mono fill-ink">
         B
       </text>
       <g className="gone anim">
@@ -962,13 +861,7 @@ const SVGS: Record<string, React.ReactNode> = {
           height="40"
           rx="5"
         />
-        <text
-          x="357"
-          y="87"
-          textAnchor="middle"
-          className="lbl mono"
-          fill="var(--ink)"
-        >
+        <text x="357" y="87" textAnchor="middle" className="lbl mono fill-ink">
           C
         </text>
       </g>
@@ -980,13 +873,7 @@ const SVGS: Record<string, React.ReactNode> = {
         height="40"
         rx="5"
       />
-      <text
-        x="489"
-        y="87"
-        textAnchor="middle"
-        className="lbl mono"
-        fill="var(--ink)"
-      >
+      <text x="489" y="87" textAnchor="middle" className="lbl mono fill-ink">
         D
       </text>
       <g className="mover anim">
@@ -998,32 +885,23 @@ const SVGS: Record<string, React.ReactNode> = {
           height="40"
           rx="5"
         />
-        <text
-          x="621"
-          y="87"
-          textAnchor="middle"
-          className="lbl mono"
-          fill="var(--ink)"
-        >
+        <text x="621" y="87" textAnchor="middle" className="lbl mono fill-ink">
           E
         </text>
       </g>
       <rect
-        className="cell tail anim"
+        className="cell tail anim fill-none dashed"
         x="573"
         y="62"
         width="96"
         height="40"
         rx="5"
-        fill="none"
-        strokeDasharray="4 3"
       />
       <text
         x="357"
         y="130"
         textAnchor="middle"
-        className="lbl-s note1 anim"
-        fill="var(--rose)"
+        className="lbl-s note1 anim fill-rose"
       >
         1 · read the last item
       </text>
@@ -1031,8 +909,7 @@ const SVGS: Record<string, React.ReactNode> = {
         x="489"
         y="150"
         textAnchor="middle"
-        className="lbl-s note2 anim"
-        fill="var(--teal)"
+        className="lbl-s note2 anim fill-teal"
       >
         2 · move it into the hole · 3 · fix its reverse pointer · 4 · remove the
         tail
@@ -1089,32 +966,29 @@ const SVGS: Record<string, React.ReactNode> = {
         </text>
       </g>
       <line
-        className="wire dline anim"
+        className="wire dline anim stroke-teal"
         x1="220"
         y1="66"
         x2="185"
         y2="116"
-        stroke="var(--teal)"
       />
       <text
         x="170"
         y="188"
         textAnchor="middle"
-        className="lbl-s delta anim"
-        fill="var(--teal)"
+        className="lbl-s delta anim fill-teal"
       >
         accrued += shares × Δindex — settles when alice shows up
       </text>
 
-      <g className="ghost anim" opacity=".45">
+      <g className="ghost anim">
         <rect
-          className="cell"
+          className="cell dashed"
           x="330"
           y="118"
           width="130"
           height="48"
           rx="6"
-          strokeDasharray="4 3"
         />
         <text x="395" y="138" textAnchor="middle" className="lbl-s mono">
           UserEmis(bob)
@@ -1123,13 +997,12 @@ const SVGS: Record<string, React.ReactNode> = {
           untouched
         </text>
         <rect
-          className="cell"
+          className="cell dashed"
           x="474"
           y="118"
           width="130"
           height="48"
           rx="6"
-          strokeDasharray="4 3"
         />
         <text x="539" y="138" textAnchor="middle" className="lbl-s mono">
           …× 10,000
@@ -1182,24 +1055,17 @@ const SVGS: Record<string, React.ReactNode> = {
         </text>
       </g>
       <rect
-        className="cell root anim"
+        className="cell root anim stroke-ink"
         x="230"
         y="26"
         width="120"
         height="28"
         rx="5"
-        stroke="var(--ink)"
       />
-      <text
-        x="290"
-        y="45"
-        textAnchor="middle"
-        className="lbl-s mono"
-        fill="var(--ink)"
-      >
+      <text x="290" y="45" textAnchor="middle" className="lbl-s mono fill-ink">
         RootHash
       </text>
-      <text x="440" y="40" className="lbl-s onchain anim" fill="var(--ink)">
+      <text x="440" y="40" className="lbl-s onchain anim fill-ink">
         ← 32-byte root in instance storage
       </text>
       <text x="440" y="60" className="lbl-s claim anim">
@@ -1215,21 +1081,14 @@ const SVGS: Record<string, React.ReactNode> = {
       aria-label="Animation: a factory contract deploys one contract per trading pair and keeps the pair registry plus factory configuration; each deployed contract gets its own storage domain."
     >
       <rect
-        className="cell"
+        className="cell stroke-ink"
         x="40"
         y="46"
         width="150"
         height="120"
         rx="10"
-        stroke="var(--ink)"
       />
-      <text
-        x="115"
-        y="72"
-        textAnchor="middle"
-        className="lbl"
-        fill="var(--ink)"
-      >
+      <text x="115" y="72" textAnchor="middle" className="lbl fill-ink">
         factory
       </text>
       <text x="115" y="94" textAnchor="middle" className="lbl-s">
@@ -1251,30 +1110,9 @@ const SVGS: Record<string, React.ReactNode> = {
         </text>
       </g>
 
-      <line
-        className="wire"
-        x1="190"
-        y1="80"
-        x2="268"
-        y2="60"
-        strokeDasharray="3 3"
-      />
-      <line
-        className="wire"
-        x1="190"
-        y1="106"
-        x2="268"
-        y2="106"
-        strokeDasharray="3 3"
-      />
-      <line
-        className="wire"
-        x1="190"
-        y1="132"
-        x2="268"
-        y2="152"
-        strokeDasharray="3 3"
-      />
+      <line className="wire dashed" x1="190" y1="80" x2="268" y2="60" />
+      <line className="wire dashed" x1="190" y1="106" x2="268" y2="106" />
+      <line className="wire dashed" x1="190" y1="132" x2="268" y2="152" />
 
       <g className="pair pr1 anim">
         <rect
@@ -1325,22 +1163,10 @@ const SVGS: Record<string, React.ReactNode> = {
         </text>
       </g>
       <g className="iso anim">
-        <text
-          x="545"
-          y="100"
-          textAnchor="middle"
-          className="lbl-s"
-          fill="var(--teal)"
-        >
+        <text x="545" y="100" textAnchor="middle" className="lbl-s fill-teal">
           independent storage domains:
         </text>
-        <text
-          x="545"
-          y="118"
-          textAnchor="middle"
-          className="lbl-s"
-          fill="var(--teal)"
-        >
+        <text x="545" y="118" textAnchor="middle" className="lbl-s fill-teal">
           pair-local entries do not conflict across pairs
         </text>
       </g>

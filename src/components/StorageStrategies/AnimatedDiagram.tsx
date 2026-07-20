@@ -15,6 +15,9 @@ export default function AnimatedDiagram({
   children,
 }: AnimatedDiagramProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // .play must live in React state: it gates animation-play-state in CSS, and
+  // an imperatively added class would be dropped on the next re-render.
+  const [playing, setPlaying] = useState(false);
   const [restored, setRestored] = useState({
     instance: false,
     persistent: false,
@@ -29,7 +32,7 @@ export default function AnimatedDiagram({
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
-            el.classList.add("play");
+            setPlaying(true);
             io.unobserve(el);
           }
         });
@@ -46,6 +49,7 @@ export default function AnimatedDiagram({
       return;
     }
     setRestored({ instance: false, persistent: false });
+    setPlaying(true);
     // Toggling .play only pauses/resumes; to restart from frame 0 the
     // animations themselves must be torn down and recreated.
     const anims = el.querySelectorAll<HTMLElement | SVGElement>(".anim");
@@ -56,11 +60,11 @@ export default function AnimatedDiagram({
     anims.forEach((a) => {
       a.style.animation = "";
     });
-    el.classList.add("play");
   };
 
   const className = [
     "ssd",
+    playing ? "play" : "",
     restored.instance ? "restored-instance" : "",
     restored.persistent ? "restored-persistent" : "",
   ]
@@ -95,7 +99,7 @@ export default function AnimatedDiagram({
           </>
         ) : null}
         <button className="replay" type="button" onClick={replay}>
-          ↻ Replay expiry
+          {id === "d0" ? "↻ Replay expiry" : "↻ Replay"}
         </button>
       </div>
       {children}
