@@ -998,15 +998,11 @@ const SVGS: Record<string, React.ReactNode> = {
   ),
   d10: (
     <svg
-      viewBox="0 0 660 210"
+      viewBox="0 0 660 232"
       role="img"
-      aria-label="Animation: a whole airdrop list collapses to a 32-byte Merkle root on-chain; claimers bring the data plus a proof, and successful claims add a claimed flag to the same instance entry."
+      aria-label="Animation: a whole airdrop list collapses to a 32-byte Merkle root on-chain; to claim, alice re-submits her record plus proof, the path from her leaf to the root lights back up as the contract re-hashes it, and only a small Claimed(0) flag is written."
     >
       <g className="leaves anim">
-        <rect className="cell" x="60" y="140" width="100" height="30" rx="4" />
-        <text x="110" y="159" textAnchor="middle" className="lbl-s mono">
-          alice, 500
-        </text>
         <rect className="cell" x="180" y="140" width="100" height="30" rx="4" />
         <text x="230" y="159" textAnchor="middle" className="lbl-s mono">
           bob, 1200
@@ -1019,24 +1015,39 @@ const SVGS: Record<string, React.ReactNode> = {
         <text x="470" y="159" textAnchor="middle" className="lbl-s mono">
           …10,000 more
         </text>
-        <line className="wire" x1="110" y1="140" x2="170" y2="106" />
         <line className="wire" x1="230" y1="140" x2="170" y2="106" />
         <line className="wire" x1="350" y1="140" x2="410" y2="106" />
         <line className="wire" x1="470" y1="140" x2="410" y2="106" />
-        <rect className="cell" x="130" y="82" width="80" height="24" rx="4" />
-        <text x="170" y="98" textAnchor="middle" className="lbl-s mono">
-          h₀₁
-        </text>
         <rect className="cell" x="370" y="82" width="80" height="24" rx="4" />
         <text x="410" y="98" textAnchor="middle" className="lbl-s mono">
           h₂₃
         </text>
-        <line className="wire" x1="170" y1="82" x2="290" y2="52" />
         <line className="wire" x1="410" y1="82" x2="290" y2="52" />
-        <text x="290" y="196" textAnchor="middle" className="lbl-s">
-          the full list lives off-chain
-        </text>
       </g>
+      <g className="proof anim">
+        <rect className="cell anim" x="60" y="140" width="100" height="30" rx="4" />
+        <text x="110" y="159" textAnchor="middle" className="lbl-s mono">
+          alice, 500
+        </text>
+        <line className="wire" x1="110" y1="140" x2="170" y2="106" />
+        <rect className="cell anim" x="130" y="82" width="80" height="24" rx="4" />
+        <text x="170" y="98" textAnchor="middle" className="lbl-s mono">
+          h₀₁
+        </text>
+        <line className="wire" x1="170" y1="82" x2="290" y2="52" />
+      </g>
+      <text x="290" y="196" textAnchor="middle" className="lbl-s">
+        the full list lives off-chain
+      </text>
+      <text
+        x="290"
+        y="214"
+        textAnchor="middle"
+        className="lbl-s claimcap anim"
+      >
+        to claim, alice brings her record + proof — the contract re-hashes her
+        path back to the root
+      </text>
       <rect
         className="cell root anim stroke-ink"
         x="230"
@@ -1048,13 +1059,23 @@ const SVGS: Record<string, React.ReactNode> = {
       <text x="290" y="45" textAnchor="middle" className="lbl-s mono fill-ink">
         RootHash
       </text>
-      <text x="440" y="40" className="lbl-s onchain anim fill-ink">
-        ← 32-byte root in instance storage
+      <text
+        x="222"
+        y="44"
+        textAnchor="end"
+        className="lbl-s onchain anim fill-ink"
+      >
+        32-byte root in instance storage →
       </text>
-      <text x="440" y="60" className="lbl-s claim anim">
-        + each <tspan className="mono">Claimed(i)</tspan> flag grows that same
-        entry
-      </text>
+      <g className="claim anim">
+        <rect className="cell" x="372" y="26" width="104" height="28" rx="5" />
+        <text x="424" y="45" textAnchor="middle" className="lbl-s mono">
+          Claimed(0)
+        </text>
+        <text x="488" y="44" className="lbl-s">
+          ← one flag per actual claim
+        </text>
+      </g>
     </svg>
   ),
   d11: (

@@ -501,47 +501,48 @@ The global `index` answers one question — how much has a single share earned s
 
 {/* section:s10 */}
 
-## Strategy 10: Don't store it at all
+## Strategy 10: Merkle roots and derived state — replace storage with verification
 
-_derived keys · sentinel values · commitments_
+_one 32-byte root · derived IDs · sentinel values_
 
-**You need.** To handle large or numerous records — proposals, scheduled operations, airdrop entitlements — whose full contents would be expensive or impossible to keep on-chain.
+**You need.** To handle large or numerous records — airdrop entitlements, governance proposals, scheduled operations — whose full contents would be expensive or impossible to keep on-chain.
 
-**The catch.** Stored bytes add I/O, keeping them live requires rent, and each entry a transaction touches consumes footprint. The cheapest entry is the one that does not exist.
+**The catch.** Stored bytes add I/O, keeping them live costs rent, and each entry a transaction touches consumes footprint. None of that is mandatory: when callers are willing to hold the data themselves, the chain only needs enough of it to verify what they bring back.
 
 <StorageDiagram n={10} />
 
-**The pattern — three escalating tricks.** **(a) Deterministic IDs.** Do not store what can be recomputed. OpenZeppelin's Governor stores proposal core state but not the action arrays; the proposal ID hashes the supplied actions and description hash. The Timelock likewise hashes operation inputs, which callers provide again when executing:
+**The pattern.** Keep the records off-chain and store only a 32-byte hash that _commits_ to them. Whoever wants the contract to act on a record must send that record back in; the contract re-hashes what it received and compares the result with the stored hash. A match proves the input is byte-for-byte the data that was committed to — so the contract can safely act on data it never stored.
+
+Hashing a whole list into one commitment would force every claimer to resend the whole list. A **Merkle tree** fixes that: hash the records pairwise up to a single root, and any one record becomes provable on its own — the claimer sends their record plus one sibling hash per tree level (the _proof_), and the contract re-hashes upward — landing on the stored root proves the record is in the tree. The tree itself never touches the ledger; on-chain state for an arbitrarily large airdrop is one root plus one `Claimed(index)` flag per completed claim:
+
+```rust
+enum DataKey { RootHash, TokenAddress, Claimed(u32) }
+// claim(index, receiver, amount, proof) -> re-hash (index, receiver, amount) up the
+//   proof path; if it lands on RootHash: set Claimed(index), transfer amount to receiver
+```
+
+For a _single_ record, skip the tree: hash the record itself and use the hash as both fingerprint and storage key — a **derived ID**. OpenZeppelin's Governor never stores a proposal's actions: `propose` hashes them into `proposal_id` and stores only a four-field `ProposalCore` (proposer, voting window, state) under that ID; to execute, the caller sends the full action list again, and finding a `ProposalCore` under the re-computed hash proves these are exactly the actions that were voted on — the contract invokes them straight from the caller's arguments:
 
 ```rust
 // governor: proposal_id = hash(targets, functions, args, description_hash)
 // timelock: operation_id = hash(target, fn, args, predecessor, salt)
 ```
 
-**(b) Sentinel-value state machines.** OpenZeppelin's Timelock stores one `u32` ledger number per operation: `0` means unset, `1` means done, and any other value is the ledger when the operation becomes ready. This avoids a separate status entry.
-
-**(c) Commitments to off-chain data.** For big datasets, store only a cryptographic commitment; users bring the data + proof. The Merkle airdrop keeps **one** 32-byte root for an arbitrarily large distribution list, plus one `Claimed(index)` flag per _actual_ claimer:
-
-```rust
-enum DataKey { RootHash, TokenAddress, Claimed(u32) }
-// claim(index, receiver, amount, proof) -> verify proof against RootHash, set Claimed(index)
-```
-
-The official example stores the root, token address, and claim flags in instance storage. It removes the distribution list from contract state, but every claim still grows the same 64 KiB instance entry. For an unbounded distribution, move claim flags to separate persistent entries.
+What must stay on-chain can still shrink to a **sentinel**. The Governor's companion Timelock contract, which holds approved calls until a delay passes, keys its operations by the same kind of derived hash — and its entire record of an operation is a single `u32`: `0` means never scheduled, `1` means executed, and any other value is the ledger at which the operation becomes ready. Identity in the key, the whole lifecycle in one integer. The Governor itself never writes Pending, Active, Succeeded, or Defeated at all: it derives them from the stored voting window, the tallies, and the clock, and writes `state` only on irreversible transitions (canceled, queued, executed).
 
 **Trade-offs**
 
-- (a)/(b): fewer stored bytes; the price is API ergonomics — callers must re-provide inputs, and clients must be able to reconstruct them (events help).
+- The ledger can _verify_ data it never stored, but it cannot _return_ it — availability becomes someone else's job, and if the off-chain copy is lost the records are permanently unusable. Each variant answers this differently: a Merkle distributor must publish the tree somewhere durable (its own auth-gated API) so claimers can fetch their proofs, while the OZ governance contracts emit each proposal's or operation's full inputs in its creation event — a single record is small enough that event history can serve as the backup copy.
 
-- (c): shifts data availability off-chain — someone must host the Merkle tree, and a lost tree means unclaimable entitlements. Verification performs O(log n) hash steps.
+- Scale is set by what you still write per record. One persistent `Claimed(index)` entry per claim grows without bound — that is OZ's `merkle_distributor`. The official `merkle_distribution` example keeps the flags inside the shared instance entry instead: simpler, but the whole distribution must then fit in one 64 KiB entry.
 
-- Lazy-write is the same philosophy applied to writes: OZ Governor creates vote-tally entries only on the _first_ vote and computes proposal states (Pending/Active/Succeeded) from `ProposalCore` + clock — don't write what you can derive.
+- Verification itself is cheap: O(log n) hashes for a Merkle proof, a single hash for a derived ID.
 
 **In the wild**
 
-- [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — [Governor proposal IDs](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/governor/storage.rs#L771-L783) and [Timelock operation IDs](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/timelock/storage.rs#L403-L413) are derived from caller-supplied inputs; the Timelock stores [one ledger-number sentinel per operation](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/timelock/mod.rs#L353-L357). Its reusable [`merkle_distributor`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/contract-utils/src/merkle_distributor/storage.rs#L13-L18) module is the unbounded-distribution variant: one persistent [`Claimed(u32)`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/contract-utils/src/merkle_distributor/storage.rs#L18) entry per claimed index.
-
 - [`stellar/soroban-examples`](https://github.com/stellar/soroban-examples) — [`merkle_distribution/src/lib.rs`](https://github.com/stellar/soroban-examples/blob/14c069cccf85e552d4d80c8122e00a61a5723aae/merkle_distribution/src/lib.rs#L19-L20) stores the root and `Claimed(index)` flags in instance storage; its claim count is bounded by the instance-entry size.
+
+- [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — its reusable [`merkle_distributor`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/contract-utils/src/merkle_distributor/storage.rs#L13-L18) module is the unbounded-distribution variant: one persistent [`Claimed(u32)`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/contract-utils/src/merkle_distributor/storage.rs#L18) entry per claimed index. [Governor proposal IDs](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/governor/storage.rs#L771-L783) and [Timelock operation IDs](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/timelock/storage.rs#L403-L413) are derived from caller-supplied inputs; the Timelock stores [one ledger-number sentinel per operation](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/timelock/mod.rs#L353-L357).
 
 {/* section:s11 */}
 
@@ -584,7 +585,7 @@ add_pair_to_all_pairs(&e, &pair_address);                           // index n -
 
 For each piece of state, walk this list:
 
-1. **Can you avoid storing it?** Derivable → recompute. Large + user-provable → commitment. Only off-chain readers → events. **→ S10**
+1. **Can you avoid storing it?** Large + user-provable → Merkle commitment. Derivable → recompute. Only off-chain readers → events. **→ S10**
 
 2. **Small, global, read by ~every call?** Instance storage; keep it under a few KiB. **→ S1**
 
@@ -654,7 +655,7 @@ Examples in current source use these approximate targets: **instance 7–31 d** 
 | Counter + index entries | O(1) by idx | O(1) | ✗ | O(page) | 1 | S8a |
 | Double map + swap-and-pop | O(1) | O(1) | O(1) | O(page), unordered | 2 | S8b |
 | Pull-based reward index | O(1)/user | — | — | ✗ | 1 + 1/user | S9 |
-| Merkle commitment | O(log n) verify | root update | ✗ | ✗ | design-dependent claim flags | S10c |
+| Merkle commitment | O(log n) verify | root update | ✗ | ✗ | design-dependent claim flags | S10 |
 | Factory / contract-per-entity | O(1) + xcall | deploy | — | via registry | own contract | S11 |
 
 \* loaded with every invocation regardless. "Entries/item": 1/n = one shared entry holds all n items; 2 = forward + reverse index entries; 1 + 1/user = one global entry plus one per user. Claim flags can share instance storage, as in the official example, or use one persistent entry per claim for an unbounded distribution.
