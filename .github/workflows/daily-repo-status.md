@@ -33,6 +33,7 @@ safe-outputs:
     title-prefix: "[repo-status] "
     labels: []
     close-older-issues: true
+  report-failure-as-issue: false
 source: githubnext/agentics/workflows/repo-status.md@1c6668b751c51af8571f01204ceffb19362e0f66
 ---
 
