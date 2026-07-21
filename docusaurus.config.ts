@@ -53,6 +53,7 @@ const config: Config = {
           horizon: {
             specPath: "openapi/horizon/bundled.yml",
             outputDir: "docs/data/apis/horizon/api-reference",
+            showInfoPage: false,
             sidebarOptions: {
               groupPathsBy: "tagGroup",
             },
@@ -61,17 +62,20 @@ const config: Config = {
             specPath: "openapi/anchor-platform/bundled-platform.yaml",
             outputDir: "docs/platforms/anchor-platform/api-reference/platform/transactions",
             hideSendButton: true,
+            showInfoPage: false,
             template: "src/template.mustache",
           } satisfies OpenApiPlugin.Options,
           ap_callbacks: {
             specPath: "openapi/anchor-platform/bundled-callbacks.yaml",
             outputDir: "docs/platforms/anchor-platform/api-reference/callbacks",
             hideSendButton: true,
+            showInfoPage: false,
             template: "src/template.mustache",
           } satisfies OpenApiPlugin.Options,
           stellar_disbursement_platform: {
             specPath: "openapi/stellar-disbursement-platform/bundled.yaml",
             outputDir: "docs/platforms/stellar-disbursement-platform/api-reference",
+            showInfoPage: false,
             sidebarOptions: {
               groupPathsBy: "tag",
               categoryLinkSource: 'tag',

@@ -9,11 +9,6 @@ const sidebar: SidebarsConfig = {
       collapsed: true,
       items: [
         {
-          type: "doc",
-          id: "data/apis/horizon/api-reference/horizon",
-          key: "resources-data-apis-horizon-api-reference-horizon",
-        },
-        {
           type: "category",
           label: "Accounts",
           key: "resources-accounts",
@@ -392,11 +387,6 @@ const sidebar: SidebarsConfig = {
       collapsible: true,
       collapsed: true,
       items: [
-        {
-          type: "doc",
-          id: "data/apis/horizon/api-reference/horizon",
-          key: "aggregations-data-apis-horizon-api-reference-horizon",
-        },
         {
           type: "category",
           label: "Fee Stats",
