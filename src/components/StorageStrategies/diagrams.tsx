@@ -998,6 +998,127 @@ const SVGS: Record<string, React.ReactNode> = {
   ),
   d10: (
     <svg
+      viewBox="0 0 660 216"
+      role="img"
+      aria-label="Animation: voting-power checkpoints append as one persistent entry per change; a query for a past ledger binary-searches the indexed entries and lands on the last checkpoint at or before it."
+    >
+      <text x="330" y="20" textAnchor="middle" className="lbl">
+        alice&apos;s voting power — one persistent checkpoint entry per change
+      </text>
+      <text x="105" y="44" textAnchor="middle" className="lbl-s mono">
+        idx 0
+      </text>
+      <text x="245" y="44" textAnchor="middle" className="lbl-s mono">
+        idx 1
+      </text>
+      <text x="385" y="44" textAnchor="middle" className="lbl-s mono">
+        idx 2
+      </text>
+      <text x="525" y="44" textAnchor="middle" className="lbl-s mono">
+        idx 3
+      </text>
+      <g className="cp1 anim">
+        <rect
+          className="cell cell-pers"
+          x="45"
+          y="52"
+          width="120"
+          height="44"
+          rx="5"
+        />
+        <text x="105" y="70" textAnchor="middle" className="lbl-s mono">
+          ledger 100
+        </text>
+        <text x="105" y="86" textAnchor="middle" className="lbl-s mono">
+          votes 40
+        </text>
+      </g>
+      <g className="cp2 anim">
+        <rect
+          className="cell cell-pers"
+          x="185"
+          y="52"
+          width="120"
+          height="44"
+          rx="5"
+        />
+        <text x="245" y="70" textAnchor="middle" className="lbl-s mono">
+          ledger 250
+        </text>
+        <text x="245" y="86" textAnchor="middle" className="lbl-s mono">
+          votes 90
+        </text>
+      </g>
+      <g className="cp3 anim">
+        <rect
+          className="cell cell-pers pr2 anim"
+          x="325"
+          y="52"
+          width="120"
+          height="44"
+          rx="5"
+        />
+        <text x="385" y="70" textAnchor="middle" className="lbl-s mono">
+          ledger 400
+        </text>
+        <text x="385" y="86" textAnchor="middle" className="lbl-s mono">
+          votes 75
+        </text>
+      </g>
+      <g className="cp4 anim">
+        <rect
+          className="cell cell-pers pr3 anim"
+          x="465"
+          y="52"
+          width="120"
+          height="44"
+          rx="5"
+        />
+        <text x="525" y="70" textAnchor="middle" className="lbl-s mono">
+          ledger 620
+        </text>
+        <text x="525" y="86" textAnchor="middle" className="lbl-s mono">
+          votes 130
+        </text>
+      </g>
+      <rect
+        className="winring anim"
+        x="325"
+        y="52"
+        width="120"
+        height="44"
+        rx="5"
+      />
+      <text x="330" y="122" textAnchor="middle" className="lbl-s cnt anim">
+        NumCheckpoints(alice) → 4 — writes touch only the tail + counter
+      </text>
+      <text x="330" y="148" textAnchor="middle" className="lbl q anim fill-ink">
+        voting power at ledger 500? → binary-search the indexes
+      </text>
+      <text
+        x="525"
+        y="172"
+        textAnchor="middle"
+        className="lbl-s mono plbl3 anim fill-danger"
+      >
+        620 &gt; 500 ✗
+      </text>
+      <text
+        x="385"
+        y="172"
+        textAnchor="middle"
+        className="lbl-s mono plbl2 anim fill-teal"
+      >
+        400 ≤ 500 ✓
+      </text>
+      <text x="330" y="200" textAnchor="middle" className="lbl-s ans anim">
+        last checkpoint at or before ledger 500 → 75 votes · each probe reads
+        one entry
+      </text>
+    </svg>
+  ),
+  d11: (
+    <svg
       viewBox="0 0 660 232"
       role="img"
       aria-label="Animation: a whole airdrop list collapses to a 32-byte Merkle root on-chain; to claim, alice re-submits her record plus proof, the path from her leaf to the root lights back up as the contract re-hashes it, and only a small Claimed(0) flag is written."
@@ -1025,12 +1146,26 @@ const SVGS: Record<string, React.ReactNode> = {
         <line className="wire" x1="410" y1="82" x2="290" y2="52" />
       </g>
       <g className="proof anim">
-        <rect className="cell anim" x="60" y="140" width="100" height="30" rx="4" />
+        <rect
+          className="cell anim"
+          x="60"
+          y="140"
+          width="100"
+          height="30"
+          rx="4"
+        />
         <text x="110" y="159" textAnchor="middle" className="lbl-s mono">
           alice, 500
         </text>
         <line className="wire" x1="110" y1="140" x2="170" y2="106" />
-        <rect className="cell anim" x="130" y="82" width="80" height="24" rx="4" />
+        <rect
+          className="cell anim"
+          x="130"
+          y="82"
+          width="80"
+          height="24"
+          rx="4"
+        />
         <text x="170" y="98" textAnchor="middle" className="lbl-s mono">
           h₀₁
         </text>
@@ -1039,12 +1174,7 @@ const SVGS: Record<string, React.ReactNode> = {
       <text x="290" y="196" textAnchor="middle" className="lbl-s">
         the full list lives off-chain
       </text>
-      <text
-        x="290"
-        y="214"
-        textAnchor="middle"
-        className="lbl-s claimcap anim"
-      >
+      <text x="290" y="214" textAnchor="middle" className="lbl-s claimcap anim">
         to claim, alice brings her record + proof — the contract re-hashes her
         path back to the root
       </text>
@@ -1078,7 +1208,7 @@ const SVGS: Record<string, React.ReactNode> = {
       </g>
     </svg>
   ),
-  d11: (
+  d12: (
     <svg
       viewBox="0 0 660 210"
       role="img"
@@ -1115,7 +1245,13 @@ const SVGS: Record<string, React.ReactNode> = {
       </g>
 
       <line className="wire dashed w1 anim" x1="190" y1="80" x2="268" y2="60" />
-      <line className="wire dashed w2 anim" x1="190" y1="106" x2="268" y2="106" />
+      <line
+        className="wire dashed w2 anim"
+        x1="190"
+        y1="106"
+        x2="268"
+        y2="106"
+      />
       <line
         className="wire dashed w3 anim"
         x1="190"

@@ -1,7 +1,7 @@
 ---
 title: Storage strategies in production contracts
 sidebar_label: Storage strategies
-description: Eleven storage layout strategies for Soroban contracts, with diagrams, a decision path, and a cheatsheet
+description: Twelve storage layout strategies for Soroban contracts, with diagrams, a decision path, and a cheatsheet
 ---
 
 import StorageDiagram from "@site/src/components/StorageStrategies";
@@ -69,7 +69,7 @@ Five subtleties that bite newcomers:
 
 - **Restoration is driven by the transaction, not by contract code.** An archived key that is in the footprint but not in the restore list fails the transaction before the contract runs — contract code never observes, and cannot restore, an archived entry. Instance storage restores as one contract instance entry (contract code separately, if also archived); persistent entries restore per key.
 
-That is the machinery every strategy below manages. The rest of this guide walks through the eleven strategies themselves, from simplest to most involved, each in the same shape: the situation you are in (**You need**), why the obvious approach hurts (**The catch**), the working code (**The pattern**), and what it costs (**Trade-offs**). The italic line under each title is a quick-facts summary; the storage tiers it names are where production contracts most commonly apply the pattern, **not a requirement** — most patterns work on any tier whose lifecycle fits the data.
+That is the machinery every strategy below manages. The rest of this guide walks through the twelve strategies themselves, from simplest to most involved, each in the same shape: the situation you are in (**You need**), why the obvious approach hurts (**The catch**), the working code (**The pattern**), and what it costs (**Trade-offs**). The italic line under each title is a quick-facts summary; the storage tiers it names are where production contracts most commonly apply the pattern, **not a requirement** — most patterns work on any tier whose lifecycle fits the data.
 
 {/* section:s1 */}
 
@@ -501,7 +501,53 @@ The global `index` answers one question — how much has a single share earned s
 
 {/* section:s10 */}
 
-## Strategy 10: Merkle roots and derived state — replace storage with verification
+## Strategy 10: Checkpoints — read state as of a past ledger
+
+_persistent · O(1) append · O(log n) historical read_
+
+**You need.** To read a value as of a past ledger, on-chain: a voter's power when a proposal snapshotted, total supply when voting started, the quorum in force back then. Tallying votes with _current_ balances instead lets an attacker acquire tokens mid-vote, vote, and dump them.
+
+**The catch.** A per-entity entry (Strategy 2) keeps only the latest value — every write destroys the history. Keeping the whole history as a growing `Vec` or `Map` under one key is the first red flag in the review checklist (64 KiB cap, whole-entry rewrites). And Strategy 9's cumulative index answers "how much accrued per share", not "what was this value at ledger X".
+
+<StorageDiagram n={10} />
+
+**The pattern.** Checkpoint the value: an append-only series of `(ledger, value)` snapshots per subject — Strategy 8(a)'s counter-plus-indexed-entries layout, applied through time:
+
+```rust
+#[contracttype]
+pub struct Checkpoint { pub ledger: u32, pub votes: u128 }
+
+#[contracttype]
+pub enum VotesStorageKey {
+    NumCheckpoints(Address),          // how many checkpoints a delegate has
+    DelegateCheckpoint(Address, u32), // index -> Checkpoint
+}
+// write: push a checkpoint at the current ledger — or overwrite the tail
+//        if it is already at this ledger — then bump the counter
+// read:  binary-search 0..num for the last checkpoint with ledger <= target
+```
+
+Checkpoints before the tail are never rewritten — that is what makes binary search valid. And queries must target a strictly past ledger (OpenZeppelin rejects the rest with `FutureLookup`): the current ledger's value can still change before it closes.
+
+**Trade-offs**
+
+- Appends are O(1), and same-ledger updates collapse into the tail checkpoint, so series length tracks activity, not call count. The latest value is one read.
+
+- A historical read costs O(log n) _ledger reads_ — each probe is its own footprint entry. Simulation declares them automatically, but they count toward the per-transaction disk-read cap.
+
+- Every checkpoint is a persistent entry paying rent, and one archived checkpoint in the search path fails the transaction until it is restored — keep the series' TTLs extended for as long as history can be queried (OpenZeppelin bumps every checkpoint it touches).
+
+- Checkpoint only what the contract itself must read historically; off-chain consumers can rebuild history from events (Strategy 8, variant c) at zero on-chain cost.
+
+**In the wild**
+
+- [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — the votes module keeps [per-delegate and total-supply checkpoint series](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/votes/storage.rs#L25-L66), [collapses same-ledger writes into the tail](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/votes/storage.rs#L444-L489), and answers past-power queries with a [binary search](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/votes/storage.rs#L367-L400). The Governor applies the same shape to [quorum changes](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/governor/storage.rs#L1088-L1113), so raising the quorum today does not retroactively affect proposals voted under the old one.
+
+- [`Phoenix-Protocol-Group/phoenix-contracts`](https://github.com/Phoenix-Protocol-Group/phoenix-contracts) — the stake contract stores each reward token's [distribution history as one persistent `Map<u64, u128>` keyed by day](https://github.com/Phoenix-Protocol-Group/phoenix-contracts/blob/aa9bfc000166e3ccdc30281b5181bbd8046fd35d/contracts/stake/src/distribution.rs#L11-L41) — the single-entry variant: simpler while the history is short, but every update rewrites the whole map, which grows for as long as rewards run.
+
+{/* section:s11 */}
+
+## Strategy 11: Merkle roots and derived state — replace storage with verification
 
 _one 32-byte root · derived IDs · sentinel values_
 
@@ -509,7 +555,7 @@ _one 32-byte root · derived IDs · sentinel values_
 
 **The catch.** Stored bytes add I/O, keeping them live costs rent, and each entry a transaction touches consumes footprint. None of that is mandatory: when callers are willing to hold the data themselves, the chain only needs enough of it to verify what they bring back.
 
-<StorageDiagram n={10} />
+<StorageDiagram n={11} />
 
 **The pattern.** Keep the records off-chain and store only a 32-byte hash that _commits_ to them. Whoever wants the contract to act on a record must send that record back in; the contract re-hashes what it received and compares the result with the stored hash. A match proves the input is byte-for-byte the data that was committed to — so the contract can safely act on data it never stored.
 
@@ -544,9 +590,9 @@ What must stay on-chain can still shrink to a **sentinel**. The Governor's compa
 
 - [`OpenZeppelin/stellar-contracts`](https://github.com/OpenZeppelin/stellar-contracts) — its reusable [`merkle_distributor`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/contract-utils/src/merkle_distributor/storage.rs#L13-L18) module is the unbounded-distribution variant: one persistent [`Claimed(u32)`](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/contract-utils/src/merkle_distributor/storage.rs#L18) entry per claimed index. [Governor proposal IDs](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/governor/storage.rs#L771-L783) and [Timelock operation IDs](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/timelock/storage.rs#L403-L413) are derived from caller-supplied inputs; the Timelock stores [one ledger-number sentinel per operation](https://github.com/OpenZeppelin/stellar-contracts/blob/34fd71403d59dfc0947fcede227313f37dd23635/packages/governance/src/timelock/mod.rs#L353-L357).
 
-{/* section:s11 */}
+{/* section:s12 */}
 
-## Strategy 11: Scale out — contract-per-entity via factory
+## Strategy 12: Scale out — contract-per-entity via factory
 
 _one contract per entity · own instance & TTLs · factory registry_
 
@@ -554,7 +600,7 @@ _one contract per entity · own instance & TTLs · factory registry_
 
 **The catch.** Even with a sound per-entry layout, one contract concentrates its instance state, upgrade surface, and failure domain. Transactions that write that instance entry conflict, and all state in it shares the 64 KiB entry cap.
 
-<StorageDiagram n={11} />
+<StorageDiagram n={12} />
 
 **The pattern.** Deploy a **contract per entity** from a factory, which keeps the registry and shared config itself (Strategy 8 for the index, Strategy 2 for the reverse lookup). Each pair/pool/wallet gets its own instance storage, its own TTLs, its own parallelism domain:
 
@@ -565,7 +611,7 @@ put_pair_address_by_token_pair(&e, token_pair, &pair_address);      // (tokenA,t
 add_pair_to_all_pairs(&e, &pair_address);                           // index n -> addr
 ```
 
-The deployment is deterministic: the salt hashes the sorted token pair, so a pair's address is recomputable from its tokens and the factory address alone — Strategy 10's derived-ID idea, applied to contract addresses.
+The deployment is deterministic: the salt hashes the sorted token pair, so a pair's address is recomputable from its tokens and the factory address alone — Strategy 11's derived-ID idea, applied to contract addresses.
 
 **Trade-offs**
 
@@ -587,11 +633,11 @@ The deployment is deterministic: the salt hashes the sorted token pair, so a pai
 
 ## Decision path: composing strategies
 
-For each piece of state, answer every question in order — steps 1–3 pick the lifecycle, steps 4–8 the layout. Several steps can match one piece of state, and the contract as a whole composes the strategies its pieces land on.
+For each piece of state, answer every question in order — steps 1–3 pick the lifecycle, steps 4–9 the layout. Several steps can match one piece of state, and the contract as a whole composes the strategies its pieces land on.
 
 1. **Can you avoid storing it?** Data that callers can hold and prove needs only a hash commitment on-chain; data derivable from other state should be recomputed; data read only by off-chain consumers can be emitted as events.
 
-   - [S10: Merkle roots and derived state — replace storage with verification](#strategy-10-merkle-roots-and-derived-state--replace-storage-with-verification)
+   - [S11: Merkle roots and derived state — replace storage with verification](#strategy-11-merkle-roots-and-derived-state--replace-storage-with-verification)
    - [S8: Enumeration — build the index yourself](#strategy-8-enumeration--build-the-index-yourself) (variant c: events + off-chain indexer)
 
 2. **Is it small, global, and read by (almost) every call?** Keep it in instance storage, and keep the whole instance entry under a few KiB.
@@ -621,9 +667,13 @@ For each piece of state, answer every question in order — steps 1–3 pick the
 
    - [S9: Pull, don't push — lazy settlement for unbounded holders](#strategy-9-pull-dont-push--lazy-settlement-for-unbounded-holders)
 
-8. **Is it still too big or too contended?** Shard it: deploy one contract per entity from a factory.
+8. **Must the contract read a value as of a past ledger?** Checkpoint it: append `(ledger, value)` snapshots and binary-search them at read time.
 
-   - [S11: Scale out — contract-per-entity via factory](#strategy-11-scale-out--contract-per-entity-via-factory)
+   - [S10: Checkpoints — read state as of a past ledger](#strategy-10-checkpoints--read-state-as-of-a-past-ledger)
+
+9. **Is it still too big or too contended?** Shard it: deploy one contract per entity from a factory.
+
+   - [S12: Scale out — contract-per-entity via factory](#strategy-12-scale-out--contract-per-entity-via-factory)
 
 {/* section:cheat */}
 
@@ -636,6 +686,7 @@ For each piece of state, answer every question in order — steps 1–3 pick the
 | Admin, config, token metadata, pause flag | instance | one entry loaded with each contract invocation |
 | AMM reserves / totals (every swap updates them anyway) | instance | co-located with instance; the write conflict is inherent to the product |
 | Balances, ownership, positions, long-lived registries | persistent | must never be lost; archive + restore safety net |
+| Voting power, quorum — anything read "as of ledger X" | persistent | append-only checkpoint series; keep it live while queries can reach it |
 | Allowances, approvals, auctions, epoch stats, pending proposals | temporary | natural deadline; half rent; deleted on TTL expiry |
 | Oracle prices / regenerable caches | temporary | loss is cheap, freshness is the point |
 | Anything derivable (states, IDs, tallies pre-first-vote) | _none_ | recompute; hash-commit; lazy-create |
@@ -653,8 +704,9 @@ Every pattern in this guide, costed per operation — use it to compare finalist
 | Counter + index entries | O(1) by index | O(1) | append-only | O(page) | 1 + shared counter | [S8 (a)](#strategy-8-enumeration--build-the-index-yourself) |
 | Double map + swap-and-pop | O(1) | O(1) | O(1) | O(page), unordered | 2 — forward + reverse | [S8 (b)](#strategy-8-enumeration--build-the-index-yourself) |
 | Pull-based reward index | O(1) per user | — | — | — | 1 per user + 1 global | [S9](#strategy-9-pull-dont-push--lazy-settlement-for-unbounded-holders) |
-| Merkle commitment | O(log n) verify | root update | root update | data lives off-chain | 0–1 claim flag† | [S10](#strategy-10-merkle-roots-and-derived-state--replace-storage-with-verification) |
-| Factory / contract-per-entity | O(1) + cross-contract call | deploy | registry only | via registry | its own contract | [S11](#strategy-11-scale-out--contract-per-entity-via-factory) |
+| Checkpoint series | O(1) latest · O(log n) past | O(1) append | — | O(page) by index | 1 per checkpoint + shared counter | [S10](#strategy-10-checkpoints--read-state-as-of-a-past-ledger) |
+| Merkle commitment | O(log n) verify | root update | root update | data lives off-chain | 0–1 claim flag† | [S11](#strategy-11-merkle-roots-and-derived-state--replace-storage-with-verification) |
+| Factory / contract-per-entity | O(1) + cross-contract call | deploy | registry only | via registry | its own contract | [S12](#strategy-12-scale-out--contract-per-entity-via-factory) |
 
 \* Loaded with every invocation, whether or not the call reads it.
 
@@ -678,7 +730,7 @@ Every pattern in this guide, costed per operation — use it to compare finalist
 
 - **A loop that updates every user.** It dies at the 200-writes-per-transaction cap as soon as the population outgrows it. Keep one cumulative index and settle each user lazily ([S9](#strategy-9-pull-dont-push--lazy-settlement-for-unbounded-holders)).
 
-- **Data paged across entries because it outgrew 64 KiB.** Paging is sometimes the right call, but it is often a symptom of a layout problem — first consider bounding the data ([S6](#strategy-6-bounded-collections--a-capped-vec-or-map-in-one-entry)), splitting it by access pattern ([S7](#strategy-7-pack-vs-split--group-state-by-access-pattern)), replacing it with a hash commitment ([S10](#strategy-10-merkle-roots-and-derived-state--replace-storage-with-verification)), or sharding by contract ([S11](#strategy-11-scale-out--contract-per-entity-via-factory)).
+- **Data paged across entries because it outgrew 64 KiB.** Paging is sometimes the right call, but it is often a symptom of a layout problem — first consider bounding the data ([S6](#strategy-6-bounded-collections--a-capped-vec-or-map-in-one-entry)), splitting it by access pattern ([S7](#strategy-7-pack-vs-split--group-state-by-access-pattern)), replacing it with a hash commitment ([S11](#strategy-11-merkle-roots-and-derived-state--replace-storage-with-verification)), or sharding by contract ([S12](#strategy-12-scale-out--contract-per-entity-via-factory)).
 
 {/* section:limits */}
 
