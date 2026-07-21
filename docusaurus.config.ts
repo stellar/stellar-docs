@@ -84,7 +84,6 @@ const config: Config = {
     './src/plugins/route-export/index.ts',
     './src/plugins/analytics-module/index.ts',
     'docusaurus-markdown-source-plugin',
-    './src/plugins/markdown-source-dev/index.ts',
     [
       "docusaurus-plugin-llms",
       {
