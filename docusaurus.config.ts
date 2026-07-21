@@ -2,7 +2,6 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { themes as prismThemes } from 'prism-react-renderer';
 
-// import { makeEditUrl, DEFAULT_LOCALE, GOOGLE_TRANSLATE_ELEMENT } from './config/constants';
 import navbarItems from './config/theme/navbar';
 import footerColumns from './config/theme/footer';
 import { headTags } from './config/theme/headTags';
@@ -31,10 +30,6 @@ const config: Config = {
   favicon: "img/docusaurus/favicon-96x96.png",
   organizationName: "stellar",
   projectName: "stellar-docs",
-  // i18n: {
-  //   defaultLocale: DEFAULT_LOCALE,
-  //   locales: ["en", "es"],
-  // },
   scripts: [
     {
       src: 'https://translate.google.com/translate_a/element.js',
@@ -117,7 +112,7 @@ const config: Config = {
       "classic",
       {
         blog: {
-          path: 'meeting-notes',
+          path: 'meetings',
           blogTitle: 'Meeting Notes',
           blogDescription: 'Notes and recordings from the Stellar protocol & developers meetings',
           blogSidebarTitle: 'All meetings',
@@ -138,7 +133,6 @@ const config: Config = {
           rehypePlugins: [rehypeKatex],
           sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
-          // editUrl: makeEditUrl,
           editUrl: "https://github.com/stellar/stellar-docs/edit/main",
           exclude: ['**/component/**', '**/CONTRIBUTING.md'],
         },

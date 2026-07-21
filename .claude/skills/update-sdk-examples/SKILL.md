@@ -102,10 +102,7 @@ the rule holds in every mode.
       string, a coordinate, a class name), `grep` the **entire** `docs/` tree
       for it directly — do not rely on a partial file list, including one
       produced by an audit sub-agent, which routinely both misses occurrences
-      and includes false matches. Scope edits to `docs/` only: the `i18n/`
-      translations mirror `docs/`, lag behind (they may still show APIs you've
-      already migrated), and are an unused holdover from previous translation
-      processes - ignore the `i18n/` directory altogether.
+      and includes false matches. Scope edits to `docs/` only.
    3. **Verify each candidate against the current source before editing.**
       Changelogs and audit sub-agents over- and under-report. Confirm the API
       against the actual released source/registry: e.g. is the symbol really

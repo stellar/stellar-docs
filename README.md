@@ -150,7 +150,7 @@ Our repository uses some custom React components that can be used inside the
 
 **Make sure that there is an empty line within the wrapper.** For example,
 
-```text
+````markdown
 <CodeExample>
 <!-- EMPTY LINE AFTER THE COMPONENT'S OPENING TAG IS REQUIRED -->
 
@@ -164,7 +164,7 @@ print("hello world")
 
 <!-- EMPTY LINE BEFORE THE COMPONENT'S CLOSING TAG IS REQUIRED -->
 </CodeExample>
-```
+````
 
 #### Code Example
 
@@ -249,7 +249,7 @@ export const CODE_LANGS = {
 };
 ```
 
-**Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
+**Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://stellar.org/privacy-policy).**
 
 [docs]: https://developers.stellar.org/docs
 [stellar]: https://stellar.org
