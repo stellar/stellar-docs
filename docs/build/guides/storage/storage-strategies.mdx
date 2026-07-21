@@ -117,7 +117,7 @@ e.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMO
 
 {/* section:s2 */}
 
-## Strategy 2: One entry per entity — the `DataKey` enum map
+## Strategy 2: One entry per entity — keyed by a `DataKey` enum
 
 _persistent · O(1) lookup · independently addressed entries · no enumeration_
 
@@ -310,7 +310,7 @@ The same threshold → bump call exists on temporary storage and suits regenerab
 
 {/* section:s6 */}
 
-## Strategy 6: Bounded collections in a single entry
+## Strategy 6: Bounded collections — a capped Vec or Map in one entry
 
 _persistent · 1 read to iterate · hard cap in code_
 
@@ -356,9 +356,9 @@ The list entry stores only _identifiers_; per-item detail lives in its own entry
 
 {/* section:s7 */}
 
-## Strategy 7: Pack vs. split — sizing the entry to the transaction
+## Strategy 7: Pack vs. split — group state by access pattern
 
-_persistent · group by usage_
+_persistent · size the entry to the transaction · split hot from cold_
 
 **You need.** An entity with several related pieces of state — say a user's collateral, debt, and supplied assets — and a decision: one entry holding all of it, or one entry per piece?
 
@@ -399,7 +399,7 @@ Two details keep Blend's packed `Positions` entry small. The maps key by reserve
 
 {/* section:s8 */}
 
-## Strategy 8: Enumeration — indexes you maintain yourself
+## Strategy 8: Enumeration — build the index yourself
 
 _persistent · O(1) maintain · pageable reads_
 
@@ -454,44 +454,46 @@ O(1) counts steps, not ledger I/O: the swap-and-pop above still writes at least 
 
 {/* section:s9 */}
 
-## Strategy 9: Two-level indexes — O(1) accounting for unbounded populations
+## Strategy 9: Pull, don't push — lazy settlement for unbounded holders
 
-_persistent · O(1) per user · never iterate_
+_persistent · O(1) per user · cumulative index_
 
 **You need.** To distribute something (interest, rewards, emissions) _continuously_ to an unbounded set of holders — without ever touching more than one holder per transaction.
 
-**The catch.** The naive design — loop over holders and update each — does not scale. Current Mainnet settings allow 200 written entries per transaction, far short of 10,000. The design must remain O(1) per user even if that limit changes.
+**The catch.** The naive design is _push-based_: loop over every holder and update each one's entry. Current Mainnet settings allow 200 written entries per transaction, so the loop dies as soon as the population outgrows the per-transaction limit — and splitting it across transactions only scales so much. On the other hand, the design described here stays O(1) per user no matter how many holders exist.
 
 <StorageDiagram n={9} />
 
-**The pattern.** Use one _global_ cumulative-index entry per pool plus one _snapshot_ entry per user:
+**The pattern.** _pull-based_ approach: one _global_ cumulative-index entry per pool plus one _snapshot_ entry per user:
 
 ```rust
 #[contracttype]
 pub struct ReserveEmissionData {   // ONE entry per reserve
     pub index: i128,               // cumulative rewards-per-share; only ever increases
     pub eps: u64, pub expiration: u64, pub last_time: u64,
+                                   // ☝️ what lets the index advance lazily on any touch:
+                                   //   index += eps * (now - last_time), until expiration
 }
 #[contracttype]
 pub struct UserEmissionData {      // ONE entry per (user, reserve)
     pub index: i128,               // the global index last time this user was touched
     pub accrued: i128,
 }
-// when settling one user: accrued += user_shares * (global.index - user.index);
-//                         user.index = global.index;
+// when settling one user: • accrued += user_shares * (global.index - user.index);
+//                         • user.index = global.index;
 ```
 
-Time advances the _global_ index lazily; each user settles the delta since _their own_ last touch, whenever they show up. Nobody ever iterates.
+The global `index` answers one question — how much has a single share earned since the pool began — and it only ever increases, bumped lazily whenever anyone interacts. Each user's snapshot records where that index stood at _their_ last settlement, so `global.index − user.index` is exactly the rewards-per-share earned while they weren't looking. A holder who joins late starts at the current index and earns nothing for the time before; one who stays away for months loses nothing, because those two numbers reconstruct every accrual period they missed. Nobody ever iterates.
 
 **Trade-offs**
 
-- O(1) entries touched per user action — an established pattern for distribution without iterating over all users.
+- O(1) entries touched per user action — the same cumulative-index pattern EVM DeFi knows as Synthetix's [`rewardPerTokenStored`](https://solidity-by-example.org/defi/staking-rewards/) or MasterChef's [`accSushiPerShare`](https://github.com/sushiswap/masterchef/blob/4153a98c34e06ee3c373fcff566d1048dcd01666/contracts/MasterChef.sol#L36-L50).
 
 - Rounding, scaling, and index monotonicity are protocol invariants and need focused tests and review.
 
-- Users who never interact never settle — fine for rewards (they accrue by formula), but the pattern cannot push _obligations_ to passive users.
+- Nothing ever runs on a passive user's behalf: rewards keep accruing by formula and settle whenever the user finally shows up, but the pattern cannot push _obligations_ (fees, penalties) onto accounts that never transact.
 
-- TTL pairing: Blend gives shared emission data a 45 → 46 day policy and per-user emission data a 100 → 120 day policy. Their TTLs are maintained on separate shared-state and per-user access paths.
+- TTL pairing: Blend gives shared emission data a 45 → 46 day policy and per-user emission data a 100 → 120 day policy — the shared entry is bumped by every user's interaction, while a user's entry is bumped only when that user shows up, so it needs the longer lease.
 
 **In the wild**
 
@@ -568,7 +570,7 @@ add_pair_to_all_pairs(&e, &pair_address);                           // index n -
 
 - Cross-entity operations become cross-contract calls (CPU + footprint per hop); a router contract usually papers over this — Soroswap's router holds exactly one storage key: the factory address.
 
-- Fleet upgrades are real operational work (N contracts to upgrade), and each instance needs its own TTL liveness.
+- Fleet upgrades are real operational work (N contracts to upgrade), and each instance needs its own TTL liveness. The upgrade half will be solvable by [CAP-85](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0085.md) — beacon pattern — in protocol 28.
 
 **In the wild**
 
@@ -592,9 +594,9 @@ For each piece of state, walk this list:
 
 5. **Several pieces are usually read and written together?** Pack them into one bounded entry. Updated independently or by different actors? Split. **→ S7**
 
-6. **The contract must iterate it?** Small & admin-managed → bounded Vec in one entry. Large or user-managed → counter/index entries; add reverse map + swap-and-pop if removable. **→ S6 · S8**
+6. **The contract must iterate it?** Small & admin-managed → bounded collection in one entry. Large or user-managed → counter/index entries; add reverse map + swap-and-pop if removable. **→ S6 · S8**
 
-7. **Distributing value over the population?** Two-level index; never iterate. **→ S9**
+7. **Distributing value over the population?** Pull, don't push — settle each user lazily. **→ S9**
 
 8. **Still too big or too contended?** Shard into contract-per-entity via factory. **→ S11**
 
@@ -647,11 +649,11 @@ Examples in current source use these approximate targets: **instance 7–31 d** 
 | --- | --- | --- | --- | --- | --- | --- |
 | Instance singleton | O(1)\* | O(1) | O(1) | n/a | 0 (shared) | S1 |
 | Entry per entity | O(1) | O(1) | O(1) | ✗ | 1 | S2/S3 |
-| Bounded Vec in one entry | O(n) in-mem | O(1) push + full rewrite | O(n) | O(n), 1 read | 1/n | S6 |
+| Bounded collection in one entry | O(n) in-mem | O(1) insert + full rewrite | O(n) | O(n), 1 read | 1/n | S6 |
 | Packed struct per entity | O(1) whole | rewrite blob | O(1) | ✗ | 1 | S7 |
 | Counter + index entries | O(1) by idx | O(1) | ✗ | O(page) | 1 | S8a |
 | Double map + swap-and-pop | O(1) | O(1) | O(1) | O(page), unordered | 2 | S8b |
-| Two-level reward index | O(1)/user | — | — | ✗ | 1 + 1/user | S9 |
+| Pull-based reward index | O(1)/user | — | — | ✗ | 1 + 1/user | S9 |
 | Merkle commitment | O(log n) verify | root update | ✗ | ✗ | design-dependent claim flags | S10c |
 | Factory / contract-per-entity | O(1) + xcall | deploy | — | via registry | own contract | S11 |
 

@@ -902,9 +902,9 @@ const SVGS: Record<string, React.ReactNode> = {
   ),
   d9: (
     <svg
-      viewBox="0 0 660 210"
+      viewBox="0 0 660 216"
       role="img"
-      aria-label="Animation: a global cumulative index rises over time; a user who shows up settles only their own delta; everyone else's entries are untouched."
+      aria-label="Animation: a global cumulative index rises over time; a user who shows up settles only their own delta into accrued; everyone else's entries are untouched."
     >
       <text x="330" y="22" textAnchor="middle" className="lbl">
         global entry — cumulative rewards-per-share, only ever increases
@@ -935,14 +935,17 @@ const SVGS: Record<string, React.ReactNode> = {
           x="80"
           y="118"
           width="180"
-          height="48"
+          height="64"
           rx="6"
         />
-        <text x="170" y="138" textAnchor="middle" className="lbl-s mono">
+        <text x="170" y="136" textAnchor="middle" className="lbl-s mono">
           UserEmis(alice)
         </text>
-        <text x="170" y="155" textAnchor="middle" className="lbl-s mono">
+        <text x="170" y="152" textAnchor="middle" className="lbl-s mono">
           index: 0.9310 → 1.0842
+        </text>
+        <text x="170" y="168" textAnchor="middle" className="lbl-s mono">
+          accrued: 12.40 → 27.72
         </text>
       </g>
       <line
@@ -954,7 +957,7 @@ const SVGS: Record<string, React.ReactNode> = {
       />
       <text
         x="170"
-        y="188"
+        y="202"
         textAnchor="middle"
         className="lbl-s delta anim fill-teal"
       >
@@ -967,13 +970,13 @@ const SVGS: Record<string, React.ReactNode> = {
           x="330"
           y="118"
           width="130"
-          height="48"
+          height="64"
           rx="6"
         />
-        <text x="395" y="138" textAnchor="middle" className="lbl-s mono">
+        <text x="395" y="144" textAnchor="middle" className="lbl-s mono">
           UserEmis(bob)
         </text>
-        <text x="395" y="155" textAnchor="middle" className="lbl-s">
+        <text x="395" y="161" textAnchor="middle" className="lbl-s">
           untouched
         </text>
         <rect
@@ -981,13 +984,13 @@ const SVGS: Record<string, React.ReactNode> = {
           x="474"
           y="118"
           width="130"
-          height="48"
+          height="64"
           rx="6"
         />
-        <text x="539" y="138" textAnchor="middle" className="lbl-s mono">
+        <text x="539" y="144" textAnchor="middle" className="lbl-s mono">
           …× 10,000
         </text>
-        <text x="539" y="155" textAnchor="middle" className="lbl-s">
+        <text x="539" y="161" textAnchor="middle" className="lbl-s">
           untouched
         </text>
       </g>
