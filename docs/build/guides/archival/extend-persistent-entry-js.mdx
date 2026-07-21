@@ -109,7 +109,7 @@ async function extendContractCodeTTL(contractId, sourceKeypair) {
 
 ### Extending both the contract and a persistent entry
 
-In Stellar, each Soroban operation must be the only Soroban operation in a single transaction. A single `ExtendFootprintTTLOp` extends _every_ entry listed in the transaction's read-only footprint, applying the same `extendTo` target to all of them, so multiple ledger entries can be extended together in one operation. The real constraint is that shared `extendTo` offset: because one operation applies a single target, entries that need _different_ target TTLs must be split across separate operations (and therefore separate transactions). The example below extends the contract's code and a persistent entry in two separate transactions, which is only required when they need different targets — entries sharing the same target can instead be placed together in one footprint.
+In Stellar, each Soroban operation must be the only Soroban operation in a single transaction — but a single `ExtendFootprintTTLOp` extends _every_ entry listed in the transaction's read-only footprint, applying the same `extendTo` target to all of them. So when several entries should be extended to the same target, you can list them all in one footprint and extend them together in a single operation, as shown below. The one real constraint is that shared `extendTo`: entries that need _different_ target TTLs cannot share an operation and must be split across separate operations (and therefore separate transactions).
 
 ```javascript
 async function extendContractAndPersistentEntry(
@@ -117,18 +117,46 @@ async function extendContractAndPersistentEntry(
   storageKey,
   sourceKeypair,
 ) {
-  // Extend the persistent entry
-  const persistentResult = await extendPersistentEntryTTL(
-    contractId,
-    storageKey,
-    sourceKeypair,
-  );
+  const server = new Server("https://soroban-testnet.stellar.org");
+  const account = await server.getAccount(sourceKeypair.publicKey());
+  const fee = "100";
 
-  // Extend the contract code
-  const contractResult = await extendContractCodeTTL(contractId, sourceKeypair);
-  return { persistentResult, contractResult };
+  // Ledger key for the persistent entry...
+  const persistentEntry = new StellarSdk.xdr.LedgerKey.contractData({
+    contract: StellarSdk.Address.fromString(contractId).toScAddress(),
+    key: StellarSdk.xdr.ScVal.scvSymbol(storageKey),
+    durability: StellarSdk.xdr.ContractDataDurability.persistent(),
+  });
+
+  // ...and the contract's own footprint key.
+  const contract = new StellarSdk.Contract(contractId);
+
+  // A single ExtendFootprintTtl operation extends the whole read-only footprint.
+  let transaction = new StellarSdk.TransactionBuilder(account, {
+    fee,
+    networkPassphrase: StellarSdk.Networks.TESTNET,
+  })
+    .addOperation(
+      StellarSdk.Operation.extendFootprintTtl({
+        extendTo: 100_000, // one shared target, applied to every key below
+      }),
+    )
+    .setTimeout(30)
+    .build();
+
+  // List every key to extend together in one read-only footprint.
+  const sorobanData = new StellarSdk.SorobanDataBuilder()
+    .setReadOnly([persistentEntry, contract.getFootprint()])
+    .build();
+  transaction.setSorobanData(sorobanData);
+
+  transaction = await server.prepareTransaction(transaction);
+  transaction.sign(sourceKeypair);
+  return await server.sendTransaction(transaction);
 }
 ```
+
+If the entries instead need _different_ target TTLs, extend each in its own transaction — for example by calling the single-entry `extendPersistentEntryTTL` and `extendContractCodeTTL` helpers above with different `extendTo` values.
 
 Usage example:
 
