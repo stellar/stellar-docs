@@ -6,7 +6,7 @@ description: Eleven storage layout strategies for Soroban contracts, with diagra
 
 import StorageDiagram from "@site/src/components/StorageStrategies";
 
-How experienced teams lay out contract state on Stellar — from a first counter to protocol-scale data layouts. The strategies below are ordered from simplest to most complex and grounded in current production contracts and official examples. They are not mutually exclusive: each one applies to a _piece_ of state, not to a whole contract, and production contracts routinely compose several — a single lending pool keeps its config in instance storage (Strategy 1), one entry per user position (Strategy 2), and a bounded reserve list (Strategy 6). Use the [decision path](#choosing-a-decision-path) to pick a strategy per piece of state.
+How experienced teams lay out contract state on Stellar — from a first counter to protocol-scale data layouts. The strategies below are ordered from simplest to most complex and grounded in current production contracts and official examples. They are not mutually exclusive: each one applies to a _piece_ of state, not to a whole contract, and production contracts routinely compose several — a single lending pool keeps its config in instance storage (Strategy 1), one entry per user position (Strategy 2), and a bounded reserve list (Strategy 6). Use the [decision path](#decision-path-composing-strategies) to pick a strategy per piece of state.
 
 :::info Protocol and limits snapshot
 
@@ -438,13 +438,13 @@ remove(OwnerTokens(owner, last_token_index));                      // pop tail
 
 **Trade-offs**
 
-| Variant | add | remove | contains | on-chain page read | keeps order | entries / item |
+| Variant | add | remove | contains | on-chain page read | keeps order | ledger entries per item |
 | --- | --- | --- | --- | --- | --- | --- |
 | (a) counter + index | O(1) | ✗ (or tombstone) | via 2nd index | O(page) | yes | ~1 |
 | (b) double map + swap-pop | O(1) | O(1) | O(1) | O(page) | no | 2 (forward + reverse) |
 | (c) events only | O(1) | O(1) | ✗ | ✗ | n/a | 0 |
 
-O(1) counts steps, not ledger I/O: the swap-and-pop above still writes at least three entries, and every entry touched counts toward the per-transaction read and write limits. The **entries / item** column is the rent side — the double map keeps two entries alive per item, roughly 2× the storage of Strategy 2. These write and rent costs are the reason to index only what the _contract itself_ needs to list on-chain; when only off-chain consumers read the list, variant (c) is enough.
+O(1) counts steps, not ledger I/O: the swap-and-pop above still writes at least three entries, and every entry touched counts toward the per-transaction read and write limits. The **ledger entries per item** column is the rent side — the double map keeps two entries alive per item, roughly 2× the storage of Strategy 2. These write and rent costs are the reason to index only what the _contract itself_ needs to list on-chain; when only off-chain consumers read the list, variant (c) is enough.
 
 **In the wild**
 
@@ -548,15 +548,15 @@ What must stay on-chain can still shrink to a **sentinel**. The Governor's compa
 
 ## Strategy 11: Scale out — contract-per-entity via factory
 
-_instance ×N · isolation · horizontal scale_
+_one contract per entity · own instance & TTLs · factory registry_
 
 **You need.** To distribute growth across contracts — a DEX with many markets, a wallet per user, or a pool per risk profile — beyond what one contract should hold.
 
-**The catch.** Even with a sound per-entry layout, one contract concentrates its instance state, upgrade surface, and failure domain. Transactions that write that instance entry conflict, and all state in it shares the 64 KiB entry cap. Network-wide per-ledger resource caps still apply across every contract.
+**The catch.** Even with a sound per-entry layout, one contract concentrates its instance state, upgrade surface, and failure domain. Transactions that write that instance entry conflict, and all state in it shares the 64 KiB entry cap.
 
 <StorageDiagram n={11} />
 
-**The pattern.** Deploy a **contract per entity** from a factory, and keep the registry plus factory-level configuration in the factory (Strategy 8 for the index, Strategy 2 for the reverse lookup). Each pair/pool/wallet gets its own instance storage, its own TTLs, its own parallelism domain:
+**The pattern.** Deploy a **contract per entity** from a factory, which keeps the registry and shared config itself (Strategy 8 for the index, Strategy 2 for the reverse lookup). Each pair/pool/wallet gets its own instance storage, its own TTLs, its own parallelism domain:
 
 ```rust
 // soroswap factory: deterministic deployment + dual registry
@@ -565,13 +565,17 @@ put_pair_address_by_token_pair(&e, token_pair, &pair_address);      // (tokenA,t
 add_pair_to_all_pairs(&e, &pair_address);                           // index n -> addr
 ```
 
+The deployment is deterministic: the salt hashes the sorted token pair, so a pair's address is recomputable from its tokens and the factory address alone — Strategy 10's derived-ID idea, applied to contract addresses.
+
 **Trade-offs**
 
-- Isolation: pair-local entries for pair A do not conflict with pair-local entries for pair B. Shared token, router, or factory entries can still overlap.
+- Isolation: pair-local entries for pair A do not conflict with pair-local entries for pair B. Transactions that touch shared token, router, or factory entries still contend.
+
+- Sharding buys parallelism, not headroom: network-wide per-ledger resource caps apply across all contracts combined.
 
 - Cross-entity operations become cross-contract calls (CPU + footprint per hop); a router contract usually papers over this — Soroswap's router holds exactly one storage key: the factory address.
 
-- Fleet upgrades are real operational work (N contracts to upgrade), and each instance needs its own TTL liveness. The upgrade half will be solvable by [CAP-85](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0085.md) — beacon pattern — in protocol 28.
+- Fleet upgrades are real operational work (N contracts to upgrade), and each instance needs its own TTL extensions. The upgrade half will be solvable by [CAP-85](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0085.md) in protocol 28 — a beacon pattern: the fleet shares one externally managed executable, so a single update upgrades every instance.
 
 **In the wild**
 
@@ -581,25 +585,45 @@ add_pair_to_all_pairs(&e, &pair_address);                           // index n -
 
 {/* section:path */}
 
-## Choosing: a decision path
+## Decision path: composing strategies
 
-For each piece of state, walk this list:
+For each piece of state, answer every question in order — steps 1–3 pick the lifecycle, steps 4–8 the layout. Several steps can match one piece of state, and the contract as a whole composes the strategies its pieces land on.
 
-1. **Can you avoid storing it?** Large + user-provable → Merkle commitment. Derivable → recompute. Only off-chain readers → events. **→ S10**
+1. **Can you avoid storing it?** Data that callers can hold and prove needs only a hash commitment on-chain; data derivable from other state should be recomputed; data read only by off-chain consumers can be emitted as events.
 
-2. **Small, global, read by ~every call?** Instance storage; keep it under a few KiB. **→ S1**
+   - [S10: Merkle roots and derived state — replace storage with verification](#strategy-10-merkle-roots-and-derived-state--replace-storage-with-verification)
+   - [S8: Enumeration — build the index yourself](#strategy-8-enumeration--build-the-index-yourself) (variant c: events + off-chain indexer)
 
-3. **Validity ends at a known ledger, or loss is acceptable?** Temporary; align TTL with the deadline and store the deadline in the value. **→ S4**
+2. **Is it small, global, and read by (almost) every call?** Keep it in instance storage, and keep the whole instance entry under a few KiB.
 
-4. **Per-entity, unbounded population?** Persistent entry per entity; composite keys for extra dimensions; bump-on-access TTLs. **→ S2 · S3 · S5**
+   - [S1: Singleton config in instance storage](#strategy-1-singleton-config-in-instance-storage)
 
-5. **Several pieces are usually read and written together?** Pack them into one bounded entry. Updated independently or by different actors? Split. **→ S7**
+3. **Does its validity end at a known ledger, or is losing it acceptable?** Use temporary storage: align the TTL with the deadline, and also store the deadline in the value so the contract can enforce it.
 
-6. **The contract must iterate it?** Small & admin-managed → bounded collection in one entry. Large or user-managed → counter/index entries; add reverse map + swap-and-pop if removable. **→ S6 · S8**
+   - [S4: Temporary storage for data with a deadline](#strategy-4-temporary-storage-for-data-with-a-deadline)
 
-7. **Distributing value over the population?** Pull, don't push — settle each user lazily. **→ S9**
+4. **Is it per-entity data with an unbounded population?** Give each entity its own persistent entry, use composite keys when lookups need more than one dimension, and extend TTLs on access.
 
-8. **Still too big or too contended?** Shard into contract-per-entity via factory. **→ S11**
+   - [S2: One entry per entity — keyed by a `DataKey` enum](#strategy-2-one-entry-per-entity--keyed-by-a-datakey-enum)
+   - [S3: Composite keys — multi-dimensional lookups](#strategy-3-composite-keys--multi-dimensional-lookups)
+   - [S5: TTL management — bump-on-access](#strategy-5-ttl-management--bump-on-access)
+
+5. **Are several pieces usually read and written together?** Pack them into one bounded entry; if they are updated independently or by different actors, split them into separate entries instead.
+
+   - [S7: Pack vs. split — group state by access pattern](#strategy-7-pack-vs-split--group-state-by-access-pattern)
+
+6. **Must the contract iterate over it?** A small, admin-managed set fits in one bounded-collection entry; a large or user-managed set needs counter-plus-index entries, adding a reverse map with swap-and-pop when items can be removed.
+
+   - [S6: Bounded collections — a capped Vec or Map in one entry](#strategy-6-bounded-collections--a-capped-vec-or-map-in-one-entry)
+   - [S8: Enumeration — build the index yourself](#strategy-8-enumeration--build-the-index-yourself)
+
+7. **Are you distributing value across the population?** Pull, don't push: keep one global cumulative index and settle each holder lazily when they show up.
+
+   - [S9: Pull, don't push — lazy settlement for unbounded holders](#strategy-9-pull-dont-push--lazy-settlement-for-unbounded-holders)
+
+8. **Is it still too big or too contended?** Shard it: deploy one contract per entity from a factory.
+
+   - [S11: Scale out — contract-per-entity via factory](#strategy-11-scale-out--contract-per-entity-via-factory)
 
 {/* section:cheat */}
 
@@ -616,65 +640,45 @@ For each piece of state, walk this list:
 | Oracle prices / regenerable caches | temporary | loss is cheap, freshness is the point |
 | Anything derivable (states, IDs, tallies pre-first-vote) | _none_ | recompute; hash-commit; lazy-create |
 
-### Mainnet numbers to memorize
-
-Condensed from the [appendix](#appendix-mainnet-limits); day conversions assume the current ~5 s close time.
-
-```text
-1 day  ≈ 17,280 ledgers at today's ~5s target close time (can change)
-max entry TTL = 3,110,400 ledgers (~180 d at ~5s)
-contract-data entry ≤ 64 KiB   serialized ledger key ≤ 250 B   Wasm ≤ 128 KiB
-min TTL: persistent create/restore ≈ 120 d, temp create ≈ 1 d
-per tx : 400 footprint entries, 200 writes / 129 KiB, 200 disk reads / 195 KiB,
-         400M instr, 40 MiB mem, 129 KiB tx size, 16 KiB events
-per ledger: 1,000 writes / 280 KiB, 1,000 disk reads / 391 KiB,
-         2,000 smart-contract txs, 260 KiB aggregate Soroban tx size, 580M instr
-temporary rent ≈ ½ persistent rent
-```
-
-### The TTL recipe
-
-```rust
-const DAY_IN_LEDGERS: u32 = 17280;
-const BUMP: u32      = 30 * DAY_IN_LEDGERS;   // pick per data class, see gradient below
-const THRESHOLD: u32 = BUMP - DAY_IN_LEDGERS; // at most one bump per ~day at the current close time
-// on every read AND write of the entry:
-storage.extend_ttl(&key, THRESHOLD, BUMP);
-```
-
-Examples in current source use these approximate targets: **instance 7–31 d** · **shared/protocol 45–60 d** · **user-owned 100–120 d** · **temporary = business deadline or retention window**. The ledger counts are authoritative; the day conversions are not.
-
 ### Pattern → complexity
 
-| Pattern | Lookup | Insert | Remove | Enumerate | Entries/item | § |
+Every pattern in this guide, costed per operation — use it to compare finalists once the [decision path](#decision-path-composing-strategies) has produced a shortlist. Complexity counts steps inside the contract, not ledger I/O: an O(1) swap-and-pop still writes three entries, and every entry touched counts toward the per-transaction read and write caps. **Ledger entries per item** is the rent side — how many entries the pattern keeps alive for each item it stores. A "—" cell means the pattern has no such operation.
+
+| Pattern | Lookup | Insert | Remove | Enumerate | Ledger entries per item | Strategy |
 | --- | --- | --- | --- | --- | --- | --- |
-| Instance singleton | O(1)\* | O(1) | O(1) | n/a | 0 (shared) | S1 |
-| Entry per entity | O(1) | O(1) | O(1) | ✗ | 1 | S2/S3 |
-| Bounded collection in one entry | O(n) in-mem | O(1) insert + full rewrite | O(n) | O(n), 1 read | 1/n | S6 |
-| Packed struct per entity | O(1) whole | rewrite blob | O(1) | ✗ | 1 | S7 |
-| Counter + index entries | O(1) by idx | O(1) | ✗ | O(page) | 1 | S8a |
-| Double map + swap-and-pop | O(1) | O(1) | O(1) | O(page), unordered | 2 | S8b |
-| Pull-based reward index | O(1)/user | — | — | ✗ | 1 + 1/user | S9 |
-| Merkle commitment | O(log n) verify | root update | ✗ | ✗ | design-dependent claim flags | S10 |
-| Factory / contract-per-entity | O(1) + xcall | deploy | — | via registry | own contract | S11 |
+| Instance singleton | O(1)\* | O(1) | O(1) | — | 0 — shares the instance entry | [S1](#strategy-1-singleton-config-in-instance-storage) |
+| Entry per entity | O(1) | O(1) | O(1) | needs an S8 index | 1 | [S2](#strategy-2-one-entry-per-entity--keyed-by-a-datakey-enum) · [S3](#strategy-3-composite-keys--multi-dimensional-lookups) |
+| Bounded collection in one entry | O(n) in-mem | O(1) + full rewrite | O(n) + full rewrite | O(n), 1 read | 1 for all n items | [S6](#strategy-6-bounded-collections--a-capped-vec-or-map-in-one-entry) |
+| Packed struct per entity | O(1), whole blob | rewrite blob | rewrite blob | needs an S8 index | 1 | [S7](#strategy-7-pack-vs-split--group-state-by-access-pattern) |
+| Counter + index entries | O(1) by index | O(1) | append-only | O(page) | 1 + shared counter | [S8 (a)](#strategy-8-enumeration--build-the-index-yourself) |
+| Double map + swap-and-pop | O(1) | O(1) | O(1) | O(page), unordered | 2 — forward + reverse | [S8 (b)](#strategy-8-enumeration--build-the-index-yourself) |
+| Pull-based reward index | O(1) per user | — | — | — | 1 per user + 1 global | [S9](#strategy-9-pull-dont-push--lazy-settlement-for-unbounded-holders) |
+| Merkle commitment | O(log n) verify | root update | root update | data lives off-chain | 0–1 claim flag† | [S10](#strategy-10-merkle-roots-and-derived-state--replace-storage-with-verification) |
+| Factory / contract-per-entity | O(1) + cross-contract call | deploy | registry only | via registry | its own contract | [S11](#strategy-11-scale-out--contract-per-entity-via-factory) |
 
-\* loaded with every invocation regardless. "Entries/item": 1/n = one shared entry holds all n items; 2 = forward + reverse index entries; 1 + 1/user = one global entry plus one per user. Claim flags can share instance storage, as in the official example, or use one persistent entry per claim for an unbounded distribution.
+\* Loaded with every invocation, whether or not the call reads it.
 
-### Red flags in review
+† Either packed into the shared instance entry (bounded) or one persistent entry per claim (unbounded).
 
-- Unbounded `Map<Address, _>` or `Vec` under a single key → will hit 64 KiB; use S2/S8.
+### 🚩 Red flags in review
 
-- Funds-critical data in `temporary()` → unrecoverable after expiry.
+- **An unbounded `Map` or `Vec` under one key.** It grows toward the 64 KiB entry cap, every update rewrites the whole value, and all writers contend on one entry. Give each item its own entry ([S2](#strategy-2-one-entry-per-entity--keyed-by-a-datakey-enum)); add an index only if the contract must enumerate ([S8](#strategy-8-enumeration--build-the-index-yourself)).
 
-- Persistent entries with no TTL-extension policy → entries archive when their initial minimum TTL eventually runs out; a later transaction must restore them and pay the associated rent and resource fees.
+- **Variable-length data inside a key.** The serialized ledger key is capped at 250 bytes, so a string or vector in the key can fail at runtime. Compose keys from addresses and integers ([S3](#strategy-3-composite-keys--multi-dimensional-lookups)).
 
-- Loop over and update "all users" on-chain → impossible at scale (200-write cap); use S9.
+- **Entries created to store a default value.** A stored zero pays rent to say nothing. Treat an absent entry as the default ([S2](#strategy-2-one-entry-per-entity--keyed-by-a-datakey-enum)).
 
-- Mutable hot data in `instance()` with many independent writers → parallel-execution contention; move to per-entity entries.
+- **Hot mutable data in `instance()` with many independent writers.** Every write to the shared instance entry serializes those transactions, so ask whether the writes would conflict anyway: AMM reserves belong in instance because every swap must update them regardless of layout, while per-user balances are independent writes and belong in per-entity entries ([S2](#strategy-2-one-entry-per-entity--keyed-by-a-datakey-enum)).
 
-- TTL as the _only_ expiry check on temporary data → also store the deadline in the value and check it (S4).
+- **Funds-critical data in `temporary()`.** Expiry deletes it permanently; there is no restore. Anything the contract must not lose belongs in persistent storage ([S4](#strategy-4-temporary-storage-for-data-with-a-deadline) covers what temporary is for).
 
-- Data paged across entries because it outgrew 64 KiB → first consider bounding it, splitting by access pattern, or sharding by contract.
+- **TTL as the only expiry check.** Anyone can extend any entry's TTL, so a TTL never enforces a deadline. Store the deadline in the value and check it in code ([S4](#strategy-4-temporary-storage-for-data-with-a-deadline)).
+
+- **Persistent entries with no TTL-extension policy.** Every entry archives once its initial TTL runs out, and a later transaction must pay rent and resource fees to restore it. Extend on access ([S5](#strategy-5-ttl-management--bump-on-access)).
+
+- **A loop that updates every user.** It dies at the 200-writes-per-transaction cap as soon as the population outgrows it. Keep one cumulative index and settle each user lazily ([S9](#strategy-9-pull-dont-push--lazy-settlement-for-unbounded-holders)).
+
+- **Data paged across entries because it outgrew 64 KiB.** Paging is sometimes the right call, but it is often a symptom of a layout problem — first consider bounding the data ([S6](#strategy-6-bounded-collections--a-capped-vec-or-map-in-one-entry)), splitting it by access pattern ([S7](#strategy-7-pack-vs-split--group-state-by-access-pattern)), replacing it with a hash commitment ([S10](#strategy-10-merkle-roots-and-derived-state--replace-storage-with-verification)), or sharding by contract ([S11](#strategy-11-scale-out--contract-per-entity-via-factory)).
 
 {/* section:limits */}
 

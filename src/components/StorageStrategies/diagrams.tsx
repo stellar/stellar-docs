@@ -1114,9 +1114,15 @@ const SVGS: Record<string, React.ReactNode> = {
         </text>
       </g>
 
-      <line className="wire dashed" x1="190" y1="80" x2="268" y2="60" />
-      <line className="wire dashed" x1="190" y1="106" x2="268" y2="106" />
-      <line className="wire dashed" x1="190" y1="132" x2="268" y2="152" />
+      <line className="wire dashed w1 anim" x1="190" y1="80" x2="268" y2="60" />
+      <line className="wire dashed w2 anim" x1="190" y1="106" x2="268" y2="106" />
+      <line
+        className="wire dashed w3 anim"
+        x1="190"
+        y1="132"
+        x2="268"
+        y2="152"
+      />
 
       <g className="pair pr1 anim">
         <rect
