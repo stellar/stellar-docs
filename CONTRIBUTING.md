@@ -19,7 +19,7 @@ Before diving in, please read the org-wide [Stellar Contribution Guide](https://
     - [Code examples](#code-examples)
     - [Terminology and style](#terminology-and-style)
   - [Site Code and Infrastructure](#site-code-and-infrastructure)
-    - [API reference pages are generated](#api-reference-pages-are-generated)
+    - [API reference pages are generated](#api-pages)
     - [URLs are forever](#urls-are-forever)
     - [Patches and swizzles are a last resort](#patches-and-swizzles-are-a-last-resort)
     - [Tooling, editor config, and build settings](#tooling-editor-config-and-build-settings)
@@ -88,6 +88,8 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 ## Site Code and Infrastructure
 
 The bar for changes to the site itself (components, theme, config, dependencies) is deliberately higher than for content.
+
+<a name="api-pages"></a>
 
 ### API reference pages are generated
 
