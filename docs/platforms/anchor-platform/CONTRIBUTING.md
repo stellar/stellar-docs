@@ -43,7 +43,9 @@ ordering and labels in MDX front matter or directory metadata; only change
 `config/anchorPlatform.sidebar.ts` when the top-level sidebar structure itself
 needs to change.
 
-## Update the OpenAPI Reference
+## Compilation Generally
+
+### Update the OpenAPI Reference
 
 The Platform API and callback API reference pages are generated. Do not edit
 generated `*.api.mdx` files or their supporting generated JSON files directly.
@@ -64,7 +66,7 @@ generated `*.api.mdx` files or their supporting generated JSON files directly.
 The OpenAPI configuration and source-to-output mappings live in
 `docusaurus.config.ts`; the Redocly entry points live in `redocly.yaml`.
 
-## Update the Platform RPC Reference
+### Update the Platform RPC Reference
 
 The Platform RPC specification is assembled from the JSON files in
 `openrpc/src/anchor-platform/`. Do not edit generated `*.openrpc.json` files
@@ -90,7 +92,7 @@ directly.
 See [`openrpc/README.md`](../../../openrpc/README.md) for the OpenRPC object
 structure and `$ref` conventions.
 
-## Validate the Changes
+### Validate the Changes
 
 Run the checks relevant to your change from the repository root:
 
