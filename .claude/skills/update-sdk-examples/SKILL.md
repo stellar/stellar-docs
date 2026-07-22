@@ -127,7 +127,11 @@ the rule holds in every mode.
       correct.
    5. Commit with a message summarizing the SDK, the version (or relocation),
       and what changed. Do NOT push — branches are pushed manually after review.
-   6. Update the state file entry to the latest tag. Start the next SDK's branch
+   6. Update the state file entry to the latest tag — **except** the
+      `stellar/stellar-rpc` entry, which stays at its prior tag until the RPC
+      OpenRPC spec check completes successfully (see [Stellar RPC OpenRPC
+      spec](#stellar-rpc-openrpc-spec)), so an interrupted spec audit stays in
+      scope next run. Start the next SDK's branch
       from `upstream/main` again — do not check out a local `main` branch (it may
       be checked out in another worktree, e.g. the scheduled runner's, and git
       forbids the same branch in two worktrees).
