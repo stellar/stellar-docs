@@ -47,6 +47,18 @@ function textResult(text: string): ToolContent {
   return { content: [{ type: 'text', text }] };
 }
 
+// Strip markup to a fixpoint so overlapping fragments like `<scr<script>ipt>`
+// can't survive a single pass (CodeQL js/incomplete-multi-character-sanitization).
+function stripMarkup(value: string): string {
+  let text = value;
+  let previous;
+  do {
+    previous = text;
+    text = text.replace(/<[^>]*>/g, '');
+  } while (text !== previous);
+  return text;
+}
+
 async function searchDocs(
   query: string,
   algolia: AlgoliaCredentials,
@@ -93,11 +105,9 @@ async function searchDocs(
         .join(' › ') || hit.url || '';
     // Snippets come back with highlight markup even with empty highlight
     // tags on some index configs — strip any leftover tags for plain text.
-    const snippet = (
-      hit._snippetResult?.content?.value ??
-      hit.content ??
-      ''
-    ).replace(/<[^>]+>/g, '');
+    const snippet = stripMarkup(
+      hit._snippetResult?.content?.value ?? hit.content ?? '',
+    );
     return { title, url: hit.url ?? '', snippet };
   });
 
