@@ -1,4 +1,4 @@
-# Contributing to the Anchor Platform Documentation
+# Anchor Platform Documentation Contribution Guide
 
 This guide supplements the repository-wide
 [contribution guide](../../../CONTRIBUTING.md) with the paths and generation
