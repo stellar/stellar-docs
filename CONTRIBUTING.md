@@ -59,6 +59,7 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 ### Links
 
 - **Internal links are relative file paths, including the `.mdx` extension**: `[fees](../../learn/fundamentals/fees-resource-limits-metering.mdx#inclusion-fee)`. Docusaurus resolves these at build time, so a broken path fails the build instead of shipping a 404.
+  - _Exception:_ **Across plugin instances, use an absolute URL path.** For example, a page in the main docs linking to a meeting should use `[discussion](/meetings/2024/06/27)`. Docusaurus cannot resolve relative file paths between here.
 - Section index pages live at `parent/README.mdx` — if you're linking to a subsection's landing page, that's usually the file you want.
 - External links to other Stellar properties use `https://stellar.org/...` (no `www`).
 
