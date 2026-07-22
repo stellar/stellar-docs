@@ -4,11 +4,6 @@ This guide supplements the repository-wide
 [contribution guide](../../../CONTRIBUTING.md) with the paths and generation
 steps specific to Anchor Platform documentation.
 
-Docusaurus excludes `**/CONTRIBUTING.md` files from the published site, so this
-file is guidance for contributors browsing the repository. Anchor Platform
-documentation is not separately versioned and is built by the site's main docs
-plugin at `/docs/platforms/anchor-platform`.
-
 ## Where to Make Changes
 
 | Content                  | Source                                                                                     | Generated output or configuration                                                                                                |
