@@ -150,7 +150,7 @@ Our repository uses some custom React components that can be used inside the
 
 **Make sure that there is an empty line within the wrapper.** For example,
 
-```text
+````markdown
 <CodeExample>
 <!-- EMPTY LINE AFTER THE COMPONENT'S OPENING TAG IS REQUIRED -->
 
@@ -164,7 +164,7 @@ print("hello world")
 
 <!-- EMPTY LINE BEFORE THE COMPONENT'S CLOSING TAG IS REQUIRED -->
 </CodeExample>
-```
+````
 
 #### Code Example
 
