@@ -180,7 +180,9 @@ Steps when in scope:
    commit hash; for a normal module version, use the matching Git tag/commit.
    URL. For each method, compare our `methods/<m>.json` params and result against
    the Go struct `json:"..."` tags — missing/extra/renamed fields, type
-   mismatches, and required-vs-optional (`,omitempty` or a pointer ⇒ optional).
+   mismatches, and required-vs-optional (`,omitempty` ⇒ optional; a pointer
+   without `,omitempty` is nullable but still **required**, e.g.
+   `LedgerEntryChange.before`/`after`).
    Resolve our `$ref`s (into `schemas/`, `contentDescriptors/`) before concluding
    a field is missing. **Wire-encoding quirks matter:** a `json:",string"` tag
    means the field serializes as a JSON **string**, not a number (e.g. the
@@ -188,7 +190,12 @@ Steps when in scope:
    `getFeeStats.transactionCount`), and the *same* conceptual field can differ
    across methods (`getTransaction` encodes close-times as strings,
    `getTransactions`/`getLedgers` top-level ones as numbers) — type those inline
-   rather than forcing them onto one shared numeric schema.
+   rather than forcing them onto one shared numeric schema. Struct tags don't
+   even capture everything: types with custom `MarshalJSON`/`UnmarshalJSON`
+   serialize independently of their fields — `EventTypeSet` and `SegmentFilter`
+   (`getEvents`), `LedgerEntryChangeType` (`simulateTransaction`) — so verify
+   their shape from the marshaler, not the tags, and don't rewrite a schema
+   that's already correct.
 3. **Refresh examples from live testnet.** Query the public testnet RPC
    (`https://soroban-testnet.stellar.org`, JSON-RPC POST) and update stale
    example values so they satisfy the schema and reflect the current protocol.
