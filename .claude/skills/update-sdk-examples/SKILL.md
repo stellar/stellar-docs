@@ -151,9 +151,11 @@ the rule holds in every mode.
 The docs ship the canonical **Stellar RPC OpenRPC spec**, and it drifts the same
 way SDK examples do. Run this check whenever `stellar/stellar-rpc` has a new
 release (release-diff mode) and on every full audit — it's in addition to the
-Go-client relocation tracking noted in the gotchas.
+Go-client relocation tracking noted in the gotchas. Do not update the
+`stellar/stellar-rpc` state-file entry until both checks complete successfully,
+so a failed or interrupted spec audit remains in scope for the next run.
 
-Artifacts, all under `openrpc/`:
+Artifacts:
 
 - Sources: `openrpc/src/stellar-rpc/` — `methods/`, `schemas/`, `examples/`,
   `examplePairingObjects/`, `contentDescriptors/`.
@@ -167,14 +169,15 @@ Artifacts, all under `openrpc/`:
 Steps when in scope:
 
 1. **Bump `info.version`** in `build.mjs` to the current `stellar-rpc` release
-   tag (e.g. `27.1.1`).
+   version with any leading `v` removed (e.g. tag `v27.1.1` becomes `27.1.1`).
 2. **Verify request/response types against source.** The canonical Go structs
    live in `github.com/stellar/go-stellar-sdk/protocols/rpc/*.go` (one file per
    method) — **not** in `stellar/stellar-rpc`, whose handlers
    (`cmd/stellar-rpc/internal/methods/*.go`) only reference them. Pin to the
-   exact commit `stellar-rpc` uses: read
-   `raw.githubusercontent.com/stellar/stellar-rpc/<tag>/go.mod`, take the
-   `go-stellar-sdk` pseudo-version, and use its trailing commit hash in the raw
+   exact source revision `stellar-rpc` uses: read
+   `raw.githubusercontent.com/stellar/stellar-rpc/<tag>/go.mod` and resolve its
+   required `go-stellar-sdk` version. For a pseudo-version, use the trailing
+   commit hash; for a normal module version, use the matching Git tag/commit.
    URL. For each method, compare our `methods/<m>.json` params and result against
    the Go struct `json:"..."` tags — missing/extra/renamed fields, type
    mismatches, and required-vs-optional (`,omitempty` or a pointer ⇒ optional).
