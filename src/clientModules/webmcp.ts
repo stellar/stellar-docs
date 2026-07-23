@@ -3,6 +3,10 @@
 // per-page browser tooling — client-side JS, not a network MCP server. The
 // API only exists behind an experimental flag (Chrome EPP / W3C draft), so in
 // every other browser this module must be a silent no-op.
+//
+// Loaded via the top-level `clientModules` option in docusaurus.config.ts.
+
+import siteConfig from '@generated/docusaurus.config';
 
 type AlgoliaCredentials = {
   appId: string;
@@ -10,10 +14,11 @@ type AlgoliaCredentials = {
   indexName: string;
 };
 
-type WebMcpWindow = Window & {
-  // Injected by the plugin (src/plugins/webmcp/index.ts) from themeConfig.
-  __webMcpAlgolia?: AlgoliaCredentials;
-};
+// The same search-only Algolia credentials every DocSearch request already
+// ships to the browser — nothing here is secret.
+const algolia = siteConfig.themeConfig.algolia as
+  | AlgoliaCredentials
+  | undefined;
 
 type AlgoliaHit = {
   hierarchy?: Record<string, string | null>;
@@ -61,7 +66,7 @@ function stripMarkup(value: string): string {
 
 async function searchDocs(
   query: string,
-  algolia: AlgoliaCredentials,
+  credentials: AlgoliaCredentials,
 ): Promise<string> {
   // Same contextual facets DocSearch uses on this site: English records from
   // the docs plugin plus untagged (default) pages, excluding blog-index noise.
@@ -81,13 +86,13 @@ async function searchDocs(
   });
 
   const response = await fetch(
-    `https://${algolia.appId}-dsn.algolia.net/1/indexes/${encodeURIComponent(algolia.indexName)}/query`,
+    `https://${credentials.appId}-dsn.algolia.net/1/indexes/${encodeURIComponent(credentials.indexName)}/query`,
     {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Algolia-Application-Id': algolia.appId,
-        'X-Algolia-API-Key': algolia.apiKey,
+        'X-Algolia-Application-Id': credentials.appId,
+        'X-Algolia-API-Key': credentials.apiKey,
       },
       body: JSON.stringify({ params: params.toString() }),
     },
@@ -138,7 +143,6 @@ const searchDocsTool: ModelContextTool = {
       if (!query) {
         return textResult('Error: `query` must be a non-empty string.');
       }
-      const algolia = (window as WebMcpWindow).__webMcpAlgolia;
       if (!algolia) {
         return textResult('Error: search is not configured on this page.');
       }
