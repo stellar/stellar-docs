@@ -4,7 +4,7 @@ import type { WrapperProps } from "@docusaurus/types";
 import OriginalBlogPostItems from "@theme-original/BlogPostItems";
 import type BlogPostItemsType from "@theme/BlogPostItems";
 
-import MeetingIndexCard from "../../components/MeetingIndexCard";
+import MeetingsIntro from "@site/src/components/MeetingsIntro";
 
 const MEETING_ROUTE = "/meetings";
 
@@ -15,7 +15,7 @@ export default function BlogPostItemsWrapper(props: Props): ReactNode {
 
   return (
     <>
-      {pathname === MEETING_ROUTE ? <MeetingIndexCard /> : null}
+      {pathname === MEETING_ROUTE ? <MeetingsIntro /> : null}
       <OriginalBlogPostItems {...props} />
     </>
   );

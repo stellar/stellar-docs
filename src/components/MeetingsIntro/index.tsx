@@ -3,6 +3,7 @@ import BrowserOnly from "@docusaurus/BrowserOnly";
 import Link from "@docusaurus/Link";
 
 import { MEETINGS_INFO } from "../../meetings/schedule";
+import styles from "./styles.module.scss";
 
 const WEEKDAY_ORDER = [
   "Sunday",
@@ -14,12 +15,12 @@ const WEEKDAY_ORDER = [
   "Saturday",
 ] as const;
 
-export default function MeetingIndexCard(): React.ReactElement {
+export default function MeetingsIntro(): React.ReactElement {
   return (
     <div className="card margin-bottom--lg">
       <div className="card__body">
         <h2 className="margin-bottom--sm">Developer Meetings</h2>
-        <p className="margin-bottom--sm" style={{ fontSize: "0.9rem" }}>
+        <p className={`margin-bottom--sm ${styles.description}`}>
           These are archived discussions of open Stellar meetings. Anyone can
           attend
           <BrowserOnly fallback={null}>
@@ -51,24 +52,21 @@ export default function MeetingIndexCard(): React.ReactElement {
           </Link>{" "}
           on YouTube for streams and updates.
         </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+        <div className={styles.buttonRow}>
           <Link
-            className="button button--primary"
-            style={{ color: "var(--ifm-color-white)" }}
+            className={`button button--primary ${styles.button}`}
             to="/meetings"
           >
             Recent
           </Link>
           <Link
-            className="button button--primary"
-            style={{ color: "var(--ifm-color-white)" }}
+            className={`button button--primary ${styles.button}`}
             to="/meetings/tags/developer"
           >
             Developer
           </Link>
           <Link
-            className="button button--primary"
-            style={{ color: "var(--ifm-color-white)" }}
+            className={`button button--primary ${styles.button}`}
             to="/meetings/tags/protocol"
           >
             Protocol
