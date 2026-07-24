@@ -36,6 +36,8 @@ const config: Config = {
       async: true,
     },
   ],
+  // Exposes a WebMCP `search_docs` tool to in-browser AI agents (#2556).
+  clientModules: ['./src/clientModules/webmcp.ts'],
   plugins: [
     "docusaurus-plugin-sass",
     [
