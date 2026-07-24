@@ -539,7 +539,7 @@ const SVGS: Record<string, React.ReactNode> = {
   ),
   d5: (
     <svg
-      viewBox="0 0 660 170"
+      viewBox="0 0 660 190"
       role="img"
       aria-label="Animation: extend_ttl is a no-op while plenty of TTL remains, and extends the TTL to the bump amount once it drops below the threshold."
     >
@@ -575,13 +575,13 @@ const SVGS: Record<string, React.ReactNode> = {
       />
       <line className="threshold" x1="384" y1="58" x2="384" y2="96" />
       <text x="384" y="52" textAnchor="middle" className="lbl-s fill-danger">
-        THRESHOLD (BUMP − 17,280 ledgers)
+        THRESHOLD
       </text>
       <text x="60" y="110" className="lbl-s">
         0
       </text>
       <text x="600" y="110" textAnchor="end" className="lbl-s">
-        BUMP (e.g. 518,400 ledgers)
+        BUMP
       </text>
       <g className="bolt1 anim">
         <text x="470" y="46" textAnchor="middle" className="lbl fill-ink">
@@ -606,6 +606,10 @@ const SVGS: Record<string, React.ReactNode> = {
       </text>
       <text x="330" y="160" textAnchor="middle" className="lbl-s">
         if called on every access → at most one extension per 17,280 ledgers
+      </text>
+      <text x="330" y="178" textAnchor="middle" className="lbl-s">
+        not to scale — with THRESHOLD = BUMP − 17,280 ledgers, the no-op zone
+        is only the top ~3% of the bar
       </text>
     </svg>
   ),
