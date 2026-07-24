@@ -2,7 +2,7 @@ import React from "react";
 import BrowserOnly from "@docusaurus/BrowserOnly";
 import Link from "@docusaurus/Link";
 
-import { MEETINGS_INFO } from "../../meetings/schedule";
+import { MEETINGS_INFO } from "@site/meetings/schedule";
 import styles from "./styles.module.scss";
 
 const WEEKDAY_ORDER = [
