@@ -89,8 +89,11 @@ pub fn __constructor(e: Env, admin: Address) {
     e.storage().instance().set(&DataKey::Admin, &admin);
 }
 
-// call from contract paths that maintain instance liveness:
-e.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+// contract paths that maintain instance liveness end with the extend_ttl call:
+pub fn deposit(e: Env, from: Address, amount: i128) {
+    // ...business logic that relies on instance state...
+    e.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
 ```
 
 **Trade-offs**
@@ -212,24 +215,24 @@ _temporary · half rent · deleted on TTL expiry_
 ```rust
 // SEP-41 token allowance (SEP-41 is Soroban's standard token interface)
 // Write side: reject deadlines already in the past, then match the TTL to it.
-if amount > 0 && expiration_ledger < e.ledger().sequence() {
-    panic!("expiration_ledger is less than ledger seq when amount > 0");
+if amount > 0 && live_until_ledger < e.ledger().sequence() {
+    panic!("live_until_ledger is less than ledger seq when amount > 0");
 }
-e.storage().temporary().set(&key, &AllowanceValue { amount, expiration_ledger });
+e.storage().temporary().set(&key, &AllowanceValue { amount, live_until_ledger });
 if amount > 0 {
-    let live_for = expiration_ledger.checked_sub(e.ledger().sequence()).unwrap();
+    let live_for = live_until_ledger.checked_sub(e.ledger().sequence()).unwrap();
     e.storage().temporary().extend_ttl(&key, live_for, live_for);
 }
 
 // Read side: anyone can extend the entry's TTL, so a live entry can outlast
-// the deadline — a past expiration_ledger means no allowance.
+// the deadline — a past live_until_ledger means no allowance.
 let allowance = match e.storage().temporary().get::<_, AllowanceValue>(&key) {
-    Some(a) if a.expiration_ledger >= e.ledger().sequence() => a.amount,
+    Some(a) if a.live_until_ledger >= e.ledger().sequence() => a.amount,
     _ => 0,
 };
 ```
 
-The TTL alone is not the whole guarantee, for two reasons: the network enforces a **minimum TTL on creation** (currently 17,280 ledgers, about a day, for temporary entries), and anyone can extend any entry's TTL with an `ExtendFootprintTTLOp`. So defensive code **also stores the deadline in the value and checks it** — as above, `expiration_ledger` lives inside `AllowanceValue`. The network guarantees deletion once the TTL runs out; your code enforces validity until then.
+The TTL alone is not the whole guarantee, for two reasons: the network enforces a **minimum TTL on creation** (currently 17,280 ledgers, about a day, for temporary entries), and anyone can extend any entry's TTL with an `ExtendFootprintTTLOp`. So defensive code **also stores the deadline in the value and checks it** — as above, `live_until_ledger` lives inside `AllowanceValue`. The network guarantees deletion once the TTL runs out; your code enforces validity until then.
 
 **Trade-offs**
 
@@ -407,6 +410,7 @@ if to_be_removed_index != last_token_index {
     set(OwnerTokensIndex(last_token_id), to_be_removed_index);     // fix reverse pointer
 }
 remove(OwnerTokens(owner, last_token_index));                      // pop tail
+remove(OwnerTokensIndex(to_be_removed_id));                        // drop removed item's reverse entry
 ```
 
 **(c) Zero on-chain index: events + off-chain indexer.** If only off-chain consumers need the listing, emit events and let an indexer (RPC `getEvents`, Hubble, etc.) build the list. On-chain cost: zero entries. On-chain readability: none.
@@ -415,11 +419,11 @@ remove(OwnerTokens(owner, last_token_index));                      // pop tail
 
 | Variant | add | remove | contains | on-chain page read | keeps order | ledger entries per item |
 | --- | --- | --- | --- | --- | --- | --- |
-| (a) counter + index | O(1) | ✗ (or tombstone) | via 2nd index | O(page) | yes | ~1 |
+| (a) counter + index | O(1) | ✗ (or tombstone) | via optional 2nd index | O(page) | yes | 1 (2 with the lookup index) |
 | (b) double map + swap-pop | O(1) | O(1) | O(1) | O(page) | no | 2 (forward + reverse) |
 | (c) events only | O(1) | O(1) | ✗ | ✗ | n/a | 0 |
 
-O(1) counts steps, not ledger I/O: the swap-and-pop above still writes at least three entries, and every entry touched counts toward the per-transaction read and write limits. The **ledger entries per item** column is the rent side — the double map keeps two entries alive per item, roughly 2× the storage of Strategy 2. These write and rent costs are the reason to index only what the _contract itself_ needs to list on-chain; when only off-chain consumers read the list, variant (c) is enough.
+O(1) counts steps, not ledger I/O: the swap-and-pop above writes four entries for a non-tail removal (two for a tail removal), and every entry touched counts toward the per-transaction read and write limits. The **ledger entries per item** column is the rent side — the double map keeps two entries alive per item, roughly 2× the storage of Strategy 2. These write and rent costs are the reason to index only what the _contract itself_ needs to list on-chain; when only off-chain consumers read the list, variant (c) is enough.
 
 **In the wild**
 
@@ -446,7 +450,7 @@ pub struct ReserveEmissionData {   // ONE entry per reserve
     pub expiration: u64,
     pub last_time: u64,
                                    // ☝️ what lets the index advance lazily on any touch:
-                                   //   index += eps * (now - last_time), until expiration
+                                   //   index += eps * (now - last_time) / total_supply, until expiration
 }
 #[contracttype]
 pub struct UserEmissionData {      // ONE entry per (user, reserve)
@@ -491,8 +495,8 @@ pub enum VotesStorageKey {
     NumCheckpoints(Address),          // how many checkpoints a delegate has
     DelegateCheckpoint(Address, u32), // index -> Checkpoint
 }
-// write: push a checkpoint at the current ledger — or overwrite the tail
-//        if it is already at this ledger — then bump the counter
+// write: push a checkpoint at the current ledger and bump the counter — or
+//        overwrite the tail if it is already at this ledger (counter unchanged)
 // read:  binary-search 0..num for the last checkpoint with ledger <= target
 ```
 
@@ -500,7 +504,7 @@ Checkpoints before the tail are never rewritten — that is what makes binary se
 
 **Trade-offs**
 
-- Appends are O(1), and same-ledger updates collapse into the tail checkpoint, so series length tracks activity, not call count. The latest value is one read.
+- Appends are O(1), and same-ledger updates collapse into the tail checkpoint, so series length tracks activity, not call count. Reading the latest value takes two reads: the counter, then the tail checkpoint.
 - A historical read costs O(log n) _ledger reads_ — each probe is its own footprint entry. Simulation declares them automatically, but they count toward the per-transaction disk-read cap.
 - Every checkpoint is a persistent entry paying rent, and one archived checkpoint in the search path fails the transaction until it is restored — keep the series' TTLs extended for as long as history can be queried (OpenZeppelin bumps every checkpoint it touches).
 - Checkpoint only what the contract itself must read historically; off-chain consumers can rebuild history from events (Strategy 8, variant c) at zero on-chain cost.
@@ -626,18 +630,18 @@ For each piece of state, answer every question in order — steps 1–3 pick the
 
 ### Pattern → complexity
 
-Every pattern in this guide, costed per operation — use it to compare finalists once the [decision path](#decision-path-composing-strategies) has produced a shortlist. Complexity counts steps inside the contract, not ledger I/O: an O(1) swap-and-pop still writes three entries, and every entry touched counts toward the per-transaction read and write caps. **Ledger entries per item** is the rent side — how many entries the pattern keeps alive for each item it stores. A "—" cell means the pattern has no such operation.
+Every pattern in this guide, costed per operation — use it to compare finalists once the [decision path](#decision-path-composing-strategies) has produced a shortlist. Complexity counts steps inside the contract, not ledger I/O: an O(1) swap-and-pop still writes up to four entries, and every entry touched counts toward the per-transaction read and write caps. **Ledger entries per item** is the rent side — how many entries the pattern keeps alive for each item it stores. An "n/a" cell means the pattern has no such operation.
 
 | Pattern | Lookup | Insert | Remove | Enumerate | Ledger entries per item | Strategy |
 | --- | --- | --- | --- | --- | --- | --- |
-| Instance singleton | O(1)\* | O(1) | O(1) | — | 0 — shares the instance entry | [S1](#strategy-1-singleton-config-in-instance-storage) |
+| Instance singleton | O(1)\* | O(1) | O(1) | n/a | 0 — shares the instance entry | [S1](#strategy-1-singleton-config-in-instance-storage) |
 | Entry per entity | O(1) | O(1) | O(1) | needs an S8 index | 1 | [S2](#strategy-2-one-entry-per-entity--keyed-by-a-datakey-enum) · [S3](#strategy-3-composite-keys--multi-dimensional-lookups) |
 | Bounded collection in one entry | O(n) in-mem | O(1) + full rewrite | O(n) + full rewrite | O(n), 1 read | 1 for all n items | [S6](#strategy-6-bounded-collections--a-capped-vec-or-map-in-one-entry) |
 | Packed struct per entity | O(1), whole blob | rewrite blob | rewrite blob | needs an S8 index | 1 | [S7](#strategy-7-pack-vs-split--group-state-by-access-pattern) |
 | Counter + index entries | O(1) by index | O(1) | append-only | O(page) | 1 + shared counter | [S8 (a)](#strategy-8-enumeration--build-the-index-yourself) |
 | Double map + swap-and-pop | O(1) | O(1) | O(1) | O(page), unordered | 2 — forward + reverse | [S8 (b)](#strategy-8-enumeration--build-the-index-yourself) |
-| Pull-based reward index | O(1) per user | — | — | — | 1 per user + 1 global | [S9](#strategy-9-pull-dont-push--lazy-settlement-for-unbounded-holders) |
-| Checkpoint series | O(1) latest · O(log n) past | O(1) append | — | O(page) by index | 1 per checkpoint + shared counter | [S10](#strategy-10-checkpoints--read-state-as-of-a-past-ledger) |
+| Pull-based reward index | O(1) per user | n/a | n/a | n/a | 1 per user + 1 global | [S9](#strategy-9-pull-dont-push--lazy-settlement-for-unbounded-holders) |
+| Checkpoint series | O(1) latest · O(log n) past | O(1) append | n/a | O(page) by index | 1 per checkpoint + shared counter | [S10](#strategy-10-checkpoints--read-state-as-of-a-past-ledger) |
 | Merkle commitment | O(log n) verify | root update | root update | data lives off-chain | 0–1 claim flag† | [S11](#strategy-11-merkle-roots-and-derived-state--replace-storage-with-verification) |
 | Factory / contract-per-entity | O(1) + cross-contract call | deploy | registry only | via registry | its own contract | [S12](#strategy-12-scale-out--contract-per-entity-via-factory) |
 
