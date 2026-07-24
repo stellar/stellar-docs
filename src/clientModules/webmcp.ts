@@ -167,9 +167,13 @@ if (typeof window !== 'undefined') {
     seen.add(modelContext);
     try {
       if (typeof modelContext.registerTool === 'function') {
-        modelContext.registerTool(searchDocsTool);
+        void Promise.resolve(modelContext.registerTool(searchDocsTool)).catch(
+          () => {},
+        );
       } else if (typeof modelContext.provideContext === 'function') {
-        modelContext.provideContext({ tools: [searchDocsTool] });
+        void Promise.resolve(
+          modelContext.provideContext({ tools: [searchDocsTool] }),
+        ).catch(() => {});
       }
     } catch {
       // Experimental API — registration must never break the page.
