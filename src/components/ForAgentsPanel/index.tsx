@@ -3,6 +3,7 @@ import { useLocation } from '@docusaurus/router';
 import Link from '@docusaurus/Link';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Translate, { translate } from '@docusaurus/Translate';
+import { useWindowSize } from '@docusaurus/theme-common';
 import clsx from 'clsx';
 
 import SparkleIcon from '@site/static/icons/sparkle.svg';
@@ -33,8 +34,8 @@ function focusableItems(container: HTMLElement | null): HTMLElement[] {
  * The "For agents" panel: a floating trigger in the bottom right of every docs
  * page that opens a docked panel of ways to point an AI agent at Stellar.
  *
- * All copy and commands come from `src/data/agentTools`, which the Building
- * with AI page renders too, so the two can never disagree.
+ * The per-client commands come from `src/data/agentTools`, which the Building
+ * with AI page renders too, so the commands cannot disagree between the two.
  */
 export default function ForAgentsPanel(): ReactNode {
   const { pathname } = useLocation();
@@ -46,16 +47,24 @@ export default function ForAgentsPanel(): ReactNode {
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const wasOpen = useRef(false);
+  const restoreFocusOnClose = useRef(false);
 
   const tool = getAgentTool(toolId);
 
+  // As a full-screen sheet the panel is genuinely modal, so it traps focus and
+  // says so. Docked beside the content on desktop it is not: the page behind it
+  // stays visible and usable, and focus is free to move out into it.
+  const isSheet = useWindowSize() === 'mobile';
+
   // A docked panel would cover the content of the page the reader navigated to.
+  // Closing here must not restore focus: the reader followed a link, and the
+  // destination page's own focus handling should win.
   useEffect(() => {
+    restoreFocusOnClose.current = false;
     setOpen(false);
   }, [pathname]);
 
-  // Move focus into the panel on open, and hold it there while it is open.
+  // Move focus into the panel on open, and while modal, hold it there.
   useEffect(() => {
     if (!open) {
       return undefined;
@@ -68,7 +77,7 @@ export default function ForAgentsPanel(): ReactNode {
         setOpen(false);
         return;
       }
-      if (event.key !== 'Tab') {
+      if (event.key !== 'Tab' || !isSheet) {
         return;
       }
       const items = focusableItems(panelRef.current);
@@ -89,14 +98,15 @@ export default function ForAgentsPanel(): ReactNode {
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [open]);
+  }, [open, isSheet]);
 
-  // Hand focus back to the trigger when the panel closes.
+  // Hand focus back to the trigger, but only when the reader closed the panel
+  // themselves. See the route-change effect above.
   useEffect(() => {
-    if (wasOpen.current && !open) {
+    if (!open && restoreFocusOnClose.current) {
+      restoreFocusOnClose.current = false;
       triggerRef.current?.focus();
     }
-    wasOpen.current = open;
   }, [open]);
 
   // Docs pages only. The homepage and meeting notes have their own layouts.
@@ -114,7 +124,10 @@ export default function ForAgentsPanel(): ReactNode {
         className={clsx(styles.trigger, open && styles.triggerHidden)}
         aria-expanded={open}
         aria-controls="for-agents-panel"
-        onClick={() => setOpen((value) => !value)}>
+        onClick={() => {
+          restoreFocusOnClose.current = true;
+          setOpen((value) => !value);
+        }}>
         <SparkleIcon className={styles.triggerIcon} role="presentation" />
         <Translate
           id="components.ForAgentsPanel.TriggerLabel"
@@ -127,7 +140,7 @@ export default function ForAgentsPanel(): ReactNode {
         id="for-agents-panel"
         ref={panelRef}
         role="dialog"
-        aria-modal="false"
+        aria-modal={isSheet}
         aria-labelledby="for-agents-panel-title"
         tabIndex={-1}
         hidden={!open}

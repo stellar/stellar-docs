@@ -1,5 +1,6 @@
 /**
- * Single source of truth for "how do I point my AI agent at Stellar" content.
+ * Single source of truth for the per-client commands that point an AI agent at
+ * Stellar. Section headings and prose are not shared, see `AGENT_SECTIONS`.
  *
  * Consumed by both:
  *  - the "For agents" panel (`src/components/ForAgentsPanel`), and
@@ -194,7 +195,14 @@ export function getAgentTool(id: string | null | undefined): AgentTool {
   return AGENT_TOOLS.find((tool) => tool.id === id) ?? AGENT_TOOLS[0];
 }
 
-/** Section copy, shared so the panel and the page cannot drift apart. */
+/**
+ * Panel chrome: headings, blurbs, and links for the panel's three sections.
+ *
+ * Unlike `AGENT_TOOLS` above, this is *not* shared with the Building with AI
+ * page. That page keeps its own headings because they are `##` anchors that
+ * other pages link to, and its prose is longer than a 400px panel can hold.
+ * The commands are the part that must never drift, and those are shared.
+ */
 export const AGENT_SECTIONS = {
   raven: {
     title: 'Raven MCP Server',

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useStorageSlot } from '@docusaurus/theme-common';
 
 import {
   AGENT_TOOL_STORAGE_KEY,
@@ -6,55 +7,35 @@ import {
   DEFAULT_AGENT_TOOL_ID,
 } from '@site/src/data/agentTools';
 
-const isKnownTool = (id: string | null): boolean =>
-  !!id && AGENT_TOOLS.some((tool) => tool.id === id);
-
-function read(): string | null {
-  try {
-    return localStorage.getItem(AGENT_TOOL_STORAGE_KEY);
-  } catch {
-    // Private browsing, or storage is disabled. Fall back to the default tool.
-    return null;
-  }
-}
-
 /**
- * The reader's chosen AI tool, persisted under the same storage key Docusaurus
- * uses for the `mcp-client` tab group. Choosing a tool in the "For agents"
- * panel therefore also picks it on the Building with AI page, and vice versa.
+ * The reader's chosen AI tool, stored under the same key Docusaurus uses for
+ * the `mcp-client` tab group. Choosing a tool in the "For agents" panel picks
+ * it on the Building with AI page too, and vice versa.
  *
- * Reads happen in an effect rather than during render so the value cannot
- * differ between the server-rendered HTML and the first client render.
+ * This goes through Docusaurus' own storage slot rather than `localStorage`
+ * directly, for two reasons: the slot applies the site's storage namespace, and
+ * its `set` dispatches a synthetic `storage` event. Writing raw `localStorage`
+ * would leave an already-open page's `<Tabs>` on the previous tool until the
+ * next navigation, because native storage events only fire in *other* windows.
  */
 export default function useSelectedAgentTool(): [string, (id: string) => void] {
-  const [toolId, setToolId] = useState<string>(DEFAULT_AGENT_TOOL_ID);
+  const [storedValue, storageSlot] = useStorageSlot(AGENT_TOOL_STORAGE_KEY);
 
-  useEffect(() => {
-    const stored = read();
-    if (isKnownTool(stored)) {
-      setToolId(stored as string);
-    }
-  }, []);
+  // Storage can be a no-op (incognito, iframes, strict privacy settings). Local
+  // state keeps the picker working for the current page view when it is.
+  const [fallbackToolId, setFallbackToolId] = useState(DEFAULT_AGENT_TOOL_ID);
 
-  // Keep multiple tabs (and the docs page's own `<Tabs>`) in sync.
-  useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === AGENT_TOOL_STORAGE_KEY && isKnownTool(event.newValue)) {
-        setToolId(event.newValue as string);
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
+  const toolId = AGENT_TOOLS.some((tool) => tool.id === storedValue)
+    ? (storedValue as string)
+    : fallbackToolId;
 
-  const selectTool = useCallback((id: string) => {
-    setToolId(id);
-    try {
-      localStorage.setItem(AGENT_TOOL_STORAGE_KEY, id);
-    } catch {
-      // Selection still applies for this page view, it just will not persist.
-    }
-  }, []);
+  const selectTool = useCallback(
+    (id: string) => {
+      setFallbackToolId(id);
+      storageSlot.set(id);
+    },
+    [storageSlot],
+  );
 
   return [toolId, selectTool];
 }
