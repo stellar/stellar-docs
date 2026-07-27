@@ -111,7 +111,7 @@ export default function ForAgentsPanel(): ReactNode {
       <button
         type="button"
         ref={triggerRef}
-        className={clsx(styles.trigger, open && styles.triggerShifted)}
+        className={clsx(styles.trigger, open && styles.triggerHidden)}
         aria-expanded={open}
         aria-controls="for-agents-panel"
         onClick={() => setOpen((value) => !value)}>

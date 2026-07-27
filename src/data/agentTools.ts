@@ -63,14 +63,17 @@ const npxSkillsInstall: ToolInstructions = {
 };
 
 /**
- * The "Try without installing" copy is not final. Design's mockup shows the
- * toggle but only specifies the Install side, so this points at the web
- * browser instead of inventing a command. See stellar/stellar-docs#2586.
+ * Skills work without installing anything: point the agent at the website and
+ * it reads the skills it needs. Same for every tool.
  */
 const browseSkillsInstead: ToolInstructions = {
-  note: 'Browse every skill in the browser and paste the one you need into your agent for a single task. Nothing is saved to your machine.',
-  snippets: [],
-  links: [{ label: 'skills.stellar.org', href: 'https://skills.stellar.org/' }],
+  note: 'Tell your agent:',
+  snippets: [
+    {
+      language: 'text',
+      code: 'Read skills.stellar.org before you start building on Stellar.',
+    },
+  ],
 };
 
 export const AGENT_TOOLS: AgentTool[] = [
