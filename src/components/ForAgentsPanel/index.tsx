@@ -31,15 +31,14 @@ function focusableItems(container: HTMLElement | null): HTMLElement[] {
 }
 
 /**
- * The "For agents" panel: a floating trigger in the bottom right of every docs
- * page that opens a docked panel of ways to point an AI agent at Stellar.
+ * The "For agents" panel: a floating trigger in the bottom right of every page
+ * that opens a docked panel of ways to point an AI agent at Stellar.
  *
  * The per-client commands come from `src/data/agentTools`, which the Building
  * with AI page renders too, so the commands cannot disagree between the two.
  */
 export default function ForAgentsPanel(): ReactNode {
   const { pathname } = useLocation();
-  const docsBaseUrl = useBaseUrl('/docs');
   const llmsTxtUrl = useBaseUrl(AGENT_SECTIONS.llmsTxt.href);
   const [open, setOpen] = useState(false);
   const [toolId, selectTool] = useSelectedAgentTool();
@@ -108,11 +107,6 @@ export default function ForAgentsPanel(): ReactNode {
       triggerRef.current?.focus();
     }
   }, [open]);
-
-  // Docs pages only. The homepage and meeting notes have their own layouts.
-  if (!pathname.startsWith(docsBaseUrl)) {
-    return null;
-  }
 
   const skills = tool.skills[skillsMode];
 
