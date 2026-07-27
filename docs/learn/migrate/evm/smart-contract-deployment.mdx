@@ -281,7 +281,7 @@ In this project we will need to create 3 files:
 - `src/test.rs` - This is where we will write our tests.
 - `src/token.rs` - This is file inherits the token contact that we imported earlier. It's also where we will write our token creation logic.
 
-To interact with the token contract, we'll use a built in interface that you can find in the `token_interface.rs` tab. This interface includes the `initialize` and `mint` functions that we will use to create and mint tokens for us to use in our vault contract. If you want to see the full code of the token contract, you can check it out [here](https://github.com/stellar/soroban-examples/tree/main/token/src).
+To interact with the token contract, we'll use a built in interface that you can find in the `token_interface.rs` tab. The token sets its admin and metadata in a `__constructor` function, which the host runs as part of the deployment itself, and exposes a `mint` function that we will use to mint tokens for our vault contract. Because the constructor runs at deployment, there is no separate initialization call to make — or to front-run. If you want to see the full code of the token contract, you can check it out [here](https://github.com/stellar/soroban-examples/tree/main/token/src).
 
 <Tabs>
 <TabItem value="lib.rs" label="src/lib.rs">
@@ -293,7 +293,7 @@ mod test;
 mod token;
 
 use soroban_sdk::{
-    contract, contractimpl, contractmeta, Address, BytesN, ConversionError, Env, IntoVal,
+    contract, contractimpl, contractmeta, Address, BytesN, ConversionError, Env, String,
     TryFromVal, Val,
 };
 use token::create_contract;
@@ -407,12 +407,16 @@ struct Vault;
 #[contractimpl]
 impl VaultTrait for Vault {
     fn initialize(e: Env, token_wasm_hash: BytesN<32>, token: Address) {
-        let share_contract_id = create_contract(&e, token_wasm_hash, &token);
-        token::Client::new(&e, &share_contract_id).initialize(
-            &e.current_contract_address(),
-            &7u32,
-            &"Vault Share Token".into_val(&e),
-            &"VST".into_val(&e),
+        // The share token's admin and metadata are passed straight to its
+        // `__constructor`, so it is deployed and initialized in a single step.
+        let share_contract_id = create_contract(
+            &e,
+            token_wasm_hash,
+            &token,
+            e.current_contract_address(),
+            7u32,
+            String::from_str(&e, "Vault Share Token"),
+            String::from_str(&e, "VST"),
         );
 
         put_token(&e, token);
@@ -588,17 +592,27 @@ fn test() {
 
 ```rust
 #![allow(unused)]
-use soroban_sdk::{xdr::ToXdr, Address, Bytes, BytesN, Env};
+use soroban_sdk::{xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 
 soroban_sdk::contractimport!(file = "./soroban_token_contract.wasm");
 
-pub fn create_contract(e: &Env, token_wasm_hash: BytesN<32>, token: &Address) -> Address {
+pub fn create_contract(
+    e: &Env,
+    token_wasm_hash: BytesN<32>,
+    token: &Address,
+    admin: Address,
+    decimal: u32,
+    name: String,
+    symbol: String,
+) -> Address {
     let mut salt = Bytes::new(e);
     salt.append(&token.to_xdr(e));
     let salt = e.crypto().sha256(&salt);
     e.deployer()
         .with_current_contract(salt)
-        .deploy(token_wasm_hash)
+        // `deploy_v2` invokes the deployed contract's `__constructor` with
+        // these arguments, in the same transaction as the deployment.
+        .deploy_v2(token_wasm_hash, (admin, decimal, name, symbol))
 }
 ```
 
@@ -609,19 +623,17 @@ pub fn create_contract(e: &Env, token_wasm_hash: BytesN<32>, token: &Address) ->
 ```rust
 //! This contract demonstrates a sample implementation of the Soroban token
 //! interface.
-use crate::admin::{has_administrator, read_administrator, write_administrator};
+use crate::admin::{read_administrator, write_administrator};
 use crate::allowance::{read_allowance, spend_allowance, write_allowance};
 use crate::balance::{is_authorized, write_authorization};
 use crate::balance::{read_balance, receive_balance, spend_balance};
 use crate::event;
 use crate::metadata::{read_decimal, read_name, read_symbol, write_metadata};
 use crate::storage_types::INSTANCE_TTL_EXTEND_AMOUNT;
-use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, Address, Env, MuxedAddress, String};
 use soroban_token_sdk::TokenMetadata;
 
 pub trait TokenTrait {
-    fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String);
-
     fn allowance(e: Env, from: Address, spender: Address) -> i128;
 
     fn approve(e: Env, from: Address, spender: Address, amount: i128, live_until_ledger: u32);
@@ -632,7 +644,7 @@ pub trait TokenTrait {
 
     fn authorized(e: Env, id: Address) -> bool;
 
-    fn transfer(e: Env, from: Address, to: Address, amount: i128);
+    fn transfer(e: Env, from: Address, to_muxed: MuxedAddress, amount: i128);
 
     fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128);
 
@@ -664,17 +676,18 @@ fn check_nonnegative_amount(amount: i128) {
 #[contract]
 pub struct Token;
 
+// `__constructor` is not part of the token interface — it is an inherent
+// function on the contract type that the host invokes once, at deployment.
+// Because it can only ever run as part of the deploy, it needs no
+// "already initialized" guard.
 #[contractimpl]
-impl TokenTrait for Token {
-    fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
-        if has_administrator(&e) {
-            panic!("already initialized")
-        }
-        write_administrator(&e, &admin);
+impl Token {
+    pub fn __constructor(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {
         if decimal > 18 {
             panic!("Decimal must not be greater than 18");
         }
 
+        write_administrator(&e, &admin);
         write_metadata(
             &e,
             TokenMetadata {
@@ -684,7 +697,10 @@ impl TokenTrait for Token {
             },
         )
     }
+}
 
+#[contractimpl]
+impl TokenTrait for Token {
     fn allowance(e: Env, from: Address, spender: Address) -> i128 {
         e.storage().instance().extend_ttl(INSTANCE_TTL_EXTEND_AMOUNT);
         read_allowance(&e, from, spender).amount
@@ -716,7 +732,10 @@ impl TokenTrait for Token {
         is_authorized(&e, id)
     }
 
-    fn transfer(e: Env, from: Address, to: Address, amount: i128) {
+    // The destination is a `MuxedAddress`, so a single account can be shared by
+    // many end users, each identified by a muxed ID. Resolve it to the
+    // underlying `Address` before touching balances.
+    fn transfer(e: Env, from: Address, to_muxed: MuxedAddress, amount: i128) {
         from.require_auth();
 
         check_nonnegative_amount(amount);
@@ -724,6 +743,7 @@ impl TokenTrait for Token {
         e.storage().instance().extend_ttl(INSTANCE_TTL_EXTEND_AMOUNT);
 
         spend_balance(&e, from.clone(), amount);
+        let to: Address = to_muxed.address();
         receive_balance(&e, to.clone(), amount);
         event::transfer(&e, from, to, amount);
     }
@@ -938,26 +958,15 @@ stellar contract build
 
 <TabItem value="deploy token" label="deploy_token.sh">
 
+Everything after the `--` is passed to the token's `__constructor`, so the token is deployed and initialized in one transaction.
+
 ```bash
 stellar contract deploy \
     --wasm soroban_token_contract.wasm \
     --source-account <SECRET_KEY> \
     --rpc-url https://soroban-testnet.stellar.org:443 \
-    --network-passphrase 'Test SDF Network ; September 2015'
-```
-
-</TabItem>
-
-<TabItem value="initialize token" label="initialize_token.sh">
-
-```bash
-stellar contract invoke \
-    --id <TOKEN_CONTRACT_ID> \
-    --source-account <SECRET_KEY> \
-    --rpc-url https://soroban-testnet.stellar.org:443 \
     --network-passphrase 'Test SDF Network ; September 2015' \
     -- \
-    initialize \
     --admin <USER_ADDRESS> \
     --decimal 18 \
     --name <TOKEN_NAME> \
@@ -997,10 +1006,10 @@ stellar contract invoke \
 
 </TabItem>
 
-<TabItem value="install wasm" label="install.sh">
+<TabItem value="upload wasm" label="upload.sh">
 
 ```bash
-stellar contract install \
+stellar contract upload \
     --wasm soroban_token_contract.wasm \
     --source-account <SECRET_KEY> \
     --rpc-url https://soroban-testnet.stellar.org:443 \
@@ -1106,36 +1115,25 @@ First, we need to build the vault contract. We can do this by running the `build
 stellar contract build
 ```
 
-Next, we need to deploy the token contract. We can do this by running the `deploy_token.sh` script.
+Next, we need to deploy the token contract. We can do this by running the `deploy_token.sh` script. The arguments after the `--` are the token's constructor arguments, so this single command both deploys the token and sets its admin and metadata.
 
 ```bash
 stellar contract deploy \
     --wasm soroban_token_contract.wasm \
     --source-account <SECRET_KEY> \
     --rpc-url https://soroban-testnet.stellar.org:443 \
-    --network-passphrase 'Test SDF Network ; September 2015'
-```
-
-We should receive an output with the token contract ID. We will need this ID for the next step.
-
-```bash
-CBYMG7OPIT67AG4S2FZU7LAYCXUSXEHRGHLDE6H26VCVWNOV7QUQTGNU
-```
-
-Next we need to initialize the token contract. We can do this by running the `initialize_token.sh` script.
-
-```bash
-stellar contract invoke \
-    --id <TOKEN_CONTRACT_ID> \
-    --source-account <SECRET_KEY> \
-    --rpc-url https://soroban-testnet.stellar.org:443 \
     --network-passphrase 'Test SDF Network ; September 2015' \
     -- \
-    initialize \
     --admin <USER_ADDRESS> \
     --decimal 18 \
     --name <TOKEN_NAME> \
     --symbol <TOKEN_SYMBOL>
+```
+
+We should receive an output with the token contract ID. We will need this ID for the next step. There is no follow-up initialization call — the constructor already ran.
+
+```bash
+CBYMG7OPIT67AG4S2FZU7LAYCXUSXEHRGHLDE6H26VCVWNOV7QUQTGNU
 ```
 
 Next, we need to deploy the vault contract. We can do this by running the `deploy_vault.sh` script.
@@ -1154,10 +1152,10 @@ We should receive an output with the vault contract ID. We will need this ID for
 CBBPLE6TGYOMO5HUF2AMYLSYYXM2VYZVAVYI5QCCM5OCFRZPBE2XA53F
 ```
 
-Now we need to get the Wasm hash of the token contract. We can do this by running the `get_token_wasm_hash.sh` script.
+Now we need to get the Wasm hash of the token contract. We can do this by running the `upload.sh` script.
 
 ```bash
-stellar contract install \
+stellar contract upload \
     --wasm soroban_token_contract.wasm \
     --source-account <SECRET_KEY> \
     --rpc-url https://soroban-testnet.stellar.org:443 \
