@@ -43,7 +43,7 @@ These guidelines exist because they're the difference between a PR that merges i
 
 ## Development Quickstart
 
-We use [pnpm](https://pnpm.io/). See the [README](README.md#quick-start) for full setup.
+We use [pnpm](https://pnpm.io). See the [README](README.md#quick-start) for full setup.
 
 ```bash
 pnpm install        # install dependencies
