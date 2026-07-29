@@ -185,7 +185,7 @@ This should help to make it a bit clearer.
 > `/platforms/stellar-disbursement-platform` plugin instance in the above
 > examples, and it all works pretty much identically.
 
-Read more about links [here](https://docusaurus.io/docs/markdown-features/links)
+Learn more about links [here](https://docusaurus.io/docs/markdown-features/links)
 (especially toward the bottom of the page).
 
 ## Directories to Know
