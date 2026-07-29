@@ -182,7 +182,7 @@ Steps when in scope:
    `raw.githubusercontent.com/stellar/stellar-rpc/<tag>/go.mod` and resolve its
    required `go-stellar-sdk` version. For a pseudo-version, use the trailing
    commit hash; for a normal module version, use the matching Git tag/commit.
-   URL. For each method, compare our `methods/<m>.json` params and result against
+   For each method, compare our `methods/<m>.json` params and result against
    the Go struct `json:"..."` tags — missing/extra/renamed fields, type
    mismatches, and required-vs-optional (`,omitempty` ⇒ optional; a pointer
    without `,omitempty` is nullable but still **required**, e.g.
