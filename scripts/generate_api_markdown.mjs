@@ -112,13 +112,30 @@ function propertyLine(name, schema, required) {
   return parts.join(' ');
 }
 
-/** Trailing detail bullets (enum/default/example) for a schema node. */
+const MAX_INLINE_EXAMPLE_CHARS = 300; // property examples are short; skip outliers
+
+/** Trailing detail bullets (enum/default/example/pattern/size) for a schema node. */
 function detailLines(schema, pad, lines) {
   if (schema.enum) {
     lines.push(`${pad}Possible values: ${schema.enum.map((v) => `\`${v}\``).join(', ')}.`);
   }
   if (schema.default !== undefined) {
     lines.push(`${pad}Default: \`${JSON.stringify(schema.default)}\`.`);
+  }
+  if (schema.example !== undefined) {
+    const example = JSON.stringify(schema.example);
+    if (example !== undefined && example.length <= MAX_INLINE_EXAMPLE_CHARS && !example.includes('`')) {
+      lines.push(`${pad}Example: \`${example}\`.`);
+    }
+  }
+  if (schema.pattern && !schema.pattern.includes('`')) {
+    lines.push(`${pad}Pattern: \`${schema.pattern}\`.`);
+  }
+  if (schema.minItems !== undefined || schema.maxItems !== undefined) {
+    const bounds = [];
+    if (schema.minItems !== undefined) bounds.push(`min ${schema.minItems}`);
+    if (schema.maxItems !== undefined) bounds.push(`max ${schema.maxItems}`);
+    lines.push(`${pad}Items: ${bounds.join(', ')}.`);
   }
 }
 
