@@ -36,7 +36,11 @@ const config: Config = {
       async: true,
     },
   ],
-  clientModules: ["./src/clientModules/apiReferenceMarkdownButton.js"],
+  clientModules: [
+    // Exposes a WebMCP `search_docs` tool to in-browser AI agents (#2556).
+    './src/clientModules/webmcp.ts',
+    './src/clientModules/apiReferenceMarkdownButton.js',
+  ],
   plugins: [
     "docusaurus-plugin-sass",
     [
