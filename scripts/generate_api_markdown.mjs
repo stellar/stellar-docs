@@ -105,7 +105,9 @@ function propertyLine(name, schema, required) {
   const parts = [`\`${name}\``, '—', typeLabel(schema)];
   if (required) parts.push('(required)');
   if (schema?.deprecated) parts.push('(deprecated)');
-  const desc = inlineText(schema?.description);
+  const desc = inlineText(
+    schema?.description ?? schema?.allOf?.find((member) => member?.description)?.description,
+  );
   if (desc) parts.push('—', desc);
   return parts.join(' ');
 }
