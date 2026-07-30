@@ -213,7 +213,7 @@ function renderParameters(parameters, lines) {
     lines.push('', `### ${location[0].toUpperCase()}${location.slice(1)} parameters`, '');
     lines.push('| Name | Type | Required | Description |', '| --- | --- | --- | --- |');
     for (const param of params) {
-      let desc = inlineText(param.description).replace(/\|/g, '\\|');
+      let desc = inlineText(param.description).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
       if (param.schema?.enum) {
         desc += `${desc ? ' ' : ''}Possible values: ${param.schema.enum.map((v) => `\`${v}\``).join(', ')}.`;
       }
