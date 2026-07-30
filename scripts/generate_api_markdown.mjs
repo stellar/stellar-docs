@@ -10,7 +10,13 @@
  * examples — client-side, so their twins come out near-empty: just the
  * one-line operation description (~39 tokens vs ~14k tokens of rendered HTML).
  *
- * This script rebuilds those twins from the operation data itself. Every
+ * A second pass covers the hand-written api-reference pages (object/schema
+ * pages, result codes, resource indexes) whose content sits inside JSX
+ * components like `<AttributeTable>`: the plugin drops JSX blocks together
+ * with their markdown children, so those twins lose their attribute tables.
+ * See patchComponentPages().
+ *
+ * This script rebuilds the operation twins from the operation data itself. Every
  * `docs/**\/api-reference/**\/*.api.mdx` source file carries the complete,
  * dereferenced operation object (the exact data the page renders) in its
  * `api:` frontmatter field, zlib-compressed and base64-encoded by the openapi
@@ -320,6 +326,132 @@ function renderOperation(op, title) {
 }
 
 // ---------------------------------------------------------------------------
+// Pass 2: hand-written api-reference pages whose content lives inside JSX
+// components (`<AttributeTable>` and friends). The markdown-source-plugin
+// drops JSX blocks *including their children* when it builds a page's twin,
+// so e.g. the Fee Stats object page's twin loses the entire attribute list
+// even though that list is plain markdown in the source. These pages are
+// hand-written .mdx (not .api.mdx), all under api-reference.
+// ---------------------------------------------------------------------------
+
+/** Components whose children are plain markdown we can pass through. */
+const UNWRAP_COMPONENTS = ['AttributeTable', 'ExampleResponse', 'CodeExample', 'MethodTable'];
+const COMPONENT_OPEN = new RegExp(`^\\s*<(${UNWRAP_COMPONENTS.join('|')})(\\s[^>]*)?>\\s*$`);
+const COMPONENT_CLOSE = new RegExp(`^\\s*</(${UNWRAP_COMPONENTS.join('|')})>\\s*$`);
+
+function prepareBody(src) {
+  return src.replace(/^---\n[\s\S]*?\n---\n/, '');
+}
+
+/**
+ * Walk the body line by line, tracking code-fence state so that import-like
+ * lines or tag-like lines inside fenced code are never touched.
+ *
+ * With keepChildren=false this mimics what the plugin emits: import lines and
+ * whole component blocks (children included) dropped. That form is used only
+ * as a safety check — we overwrite a twin only when we can prove it is the
+ * plugin's own output for this source. With keepChildren=true the component
+ * tags go away but their markdown children stay: the actual patched twin.
+ */
+function transformBody(body, keepChildren) {
+  const out = [];
+  let inFence = false;
+  let depth = 0;
+  for (const line of body.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      if (depth === 0 || keepChildren) out.push(line);
+      continue;
+    }
+    if (!inFence) {
+      if (/^import\s/.test(line)) continue;
+      const open = line.match(COMPONENT_OPEN);
+      if (open) {
+        depth++;
+        if (keepChildren) {
+          const title = (open[2] ?? '').match(/title="([^"]+)"/);
+          if (title) out.push(`**${title[1]}**`, '');
+        }
+        continue;
+      }
+      if (COMPONENT_CLOSE.test(line)) {
+        depth = Math.max(0, depth - 1);
+        continue;
+      }
+    }
+    if (depth === 0 || keepChildren) out.push(line);
+  }
+  return out.join('\n');
+}
+
+/**
+ * Whitespace- and link-target-insensitive comparison key. Link targets are
+ * masked because scripts/rewrite_md_links.mjs (which runs after this one)
+ * rewrites relative targets to absolute URLs in every built .md file.
+ */
+function comparisonKey(text) {
+  return text
+    .replace(/\]\([^)]*\)/g, ']()')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
+/** docs/<dir>/<name>.mdx -> its built twin path (README.mdx is the dir index). */
+function proseTwinPath(source) {
+  const dir = relative(DOCS_DIR, dirname(source));
+  const base = source.split('/').pop().replace(/\.mdx$/, '');
+  return base === 'README'
+    ? join(BUILD_DIR, DOCS_DIR, `${dir}.md`)
+    : join(BUILD_DIR, DOCS_DIR, dir, `${base}.md`);
+}
+
+function patchComponentPages() {
+  const sources = globSync(`${DOCS_DIR}/**/*.mdx`)
+    .filter((p) => p.includes('/api-reference/') && !p.endsWith('.api.mdx') && !p.includes('/component/'))
+    .sort();
+
+  let written = 0;
+  let unchanged = 0;
+  let skipped = 0;
+  let candidates = 0;
+
+  for (const source of sources) {
+    const src = readFileSync(source, 'utf8');
+    if (!UNWRAP_COMPONENTS.some((name) => src.includes(`<${name}`))) continue;
+    candidates++;
+
+    const twin = proseTwinPath(source);
+    if (!existsSync(twin)) {
+      console.warn(`[generate-api-markdown] no twin for ${source} — skipping.`);
+      skipped++;
+      continue;
+    }
+
+    const body = prepareBody(src);
+    const existing = readFileSync(twin, 'utf8');
+    const unwrapped = `${transformBody(body, true).replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+
+    if (comparisonKey(existing) === comparisonKey(unwrapped)) {
+      unchanged++;
+      continue;
+    }
+    // Only overwrite what we can recognize as the plugin's own (lossy) output.
+    if (comparisonKey(existing) !== comparisonKey(transformBody(body, false))) {
+      console.warn(`[generate-api-markdown] twin for ${source} doesn't match its source — leaving it alone.`);
+      skipped++;
+      continue;
+    }
+    writeFileSync(twin, unwrapped);
+    written++;
+  }
+
+  console.log(
+    `[generate-api-markdown] Patched ${written} component-page twin(s) (${unchanged} already current, ${skipped} skipped) from ${candidates} candidate page(s).`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -373,6 +505,8 @@ function main() {
   console.log(
     `[generate-api-markdown] Wrote ${written} API reference twin(s) (${unchanged} already current, ${skipped} skipped) from ${sources.length} operation source(s).`,
   );
+
+  patchComponentPages();
 }
 
 main();
