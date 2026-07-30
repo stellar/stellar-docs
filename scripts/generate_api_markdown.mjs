@@ -255,7 +255,7 @@ function renderResponses(responses, lines) {
     if (headers.length) {
       lines.push('#### Headers', '', '| Name | Type | Description |', '| --- | --- | --- |');
       for (const [name, header] of headers) {
-        const headerDesc = inlineText(header.description).replace(/\|/g, '\\|');
+        const headerDesc = inlineText(header.description).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
         lines.push(`| \`${name}\` | ${typeLabel(header.schema)} | ${headerDesc} |`);
       }
       lines.push('');
