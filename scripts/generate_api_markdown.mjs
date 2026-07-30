@@ -251,6 +251,15 @@ function renderResponses(responses, lines) {
     lines.push('', `### ${status}`, '');
     const desc = inlineText(response.description);
     if (desc) lines.push(desc, '');
+    const headers = Object.entries(response.headers ?? {});
+    if (headers.length) {
+      lines.push('#### Headers', '', '| Name | Type | Description |', '| --- | --- | --- |');
+      for (const [name, header] of headers) {
+        const headerDesc = inlineText(header.description).replace(/\|/g, '\\|');
+        lines.push(`| \`${name}\` | ${typeLabel(header.schema)} | ${headerDesc} |`);
+      }
+      lines.push('');
+    }
     for (const [contentType, media] of Object.entries(response.content ?? {})) {
       lines.push(`Content type: \`${contentType}\``, '');
       if (media.schema) renderSchema(media.schema, lines);
