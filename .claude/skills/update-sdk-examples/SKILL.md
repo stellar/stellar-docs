@@ -1,13 +1,15 @@
 ---
 name: update-sdk-examples
-description: Use when checking whether Stellar SDKs listed in the docs have new releases, or when code examples in docs/ may use outdated, renamed, or deprecated SDK syntax. Runs per-release on a schedule, or as a full standing-correctness audit on demand.
+description: Use when checking whether Stellar SDKs listed in the docs have new releases, or when code examples in docs/ may use outdated, renamed, or deprecated SDK syntax, or whether the Stellar RPC OpenRPC spec (openrpc/) matches the current stellar-rpc release. Runs per-release on a schedule, or as a full standing-correctness audit on demand.
 allowed-tools: Read, Edit, Grep, Bash, WebFetch
 ---
 
 # Update SDK Examples
 
 Check for new releases of the Stellar SDKs listed in our documentation, and update
-any code examples that use outdated or deprecated syntax.
+any code examples that use outdated or deprecated syntax. On the same runs, also
+check that the **Stellar RPC OpenRPC spec** we ship (`openrpc/`) still matches the
+current `stellar-rpc` release — see [Stellar RPC OpenRPC spec](#stellar-rpc-openrpc-spec).
 
 ## Context
 
@@ -25,6 +27,13 @@ any code examples that use outdated or deprecated syntax.
   API source-of-truth, confirm its npm publisher/linked repo is the genuine
   project (guards against typosquat names). Note `@x402/` is **not** the
   `@stellar` org — verify it's the real x402 package, not a lookalike.
+- Stellar RPC OpenRPC spec artifacts (under `openrpc/`): the per-method sources
+  in `openrpc/src/stellar-rpc/`, the hardcoded `info.version` in
+  `openrpc/scripts/build.mjs`, and the generated `static/stellar-rpc.openrpc.json`.
+  The `stellar/stellar-rpc` state-file entry (already tracked, see the Go-client
+  gotcha) gates this check too: a new `stellar-rpc` release triggers both the
+  Go-client relocation check and the spec check. See
+  [Stellar RPC OpenRPC spec](#stellar-rpc-openrpc-spec).
 
 ## Two modes
 
@@ -102,10 +111,7 @@ the rule holds in every mode.
       string, a coordinate, a class name), `grep` the **entire** `docs/` tree
       for it directly — do not rely on a partial file list, including one
       produced by an audit sub-agent, which routinely both misses occurrences
-      and includes false matches. Scope edits to `docs/` only: the `i18n/`
-      translations mirror `docs/`, lag behind (they may still show APIs you've
-      already migrated), and are an unused holdover from previous translation
-      processes - ignore the `i18n/` directory altogether.
+      and includes false matches. Scope edits to `docs/` only.
    3. **Verify each candidate against the current source before editing.**
       Changelogs and audit sub-agents over- and under-report. Confirm the API
       against the actual released source/registry: e.g. is the symbol really
@@ -121,7 +127,11 @@ the rule holds in every mode.
       correct.
    5. Commit with a message summarizing the SDK, the version (or relocation),
       and what changed. Do NOT push — branches are pushed manually after review.
-   6. Update the state file entry to the latest tag. Start the next SDK's branch
+   6. Update the state file entry to the latest tag — **except** the
+      `stellar/stellar-rpc` entry, which stays at its prior tag until the RPC
+      OpenRPC spec check completes successfully (see [Stellar RPC OpenRPC
+      spec](#stellar-rpc-openrpc-spec)), so an interrupted spec audit stays in
+      scope next run. Start the next SDK's branch
       from `upstream/main` again — do not check out a local `main` branch (it may
       be checked out in another worktree, e.g. the scheduled runner's, and git
       forbids the same branch in two worktrees).
@@ -133,10 +143,82 @@ the rule holds in every mode.
 
 5. **Report.** End with a summary: the mode you ran, SDKs checked, new releases
    or relocations found, branches created (with files touched), and SDKs that
-   needed no doc changes. Also list candidates you deliberately did **not** edit
+   needed no doc changes. Include the [RPC OpenRPC spec](#stellar-rpc-openrpc-spec)
+   outcome too (version bumped, type drift found/fixed, examples refreshed, or no
+   change). Also list candidates you deliberately did **not** edit
    and why (false positives, still-correct examples, third-party tutorials), so
    the human reviewer can second-guess those calls. If nothing needed changing,
    confirm briefly.
+
+## Stellar RPC OpenRPC spec
+
+The docs ship the canonical **Stellar RPC OpenRPC spec**, and it drifts the same
+way SDK examples do. Run this check whenever `stellar/stellar-rpc` has a new
+release (release-diff mode) and on every full audit — it's in addition to the
+Go-client relocation tracking noted in the gotchas. Do not update the
+`stellar/stellar-rpc` state-file entry until both checks complete successfully,
+so a failed or interrupted spec audit remains in scope for the next run.
+
+Artifacts:
+
+- Sources: `openrpc/src/stellar-rpc/` — `methods/`, `schemas/`, `examples/`,
+  `examplePairingObjects/`, `contentDescriptors/`.
+- The hardcoded `info.version` string in `openrpc/scripts/build.mjs`.
+- Generated outputs (never hand-edit): `static/stellar-rpc.openrpc.json` is the
+  committed artifact; `openrpc/stellar-rpc.openrpc.json` and
+  `openrpc/stellar-rpc.refs-openrpc.json` are gitignored build intermediates.
+- Regenerate with `pnpm rpcspec:build`; build **and** validate with
+  `pnpm rpcspec:validate`. Always finish on a clean validate.
+
+Steps when in scope:
+
+1. **Bump `info.version`** in `build.mjs` to the current `stellar-rpc` release
+   version with any leading `v` removed (e.g. tag `v27.1.1` becomes `27.1.1`).
+2. **Verify request/response types against source.** The canonical Go structs
+   live in `github.com/stellar/go-stellar-sdk/protocols/rpc/*.go` (one file per
+   method) — **not** in `stellar/stellar-rpc`, whose handlers
+   (`cmd/stellar-rpc/internal/methods/*.go`) only reference them. Pin to the
+   exact source revision `stellar-rpc` uses: read
+   `raw.githubusercontent.com/stellar/stellar-rpc/<tag>/go.mod` and resolve its
+   required `go-stellar-sdk` version. For a pseudo-version, use the trailing
+   commit hash; for a normal module version, use the matching Git tag/commit.
+   For each method, compare our `methods/<m>.json` params and result against
+   the Go struct `json:"..."` tags — missing/extra/renamed fields, type
+   mismatches, and required-vs-optional (`,omitempty` ⇒ optional; a pointer
+   without `,omitempty` is nullable but still **required**, e.g.
+   `LedgerEntryChange.before`/`after`).
+   Resolve our `$ref`s (into `schemas/`, `contentDescriptors/`) before concluding
+   a field is missing. **Wire-encoding quirks matter:** a `json:",string"` tag
+   means the field serializes as a JSON **string**, not a number (e.g. the
+   `getTransaction`/`getEvents`/`getHealth` close-times and
+   `getFeeStats.transactionCount`), and the *same* conceptual field can differ
+   across methods (`getTransaction` encodes close-times as strings,
+   `getTransactions`/`getLedgers` top-level ones as numbers) — type those inline
+   rather than forcing them onto one shared numeric schema. Struct tags don't
+   even capture everything: types with custom `MarshalJSON`/`UnmarshalJSON`
+   serialize independently of their fields — `EventTypeSet` and `SegmentFilter`
+   (`getEvents`), `LedgerEntryChangeType` (`simulateTransaction`) — so verify
+   their shape from the marshaler, not the tags, and don't rewrite a schema
+   that's already correct.
+3. **Refresh examples from live testnet.** Query the public testnet RPC
+   (`https://soroban-testnet.stellar.org`, JSON-RPC POST) and update stale
+   example values so they satisfy the schema and reflect the current protocol.
+   Prefer scripting the rewrite (`python3` via `bash`) over hand-transcribing
+   base64. Keep examples compact: testnet `metadataXdr`/`resultMetaXdr` blobs run
+   tens of KB — truncate an oversized base64 value with an explicit
+   `…(truncated …)` marker instead of inlining it (validation still passes; it's
+   a string). Validate strkeys/consistency where cheap.
+4. **Regenerate and commit together.** Run `pnpm rpcspec:build`, confirm
+   `pnpm rpcspec:validate` passes (it validates every example against its
+   schema), and commit the edited sources **and** the regenerated
+   `static/stellar-rpc.openrpc.json` on the same branch
+   (`chore/openrpc-<version>`, or fold into the run's branch). Do NOT push —
+   same review-then-push rule as the SDK branches.
+
+The type-drift audit fans out cleanly across sub-agents (one per method) in a
+full audit — but only under a tool set that includes `Task`; otherwise work
+through the methods sequentially. Treat sub-agent findings as candidates and
+re-verify each against the Go source before editing, exactly as in step 3.3.
 
 ## Running unattended
 
@@ -187,7 +269,8 @@ per-machine deployment concern, not part of this skill.)
   404. `stellar/stellar-rpc` is still a real repo (the RPC server binary), so
   keep tracking it, but its Go _client_ packages are gone. Treat repo/path
   relocations like this as breaking changes even when the version number barely
-  moved.
+  moved. A new `stellar-rpc` release also triggers the
+  [RPC OpenRPC spec](#stellar-rpc-openrpc-spec) check.
 - When run headlessly from launchd, the SSH agent is unavailable, so
   `git fetch`/`git pull` over SSH fail. Verify `main` is current by comparing
   local HEAD against `gh api repos/stellar/stellar-docs/commits/main` instead,
