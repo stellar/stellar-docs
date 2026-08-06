@@ -59,16 +59,16 @@ pub trait TokenInterface {
     /// * `spender` - The address being authorized to spend the tokens held by
     ///   `from`.
     /// * `amount` - The tokens to be made available to `spender`.
-    /// * `expiration_ledger` - The ledger number where this allowance expires. Cannot
+    /// * `live_until_ledger` - The ledger number where this allowance expires. Cannot
     ///    be less than the current ledger number unless the amount is being set to 0.
-    ///    An expired entry (where expiration_ledger < the current ledger number)
+    ///    An expired entry (where live_until_ledger < the current ledger number)
     ///    should be treated as a 0 amount allowance.
     ///
     /// # Events
     ///
     /// Emits an event with topics `["approve", from: Address,
-    /// spender: Address], data = [amount: i128, expiration_ledger: u32]`
-    fn approve(env: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32);
+    /// spender: Address], data = [amount: i128, live_until_ledger: u32]`
+    fn approve(env: Env, from: Address, spender: Address, amount: i128, live_until_ledger: u32);
 
     /// Returns the balance of `id`.
     ///
@@ -191,6 +191,46 @@ pub trait TokenInterface {
 The `approve` function overwrites the previous value with `amount`, so it is possible for the previous allowance to be spent in an earlier transaction before `amount` is written in a later transaction. The result of this is that `spender` can spend more than intended. This issue can be avoided by first setting the allowance to 0, verifying that the spender didn't spend any portion of the previous allowance, and then setting the allowance to the new desired amount. You can read more about this issue here - https://github.com/ethereum/EIPs/issues/20#issuecomment-263524729.
 
 :::
+
+### Events: SEP-41 Tokens vs. Stellar Asset Contracts
+
+The event shapes in the interface above are the ones a SEP-41 contract token emits. A [Stellar Asset Contract](./stellar-asset-contract.mdx) — the built-in contract every Stellar asset has — emits the same event names with **one extra topic**: the asset's [SEP-11](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0011.md) identifier, always last.
+
+Code written against the shapes above will therefore mis-parse an event emitted by a Stellar Asset Contract, reading the asset identifier as a missing field or ignoring it entirely.
+
+[CAP-0067](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md) is the normative source for the Stellar Asset Contract shapes below, and for the unification of classic events described further down.
+
+| Event | SEP-41 contract token | Stellar Asset Contract |
+| --- | --- | --- |
+| `approve` | `["approve", from, spender]` | `["approve", from, spender, sep0011_asset]` |
+| `transfer` | `["transfer", from, to]` | `["transfer", from, to, sep0011_asset]` |
+| `burn` | `["burn", from]` | `["burn", from, sep0011_asset]` |
+| `mint` | not part of this interface | `["mint", to, sep0011_asset]` |
+| `clawback` | not part of this interface | `["clawback", from, sep0011_asset]` |
+| `set_authorized` | not part of this interface | `["set_authorized", id, sep0011_asset]` |
+| `set_admin` | not part of this interface | `["set_admin", admin, sep0011_asset]` |
+
+On the Stellar Asset Contract side, the extra topic does not change the data payload: `amount: i128` for `transfer`, `mint`, `burn`, and `clawback`; `[amount: i128, live_until_ledger: u32]` for `approve`; `authorize: bool` for `set_authorized`; and `new_admin: Address` for `set_admin`. When the destination of a Stellar Asset Contract `transfer` or `mint` carries a multiplexing id, the data becomes `{ amount: i128, to_muxed_id }: Map` instead — see [Monitoring Payments as event stream](../build/guides/transactions/send-and-receive-payments.mdx#monitoring-payments-as-event-stream) for a worked example.
+
+A SEP-41 contract token keeps whatever payload the interface above documents for it, so do not carry these payload shapes back across the table.
+
+:::caution[A Stellar Asset Contract transfer does not always emit a transfer event]
+
+When the asset issuer is one side of the transfer, the contract emits a different event: `mint` if `from` is the issuer, `burn` if `to` is the issuer — and the `burn` drops any multiplexing id. You only get a `transfer` event when neither side is the issuer, or when both are. See [Interacting with classic Stellar assets](./stellar-asset-contract.mdx#interacting-with-classic-stellar-assets).
+
+:::
+
+#### Telling a classic operation from a contract invocation
+
+Since protocol 23, classic operations emit these same events, published under the asset's Stellar Asset Contract address whether or not that contract has been deployed — see [Tracking the movement of value](../learn/fundamentals/stellar-data-structures/events.mdx#tracking-the-movement-of-value).
+
+Not all of them, though. `approve` and `set_admin` are never emitted by a classic operation, because no classic operation is equivalent to them: allowances and contract administration exist only on the contract side. So those two always come from a contract invocation, and the rest — `transfer`, `mint`, `burn`, `clawback`, and `set_authorized` — can come from either path.
+
+The two paths produce byte-identical events, so nothing inside an event distinguishes them. To tell them apart, join the event back to its operation using `txHash` and `operationIndex`, then read the operation's type. Note that this separates a classic operation from a contract invocation, not a direct call to the asset contract from one made by another contract on a user's behalf — both of those are `InvokeHostFunction` operations emitting the same event.
+
+If you would rather not do that join yourself, the [Token Transfer Processor](../data/indexers/build-your-own/processors/token-transfer-processor/README.mdx) normalizes both paths into a single stream of typed events.
+
+One event in the unified set has no counterpart here: `fee` is transaction-level, carries only two topics and no asset identifier, and is never emitted by a contract function.
 
 ### Metadata
 
