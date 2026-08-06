@@ -44,7 +44,7 @@ const DeveloperResourcesBoxes: DeveloperResourcesItem[] = [
       <Translate
         id='component.Homepage.DeveloperResources.StackExchange.Description'
         description='Long description of what kind of developer resource this is.'>
-        A question and answer site for Stellar developers; if you can’t find what you’re looking for in the docs, try searching the Stack Exchange to see if your question has been addressed. If it hasn't, feel free to ask!
+        A question and answer site for Stellar developers; if you can't find what you're looking for in the docs, try searching the Stack Exchange to see if your question has been addressed. If it hasn't, feel free to ask!
       </Translate>
     ),
     link: exploreLink('https://stellar.stackexchange.com/'),
@@ -100,7 +100,7 @@ function DocsContribution() {
               </Link>
             )
           }}>
-          {'Stellar’s Developer Documentation is open-source, and contributions to the docs are encouraged. You can file an issue or pull request to add new content, suggest revisions to existing content, submit suggestions, report bugs, and more in the {githubRepoLink}.'}
+          {'Stellar\'s Developer Documentation is open-source, and contributions to the docs are encouraged. You can file an issue or pull request to add new content, suggest revisions to existing content, submit suggestions, report bugs, and more in the {githubRepoLink}.'}
         </Translate>
       </p>
       <p>
