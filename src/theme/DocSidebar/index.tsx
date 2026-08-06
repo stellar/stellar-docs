@@ -11,9 +11,7 @@ export default function DocSidebarWrapper(props: Props): ReactNode {
   // For all `/platforms` and `/docs/data` sidebars, remove the parent category from the sidebar.
   if (
     props.path.startsWith('/docs/platforms') ||
-    props.path.startsWith('/docs/data') ||
-    props.path.startsWith('/es/docs/platforms') ||
-    props.path.startsWith('/es/docs/data')
+    props.path.startsWith('/docs/data')
   ) {
     newProps = {
       ...props,
