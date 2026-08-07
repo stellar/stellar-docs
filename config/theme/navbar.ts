@@ -451,7 +451,7 @@ const tools: NavbarItem = {
     },
     {
       to: '/docs/tools/scaffold-stellar',
-      label: 'Scaffold Stellar',
+      label: 'Stellar Scaffold',
       activeBasePath: 'docs/tools/scaffold-stellar'
     },
     {
