@@ -3,7 +3,7 @@ set -e
 
 touch docs.log
 chmod 775 docs.log
-nohup yarn start --port 3000 > docs.log 2>&1 & echo $! > run.pid
+nohup pnpm start --port 3000 > docs.log 2>&1 & echo $! > run.pid
 
 echo "Docusaurus running on process: $(cat run.pid)"
 echo "Docusaurus running on port 3000"

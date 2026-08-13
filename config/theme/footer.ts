@@ -5,7 +5,7 @@ const resources = {
   items: [
     {
       label: "Developer Blog",
-      href: "https://www.stellar.org/developers-blog",
+      href: "https://stellar.org/developers-blog",
     },
     {
       label: "Stellar Quest",

@@ -19,7 +19,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small>',
+      value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small></a>',
       className: 'subtitle',
     },
     {
@@ -41,7 +41,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small>',
+      value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small></a>',
       className: 'subtitle',
     },
     {
@@ -96,7 +96,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/agentic-payments" class="subtitle"><small>Agentic Payments</small>',
+      value: '<hr><a href="/docs/build/agentic-payments" class="subtitle"><small>Agentic Payments</small></a>',
       className: 'subtitle',
     },
     {
@@ -111,7 +111,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small>',
+      value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small></a>',
       className: 'subtitle',
     },
     {
@@ -204,7 +204,7 @@ const learn: NavbarItem = {
   items: [
     {
       type: 'html',
-      value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small>',
+      value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small></a>',
       className: 'subtitle',
     },
     {
@@ -227,6 +227,11 @@ const learn: NavbarItem = {
       label: 'Data Structures',
       activeBasePath: 'docs/learn/fundamentals/stellar-data-structures',
       className: 'has-nested-items',
+    },
+    {
+      to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
+      label: 'Stellar Decentralized Exchange (SDEX)',
+      activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
     },
     {
       to: '/docs/learn/fundamentals/transactions',
@@ -260,11 +265,6 @@ const learn: NavbarItem = {
       to: '/docs/learn/fundamentals/anchors',
       label: 'Ramps (anchors)',
       activeBasePath: 'docs/learn/fundamentals/anchors',
-    },
-    {
-      to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
-      label: 'SDEX',
-      activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
     },
     {
       type: 'html',
@@ -321,6 +321,10 @@ const tokens: NavbarItem = {
       to: '/docs/tokens/publishing-asset-info',
       label: 'Publish Asset Information',
     },
+    {
+      to: '/docs/tokens/cross-chain-transfers',
+      label: 'CCTP',
+    },
   ],
 }
 
@@ -337,7 +341,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small>',
+      value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small></a>',
       className:'subtitle'
     },
     {
@@ -352,7 +356,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small>',
+      value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small></a>',
       className:'subtitle'
     },
     {
@@ -382,7 +386,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
+      value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small></a>',
       className:'subtitle'
     },
     {
@@ -392,7 +396,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
+      value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small></a>',
       className:'subtitle'
     },
     {
@@ -552,10 +556,6 @@ const translation: NavbarItem[] = [
     position: 'right',
     value: GOOGLE_TRANSLATE_ELEMENT,
   },
-  // {
-  //   type: 'localeDropdown',
-  //   position: 'right',
-  // },
 ]
 
 export default {
