@@ -58,15 +58,18 @@ const USDC = new Asset(
 
 // `getAssetBalance` looks up the trustline ledger entry for us and returns it
 // already decoded. If the account has no trustline for the asset at all, the
-// call throws, so we handle that case here.
+// call throws, so we handle that case here. Note that the SDK reports any
+// failure of this lookup — including a network or RPC error — with the same
+// "not found" error, so treat this branch as "could not confirm a trustline"
+// rather than proof that none exists.
 let balanceEntry;
 try {
   ({ balanceEntry } = await rpc.getAssetBalance(receiver, USDC));
 } catch (error) {
   console.error(
-    `Trustline for asset ${USDC.code} issued by ${USDC.issuer} not found for account ${receiver}.`,
+    `Could not confirm a trustline for asset ${USDC.code} issued by ${USDC.issuer} for account ${receiver}.`,
   );
-  throw new Error("Trustline not found");
+  throw error;
 }
 
 // The trustline exists, but the issuer may not have authorized it yet. An
@@ -78,12 +81,11 @@ if (!balanceEntry.authorized) {
   throw new Error("Trustline not authorized");
 }
 
-// `amount` is the account's current balance of the asset, in stroops
-// (1 unit = 10,000,000 stroops).
-const balance = Number(balanceEntry.amount) / 10 ** 7;
-
+// `amount` is the account's current balance of the asset, as a string of
+// stroops (1 unit = 10,000,000 stroops). Keep it as a string or a BigInt
+// rather than a Number — see the note on precision below.
 console.log(
-  `Trustline for asset ${USDC.code} issued by ${USDC.issuer} is valid for account ${receiver} (balance: ${balance}).`,
+  `Trustline for asset ${USDC.code} issued by ${USDC.issuer} is valid for account ${receiver} (${balanceEntry.amount} stroops).`,
 );
 
 // Proceed with sending the payment...
@@ -97,11 +99,19 @@ console.log(
 
 :::
 
+:::warning
+
+`getAssetBalance` raises the same `Trustline for CODE:ISSUER not found for ACCOUNT` error whether the trustline is genuinely absent or the lookup simply failed — a timeout or an unreachable RPC endpoint surfaces as "not found" too. If your application needs to tell those cases apart, use `getLedgerEntries` instead: it returns an empty `entries` array for a missing trustline and only rejects on a transport error.
+
+:::
+
 ### Checking the trustline limit
 
 A trustline also carries a `limit`: the maximum balance of the asset the account is willing to hold. A payment that would push the balance past that limit fails, even when the trustline exists and is authorized.
 
-`getAssetBalance` does not surface the limit, so we fetch the raw trustline ledger entry with `getLedgerEntries`:
+`getAssetBalance` does not surface the limit, so we fetch the raw trustline ledger entry with `getLedgerEntries`.
+
+Amounts are stored on the ledger as int64 stroops, and the largest representable amount — 922,337,203,685.4775807 — exceeds what a JavaScript `Number` can hold exactly. Trustline limits routinely sit at that maximum, so this example keeps the arithmetic in `BigInt` stroops; converting to `Number` first can silently misjudge whether a payment fits. See [Amount precision](../../../learn/fundamentals/stellar-data-structures/assets.mdx#amount-precision) for the full picture.
 
 <CodeExample>
 
@@ -117,7 +127,17 @@ const USDC = new Asset(
   "USDC",
   "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
 );
-const sendingAmount = "1";
+
+// Amounts live on the ledger as int64 stroops, whose maximum (9223372036854775807,
+// or 922,337,203,685.4775807 units) is far beyond what a JavaScript `Number` can
+// hold exactly. Convert the amount you want to send into stroops as a BigInt and
+// do the comparison there, so a large trustline can't be misjudged.
+function toStroops(amount) {
+  const [whole, fraction = ""] = amount.split(".");
+  return BigInt(whole + fraction.padEnd(7, "0").slice(0, 7));
+}
+
+const sendingAmount = toStroops("1");
 
 // A ledger key uniquely identifies an entry on the ledger. For a trustline, it
 // is the combination of the account that holds it and the asset it is for.
@@ -155,16 +175,16 @@ if (!(trustlineData.flags() & 1)) {
   throw new Error("Trustline not authorized");
 }
 
-// Amounts on the ledger are stored in stroops (1 unit = 10,000,000 stroops).
-const limit = Number(trustlineData.limit().toBigInt()) / 10 ** 7;
-const balance = Number(trustlineData.balance().toBigInt()) / 10 ** 7;
+// Read the limit and balance as BigInt stroops, with no conversion to Number.
+const limit = trustlineData.limit().toBigInt();
+const balance = trustlineData.balance().toBigInt();
 
 // Finally, we check if the trustline has enough limit to receive the payment.
 // We compare the trustline's limit minus its current balance with the amount we
 // want to send. Attempting to send an amount that exceeds the available limit
 // will result in a failed transaction, therefore, if the limit is insufficient,
 // we log an error and throw an exception.
-if (limit - balance < parseFloat(sendingAmount)) {
+if (limit - balance < sendingAmount) {
   console.error(
     `Insufficient limit for asset ${USDC.code} issued by ${USDC.issuer} in account ${receiver}.`,
   );
