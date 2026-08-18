@@ -6,6 +6,66 @@ description: Use the version marker pattern to safely read and migrate stored da
 
 When a contract is upgraded and a stored data structure gains new fields, the data already written to the ledger still uses the old layout. Naively reading those old entries with the new type causes the host to trap. This guide introduces the version marker pattern as the correct solution, covers lazy versus eager migration strategies and how to test them, and explains why the "intuitive" approach fails.
 
+:::note
+
+Since `soroban-sdk` v28 ([CAP-86]), the two most common cases below — adding an `Option` field to a stored struct, and removing a field from one — no longer need any of the patterns in this guide. See [Add an Optional Field](#add-an-optional-field) and [Removing a Field](#removing-a-field) below.
+
+The patterns in this guide are still required for changes sparse unpacking doesn't cover, such as adding a field that doesn't accept void (that is, isn't `Option`, the unit type, or `Val`), changing an existing field's type, or evolving enums and tuple structs, which are represented on the ledger as vectors rather than maps and are unaffected by this change. They're also required if the contract must keep working on a network that hasn't yet upgraded to the protocol version CAP-86 shipped in.
+
+[CAP-86]: https://github.com/stellar/stellar-protocol/blob/master/core/cap-0086.md
+
+:::
+
+## Add an Optional Field
+
+Suppose a contract stores `DataV1` entries and is upgraded to use `DataV2`, which adds an optional field `c`:
+
+```rust
+#[contracttype]
+pub struct DataV1 { a: i64, b: i64 }
+
+#[contracttype]
+pub struct DataV2 { a: i64, b: i64, c: Option<i64> }
+```
+
+Built with `soroban-sdk` v28 or newer, reading an old `DataV1` entry directly as `DataV2` now succeeds: the stored map has keys for `a` and `b` but not `c`, and the missing key unpacks as `None`.
+
+```rust
+pub fn read_data(e: Env, id: u32) -> Option<DataV2> {
+    e.storage().persistent().get(&DataKey::Data(id))
+}
+```
+
+No version marker, versioned enum, or migration step is required. Writing always writes every field, so once a `DataV2` value is written back, the entry's map has keys for `a`, `b`, and `c`.
+
+This relies on a host function that `soroban-sdk` v28 generates code to call, so the contract must also run on a network at the protocol version CAP-86 shipped in.
+
+## Removing a Field
+
+Suppose a contract stores `DataV2` entries and is upgraded to use `DataV1`, dropping field `c`:
+
+```rust
+#[contracttype]
+pub struct DataV2 { a: i64, b: i64, c: Option<i64> }
+
+#[contracttype]
+pub struct DataV1 { a: i64, b: i64 }
+```
+
+Built with `soroban-sdk` v28 or newer, reading an old `DataV2` entry directly as `DataV1` now succeeds: the `c` key in the stored map is not a field of `DataV1`, so it's ignored.
+
+```rust
+pub fn read_data(e: Env, id: u32) -> Option<DataV1> {
+    e.storage().persistent().get(&DataKey::Data(id))
+}
+```
+
+:::caution
+
+The discarded field isn't remembered. If the value is later packed and written back to storage, the write includes only the fields `DataV1` has, and the entry's `c` value is permanently lost. A routine read followed by a write - not just an explicit migration - discards it.
+
+:::
+
 ## Versioned Enum Pattern
 
 Suppose a contract stores `DataV1` entries and is upgraded to use `DataV2`, which adds an optional field `c`:
@@ -331,6 +391,12 @@ let data: DataV2 = env.storage().persistent().get(&key).unwrap();
 
 This traps with `Error(Object, UnexpectedSize)`. The Soroban host validates the field count of the XDR-encoded value against the type definition before returning anything to the contract. Because `DataV1` has two fields and `DataV2` has three, the host rejects the entry before the SDK can handle it.
 
+:::note
+
+This was the behavior before `soroban-sdk` v28. As of v28, this exact case — an added field that's `Option` — is no longer a trap; see [Add an Optional Field](#add-an-optional-field) above. It still traps if the added field doesn't accept void (that is, isn't `Option`, the unit type, or `Val`), if an existing field's type changes, or for enums and tuple structs, which are represented as vectors rather than maps and are unaffected.
+
+:::
+
 ### Approach 2: Use `try_from_val` as a fallback
 
 Another approach is to use `try_from_val` expecting to catch a deserialization error and recover:
@@ -348,4 +414,6 @@ if let Ok(v2) = DataV2::try_from_val(&env, &raw) {
 
 This also traps at the host level. The field count validation happens in the host environment during deserialization - it does not produce a Rust `Err` that the SDK can intercept. There is no way to catch or recover from the mismatch at the contract level.
 
-The root issue is that a contract cannot determine which type an existing storage entry was written as just by reading it. That information must be stored explicitly.
+As with Approach 1, this specific case no longer traps as of `soroban-sdk` v28.
+
+Outside that case, the root issue is that a contract cannot determine which type an existing storage entry was written as just by reading it. That information must be stored explicitly.
