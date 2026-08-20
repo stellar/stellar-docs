@@ -16,8 +16,11 @@
  *
  * which render as colored callouts on GitHub and in common markdown viewers,
  * and degrade to plain blockquotes elsewhere. Docusaurus admonition types map
- * to the closest of GitHub's five alert types. Nested admonitions become
- * nested quotes; admonitions indented inside list items keep their indent.
+ * to the closest of GitHub's five alert types. A synthesized title gets an
+ * empty quote line after it so it doesn't lazily merge into the first body
+ * paragraph. GitHub only renders alerts at the top level, so nested
+ * admonitions and ones indented inside list items become plain blockquotes
+ * with a bold "Type: Title" label instead of a literal "[!TYPE]" marker.
  * Lines inside code fences are left untouched so documented admonition syntax
  * survives.
  *
@@ -34,7 +37,10 @@ import { join } from 'node:path';
 
 const BUILD_DIR = 'build';
 
-const FENCE_RE = /^\s*(```|~~~)/;
+// Code-fence delimiter: 3+ backticks or tildes, optionally indented.
+const FENCE_OPEN_RE = /^\s*(`{3,}|~{3,})/;
+// A closing fence is the delimiter alone — no info string after it.
+const FENCE_CLOSE_RE = /^\s*(`{3,}|~{3,})[ \t]*$/;
 // ":::type" or ":::type[Title]" (3+ colons for nesting, optional indentation).
 const OPEN_RE = /^([ \t]*):{3,}([a-zA-Z]+)(?:\[(.*)\])?[ \t]*$/;
 // Bare ":::" closing line (3+ colons, optional indentation).
@@ -51,10 +57,26 @@ const ALERT_TYPE = {
   danger: 'CAUTION',
 };
 
+// Emoji stand-ins for the admonition icons, used where GitHub alert syntax
+// doesn't render (nested / list-indented admonitions).
+const TYPE_EMOJI = {
+  note: 'ℹ️',
+  info: 'ℹ️',
+  tip: '💡',
+  important: '❗',
+  warning: '⚠️',
+  caution: '⚠️',
+  danger: '🔥',
+};
+
 /** Convert admonition blocks to GitHub alerts; returns null when unchanged. */
 function convertAdmonitions(content) {
   let changed = 0;
-  let inFence = false;
+  /** Delimiter of the code fence we're inside (e.g. "````"), or null. */
+  let fence = null;
+  /** Separate a synthesized title from the next body line with an empty
+   * quote line, so the two don't lazily merge into one paragraph. */
+  let needBlank = false;
   /** @type {{ indent: string }[]} */
   const stack = [];
   const out = [];
@@ -62,20 +84,58 @@ function convertAdmonitions(content) {
   const prefix = () => (stack[0]?.indent ?? '') + '> '.repeat(stack.length);
 
   for (const line of content.split('\n')) {
-    if (FENCE_RE.test(line)) inFence = !inFence;
+    if (fence) {
+      // Per CommonMark, only a bare delimiter of the same character and at
+      // least the opening length closes the fence; anything else (an inner
+      // fence of the other character, a shorter run, or a line with an info
+      // string) is fenced content.
+      const close = line.match(FENCE_CLOSE_RE);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
+        fence = null;
+      }
+    } else {
+      const open = line.match(FENCE_OPEN_RE);
+      if (open) fence = open[1];
+    }
 
-    if (!inFence) {
+    if (!fence) {
       const open = line.match(OPEN_RE);
       if (open) {
         const [, indent, type, title] = open;
+        const alert = ALERT_TYPE[type.toLowerCase()] ?? 'NOTE';
+        const topLevel = stack.length === 0 && indent === '';
+        if (needBlank) {
+          out.push(prefix().trimEnd());
+          needBlank = false;
+        }
         stack.push({ indent });
-        out.push(`${prefix()}[!${ALERT_TYPE[type.toLowerCase()] ?? 'NOTE'}]`);
-        if (title) out.push(`${prefix()}**${title}**`);
+        if (topLevel) {
+          out.push(`${prefix()}[!${alert}]`);
+          if (title) {
+            out.push(`${prefix()}**${title}**`);
+            needBlank = true;
+          }
+        } else {
+          // GitHub only renders alerts at the top level; a nested or
+          // list-indented "[!TYPE]" shows up as literal text, so degrade to
+          // a blockquote led by the type's emoji icon and a bold label. The
+          // label keeps the original Docusaurus type name (e.g. "Danger"),
+          // matching the HTML page, since this path isn't limited to
+          // GitHub's alert set.
+          const t = type.toLowerCase();
+          const label = t[0].toUpperCase() + t.slice(1);
+          const emoji = TYPE_EMOJI[t] ?? 'ℹ️';
+          out.push(
+            `${prefix()}${emoji} **${title ? `${label}: ${title}` : label}**`,
+          );
+          needBlank = true;
+        }
         changed++;
         continue;
       }
       if (stack.length > 0 && CLOSE_RE.test(line)) {
         stack.pop();
+        needBlank = false;
         changed++;
         continue; // drop the closing line entirely
       }
@@ -89,7 +149,13 @@ function convertAdmonitions(content) {
       const rest = line.startsWith(indent)
         ? line.slice(indent.length)
         : line.trimStart();
-      out.push(rest === '' ? prefix().trimEnd() : prefix() + rest);
+      if (rest === '') {
+        out.push(prefix().trimEnd());
+      } else {
+        if (needBlank) out.push(prefix().trimEnd());
+        out.push(prefix() + rest);
+      }
+      needBlank = false;
       continue;
     }
 
