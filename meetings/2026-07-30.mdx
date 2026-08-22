@@ -1,0 +1,60 @@
+---
+title: "2026-07-30"
+authors: kaankacar
+tags: [developer]
+---
+
+import YouTube from "@site/src/components/YouTube";
+
+<YouTube ID="57fB8A5vhj0" />
+
+## Two Developer Advocates, One Call
+
+The twist this week: I wasn't the only developer advocate on the stream. Most of SDF was heads-down preparing for **Stellar House in Brazil** the following week — and if you were in Brazil, you were probably at the **Stellar Builder Summit** at that very moment. If not, I shouted you out for no reason.
+
+The topic was **cross-chain interoperability with CCTP** — Circle's Cross-Chain Transfer Protocol — and USDC on Stellar. My guest was **Elliot** ([@elliotfriend](https://x.com/elliotfriend) just about everywhere — if you can't find him on a platform, type "elliotfriend" into the search bar and be done with it), a senior developer advocate at SDF and genuinely one of the people I've learned the most from since joining. He's been in and around the Stellar ecosystem for six-plus years, having wandered into the Stellar Quest Discord out of curiosity about how the machine actually worked — not to trade altcoins — and never looked back. He built the CCTP demo himself, so I got out of the way and let him drive.
+
+## CCTP in One Paragraph
+
+Some framing before the demo. USDC has been native on Stellar since 2021, so this isn't a story about finally getting the token here — it's about how it _gets_ here. Until recently, moving USDC from Ethereum or Base onto Stellar meant a centralized exchange or a third-party bridge: a human does it out of band while your application sits there waiting for a balance to appear. **CCTP turns that into a contract call.** Circle is the issuer of USDC, so nothing needs to be locked anywhere: you **burn** USDC on the source chain, Circle signs an **attestation** that the burn happened, and you **mint** the same amount on the destination chain. Same canonical USDC on both sides, and the whole thing is something your code can start and finish on its own. CCTP went live on Stellar this past May.
+
+Elliot's history lesson made the "why" concrete. Cross-chain bridging has traditionally been done two ways: **lock-and-mint** (lock tokens in a vault on chain A, mint a wrapped representation on chain B — wrapped BTC being the classic) or **liquidity pools** (deposit real USDC on chain A, withdraw real USDC on chain B). Both approaches end with a giant pile of USDC sitting somewhere, and giant piles attract bad actors. CCTP's version has no pile: the tokens are _gone_ on the source chain, and real, canonical USDC — not a wrapped token, not a pool that can get drained — is minted on the destination.
+
+## The Demo: Stellar to Arc
+
+Elliot's demo app is live at [cctp27.vercel.app](https://cctp27.vercel.app) — named after Stellar's CCTP **destination domain, 27** — and the whole thing is open source. He ran it against **Arc testnet** (Circle's chain, domain 26) because Arc is usually quick, but it works the same with any CCTP-enabled chain; he's wired up the EVM chains and Solana.
+
+First transfer: 5 USDC, Stellar to Arc. The deposit-for-burn invocation on the Stellar side takes a handful of arguments worth knowing:
+
+- **Amount** — Stellar USDC has **seven decimals of precision**, so 5 USDC is 50 million stroops. Every other CCTP chain uses six. Why? Per Elliot: "I don't know why, but it is."
+- **Destination domain** — 26 for Arc, 27 for Stellar.
+- **Mint recipient** — the destination address, passed as 32 bytes.
+- **Burn token** — the USDC SAC address.
+- **Destination caller** — leave it all zeros and _anybody_ can call the mint function on the destination chain, making the mint permissionless; set it if you want only the recipient to be able to.
+- **Max fee and finality threshold** — these matter for _fast_ transfers on slower chains. Out of Stellar, standard (threshold 2000) is the only supported mode, because Stellar already reaches finality in seconds. Fast transfers exist for chains like Ethereum and its L2s — and Elliot's favorite, Starknet, which can take **four to eight hours** to reach finality before you can mint.
+
+Out of the box this is a two-transaction flow on Stellar — an allowance **approval** on the USDC SAC, then the **deposit-for-burn** — which bugged Elliot enough that he wrote a **wrapper contract** that does both in one atomic transaction. He demoed it with a 3.14 USDC transfer, "because I'm a dork." Either way, the rest is the same: wait for Circle's attestation ("Circle's permission slip that the burn actually happened"), confirm the mint in MetaMask, watch the balances update.
+
+## The Gotchas: Getting USDC _Into_ Stellar
+
+Before going the other direction, Elliot flagged the part that will "totally torch your funds if you're not careful." On EVM chains a mint recipient is a 20-byte address; CCTP gives you a 32-byte field. For transfers _into_ Stellar, you cannot just drop your G address (or M, or C address) in there. Circle requires the mint recipient — and the destination caller — to be the **CCTP forwarder contract**, as the raw 32 bytes underlying its C address (the Stellar SDK will decode those for you).
+
+Your _actual_ destination goes into the **hook data**, which has a strict layout: 24 zeroed "magic bytes," a version field (currently zero), a length field, and then your G address as a hex-encoded **UTF-8 string** — the string key itself, not the decoded public key bytes. Get that layout wrong and your funds go somewhere you didn't intend.
+
+The live Arc-to-Stellar run promptly hit Arc testnet's aggressive RPC rate limits, which gave Elliot the chance to show off my favorite feature: **resume from burn hash**. Paste the transaction hash of an earlier burn, the app fetches Circle's attestation, Freighter pops up, and you approve the `mint_and_forward` call on the forwarder contract. Five USDC landed back in his Stellar wallet.
+
+## Solana, ATAs, and Every Chain's Opinion
+
+This project was Elliot's first real development against Ethereum and his first Solana transaction ever ("so I'm pretty much an expert on Solana"). Two observations from that tour. First, every ecosystem has its own flavor of contract bindings — the Stellar CLI generates TypeScript or Rust bindings, EVM has ABIs, Solana has IDLs — and they all save you from hand-assembling binary data on the front end. Second, every chain has its own opinion about the 32-byte recipient: EVM addresses are right-aligned and zero-padded; Solana addresses fill all 32 bytes; Stellar wants the forwarder plus hook data.
+
+The Solana catch: your tokens don't live at your wallet address. Every token you hold has an **associated token account (ATA)** — imagine if each of your Stellar trustlines had its own distinct address you sent payments to — and CCTP transfers to Solana must target the ATA, not the wallet. With that handled, a 12 USDC **fast transfer** from Solana devnet to Stellar went through cleanly: burn confirmed in Phantom, attestation arrived in seconds, Freighter approved the `mint_and_forward` carrying the message and attestation from Circle's Iris API.
+
+The closer was **Circle's forwarding service**. Normally you sign — and pay gas — on both sides of a transfer. Going _outbound_ from Stellar (inbound isn't supported yet), you can have Circle submit the destination transaction and cover the gas: it's a relayer, same idea as OpenZeppelin's relayer service or Launchtube, triggered by putting "CCTP forward" magic bytes in the hook data. Elliot sent 11 USDC from Stellar to Solana and the tokens simply appeared — no popup, no destination gas, minus whatever fees Circle took along the way. Getting this working on Stellar testnet took a week or two of politely bugging Circle support (Stellar as a source chain wasn't being indexed correctly at first), so pour one out for whoever fielded those tickets.
+
+## What's Next for the Demo
+
+Elliot's roadmap: try M-addresses and smart accounts (everything so far has been plain G addresses), add more chains beyond "EVM is pretty much the same from one to the next," extend the wrapper contract to **ensure the destination G address has a trustline** before invoking the mint on Stellar-bound transfers, and use the forwarding service to create the recipient's ATA on Solana-bound ones — ATAs aren't opt-in like trustlines, they just have to be paid for.
+
+## Closing
+
+Everything — the app, the contracts, even the slide deck (an HTML page Claude put together) — lives in the [stellar-cctp-demo repository](https://github.com/ElliotFriend/stellar-cctp-demo). Take it, build it, break it, steal it; whatever floats your boat, per the author. A viewer on Twitch asked for the presentation materials, and Elliot's sharing them once refined. Close to 200 of you watched live across YouTube, X, and Twitch. Elliot's parting words: "let your heart guide you." Next week we talk confidential tokens with more SDF folks — see you there.
