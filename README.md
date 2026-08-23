@@ -222,6 +222,8 @@ below:
 export const CODE_LANGS = {
   bash: 'bash',
   cpp: 'C++',
+  css: 'CSS',
+  css3: 'CSS3',
   curl: 'cURL',
   dart: 'Flutter',
   flutter: 'Flutter',
