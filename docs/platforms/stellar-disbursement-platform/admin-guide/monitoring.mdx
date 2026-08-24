@@ -1,7 +1,7 @@
 ---
 title: Monitoring
-description: Guide to using the Stellar Disbursement Platform CLI
-keywords: [SDP, CLI]
+description: How the SDP exposes runtime metrics and logs, and how to wire them into Prometheus and Grafana
+keywords: [SDP, monitoring, metrics, Prometheus, Grafana, Loki]
 sidebar_position: 70
 ---
 
@@ -17,6 +17,18 @@ Both the Dashboard API and the Transaction Submission Service (TSS) expose Prome
 - `TSS_METRICS_TYPE` – Monitoring backend for the TSS (defaults to `TSS_PROMETHEUS`).
 
 When the server starts, it mounts the `/metrics` route and surfaces request, database, and TSS-specific counters and histograms that align with the Grafana dashboards provided in [Grafana README](https://github.com/stellar/stellar-disbursement-platform-backend/blob/develop/resources/grafana/README.md).
+
+Payment-related metrics carry a `wallet_id` label naming the distribution account the funds were sent from, so any panel can be broken down per account. Do not confuse it with the neighbouring `wallet` label, which names the recipient's wallet provider.
+
+The Dashboard API and the TSS both export successful and failure database query durations, including percentiles (p50, p90, p95, p99). The TSS also exports HTTP request durations, and its transaction latency histogram extends to 30 minutes so slow submissions stay visible.
+
+### Shipping Logs
+
+The SDP always writes structured logs to stdout, which is the recommended way to collect them. On Kubernetes, run a collector that reads the container's stdout.
+
+For platforms where nothing can read stdout, such as a PaaS with no log drain, set `LOG_SHIPPING_URL` to a Loki-compatible push endpoint (for example, a Grafana Alloy `loki.source.api` receiver). The SDP then streams the same structured logs to that endpoint over HTTP, in addition to stdout. Log shipping is disabled when the variable is not set.
+
+Transaction Submission Service log lines carry a `wallet_id` field identifying the distribution account that sent the payment, alongside a `payment_id` field that correlates them with the originating SDP payment. Together these let you filter transaction activity down to a single account, or trace one payment end to end. Both are structured fields inside the log line rather than Loki stream labels; the shipper keeps stream labels to `service` and `level` to avoid unbounded cardinality, so query them with a JSON or line filter.
 
 ### Local Prometheus and Grafana Stack
 
@@ -49,8 +61,18 @@ docker compose -p sdp-multi-tenant -f docker-compose-monitoring.yml down
 
 3. Select the `prometheus` datasource provided by [datasource](https://github.com/stellar/stellar-disbursement-platform-backend/blob/develop/dev/grafana/datasource.yaml). ![Select Datasource](/assets/SDP/SDP44.png)
 
-This dashboard visualizes HTTP request volume/latency, database query timings, and TSS transaction statistics, details described in [Grafana README.md](https://github.com/stellar/stellar-disbursement-platform-backend/blob/develop/resources/grafana/README.md). All panels can be filtered by method, route, tenant, or instance so you can distinguish traffic between multiple deployments.
+Three dashboards ship in [resources/grafana](https://github.com/stellar/stellar-disbursement-platform-backend/tree/develop/resources/grafana): Stellar Disbursement Platform (`dashboard.json`), Transaction Submission Service Metrics (`transaction_submission_service_dashboard.json`), and TSS Payments Dashboard (`tss_payments_dashboard.json`). Import each the same way.
 
-### Integrating with External Prometheus Instances
+The main dashboard visualizes HTTP request volume/latency, database query timings, and TSS transaction statistics, details described in [Grafana README.md](https://github.com/stellar/stellar-disbursement-platform-backend/blob/develop/resources/grafana/README.md). All panels can be filtered by method, route, tenant, or instance so you can distinguish traffic between multiple deployments.
 
-If you already operate a Prometheus cluster, add scrape jobs equivalent to the ones in [prometheus config](https://github.com/stellar/stellar-disbursement-platform-backend/blob/develop/dev/prometheus/prometheus.yml). Each subsystem exposes metrics at `http://<host>:<METRICS_PORT>/metrics` (Dashboard API) and `http://<host>:<TSS_METRICS_PORT>/metrics` (TSS). [Helm](https://github.com/stellar/stellar-disbursement-platform-backend/blob/develop/helmchart/sdp/values.yaml) deployments expose the same configuration knobs through `sdp.configMap.data.METRICS_*` and `tss.configMap.data.TSS_METRICS_*`. Once the new jobs are present, you can import the same dashboard JSON into your existing Grafana deployment or adapt the PromQL queries to your preferred observability suite.
+### Kubernetes and Helm
+
+The Helm chart publishes both metrics ports and adds three switches, all off by default:
+
+| Value | Turn it on when |
+| :-- | :-- |
+| `serviceMonitor.enabled` | You run the Prometheus Operator. Needs the `monitoring.coreos.com/v1` CRDs, plus `serviceMonitor.additionalLabels` set to whatever label your Operator discovers on, commonly `release: kube-prometheus-stack`. |
+| `metricsScrapeAnnotations.enabled` | Your Prometheus finds targets by pod annotation. Adds `prometheus.io/scrape`, `prometheus.io/port` and `prometheus.io/path` to both pods. |
+| `grafanaDashboards.enabled` | Your Grafana runs the kube-prometheus-stack sidecar. It imports the dashboards for you, so the manual steps above are not needed. |
+
+Use `serviceMonitor` or `metricsScrapeAnnotations`, not both. The ports themselves come from `sdp.configMap.data.METRICS_PORT` and `tss.configMap.data.TSS_METRICS_PORT`.
