@@ -236,6 +236,88 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Distribution Wallets",
+      link: {
+        type: "doc",
+        id: "platforms/stellar-disbursement-platform/api-reference/distribution-wallets",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/list-distribution-wallets",
+          label: "List Distribution Accounts",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/create-distribution-wallet",
+          label: "Create Distribution Account",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-distribution-wallets-total-balance",
+          label: "Get Total Balance",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-distribution-wallet",
+          label: "Get Distribution Account",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-distribution-wallet-balance",
+          label: "Get Account Balance",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-distribution-wallet-capabilities",
+          label: "Get Account Capabilities",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/list-distribution-wallet-memberships",
+          label: "List Account Access",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/grant-distribution-wallet-membership",
+          label: "Grant Account Access",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/revoke-distribution-wallet-membership",
+          label: "Revoke Account Access",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/get-distribution-wallet-audit",
+          label: "Get Account Access History",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/archive-distribution-wallet",
+          label: "Archive Distribution Account",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "platforms/stellar-disbursement-platform/api-reference/promote-distribution-wallet-to-default",
+          label: "Promote Account To Default",
+          className: "api-method post",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "Organization",
       link: {
         type: "doc",
