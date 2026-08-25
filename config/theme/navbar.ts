@@ -325,6 +325,10 @@ const tokens: NavbarItem = {
       to: '/docs/tokens/cross-chain-transfers',
       label: 'CCTP',
     },
+    {
+      to: '/docs/tokens/usdt0-layerzero',
+      label: 'Cross-Chain USDT0 Transfers with LayerZero',
+    },
   ],
 }
 
