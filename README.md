@@ -261,5 +261,6 @@ export const CODE_LANGS = {
 [tutorial]: https://www.markdowntutorial.com/
 [guide]: https://www.markdownguide.org/
 [prism]: https://github.com/FormidableLabs/prism-react-renderer
+https://claude.ai/join/org#-q2RgxfFsXBp5y54VVkRqg
 [open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web
 [open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs
