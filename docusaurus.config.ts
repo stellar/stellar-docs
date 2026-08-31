@@ -86,6 +86,9 @@ const config: Config = {
     './src/plugins/route-export/index.ts',
     './src/plugins/analytics-module/index.ts',
     'docusaurus-markdown-source-plugin',
+    // Dumps the .md-twin → source-file map consumed by the postbuild step
+    // that restores <CodeExample> content (scripts/rewrite_md_code_examples.mjs).
+    './src/plugins/markdown-source-map/index.ts',
     [
       "docusaurus-plugin-llms",
       {
