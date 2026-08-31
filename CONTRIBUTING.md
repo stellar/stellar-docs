@@ -89,7 +89,7 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 ### Promotional and third-party content
 
 - **We don't accept promotional contributions.** PRs that add payment addresses, donation appeals, referral links, or marketing copy for a contributor's own product will be closed without review. This includes rewriting an existing page to center a specific project.
-- **Third-party tools and services belong on the pages built for them.** Several pages exist to list ecosystem tooling and providers. Entries there are descriptive rather than promotional: what the thing does and how it works with Stellar, not why a reader should choose it. If you think your project belongs in one of those sections, open an issue proposing it before opening a PR.
+- **Third-party tools and services belong on the pages built for them.** Several pages exist to list ecosystem tooling and providers. Entries there are descriptive rather than promotional: what the thing does and how it works with Stellar, not why a reader should choose it. If your project clearly fits into one of these list pages, feel free to directly open a PR. If you're uncertain where or if your project fits, feel free to open an issue proposing it.
 
 ## Site Code and Infrastructure
 
