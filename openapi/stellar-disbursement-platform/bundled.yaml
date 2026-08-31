@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Disbursement Platform API
-  version: 2.1.0
+  version: 7.0.0
   summary: The Stellar Disbursement Platform (SDP) is a tool built for organizations to make bulk payments to a group of recipients over the Stellar network.
   description: |
     The Stellar Disbursement Platform (SDP) is a tool built for organizations to make bulk payments to a group of recipients over the Stellar network.
@@ -45,6 +45,11 @@ tags:
       - ERROR → Integration error occurred
   - name: Disbursements
     description: Endpoints related to disbursements. A disbursement is a group of payments sent to multiple individuals at once. An SDP user with the appropriate role triggers a new disbursement through the SDP dashboard by uploading a list of receivers and amounts. When the receiver has linked their wallet to the SDP, the payment automatically begins. SDP users can track their disbursements in real-time through the SDP dashboard. Each disbursement must have a unique name defined by the organization.
+  - name: Distribution Wallets
+    description: |
+      Endpoints related to distribution accounts (the Stellar accounts a tenant sends funds from). A tenant starts with a single account, created when the tenant is provisioned, which is marked as the default. Tenants using the `DISTRIBUTION_ACCOUNT.STELLAR.DB_VAULT` account type can hold up to 20, and Owners can add more at any time.
+
+      Access to an account is granted per user and is separate from the user's role: both are required to act on an account. API keys need the `read:distribution_wallets` or `write:distribution_wallets` permission, and the Owner-only operations additionally require that the key was created by an Owner, so permissions alone are not sufficient. Accounts are archived rather than deleted, so past disbursements and payments keep pointing at the account that sent them.
   - name: Organization
     description: Organization endpoints manage the process of getting and updating organizational profile information. The organization's profile has basic information set at the time of SDP deployment. It can be modified by the Owner. Organizations can also manage their preferences, like which assets to use, through these endpoints.
   - name: Payments
@@ -379,6 +384,7 @@ paths:
       description: Fetches all disbursements the organization has created. This endpoint supports pagination. The response includes basic aggregations on payments within the disbursement.
       operationId: ListAllDisbursements
       parameters:
+        - $ref: '#/components/parameters/XWalletIdListScope'
         - name: page
           in: query
           description: The page requested.
@@ -419,6 +425,7 @@ paths:
               - STARTED
               - PAUSED
               - COMPLETED
+              - CANCELED
           example: DRAFT
         - name: created_at_after
           in: query
@@ -516,6 +523,8 @@ paths:
       summary: Create Disbursement
       description: 'Creates a new disbursement in  `draft ` state with basic details. Important: a disbursement is not triggered until the organization adds receivers through the Upload Disbursement Instructions endpoint and the status changes from  `draft ` to  `ready `.'
       operationId: CreateDisbursement
+      parameters:
+        - $ref: '#/components/parameters/XWalletIdWriteSource'
       requestBody:
         content:
           '*/*':
@@ -614,6 +623,9 @@ paths:
                   error: Forbidden
               example:
                 error: Forbidden
+        '404':
+          description: Not Found
+          $ref: '#/components/responses/NotFoundResponse'
       security:
         - BearerAuth: []
       x-codegen-request-body-name: body
@@ -1129,6 +1141,7 @@ paths:
       description: Exports a CSV file of disbursements.
       operationId: exportDisbursements
       parameters:
+        - $ref: '#/components/parameters/XWalletIdListScope'
         - name: q
           in: query
           description: A search term used to query through the disbursement names.
@@ -1212,6 +1225,7 @@ paths:
       description: Exports a CSV file of payments.
       operationId: exportPaymentsCSV
       parameters:
+        - $ref: '#/components/parameters/XWalletIdListScope'
         - name: q
           in: query
           description: Search payments by ID, external_payment_id, receiver wallet address, or disbursement name.
@@ -1315,6 +1329,7 @@ paths:
       description: Exports a CSV file of receivers.
       operationId: exportReceiversCSV
       parameters:
+        - $ref: '#/components/parameters/XWalletIdListScope'
         - name: q
           in: query
           description: A search term used to query through the receiver phone_number, email, and ID.
@@ -1398,6 +1413,7 @@ paths:
       description: Returns all individual payments matching the request criteria. This endpoint supports pagination, and filtering on payment status, type, receiver ID, and timestamp. Each payment has details on the transaction itself, receiver, disbursement, asset, status history, and blockchain information.
       operationId: ListAllPayments
       parameters:
+        - $ref: '#/components/parameters/XWalletIdListScope'
         - name: page
           in: query
           description: The page requested.
@@ -1557,6 +1573,8 @@ paths:
       summary: Create Direct Payment
       description: Creates a new direct payment that is immediately sent to the specified receiver if they have a valid registered wallet. Direct payments bypass the disbursement workflow and are processed instantly.
       operationId: CreateDirectPayment
+      parameters:
+        - $ref: '#/components/parameters/XWalletIdWriteSource'
       requestBody:
         content:
           application/json:
@@ -1804,6 +1822,13 @@ paths:
       description: Returns all receivers matching the request criteria. This endpoint supports pagination and filtering on receiver status, receiver attributes, and timestamp. Each payment has details on the receiver, high-level payments metrics, and wallets associated with the receiver.
       operationId: ListAllReceivers
       parameters:
+        - name: X-Wallet-Id
+          in: header
+          required: false
+          description: |
+            Optional. Selects the distribution account whose receivers are returned. A receiver is reachable from an account if they were created from it or have been paid from it. Omit it to cover every account you have access to.
+          schema:
+            type: string
         - name: page
           in: query
           description: The page requested.
@@ -1940,6 +1965,8 @@ paths:
       summary: Create Receiver
       description: Creates a new Receiver. Allows clients to create a single receiver record, which can later be referenced in payments or disbursements.
       operationId: CreateReceiver
+      parameters:
+        - $ref: '#/components/parameters/XWalletIdWriteSource'
       requestBody:
         content:
           application/json:
@@ -1962,6 +1989,9 @@ paths:
         '403':
           description: Forbidden
           $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          description: Not Found
+          $ref: '#/components/responses/NotFoundResponse'
         '409':
           description: Conflict - receiver already exists
           content:
@@ -2326,6 +2356,14 @@ paths:
       summary: Retrieve All Statistics
       description: Fetches all metrics on all disbursements the organization has created. The response includes basic aggregations on payments, receivers, receiver wallets, and assets.
       operationId: RetrieveAllStatistics
+      parameters:
+        - name: X-Wallet-Id
+          in: header
+          required: false
+          description: |
+            Optional. Narrows the statistics to a single distribution account. Naming an account outside your access returns 404 rather than disclosing that it exists. Omit it to cover every account you have access to.
+          schema:
+            type: string
       responses:
         '200':
           description: General Statistics response
@@ -2359,6 +2397,17 @@ paths:
                 extras:
                   status: 401
                   message: Not authorized
+        '404':
+          description: Distribution account not found, or outside the caller's access
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                example:
+                  error: distribution wallet not found
       security:
         - BearerAuth: []
   /statistics/{id}:
@@ -3056,6 +3105,400 @@ paths:
       security:
         - BearerAuth: []
       x-codegen-request-body-name: body
+  /distribution-wallets:
+    get:
+      tags:
+        - Distribution Wallets
+      summary: List Distribution Accounts
+      description: Lists the distribution accounts the caller has access to. Owners see every account in the tenant. Archived accounts are included so historical records stay resolvable.
+      operationId: ListDistributionWallets
+      responses:
+        '200':
+          description: Distribution accounts retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DistributionWallet'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+      security:
+        - BearerAuth: []
+    post:
+      tags:
+        - Distribution Wallets
+      summary: Create Distribution Account
+      description: |
+        Creates and provisions a new distribution account. The account is generated, funded, and given its own signing key, isolated from the tenant's other accounts.
+
+        Owner only. Available only to tenants using the `DISTRIBUTION_ACCOUNT.STELLAR.DB_VAULT` account type, up to a maximum of 20 accounts.
+      operationId: CreateDistributionWallet
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DistributionWalletRequest'
+        required: true
+      responses:
+        '201':
+          description: Distribution account created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DistributionWallet'
+        '400':
+          $ref: '#/components/responses/BadRequestResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '409':
+          description: An account with this name already exists
+      security:
+        - BearerAuth: []
+  /distribution-wallets/balance:
+    get:
+      tags:
+        - Distribution Wallets
+      summary: Get Total Balance
+      description: Returns the combined live balances of every distribution account the caller has access to, summed per asset. This is the Total Balance shown on the dashboard.
+      operationId: GetDistributionWalletsTotalBalance
+      responses:
+        '200':
+          description: Total balance retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletBalanceResponse'
+              example:
+                balances:
+                  USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5: '37500.0000000'
+                  XLM: '314.9997600'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+      security:
+        - BearerAuth: []
+  /distribution-wallets/{id}:
+    get:
+      tags:
+        - Distribution Wallets
+      summary: Get Distribution Account
+      description: Retrieves a single distribution account. Owner only.
+      operationId: GetDistributionWallet
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Distribution account retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DistributionWallet'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+      security:
+        - BearerAuth: []
+  /distribution-wallets/{id}/balance:
+    get:
+      tags:
+        - Distribution Wallets
+      summary: Get Account Balance
+      description: Returns one distribution account's live on-chain balances. An account the caller has no access to is indistinguishable from one that does not exist; both return 404.
+      operationId: GetDistributionWalletBalance
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Balances retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletBalanceResponse'
+              example:
+                wallet_id: 8d1f6a2e-3c4b-4a5d-9e6f-7a8b9c0d1e2f
+                balances:
+                  USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5: '12500.0000000'
+                  XLM: '104.9999200'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+      security:
+        - BearerAuth: []
+  /distribution-wallets/{id}/capabilities:
+    get:
+      tags:
+        - Distribution Wallets
+      summary: Get Account Capabilities
+      description: |
+        Reports what the caller may do on one distribution account, combining their tenant-wide role with the role they hold on that account.
+
+        Owners can also ask what a third party could do, by passing `user_id`. Add `role` alongside it to ask hypothetically what that user could do if granted that role. `role` cannot be sent on its own and returns 400 without `user_id`. This backs the dashboard's access-granting picker, which warns when a grant would be inert because the user's tenant-wide role already excludes the action.
+      operationId: GetDistributionWalletCapabilities
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          description: Report this user's capabilities instead of the caller's. Owner only.
+          required: false
+          schema:
+            type: string
+        - name: role
+          in: query
+          description: Report the capabilities a user would have if granted this role. Owner only.
+          required: false
+          schema:
+            type: string
+            enum:
+              - financial_controller
+              - developer
+              - business
+              - initiator
+              - approver
+      responses:
+        '200':
+          description: Capabilities retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletCapabilitiesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+      security:
+        - BearerAuth: []
+  /distribution-wallets/{id}/memberships:
+    get:
+      tags:
+        - Distribution Wallets
+      summary: List Account Access
+      description: Lists the users who have access to a distribution account, and the role each holds. Owner only.
+      operationId: ListDistributionWalletMemberships
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Access list retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WalletMembership'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+      security:
+        - BearerAuth: []
+    post:
+      tags:
+        - Distribution Wallets
+      summary: Grant Account Access
+      description: |
+        Grants a user a role on a distribution account. Owner only.
+
+        The Owner role cannot be granted here, since it is always tenant-wide. An archived account takes no new grants.
+      operationId: GrantDistributionWalletMembership
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletMembershipRequest'
+        required: true
+      responses:
+        '201':
+          description: Access granted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletMembership'
+        '400':
+          $ref: '#/components/responses/BadRequestResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+        '409':
+          description: The user already has access to this account, or the account is archived
+      security:
+        - BearerAuth: []
+  /distribution-wallets/{id}/memberships/{membershipID}:
+    delete:
+      tags:
+        - Distribution Wallets
+      summary: Revoke Account Access
+      description: Revokes a user's access to a distribution account. Owner only. The grant history is preserved in the account's audit trail.
+      operationId: RevokeDistributionWalletMembership
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+        - name: membershipID
+          in: path
+          description: The unique identifier of the access grant being revoked
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Access revoked successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+      security:
+        - BearerAuth: []
+  /distribution-wallets/{id}/audit:
+    get:
+      tags:
+        - Distribution Wallets
+      summary: Get Account Access History
+      description: Returns the grants and revokes recorded against a distribution account, newest first, from an append-only audit table. Owner only. Archived accounts remain queryable. Capped at the 100 most recent entries, with no pagination, so older entries are not returned.
+      operationId: GetDistributionWalletAudit
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Access history retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WalletMembershipAuditEntry'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+      security:
+        - BearerAuth: []
+  /distribution-wallets/{id}/archive:
+    post:
+      tags:
+        - Distribution Wallets
+      summary: Archive Distribution Account
+      description: |
+        Archives a distribution account. Owner only.
+
+        Archived accounts accept no new disbursements but keep serving reads, so past records stay resolvable. Two accounts cannot be archived and return 400: the tenant's default, which requires promoting another account first, and the last remaining active account.
+      operationId: ArchiveDistributionWallet
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Distribution account archived successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DistributionWallet'
+        '400':
+          description: The account is the tenant's default, or is the last active account
+          $ref: '#/components/responses/BadRequestResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+      security:
+        - BearerAuth: []
+  /distribution-wallets/{id}/promote-to-default:
+    post:
+      tags:
+        - Distribution Wallets
+      summary: Promote Account To Default
+      description: Makes this the tenant's default distribution account. Owner only. The previous default becomes an ordinary active account. Only an active account can be promoted; archived or still-provisioning accounts return 400.
+      operationId: PromoteDistributionWalletToDefault
+      parameters:
+        - name: id
+          in: path
+          description: The unique identifier of the distribution account
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Distribution account promoted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DistributionWallet'
+        '400':
+          description: The account is not active
+          $ref: '#/components/responses/BadRequestResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+      security:
+        - BearerAuth: []
   /organization:
     get:
       tags:
@@ -3117,7 +3560,26 @@ paths:
                 data:
                   type: string
                   description: |
-                    A JSON string that contains the details to update. Contains the following keys:  `organization_name` (string): the new name of the organization, `timezone_utc_offset` (string): the new timezone offset of the organization, `is_approval_required` (boolean): whether the approval workflow is enabled or not. `receiver_registration_message_template` (string): the message template sent to the receivers inviting them to registration. Sending this field empty sets the `default` value for it. `otp_message_template` (string): the message template sent to the receivers sending the OTP to complete the registration flow. Sending this field empty sets the `default` value for it. For example: '{"organization_name": "NewOrgName", "timezone_utc_offset": "+02:00", "is_approval_required": true, "receiver_registration_message_template": "You have a payment waiting for you from {{.OrganizationName}}. Click {{.RegistrationLink}} to register.", "otp_message_template": "{{.OTP}} is your {{.OrganizationName}} phone verification code."}'
+                    A JSON string that contains the details to update. Every key is optional; only the keys you send are changed.
+
+                    - `organization_name` (string): the new name of the organization, up to 64 characters.
+                    - `timezone_utc_offset` (string): the new timezone offset of the organization.
+                    - `is_approval_required` (boolean): whether the approval workflow is enabled or not.
+                    - `is_link_shortener_enabled` (boolean): whether registration links sent to receivers are shortened.
+                    - `is_memo_tracing_enabled` (boolean): whether payments carry a tracing memo.
+                    - `receiver_registration_message_template` (string): the message template sent to the receivers inviting them to registration. Up to 255 characters, and it cannot contain HTML, JS or CSS. Sending this field empty sets the `default` value for it.
+                    - `otp_message_template` (string): the message template sent to the receivers sending the OTP to complete the registration flow. Sending this field empty sets the `default` value for it.
+                    - `privacy_policy_link` (string): a URL to the organization privacy policy. Sending it empty clears it.
+                    - `webhook_url` (string): an https URL the SDP delivers outbox events to. Owner only; sending it empty clears it.
+                    - `receiver_invitation_resend_interval_days` (number): how often an unregistered receiver is re-invited. Sending 0 clears it.
+                    - `payment_cancellation_period_days` (number): how long a READY payment waits before it is canceled automatically. Sending 0 clears it.
+                    - `mfa_disabled` (boolean): whether multi-factor authentication is turned off for dashboard sign-in.
+                    - `captcha_disabled` (boolean): whether reCAPTCHA is turned off.
+                    - `receiver_invitations_disabled` (boolean): whether receiver invitation messages are suppressed.
+
+                    For example:
+
+                    `{"organization_name": "NewOrgName", "timezone_utc_offset": "+02:00", "is_approval_required": true, "receiver_registration_message_template": "You have a payment waiting for you from {{.OrganizationName}}. Click {{.RegistrationLink}} to register.", "otp_message_template": "{{.OTP}} is your {{.OrganizationName}} phone verification code."}`
                   format: json
       responses:
         '200':
@@ -3295,15 +3757,32 @@ paths:
       summary: Get All Assets
       description: 'Fetches the list of available assets to populate the dropdown box in the New Disbursement flow. Note: the organization must hold a balance in a particular asset to use it in a disbursement.'
       operationId: GetAllAssets
+      parameters:
+        - name: enabled
+          in: query
+          required: false
+          description: |
+            When set, each asset also reports whether the selected distribution account can send it and what it currently holds. `true` returns only assets the account is set up for, `false` only those it is not.
+          schema:
+            type: boolean
+        - name: X-Wallet-Id
+          in: header
+          required: false
+          description: |
+            Optional. When the enabled filter is used, selects the distribution account that the enabled and balance fields describe. Omit it to describe the tenant's default account.
+          schema:
+            type: string
       responses:
         '200':
-          description: A list of assets
+          description: A list of assets. When the `enabled` filter is used, each entry also carries `enabled` and `balance`.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Asset'
+                  oneOf:
+                    - $ref: '#/components/schemas/Asset'
+                    - $ref: '#/components/schemas/AssetWithEnabledInfo'
         '401':
           description: Unauthorized
           content:
@@ -3343,6 +3822,17 @@ paths:
                   error: Forbidden
               example:
                 error: Forbidden
+        '404':
+          description: The distribution account named by X-Wallet-Id is not visible to the caller
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                example:
+                  error: distribution wallet not found
       security:
         - BearerAuth: []
     post:
@@ -3351,6 +3841,8 @@ paths:
       summary: Create Asset
       description: 'This endpoint is used to create a new asset that can be used in a Disbursement. Note: the organization must hold a balance in a particular asset to use it in a disbursement.'
       operationId: CreateAsset
+      parameters:
+        - $ref: '#/components/parameters/XWalletIdTrustlineTarget'
       requestBody:
         description: Asset to be created
         content:
@@ -3377,6 +3869,15 @@ paths:
         '400':
           description: Bad request, invalid request body or the provided code/issuer is invalid.
           content: {}
+        '401':
+          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          description: Forbidden
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          description: Not Found
+          $ref: '#/components/responses/NotFoundResponse'
       security:
         - BearerAuth: []
       x-codegen-request-body-name: body
@@ -3388,6 +3889,7 @@ paths:
       description: This endpoint is used to soft delete an asset.
       operationId: DeleteAsset
       parameters:
+        - $ref: '#/components/parameters/XWalletIdTrustlineTarget'
         - name: id
           in: path
           description: ID of the asset to delete
@@ -3403,6 +3905,15 @@ paths:
         '204':
           description: Asset already deleted
           content: {}
+        '400':
+          description: Bad Request
+          $ref: '#/components/responses/BadRequestResponse'
+        '401':
+          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          description: Forbidden
+          $ref: '#/components/responses/ForbiddenResponse'
         '404':
           description: Asset not found
           content: {}
@@ -4752,6 +5263,10 @@ components:
           $ref: '#/components/schemas/Asset'
         status:
           $ref: '#/components/schemas/DisbursementStatus'
+        source_wallet_id:
+          type: string
+          description: ID of the distribution account the disbursement is funded from.
+          example: 4c379f5e-09b5-4472-a286-b84e249a1512
         verification_field:
           $ref: '#/components/schemas/VerificationField'
         status_history:
@@ -4901,6 +5416,7 @@ components:
         - STARTED
         - PAUSED
         - COMPLETED
+        - CANCELED
     DisbursementStatusHistory:
       type: array
       items:
@@ -4984,6 +5500,13 @@ components:
           type: integer
           description: The amount of days that the SDP will wait to cancel a payment that is waiting for the receiver to register. If `0`, that means the payment cancellation feature is disabled.
           example: 5
+        webhook_url:
+          type:
+            - string
+            - 'null'
+          format: uri
+          description: HTTPS destination the SDP delivers outbox events to. Must use https.
+          example: https://example.org/sdp-events
         privacy_policy_link:
           type: string
           description: The link to the organization privacy policy
@@ -5069,12 +5592,23 @@ components:
           type: string
           description: The ID of the transaction in the Stellar network. It can be used to track the payment in the Stellar network using [Stellar Laboratory](https://laboratory.stellar.org), or [StellarExpert](https://stellar.expert).
           example: 0b339d1c89d314186b8147c2af4c9a9ed5bbdbcd7ada8d138633907649b
-        circle_transfer_request_id:
+        circle_transaction_id:
           type: string
-          description: The Circle transfer request ID. It is only present when the payment was made using Circle.
+          description: The Circle transaction ID. It is only present when the payment was made using Circle.
           example: 74a68b6a-3f67-424b-b8b0-e593a19d7463
+        circle_transaction_type:
+          type: string
+          enum:
+            - PAYOUT
+            - TRANSFER
+          description: Which Circle API the payment went through. It is only present when the payment was made using Circle.
+          example: TRANSFER
         stellar_operation_id:
           type: string
+        source_wallet_id:
+          type: string
+          description: ID of the distribution account the payment was sent from.
+          example: 4c379f5e-09b5-4472-a286-b84e249a1512
         status:
           $ref: '#/components/schemas/PaymentStatus'
         status_history:
@@ -5142,6 +5676,9 @@ components:
     PaymentCounters:
       type: object
       properties:
+        canceled:
+          type: integer
+          format: int64
         draft:
           type: integer
           format: int64
@@ -5176,11 +5713,17 @@ components:
         asset_code:
           type: string
           example: USDC
+        asset_issuer:
+          type: string
+          description: Issuer of the asset. Empty for the native asset.
+          example: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
         payment_amounts:
           $ref: '#/components/schemas/PaymentAmounts'
     PaymentAmounts:
       type: object
       properties:
+        canceled:
+          type: string
         draft:
           type: string
           example: '100.00'
@@ -5257,6 +5800,9 @@ components:
         failed_payments:
           type: string
           example: '0'
+        canceled_payments:
+          type: string
+          example: '0'
         remaining_payments:
           type: string
           example: '0'
@@ -5323,6 +5869,9 @@ components:
           type: string
           example: '2'
         failed_payments:
+          type: string
+          example: '0'
+        canceled_payments:
           type: string
           example: '0'
         remaining_payments:
@@ -5933,6 +6482,11 @@ components:
         - payment_rail
         - currency
         - address
+    DistributionWalletIDs:
+      type: array
+      items:
+        type: string
+      description: IDs of the distribution accounts this API key may act on.
     APIKey:
       type: object
       properties:
@@ -5952,6 +6506,8 @@ components:
           items:
             type: string
           description: List of allowed IP addresses or CIDR ranges
+        distribution_wallet_ids:
+          $ref: '#/components/schemas/DistributionWalletIDs'
         expiry_date:
           type: string
           format: date-time
@@ -6003,9 +6559,17 @@ components:
               - write:users
               - read:wallets
               - write:wallets
+              - read:distribution_wallets
+              - write:distribution_wallets
               - read:statistics
               - read:exports
           minItems: 1
+        distribution_wallet_ids:
+          type: array
+          items:
+            type: string
+          description: |
+            IDs of the distribution accounts this key may act on. Omit the field to inherit the accounts its creator can reach at that moment. An empty array grants no account access. A key cannot be scoped to an account its creator cannot reach.
         expiry_date:
           type: string
           format: date-time
@@ -6041,6 +6605,8 @@ components:
           items:
             type: string
           description: List of allowed IP addresses or CIDR ranges
+        distribution_wallet_ids:
+          $ref: '#/components/schemas/DistributionWalletIDs'
         expiry_date:
           type: string
           format: date-time
@@ -6088,9 +6654,17 @@ components:
               - write:users
               - read:wallets
               - write:wallets
+              - read:distribution_wallets
+              - write:distribution_wallets
               - read:statistics
               - read:exports
           minItems: 1
+        distribution_wallet_ids:
+          type: array
+          items:
+            type: string
+          description: |
+            IDs of the distribution accounts this key may act on. Omit the field to leave the key's current accounts unchanged; providing a list replaces them. An empty array removes all account access. A key cannot be scoped to an account the caller cannot reach.
         allowed_ips:
           oneOf:
             - type: string
@@ -6408,6 +6982,206 @@ components:
                 required:
                   - type
       minProperties: 1
+    DistributionWallet:
+      type: object
+      description: A distribution account the tenant sends funds from.
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the account
+        name:
+          type: string
+          description: Human-readable name for the account
+        description:
+          type: string
+          description: Optional description
+        distribution_account_address:
+          type: string
+          description: The account's Stellar address. Absent until the account has been provisioned on the network.
+        distribution_account_type:
+          type: string
+          enum:
+            - DISTRIBUTION_ACCOUNT.STELLAR.ENV
+            - DISTRIBUTION_ACCOUNT.STELLAR.DB_VAULT
+            - DISTRIBUTION_ACCOUNT.CIRCLE.DB_VAULT
+          description: How the account's secret is stored. Additional accounts are always `DISTRIBUTION_ACCOUNT.STELLAR.DB_VAULT`.
+        distribution_account_status:
+          type: string
+          enum:
+            - ACTIVE
+            - PENDING_USER_ACTIVATION
+          description: Status of the underlying Stellar account
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - PENDING
+            - ARCHIVED
+          description: |
+            Lifecycle status. `PENDING` accounts have been reserved but not yet funded on the network and cannot send. `ARCHIVED` accounts accept no new disbursements and are never deleted.
+        is_default:
+          type: boolean
+          description: Whether this is the tenant's default account. Exactly one account is the default, and it cannot be archived.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        archived_at:
+          type: string
+          format: date-time
+          description: When the account was archived, if it has been
+    AssetWithEnabledInfo:
+      allOf:
+        - $ref: '#/components/schemas/Asset'
+        - type: object
+          description: An asset as reported for one distribution account, returned when the `enabled` filter is used.
+          properties:
+            enabled:
+              type: boolean
+              description: Whether the selected account is set up to send this asset
+            balance:
+              type: string
+              description: What the account currently holds of this asset. Omitted when the balance could not be read.
+    DistributionWalletRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          description: Human-readable name for the new account
+        description:
+          type: string
+          description: Optional description
+    WalletBalanceResponse:
+      type: object
+      description: Live on-chain balances, keyed by asset. Non-native assets are keyed `CODE:ISSUER`; the native asset is keyed `XLM`.
+      properties:
+        wallet_id:
+          type: string
+          description: The account these balances belong to. Absent on the aggregate total across accounts.
+        balances:
+          type: object
+          additionalProperties:
+            type: string
+          description: Asset key to amount
+    WalletMembership:
+      type: object
+      description: Grants one user one role on one distribution account.
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        wallet_id:
+          type: string
+        role:
+          type: string
+          enum:
+            - financial_controller
+            - developer
+            - business
+            - initiator
+            - approver
+          description: The role the user holds on this account. Owner is always tenant-wide and never appears here.
+        granted_by:
+          type: string
+          description: ID of the Owner who granted the access
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    WalletMembershipRequest:
+      type: object
+      required:
+        - user_id
+        - role
+      properties:
+        user_id:
+          type: string
+          description: The user being granted access
+        role:
+          type: string
+          enum:
+            - financial_controller
+            - developer
+            - business
+            - initiator
+            - approver
+          description: The role to grant on this account. `owner` is rejected, since Owner is always tenant-wide.
+    WalletMembershipAuditEntry:
+      allOf:
+        - $ref: '#/components/schemas/WalletMembership'
+        - type: object
+          description: One grant or revoke recorded in the append-only audit history.
+          properties:
+            operation:
+              type: string
+              enum:
+                - INSERT
+                - UPDATE
+                - DELETE
+              description: The change that was recorded. `INSERT` is a grant, `DELETE` a revoke, and `UPDATE` a change to an existing grant
+            changed_at:
+              type: string
+              format: date-time
+    WalletCapabilitiesResponse:
+      type: object
+      description: |
+        What the subject may actually do on one account, combining their tenant-wide role with the role they hold on that account. Both gates apply, so this is reported as a capability set rather than a single effective role.
+      properties:
+        wallet_id:
+          type: string
+        user_id:
+          type: string
+          description: Present when the capabilities of another user were requested
+        role:
+          type: string
+          description: Present when the capabilities of a hypothetical role were requested
+        capabilities:
+          type: object
+          additionalProperties:
+            type: boolean
+      example:
+        wallet_id: 8d1f6a2e-3c4b-4a5d-9e6f-7a8b9c0d1e2f
+        capabilities:
+          can_create_disbursement: true
+          can_start_disbursement: false
+          can_pause_disbursement: false
+          can_cancel_disbursement: false
+          can_create_payment: true
+          can_retry_payment: true
+          can_cancel_payment: false
+  parameters:
+    XWalletIdListScope:
+      name: X-Wallet-Id
+      in: header
+      required: false
+      description: |
+        Optional. Narrows the results to a single distribution account. Omit it to cover every account you have access to.
+      schema:
+        type: string
+    XWalletIdWriteSource:
+      name: X-Wallet-Id
+      in: header
+      required: false
+      description: |
+        Names the distribution account this request acts on. Required when the tenant has more than one active account. With a single active account, or an API key scoped to exactly one account, it may be omitted.
+      schema:
+        type: string
+    XWalletIdTrustlineTarget:
+      name: X-Wallet-Id
+      in: header
+      required: false
+      description: |
+        Optional. Selects the distribution account whose trustlines are affected. Omit it to act on the tenant's default account. An API key does not get that fallback: a key scoped to exactly one account may omit the header, any other key must send it.
+      schema:
+        type: string
   responses:
     UnauthorizedResponse:
       description: Unauthorized
