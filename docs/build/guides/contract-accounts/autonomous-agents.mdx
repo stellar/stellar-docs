@@ -1,0 +1,42 @@
+---
+title: Autonomous agents
+description: Bound a long-running agent's authority with layered restrictions, and the pitfalls that only surface once it's actually running.
+sidebar_position: 45
+---
+
+A contract account restricts _who_ can act and _under what conditions_ (see [Advanced contract account patterns](./advanced-patterns.mdx)). Those guardrails are usually installed once, for a human session. An autonomous agent is different: the same signing key stays live indefinitely, deciding on its own when to act, often many times a day. The restriction has to hold not just at setup, but for as long as the agent keeps running — including the day someone revokes it while the agent is mid-loop.
+
+This page covers two layered ways to bound an agent's authority, and three pitfalls that only show up once the agent is actually operating, not when you install the policy.
+
+## Two ways to bound authority, and why you want both
+
+**Restrict the callee.** The safest scope is a capability the contract you're calling never implements in the first place. A vault that only exposes `Invest(strategy, amount)` and `Unwind(strategy, amount)`, with the destination hardcoded to the vault's own address in every code path, cannot pay out to an arbitrary address no matter what the caller's key can sign. Withdrawal isn't denied by a check; it's absent from the interface. [DeFindex's vault](https://github.com/defindex-io/stellar-contracts/blob/main/vault/src/models.rs) is a real example: its `rebalance()` instruction set is `Unwind`, `Invest`, `SwapExactIn`, and `SwapExactOut`, and none of the four take a destination argument — every branch resolves the transfer to `e.current_contract_address()`.
+
+**Restrict the key.** The complementary layer is scoping the caller's own credential, using the account-abstraction primitives already covered on this page and the [previous one](./advanced-patterns.mdx): a smart account whose only context rule is `CallContract(the one vault you want)`, with no default/catch-all rule installed. The absence of a fallback rule is what does the work — a context that isn't covered by an explicit rule has no rule that authorizes it.
+
+Neither layer is sufficient alone for an unattended agent. Restrict only the callee, and a leaked key can still authorize anything the callee's own logic happens to allow — a swap at bad slippage, say, if the callee supports swaps at all. Restrict only the key, and you're trusting that the callee's logic never grows a footgun later. Composed, an agent's key can only reach one contract, and that contract can't move funds anywhere but back into itself. A testnet deployment combining both layers this way — Nirium's treasury agent, scoped to a single DeFindex vault — is verifiable on-chain at [`CCZW2WIFAD7OQX35U5AILTNF32TCHQUYVPNB32GGKEKKPII2HF7B5LML`](https://stellar.expert/explorer/testnet/contract/CCZW2WIFAD7OQX35U5AILTNF32TCHQUYVPNB32GGKEKKPII2HF7B5LML), built on the [OpenZeppelin Smart Accounts framework](https://developers.stellar.org/docs/tools/openzeppelin-contracts).
+
+## What only shows up once the agent is running
+
+### Simulation records authorization, it doesn't verify it
+
+[Recording-mode simulation](https://developers.stellar.org/docs/learn/fundamentals/contract-development/contract-interactions/transaction-simulation#recording-mode) records every `require_auth` call as successful, and "never emulates authorization failures... failing authorization is always an 'exceptional' situation." That's the right behavior for building a transaction to sign, and the wrong tool for testing that a restriction actually holds. A policy that looks correctly restrictive under simulation can still pass simulation for an action it should deny, because simulation was never checking the signature in the first place. To test the deny path, submit the transaction in enforcement mode and confirm it actually fails on-chain — don't infer it from a clean simulation.
+
+### Re-read authority from chain every cycle, never cache it
+
+A human signer revokes access once, and the session ends there. A long-running agent process keeps looping regardless of what changed underneath it, so if it caches "am I still authorized" from the start of the process, a revocation made ten minutes into a multi-day run does nothing until the process restarts. Read the current role or permission state from chain at the top of every cycle, not once at boot.
+
+### Draw the line between the agent's judgment and the code's limits, and don't let the agent move it
+
+If an LLM or other model is choosing _when_ to act and _what_ to attempt, treat its output like any other untrusted input: it can request an action, but the ceiling on that action — maximum amount, allowed destinations, acceptable slippage — has to be enforced by code the model's own output cannot alter. In practice this means the boundary values live in a small, deterministic, separately reviewed piece of the system, and the model never gets a code path that writes to them.
+
+## What this pattern doesn't resolve
+
+A destination-less instruction set and a policy account with no default rule are technical facts you can verify on-chain. Whether they add up to something like custody or intermediation under a specific jurisdiction's securities or money-transmission law is a separate, non-technical question. Get that answered early with real counsel, not inferred from the contract's design after the fact.
+
+## Where to go next
+
+- [Advanced contract account patterns](./advanced-patterns.mdx) for the individual guardrail primitives this page composes.
+- [OpenZeppelin Smart Accounts](https://developers.stellar.org/docs/tools/openzeppelin-contracts) — context rules, signers, and policies, audited by OpenZeppelin's security team, with formal verification by Certora in progress.
+- [CAP-71](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0071.md), authentication delegation and address-bound Soroban credentials.
+- [DeFindex's vault contract](https://github.com/defindex-io/stellar-contracts), a real example of an instruction set with no destination parameter.
