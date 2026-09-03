@@ -116,9 +116,98 @@ For a full detailed example, see the [fuzzing example].
 
 :::
 
-:::info
+## How to Write Fuzz Tests with `cargo-afl`
 
-There is another tool for fuzzing Rust code, `cargo-afl`. See the [Rust Fuzz book] for a tutorial for how to use it.
+_Available since soroban-sdk v28.0.0._
+
+[`cargo-afl`] drives [AFL++] and, unlike `cargo-fuzz`, runs on stable Rust, making it a good alternative for anyone who'd rather not switch to nightly.
+
+1. Install `cargo-afl`. Installing it builds AFL++ from source, so a C compiler needs to be available.
+
+   ```text
+   cargo install cargo-afl --locked
+   ```
+
+2. Configure the machine for fuzzing.
+
+   ```text
+   cargo afl system-config
+   ```
+
+3. Create a fuzz target crate, for example in a `fuzz` directory inside your contract's directory. Unlike a `cargo-fuzz` target, an AFL++ target depends on the `arbitrary` crate directly, because that's where the `Arbitrary` derive comes from and where the `fuzz!` macro looks up the trait.
+
+   ```toml
+   [dependencies]
+   afl = "0.18"
+   arbitrary = { version = "~1.3.0", features = ["derive"] }
+   soroban-sdk = { version = "*", features = ["testutils"] }
+   my-contract = { path = ".." }
+   ```
+
+4. Write the fuzz target. An AFL++ target is a regular binary crate with a `main` function that calls the [`afl::fuzz!`] macro, rather than the `fuzz_target!` macro `cargo-fuzz` uses. For example, for the [increment example]:
+
+   ```rust
+   use afl::fuzz;
+   use soroban_increment_with_fuzz_contract::{IncrementContract, IncrementContractClient};
+   use soroban_sdk::{
+       testutils::arbitrary::{arbitrary, Arbitrary},
+       Env,
+   };
+
+   #[derive(Debug, Arbitrary)]
+   pub struct Input {
+       pub by: u64,
+   }
+
+   fn main() {
+       fuzz!(|input: Input| {
+           // Create the `Env` inside the closure, not outside: AFL++ reuses the
+           // process for many inputs, and state created outside the closure
+           // would leak from one input into the next.
+           let env = Env::default();
+           let id = env.register(IncrementContract, ());
+           let client = IncrementContractClient::new(&env, &id);
+
+           let mut last: Option<u32> = None;
+           for _ in input.by.. {
+               match client.try_increment() {
+                   Ok(Ok(current)) => assert!(Some(current) > last),
+                   Err(Ok(_)) => {} // Expected error
+                   Ok(Err(_)) => panic!("success with wrong type returned"),
+                   Err(Err(_)) => panic!("unrecognised error"),
+               }
+           }
+       });
+   }
+   ```
+
+5. Build the target. `cargo afl build` is `cargo build` with AFL++'s instrumentation added.
+
+   ```text
+   cargo afl build
+   ```
+
+6. Fuzz the target, pointing at an input directory containing at least one seed input and an output directory to write results to.
+
+   ```text
+   cargo afl fuzz -i in -o out target/debug/fuzz_target_1
+   ```
+
+   :::tip
+
+   Fuzz debug builds, at least at first: they keep integer overflow checks and `debug_assert!`s enabled, and those catch bugs a release build would let through.
+
+   :::
+
+Crashing inputs are written to `out/default/crashes/`. The target reads an input on stdin when it isn't being driven by AFL++, so a crash can be replayed by feeding the file back in:
+
+```text
+RUST_BACKTRACE=1 ./target/debug/fuzz_target_1 < out/default/crashes/id:000000*
+```
+
+:::tip
+
+For a full, buildable example, see the [`fuzz_afl`] test crate in the `rs-soroban-sdk` repository.
 
 :::
 
@@ -170,6 +259,9 @@ To measure code coverage of regular Rust tests, see [Code Coverage].
 [unit tests]: ./unit-tests.mdx
 [stellar/rs-soroban-sdk#1360]: https://github.com/stellar/rs-soroban-sdk/issues/1360
 [fuzzing example]: ../../smart-contracts/example-contracts/fuzzing.mdx
-[Rust Fuzz Book]: https://rust-fuzz.github.io/book
 [Code Coverage]: code-coverage.mdx
 [Coverage Gutters]: https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters
+[`cargo-afl`]: https://github.com/rust-fuzz/afl.rs
+[AFL++]: https://aflplus.plus
+[`afl::fuzz!`]: https://docs.rs/afl/latest/afl/macro.fuzz.html
+[`fuzz_afl`]: https://github.com/stellar/rs-soroban-sdk/tree/main/tests/fuzz_afl
