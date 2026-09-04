@@ -11,7 +11,13 @@ Fuzz tests can also be written as property tests that instead of seeking to iden
 
 The following steps can be used in any Stellar contract workspace. If experimenting, try them in the [increment example]. The contract has an `increment` function that increases a counter value by one on every invocation.
 
-## How to Write Fuzz Tests
+:::tip
+
+See the [Rust Fuzz Book] for a general tutorial on using both `cargo-fuzz` and `cargo-afl`.
+
+:::
+
+## How to Write Fuzz Tests with `cargo-fuzz`
 
 1. Install the nightly Rust toolchain. Nightly Rust is required to run cargo-fuzz.
 
@@ -116,11 +122,101 @@ For a full detailed example, see the [fuzzing example].
 
 :::
 
-:::info
+## How to Write Fuzz Tests with `cargo-afl`
 
-There is another tool for fuzzing Rust code, `cargo-afl`. See the [Rust Fuzz book] for a tutorial for how to use it.
+[`cargo-afl`] drives [AFL++] and, unlike `cargo-fuzz`, runs on stable Rust.
 
-:::
+1. Install `cargo-afl`. Installing it builds AFL++ from source, so a C compiler needs to be available.
+
+   ```text
+   cargo install cargo-afl --locked
+   ```
+
+2. Configure the machine for fuzzing.
+
+   ```text
+   cargo afl system-config
+   ```
+
+3. Create a fuzz target crate, for example with `cargo new --bin fuzz` inside your contract's directory. Unlike a `cargo-fuzz` target, an AFL++ target depends on the `arbitrary` crate directly, because the `fuzz!` macro expands to code that refers to it by an absolute path, which only resolves if `arbitrary` is a direct dependency. Add the following to the new crate's `Cargo.toml`:
+
+   ```toml
+   [dependencies]
+   afl = "0.18"
+   arbitrary = { version = "~1.3.0", features = ["derive"] }
+   soroban-sdk = { version = "*", features = ["testutils"] }
+   my-contract = { path = ".." }
+
+   [[bin]]
+   name = "fuzz_target_1"
+   path = "src/fuzz_target_1.rs"
+
+   # Prevent this from interfering with the contract's workspace, if it has one.
+   [workspace]
+   members = ["."]
+   ```
+
+4. Write the fuzz target at `src/fuzz_target_1.rs`, and delete the default `src/main.rs` `cargo new` created. An AFL++ target is a regular binary crate with a `main` function that calls the [`afl::fuzz!`] macro. For example, for the [increment example]:
+
+   ```rust
+   use afl::fuzz;
+   use arbitrary::Arbitrary;
+   use soroban_increment_with_fuzz_contract::{IncrementContract, IncrementContractClient};
+   use soroban_sdk::Env;
+
+   #[derive(Debug, Arbitrary)]
+   pub struct Input {
+       pub by: u64,
+   }
+
+   fn main() {
+       fuzz!(|input: Input| {
+           // Create the `Env` inside the closure, not outside: AFL++ reuses the
+           // process for many inputs, and state created outside the closure
+           // would leak from one input into the next.
+           let env = Env::default();
+           let id = env.register(IncrementContract, ());
+           let client = IncrementContractClient::new(&env, &id);
+
+           let mut last: Option<u32> = None;
+           for _ in 0..input.by {
+               match client.try_increment() {
+                   Ok(Ok(current)) => assert!(Some(current) > last),
+                   Err(Ok(_)) => {} // Expected error
+                   Ok(Err(_)) => panic!("success with wrong type returned"),
+                   Err(Err(_)) => panic!("unrecognised error"),
+               }
+           }
+       });
+   }
+   ```
+
+5. From inside the `fuzz` crate, build the target.
+
+   ```text
+   cd fuzz
+   cargo afl build
+   ```
+
+6. Fuzz the target, pointing at an input directory containing at least one seed input and an output directory to write results to.
+
+   ```text
+   mkdir in out
+   echo -n '00000000' > in/seed
+   cargo afl fuzz -i in -o out target/debug/fuzz_target_1
+   ```
+
+   :::tip
+
+   Fuzz debug builds, at least at first: they keep integer overflow checks and `debug_assert!`s enabled, and those catch bugs a release build won't.
+
+   :::
+
+Crashing inputs are written to `out/default/crashes/`. The target reads an input on stdin when it isn't being driven by AFL++, so a crash can be replayed by feeding the file back in:
+
+```text
+RUST_BACKTRACE=1 ./target/debug/fuzz_target_1 < out/default/crashes/id:000000*
+```
 
 ## How to Get Code Coverage of Fuzz Tests
 
@@ -173,3 +269,6 @@ To measure code coverage of regular Rust tests, see [Code Coverage].
 [Rust Fuzz Book]: https://rust-fuzz.github.io/book
 [Code Coverage]: code-coverage.mdx
 [Coverage Gutters]: https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters
+[`cargo-afl`]: https://github.com/rust-fuzz/afl.rs
+[AFL++]: https://aflplus.plus
+[`afl::fuzz!`]: https://docs.rs/afl/latest/afl/macro.fuzz.html
