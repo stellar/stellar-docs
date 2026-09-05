@@ -354,9 +354,9 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/analytics/hubble'
     },
     {
-      to: '/docs/data/analytics/analytics-providers',
+      to: '/docs/data/analytics/providers',
       label: 'Providers',
-      activeBasePath: 'docs/data/analytics/analytics-providers'
+      activeBasePath: 'docs/data/analytics/providers'
     },
     {
       type: 'html',
