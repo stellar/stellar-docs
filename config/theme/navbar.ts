@@ -454,9 +454,9 @@ const tools: NavbarItem = {
       activeBasePath: 'docs/tools/openzeppelin-contracts'
     },
     {
-      to: '/docs/tools/scaffold-stellar',
-      label: 'Scaffold Stellar',
-      activeBasePath: 'docs/tools/scaffold-stellar'
+      to: '/docs/tools/stellar-scaffold',
+      label: 'Stellar Scaffold',
+      activeBasePath: 'docs/tools/stellar-scaffold'
     },
     {
       to: '/docs/tools/developer-tools',
