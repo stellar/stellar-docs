@@ -1,0 +1,172 @@
+name: Prepare PR autofix
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize, ready_for_review]
+
+concurrency:
+  group: pr-autofix-prepare-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  autofix:
+    name: Format, lint, and build
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      # This workflow deliberately runs under pull_request, so fork PRs receive
+      # only the normal read-only token and no repository secrets.
+      - name: Checkout PR head read-only
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --prefer-offline --frozen-lockfile
+
+      - name: Generate formatting and lint fixes
+        run: |
+          set -euo pipefail
+          pnpm ci-format:mdx
+          pnpm lint:fix || true
+          git diff --binary > "$RUNNER_TEMP/style.patch"
+          git reset --hard "$HEAD_SHA"
+          git clean -fd
+
+      - name: Generate routes.txt
+        run: |
+          set -euo pipefail
+          pnpm stellar-cli:build -- --cli-ref='main'
+          pnpm stellar-cli:fix-links
+          pnpm build
+          git diff --binary -- routes.txt > "$RUNNER_TEMP/routes.patch"
+          git reset --hard "$HEAD_SHA"
+          git clean -fd
+
+      - name: Assemble autofix patch
+        id: patch
+        run: |
+          set -euo pipefail
+
+          if [[ -s "$RUNNER_TEMP/style.patch" ]]; then
+            git apply "$RUNNER_TEMP/style.patch"
+          fi
+          if [[ -s "$RUNNER_TEMP/routes.patch" ]]; then
+            git apply "$RUNNER_TEMP/routes.patch"
+          fi
+
+          git diff --binary > "$RUNNER_TEMP/autofix.patch"
+          if [[ -s "$RUNNER_TEMP/autofix.patch" ]]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restrict autofix output
+        if: steps.patch.outputs.has_changes == 'true'
+        run: |
+          set -euo pipefail
+
+          count=0
+          while IFS= read -r -d '' path; do
+            count=$((count + 1))
+            case "$path" in
+              routes.txt|docs/*.md|docs/*.mdx|src/pages/*.md|src/pages/*.mdx|meetings/*.md|meetings/*.mdx|src/*.js|src/*.jsx|src/*.ts|src/*.tsx)
+                ;;
+              *)
+                echo "::error::Autofix attempted to change disallowed path: $path"
+                exit 1
+                ;;
+            esac
+          done < <(git diff --name-only -z)
+
+          if (( count > 500 )); then
+            echo "::error::Autofix changed $count files; refusing an unexpectedly large patch"
+            exit 1
+          fi
+
+          size="$(wc -c < "$RUNNER_TEMP/autofix.patch")"
+          if (( size > 2097152 )); then
+            echo "::error::Autofix patch is larger than 2 MiB"
+            exit 1
+          fi
+
+      - name: Stage validation tree
+        if: steps.patch.outputs.has_changes == 'true'
+        run: |
+          set -euo pipefail
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Autofix validation tree'
+
+      - name: Check MDX formatting
+        run: git update-index -g && pnpm ci:mdx
+
+      - name: Lint source
+        run: pnpm lint
+
+      - name: Check new absolute internal links
+        run: |
+          set -euo pipefail
+          git remote add base "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch base "$BASE_REF" --depth=1
+          scripts/check-relative-links.sh --range "base/${BASE_REF}...HEAD" \
+            || { echo "::error::New absolute /docs link(s) found above."; exit 1; }
+
+      - name: Validate full docs build
+        run: |
+          set -euo pipefail
+          routes_before="$(git hash-object routes.txt)"
+          pnpm stellar-cli:build -- --cli-ref='main'
+          pnpm stellar-cli:fix-links
+          pnpm build
+          routes_after="$(git hash-object routes.txt)"
+          if [[ "$routes_before" != "$routes_after" ]]; then
+            echo "::error::routes.txt still changes after the autofix pass"
+            exit 1
+          fi
+
+      - name: Prepare artifact metadata
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pr-autofix"
+          cp "$RUNNER_TEMP/autofix.patch" "$RUNNER_TEMP/pr-autofix/autofix.patch"
+          jq -n \
+            --argjson pr_number '${{ github.event.pull_request.number }}' \
+            --arg head_sha '${{ github.event.pull_request.head.sha }}' \
+            --arg head_repo '${{ github.event.pull_request.head.repo.full_name }}' \
+            --arg head_ref '${{ github.event.pull_request.head.ref }}' \
+            --argjson maintainer_can_modify '${{ github.event.pull_request.maintainer_can_modify }}' \
+            --argjson has_changes '${{ steps.patch.outputs.has_changes }}' \
+            '{pr_number: $pr_number, head_sha: $head_sha, head_repo: $head_repo, head_ref: $head_ref, maintainer_can_modify: $maintainer_can_modify, has_changes: $has_changes}' \
+            > "$RUNNER_TEMP/pr-autofix/metadata.json"
+
+      - name: Upload validated autofix
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-autofix-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/pr-autofix
+          retention-days: 7
