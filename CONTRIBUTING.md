@@ -18,6 +18,7 @@ Before diving in, please read the org-wide [Stellar Contribution Guide](https://
     - [Images](#images)
     - [Code examples](#code-examples)
     - [Terminology and style](#terminology-and-style)
+    - [Promotional and third-party content](#promotional-and-third-party-content)
   - [Site Code and Infrastructure](#site-code-and-infrastructure)
     - [API reference pages are generated](#api-reference-pages-are-generated)
     - [URLs are forever](#urls-are-forever)
@@ -84,6 +85,11 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 - "Stellar network" — lowercase *network*. Likewise *asset* and *anchor* are not capitalized.
 - Write SEP and CAP references without zero-padding (for example, `SEP-1` and `CAP-1`, not `SEP-0001` and `CAP-0001`). Keep canonical filenames and URLs unchanged (for example, `sep-0001.md` and `cap-0001.md`).
 - Meeting notes (in `meetings/`) use the date as the title (`2026-05-07`), uniformly across the series.
+
+### Promotional and third-party content
+
+- **We don't accept promotional contributions.** PRs that add payment addresses, donation appeals, referral links, or marketing copy for a contributor's own product will be closed without review. This includes rewriting an existing page to center a specific project.
+- **Third-party tools and services belong on the pages built for them.** Several pages exist to list ecosystem tooling and providers. Entries there are descriptive rather than promotional: what the thing does and how it works with Stellar, not why a reader should choose it. If your project clearly fits into one of these list pages, feel free to directly open a PR. If you're uncertain where or if your project fits, feel free to open an issue proposing it.
 
 ## Site Code and Infrastructure
 
