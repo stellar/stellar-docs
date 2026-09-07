@@ -325,6 +325,10 @@ const tokens: NavbarItem = {
       to: '/docs/tokens/cross-chain-transfers',
       label: 'CCTP',
     },
+    {
+      to: '/docs/tokens/usdt0-layerzero',
+      label: 'USDT0',
+    },
   ],
 }
 
@@ -518,6 +522,10 @@ const networks: NavbarItem = {
     {
       to: '/docs/networks/resource-limits-fees',
       label: 'Resource Limits & Fees',
+    },
+    {
+      to: '/docs/networks/audits',
+      label: 'Audits',
     }
   ]
 }

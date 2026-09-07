@@ -82,6 +82,7 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 ### Terminology and style
 
 - "Stellar network" — lowercase *network*. Likewise *asset* and *anchor* are not capitalized.
+- Write SEP and CAP references without zero-padding (for example, `SEP-1` and `CAP-1`, not `SEP-0001` and `CAP-0001`). Keep canonical filenames and URLs unchanged (for example, `sep-0001.md` and `cap-0001.md`).
 - Meeting notes (in `meetings/`) use the date as the title (`2026-05-07`), uniformly across the series.
 
 ## Site Code and Infrastructure

@@ -214,7 +214,11 @@ print(f"Public Key: {pair.public_key}")
 ````
 
 Languages that are currently being used in Documentation and API Reference are
-below:
+below. This snippet is copied from `config/constants.ts` and is **only the
+subset of languages used as `CodeExample` tab labels**, not every language
+Prism can highlight. If you add a fenced language in docs, add the same key
+here *and* in `config/constants.ts` so the tab does not fall back to
+“Example”.
 
 ```js
 // https://github.com/stellar/stellar-docs/blob/main/config/constants.ts
@@ -222,18 +226,20 @@ below:
 export const CODE_LANGS = {
   bash: 'bash',
   cpp: 'C++',
+  css: 'CSS',
   curl: 'cURL',
   dart: 'Flutter',
   flutter: 'Flutter',
   swift: 'Swift',
   docker: 'Dockerfile',
   go: 'Go',
-  html: 'html',
+  html: 'HTML',
   kotlin: 'Kotlin',
   kt: 'Kotlin',
   java: 'Java',
   javascript: 'JavaScript',
   js: 'JavaScript',
+  jsx: 'JSX',
   json: 'JSON',
   json5: 'JSON5',
   python: 'Python',

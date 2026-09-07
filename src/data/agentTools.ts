@@ -210,7 +210,7 @@ export const AGENT_SECTIONS = {
     guide: { label: 'Full guide', href: '/docs/build/building-with-ai' },
     links: [
       { label: 'Try in chat', href: 'https://raven.stellar.buzz/playground' },
-      { label: 'View source', href: 'https://github.com/kalepail/stellar-raven' },
+      { label: 'View source', href: 'https://github.com/stellar-experimental/stellar-raven' },
     ] satisfies ExternalLink[],
   },
   skills: {
