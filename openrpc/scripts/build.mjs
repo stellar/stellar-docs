@@ -134,7 +134,7 @@ const services = {
           name: "Apache 2.0",
           url: "https://www.apache.org/licenses/LICENSE-2.0.html"
         },
-        version: "20.1.0"
+        version: "27.1.1"
       },
       servers: [
         {
@@ -153,7 +153,7 @@ const services = {
     },
   },
   'anchor-platform': {
-    saveDir: "platforms/anchor-platform/api-reference/platform/rpc",
+    saveDir: "docs/platforms/anchor-platform/api-reference/platform/rpc",
     starterFile: {
       openrpc: "1.2.6",
       info: {

@@ -2,7 +2,7 @@ import React from "react";
 import Admonition from '@theme/Admonition';
 import {LanguageButtons} from "./LanguageButtons";
 import {LanguageSpecific} from "./LanguageSpecific";
-import {CODE_LANGS} from "../constants";
+import {CODE_LANGS} from "@site/config/constants";
 import Translate from "@docusaurus/Translate";
 
 type WalletGuideWarnProps = {

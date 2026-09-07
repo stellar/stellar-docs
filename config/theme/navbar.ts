@@ -1,4 +1,5 @@
-import type { NavbarItem } from '@docusaurus/theme-common'
+import type { NavbarItem } from '@docusaurus/theme-common';
+import { GOOGLE_TRANSLATE_ELEMENT } from '../constants';
 
 const build: NavbarItem = {
   type: 'dropdown',
@@ -12,8 +13,13 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build',
     },
     {
+      to: '/docs/build/building-with-ai',
+      label: 'Building with AI',
+      activeBasePath: 'docs/build/building-with-ai',
+    },
+    {
       type: 'html',
-      value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small>',
+      value: '<hr><a href="/docs/build/smart-contracts" class="subtitle"><small>Build Smart Contracts</small></a>',
       className: 'subtitle',
     },
     {
@@ -35,7 +41,7 @@ const build: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small>',
+      value: '<hr><a href="/docs/build/apps" class="subtitle"><small>Build Applications</small></a>',
       className: 'subtitle',
     },
     {
@@ -79,19 +85,44 @@ const build: NavbarItem = {
       activeBasePath: 'docs/build/apps/dapp-frontend',
     },
     {
-      to: '/docs/build/apps/smart-wallets',
-      label: 'Smart Wallets',
-      activeBasePath: 'docs/build/apps/smart-wallets',
+      to: '/docs/build/apps/privacy',
+      label: 'Privacy on Stellar',
+      activeBasePath: 'docs/build/apps/privacy',
+    },
+    {
+      to: '/docs/build/apps/zk',
+      label: 'ZK Proofs on Stellar',
+      activeBasePath: 'docs/build/apps/zk',
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small>',
+      value: '<hr><a href="/docs/build/agentic-payments" class="subtitle"><small>Agentic Payments</small></a>',
+      className: 'subtitle',
+    },
+    {
+      to: '/docs/build/agentic-payments/x402',
+      label: 'x402 on Stellar',
+      activeBasePath: 'docs/build/agentic-payments/x402',
+    },
+    {
+      to: '/docs/build/agentic-payments/mpp',
+      label: 'MPP on Stellar',
+      activeBasePath: 'docs/build/agentic-payments/mpp',
+    },
+    {
+      type: 'html',
+      value: '<hr><a href="/docs/build/guides" class="subtitle"><small>How-To Guides</small></a>',
       className: 'subtitle',
     },
     {
       to: '/docs/build/guides/auth',
       label: 'Contract Authorization',
       activeBasePath: 'docs/build/guides/auth',
+    },
+    {
+      to: '/docs/build/guides/contract-accounts',
+      label: 'Contract Accounts',
+      activeBasePath: 'docs/build/guides/contract-accounts',
     },
     {
       to: '/docs/build/guides/conventions',
@@ -173,7 +204,7 @@ const learn: NavbarItem = {
   items: [
     {
       type: 'html',
-      value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small>',
+      value: '<hr><a href="/docs/learn/fundamentals" class="subtitle"><small>Core Concepts</small></a>',
       className: 'subtitle',
     },
     {
@@ -196,6 +227,11 @@ const learn: NavbarItem = {
       label: 'Data Structures',
       activeBasePath: 'docs/learn/fundamentals/stellar-data-structures',
       className: 'has-nested-items',
+    },
+    {
+      to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
+      label: 'Stellar Decentralized Exchange (SDEX)',
+      activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
     },
     {
       to: '/docs/learn/fundamentals/transactions',
@@ -229,11 +265,6 @@ const learn: NavbarItem = {
       to: '/docs/learn/fundamentals/anchors',
       label: 'Ramps (anchors)',
       activeBasePath: 'docs/learn/fundamentals/anchors',
-    },
-    {
-      to: '/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
-      label: 'SDEX',
-      activeBasePath: 'docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
     },
     {
       type: 'html',
@@ -290,6 +321,14 @@ const tokens: NavbarItem = {
       to: '/docs/tokens/publishing-asset-info',
       label: 'Publish Asset Information',
     },
+    {
+      to: '/docs/tokens/cross-chain-transfers',
+      label: 'CCTP',
+    },
+    {
+      to: '/docs/tokens/usdt0-layerzero',
+      label: 'USDT0',
+    },
   ],
 }
 
@@ -306,7 +345,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small>',
+      value: '<hr><a href="/docs/data/analytics" class="subtitle"><small>Analytics</small></a>',
       className:'subtitle'
     },
     {
@@ -321,7 +360,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small>',
+      value: '<hr><a href="/docs/data/apis" class="subtitle"><small>API</small></a>',
       className:'subtitle'
     },
     {
@@ -351,7 +390,7 @@ const data: NavbarItem = {
     },
     {
       type: 'html',
-      value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small>',
+      value: '<hr><a href="/docs/data/indexers" class="subtitle"><small>Indexers</small></a>',
       className:'subtitle'
     },
     {
@@ -360,13 +399,8 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/indexers/build-your-own'
     },
     {
-      to: '/docs/data/indexers/indexer-providers',
-      label: 'Providers',
-      activeBasePath: 'docs/data/indexers/indexer-providers'
-    },
-    {
       type: 'html',
-      value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small>',
+      value: '<hr><a href="/docs/data/oracles" class="subtitle"><small>Oracles</small></a>',
       className:'subtitle'
     },
     {
@@ -410,6 +444,11 @@ const tools: NavbarItem = {
       activeBasePath: 'docs/tools/quickstart'
     },
     {
+      to: '/docs/tools/openzeppelin-relayer',
+      label: 'OpenZeppelin Relayer',
+      activeBasePath: 'docs/tools/openzeppelin-relayer'
+    },
+    {
       to: '/docs/tools/openzeppelin-contracts',
       label: 'OpenZeppelin Contracts',
       activeBasePath: 'docs/tools/openzeppelin-contracts'
@@ -434,7 +473,7 @@ const tools: NavbarItem = {
       label: 'MoneyGram Ramps',
       activeBasePath: '/docs/tools/ramps/moneygram'
     },
-                {
+    {
       type: 'html',
       value: '<hr><small>Infra Tools</small>',
       className: 'subtitle',
@@ -450,11 +489,15 @@ const tools: NavbarItem = {
       className: 'subtitle',
     },
     {
-      to: "/platforms/anchor-platform",
+      type: 'docSidebar',
+      // docId: "docs/platforms/anchor-platform/README",
+      sidebarId: 'anchor_platform',
       label: "Anchor Platform",
     },
     {
-      to: "/platforms/stellar-disbursement-platform",
+      type: 'docSidebar',
+      // docId: "docs/platforms/stellar-disbursement-platform/README",
+      sidebarId: 'stellar_disbursement_platform',
       label: "Stellar Disbursement Platform",
     },
   ]
@@ -479,6 +522,10 @@ const networks: NavbarItem = {
     {
       to: '/docs/networks/resource-limits-fees',
       label: 'Resource Limits & Fees',
+    },
+    {
+      to: '/docs/networks/audits',
+      label: 'Audits',
     }
   ]
 }
@@ -506,6 +553,19 @@ const validators: NavbarItem = {
   ]
 }
 
+const translation: NavbarItem[] = [
+  {
+    type: 'html',
+    position: 'right',
+    value: '<div id="google_translate_element"></div>',
+  },
+  {
+    type: 'html',
+    position: 'right',
+    value: GOOGLE_TRANSLATE_ELEMENT,
+  },
+]
+
 export default {
   build,
   learn,
@@ -514,4 +574,5 @@ export default {
   tools,
   networks,
   validators,
+  translation,
 }

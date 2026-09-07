@@ -1,0 +1,927 @@
+---
+title: "Integration"
+sidebar_position: 30
+---
+
+import Security from "../../admin-guide/component/security/security.mdx";
+import UsingApiKey from "../../admin-guide/component/security/api_key.mdx";
+import UsingJwt from "../../admin-guide/component/security/jwt.mdx";
+import Rpc from "../../admin-guide/component/rpc/rpc.mdx";
+import RpcRequest from "../../admin-guide/component/rpc/request.mdx";
+import RpcResponse from "../../admin-guide/component/rpc/response.mdx";
+import RpcError from "../../admin-guide/component/rpc/error.mdx";
+import Observer from "../../admin-guide/component/observer/observer.mdx";
+
+One of the main points of interaction with the Anchor Platform is notifying the Anchor Platform about events related to the transaction.
+
+In general, you'll want to provide updates for the following events:
+
+- Your business is processing the KYC information provided by the user
+- Your business is ready to receive funds from the user
+- Your business has received funds from the user
+- Your business has sent funds to the user
+- Your business has processed a refund for the user's transaction
+- Your business experienced an unexpected error
+
+This is done by making JSON-RPC requests to the Platform API's endpoint. JSON-RPC requests allow you to update the status of the transaction. To move the transaction to a specific status, it's necessary to make a corresponding JSON-RPC request and pass data that is required by this RPC method.
+
+The Anchor Platform JSON-RPC API is designed to notify the platform about changes in the status of the transaction. Given that, the API will be called every time a user or the anchor takes any action that progresses the transaction status in the flow.
+
+Communication from the Anchor Platform about transaction updates, customer updates, and quote creation is handled through the event service. This is an optional feature that needs to be configured separately from the SEP-6 integration. For more information, see [Event Handling][event-handling].
+
+You can find out more about transaction flow and statuses in the [SEP-24 protocol document][sep-24]
+
+## Callbacks
+
+The Anchor Platform relies on the business server to provide and store information about quotes.
+
+### Quotes and Fees
+
+To support the exchange of non-equivalent assets, the Anchor Platform exposes a SEP-38 compliant API to provide quotes for the exchange. The quote API is used to provide the user with the expected amount of the asset they will receive in exchange for the asset they are sending. The quote API is also used to provide the user with the expected fees for the transaction. Therefore, your business server must implement the [rate API][rate-callback] to provide quotes to the Anchor Platform.
+
+## Securing Platform API
+
+<Security />
+
+### Using API Key
+
+<UsingApiKey />
+
+### Using JWT
+
+<UsingJwt />
+
+## Making JSON-RPC Requests
+
+<Rpc />
+
+### JSON-RPC Request
+
+<RpcRequest />
+
+### JSON-RPC Response
+
+<RpcResponse />
+
+### Error Codes
+
+<RpcError />
+
+## Updating Deposit Transaction Via JSON-RPC
+
+SEP-24 deposit flow diagram defines sequence/rules of the transaction's status transition and a set of JSON-RPC methods that should be called to change that status. You can't define the status you want to set for a specific transaction in your requests. Each JSON-RPC method defines data structures that it expects in request. If request doesn't contain a required attributes, the Anchor Platform will return and error and won't change status of the transaction.
+
+[![sep24 deposit flow](/assets/ap/sep24-deposit-flow-diagram.png)](/assets/ap/sep24-deposit-flow-diagram.png)
+
+:::tip
+
+Statuses in <span style={{color: "green"}}>green</span> are mandatory and define the shortest way.
+
+Statuses in <span style={{color: "#B0BF1A"}}>yellow</span> are optional and can be skipped.
+
+Statuses in <span style={{color: "red"}}>red</span> mean the transaction is in an error status or it has expired.
+
+:::
+
+### Ready to Receive Funds
+
+The first step of the deposit flow after starting the deposit itself is collecting KYC. It's usually done in the web-app, but can also be optionally provided by the wallet application, using [SEP-9]. Once the necessary KYC is collected, a `request_offchain_funds` JSON-RPC request should be made.
+
+<CodeExample>
+
+```json
+// request-offchain-funds.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "request_offchain_funds",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Request offchain funds",
+      "amount_in": {
+        "amount": 10,
+        "asset": "iso4217:USD"
+      },
+      "amount_out": {
+        "amount": 9,
+        "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+      },
+      "fee_details": {
+        "total": 1,
+        "asset": "iso4217:USD"
+      },
+      "amount_expected": {
+        "amount": 10
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `amount_in` is the amount the user has to sent to the business.
+- `amount_out` is the amount the user will receive.
+- `fee_details` is the total amount of fees collected by the business.
+- `asset` is part of the `amount_x` field and is in a SEP-38 format. In this example, it's set to USD, assuming the user made a bank transfer to the system using USD.
+
+Information abouts amounts (in/out/fee) is required if you want to move the transaction from the `incomplete` to the `pending_user_transfer_start` status. If transaction status is changed from `pending_anchor` to `pending_user_transfer_start`, you can skip defining the amounts.
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh request-offchain-funds.json
+```
+
+</CodeExample>
+
+:::tip
+
+When the KYC process is long (for example, ID verification), it's advised to first set the transaction status to `pending_anchor` by using `notify_interactive_flow_completed` JSON-RPC request. This will indicate to the user that KYC is being processed.
+
+:::
+
+### Processing KYC Information
+
+:::tip
+
+This step is optional. Most businesses don't use it. You can skip it and go to the [next step](#funds-received).
+
+Using this status is recommended when KYC verification may need to be performed asynchronously.
+
+:::
+
+You **must** specify the `amount_x` fields.
+
+<CodeExample>
+
+```json
+// kyc-in-process.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_interactive_flow_completed",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Interactive flow completed.",
+      "amount_in": {
+        "amount": 10,
+        "asset": "iso4217:USD"
+      },
+      "amount_out": {
+        "amount": 9,
+        "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+      },
+      "fee_details": {
+        "total": 1,
+        "asset": "iso4217:USD"
+      },
+      "amount_expected": {
+        "amount": 10
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh kyc-in-process.json
+```
+
+</CodeExample>
+
+### Funds Received
+
+If offchain funds were received, you'll want to provide an updated transaction information.
+
+<CodeExample>
+
+```json
+// offchain-funds-received.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_received",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds received",
+      "funds_received_at": "2023-07-04T12:34:56Z",
+      "external_transaction_id": "7...9",
+      "amount_in": {
+        "amount": 10
+      },
+      "amount_out": {
+        "amount": 9
+      },
+      "fee_details": {
+        "total": 1
+      },
+      "amount_expected": {
+        "amount": 10
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `funds_received_at` is the date and time of receiving funds
+- `external_transaction_id` is the ID of transaction on external network
+
+The amount fields are optional. If skipped, the values from previous JSON-RPC requests will be taken.
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-received.json
+```
+
+</CodeExample>
+
+### Waiting For User Funds
+
+In a real world, the transfer confirmation process may take time. In such cases, transactions should be set to a new status indicating that the confirmation of the transfer has been received but the funds themselves have not been received yet.
+
+<CodeExample>
+
+```json
+// offchain-funds-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds sent",
+      "funds_received_at": "2023-07-04T12:34:56Z",
+      "external_transaction_id": "7...9"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-sent.json
+```
+
+</CodeExample>
+
+### Sending Onchain Funds
+
+Next, send a transaction on the Stellar network to fulfill a user request. After the transaction completion, it's necessary to send the `notify_onchain_funds_sent` JSON-RPC request to notify a user that the funds were successfully sent.
+
+<CodeExample>
+
+```json
+// onchain-funds-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_onchain_funds_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Onchain funds sent",
+      "stellar_transaction_id": "7...9"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `stellar_transaction_id` is the transaction id on Stellar network of the transfer
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh onchain-funds-sent.json
+```
+
+</CodeExample>
+
+After this JSON-RPC request, the transaction will be transferred to the `completed` status.
+
+### Pending Trust
+
+This status has to be set if a payment requires an asset trustline that wasn't configured by the user. There are two ways of how the transaction may be moved to the `pending_trust` status. The first one is when the business server detects that the trustline isn't configured. The second one is when the business itself detects that the trustline is missing and wants to notify the user that it has to be configured. To move the transaction to the `pending_trust` status, it's necessary to make the following JSON-RPC request:
+
+<CodeExample>
+
+```json
+// request-trust.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "request_trust",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Asset trustine not configured"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh request-trust.json
+```
+
+</CodeExample>
+
+:::info
+
+The business server periodically checks if the trustline was configured. If it was, it may send a payment and change the status of the transaction to `pending_stellar`.
+
+:::
+
+### Trust Set
+
+This status has to be set if the business has detected that the trustline was or wasn't configured by user.
+
+<CodeExample>
+
+```json
+// trust-set.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_trust_set",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Asset trustine set",
+      "success": "true"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `success` flag which defines if trustline was or wasn't configured by user
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh trust-set.json
+```
+
+</CodeExample>
+
+:::info
+
+Depending on the `success` flag, the status of the transaction will be changed to `pending_stellar` if the trustline was set, or to `pending_anchor` if it wasn't.
+
+:::
+
+### Sending Refund
+
+There is a possibility to send funds back to the user (refund). You can refund the whole sum(full refund) or do a set of partial refunds. Also, if user sent more money than expected, you can refund a part of the sum back to the user and send the rest as onchain funds.
+
+<CodeExample>
+
+```json
+// refund-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_refund_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Refund sent",
+      "refund": {
+        "id": "1c186184-09ee-486c-82a6-aa7a0ab1119c",
+        "amount": {
+          "amount": 10,
+          "asset": "iso4217:USD"
+        },
+        "amount_fee": {
+          "amount": 1,
+          "asset": "iso4217:USD"
+        }
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh refund-sent.json
+```
+
+</CodeExample>
+
+:::info
+
+If a sum of refunds is less than `amount_in`, the status of the transaction will be set to `pending_anchor`. Only if the sum of refunds is equal to `amount_in`, the status of the transaction will be set to `refunded`.
+
+:::
+
+### Refund Pending
+
+It's similar to [Refund sent](#refund-sent), but it handles a case when a refund has been submitted to external network but is not yet confirmed. The status of the transaction is set to `pending_external`. This is the status that will be set when waiting for Bitcoin or other external crypto network to complete a transaction, or when waiting for a bank transfer.
+
+### Transaction Error
+
+If you encounter an unrecoverable error when processing the transaction, it's required to set the transaction status to `error`. You can use the message field to describe the error details.
+
+<CodeExample>
+
+```json
+// transaction-error.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_error",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Error occurred"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-error.json
+```
+
+</CodeExample>
+
+:::tip
+
+If a user has made a transfer, you should do a transaction recovery, and then you can retry processing the transaction or initiate a refund.
+
+:::
+
+### Expired Transaction
+
+Your business may want to handle abandoned transactions by expiring those have remained inactive for a certain period. To achieve this, check the transaction status using the `GET /transactions` endpoint and sort the results by the `user_action_required_by` timestamp. If the timestamp has passed, manually execute the appropriate logic, such as expiring the transaction or initiating an auto-refund, based on the transaction's current status. For example, to expire transaction business should change the transaction status to `expired`:
+
+<CodeExample>
+
+```json
+// transaction-expired.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_expired",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction expired"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-expired.json
+```
+
+</CodeExample>
+
+:::tip
+
+This JSON-RPC method can't be used after the user has made a transfer.
+
+:::
+
+### On-Hold Transaction
+
+In rare cases, you may want to pause current transaction and request more information from the user (after the transfer has been received). This could be used for compliance use cases.
+
+<CodeExample>
+
+```json
+// transaction-hold.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_on_hold",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction is on hold. Please contact customer support to resolve the hold."
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-hold.json
+```
+
+</CodeExample>
+
+### Transaction Recovery
+
+Transaction status can be changed from `error/expired` to `pending_anchor`. After recovery, you can refund the received assets or proceed with processing of the transaction. To recover a transaction, it's necessary to make the following JSON-RPC request:
+
+<CodeExample>
+
+```json
+// transaction-recovery.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_transaction_recovery",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Transaction recovered"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh transaction-recovery.json
+```
+
+</CodeExample>
+
+## Updating Withdrawal Transaction Via JSON-RPC
+
+This diagram defines a sequence/rules of transaction's status transition for SEP-24 withdrawal flow.
+
+[![sep24 withdrawal flow](/assets/ap/sep24-withdrawal-flow-diagram.png)](/assets/ap/sep24-withdrawal-flow-diagram.png)
+
+:::tip
+
+Statuses in <span style={{color: "green"}}>green</span> are mandatory and define the shortest way.
+
+Statuses in <span style={{color: "#B0BF1A"}}>yellow</span> are optional and can be skipped.
+
+Statuses in <span style={{color: "red"}}>red</span> mean the transaction is in an error status or it has expired.
+
+:::
+
+Once the deposit flow is finished, implementing the withdrawal is straightforward. Some parts of the flow are similar and can be reused.
+
+The starting point both for withdrawal and for deposit is the same.
+
+### Ready to Receive Funds
+
+Similar to deposit, the next step is to notify the user that the anchor is ready to receive funds. However, as your service will be receiving transactions over the Stellar network, the update will look differently.
+
+<CodeExample>
+
+```json
+// request-onchain-funds.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "request_onchain_funds",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Request onchain funds",
+      "amount_in": {
+        "amount": 10,
+        "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+      },
+      "amount_out": {
+        "amount": 9,
+        "asset": "iso4217:USD"
+      },
+      "fee_details": {
+        "total": 1,
+        "asset": "stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+      },
+      "amount_expected": {
+        "amount": 10
+      },
+      "destination_account": "GD...G",
+      "memo": "12345",
+      "memo_type": "id"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+- `memo` Value of memo to attach to the transaction
+- `memo_type` Type of memo that the anchor should attach to the transaction
+- `destination_account` Destination account
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh request-onchain-funds.json
+```
+
+</CodeExample>
+
+:::tip
+
+Setting `memo`, `memo_type`, and `destination_account` is optional.
+
+If integration with a third-party custodian is enabled, the Anchor Platform can generate `memo`, `memo_type`, and `destination_address` if a corresponding `deposit_info_generator_type` is chosen. Also, you can provide `memo` and `memo_type` to the request as shown above. Note that the memo must be unique, this is what helps to associate Stellar transactions with SEP transactions.
+
+If your business manages the assets, the Anchor Platform can generate memos for you. When the status is changed to `pending_user_transfer_start`, the Anchor Platform sets the `memo` and `memo_type` automatically (only if it's not included in the request).
+
+:::
+
+:::note
+
+The Stellar account that will be used to receive funds should be configured.
+
+:::
+
+### Processing KYC Information
+
+This step is optional, and it's similar to [Processing KYC Information](#processing-kyc-information) of the deposit flow.
+
+### Funds Received
+
+If onchain funds were received, you need to provide amounts and change the status of the transaction to `pending_anchor`.
+
+<CodeExample>
+
+```json
+// onchain-funds-received.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_onchain_funds_received",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Onchain funds received",
+      "stellar_transaction_id": "7...9",
+      "amount_in": {
+        "amount": 10
+      },
+      "amount_out": {
+        "amount": 9
+      },
+      "fee_details": {
+        "total": 1
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh onchain-funds-received.json
+```
+
+</CodeExample>
+
+:::tip
+
+This method will be called automatically by the Stellar payment observer when it detects that onchain funds have been received.
+
+:::
+
+### Amount Updated
+
+If onchain funds were received, but for some reason the `amount_in` differs from specified in the interactive flow (`amount_expected`), you can update `amount_out` and `fee_details` to make them correspond to the actual `amount_in`. The status of the transaction in this case won't be changed and will be equal to `pending_anchor`.
+
+<CodeExample>
+
+```json
+// amounts-updated.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_amounts_updated",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Amounts updated",
+      "amount_out": {
+        "amount": 9
+      },
+      "fee_details": {
+        "total": 1
+      }
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh amounts-updated.json
+```
+
+</CodeExample>
+
+:::note
+
+Only `amount_out` and `fee_details` can be updated using this JSON-RPC request, and you don't need to specify the assets of the amounts.
+
+:::
+
+### Offchain Funds Sent
+
+To complete the transaction and change its status to `completed`, you need to make the `notify_offchain_funds_sent` JSON-RPC request.
+
+<CodeExample>
+
+```json
+// offchain-funds-sent.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_sent",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds sent",
+      "funds_sent_at": "2023-07-04T12:34:56Z",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-sent.json
+```
+
+</CodeExample>
+
+### Offchain Funds Available
+
+You can move transaction status to `pending_user_transfer_complete` if offchain funds were sent, and if it's ready for the user / recipient to pick it up.
+
+<CodeExample>
+
+```json
+// offchain-funds-available.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_available",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds available",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-available.json
+```
+
+</CodeExample>
+
+### Offchain Funds Pending
+
+Another option is to move the transaction's status to `pending_external`. This status means that the payment has been submitted to an external network, but is not yet confirmed.
+
+<CodeExample>
+
+```json
+// offchain-funds-pending.json
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "notify_offchain_funds_pending",
+    "params": {
+      "transaction_id": "<transaction_id>",
+      "message": "Offchain funds pending",
+      "external_transaction_id": "a...c"
+    }
+  }
+]
+```
+
+</CodeExample>
+
+To execute this, you need to run:
+
+<CodeExample>
+
+```bash
+./call-json-rpc.sh offchain-funds-pending.json
+```
+
+</CodeExample>
+
+### Refund Sent
+
+The refund logic works in the same way as for the deposit flow. For more details, see [Refund Sent](#refund-sent) of the deposit flow.
+
+### Transaction Error
+
+Works in the same manner as for the deposit flow. For more details, see [Transaction Error](#transaction-error) of the deposit flow.
+
+### Expired Transaction
+
+Works in the same manner as for the deposit flow. For more details, see [Expired Transaction](#expired-transaction) of the deposit flow.
+
+### On-Hold Transaction
+
+Works in the same manner as for the deposit flow. For more details, see [On-Hold Transaction](#on-hold-transaction) of the deposit flow.
+
+### Transaction Recovery
+
+Works in the same manner as for the deposit flow. For more details, see [Transaction Recovery](#transaction-recovery) of the deposit flow.
+
+## Tracking Stellar Transactions
+
+<Observer />
+
+[sep-9]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0009.md
+[sep-24]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md
+[event-handling]: ../../admin-guide/events/README.mdx
+[rate-callback]: ../../api-reference/callbacks/README.mdx
+[json-rpc-methods]: ../../api-reference/platform/rpc/methods/README.mdx

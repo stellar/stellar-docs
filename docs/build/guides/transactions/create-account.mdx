@@ -6,9 +6,6 @@ description: Learn about creating Stellar accounts, keypairs, funding, and accou
 
 # Create an Account
 
-import { CodeExample } from "@site/src/components/CodeExample";
-import { Alert } from "@site/src/components/Alert";
-
 _Before we get started with working with Stellar in code, consider going through the following examples using the [Stellar Lab](https://lab.stellar.org). The lab allows you to create accounts, fund accounts on the Stellar test network, build transactions, run any operation, and inspect responses from Horizon via the Endpoint Explorer._
 
 [Accounts](../../../learn/fundamentals/stellar-data-structures/accounts.mdx) are a fundamental building block of Stellar: they hold all your balances, allow you to send and receive payments, and let you place offers to buy and sell assets. Since pretty much everything on Stellar is in some way tied to an account, the first thing you generally need to do when you start developing is create one. This beginner-level tutorial walks through the three building blocks you'll need: [generating keys](#create-a-keypair), [funding an account](#create-an-account), and [fetching balances](#fetch-balances).
@@ -21,7 +18,9 @@ Before creating an account, you need to generate your own keypair; we'll learn h
 
 ## Create an Account
 
-A valid keypair alone does not make an account. To prevent unused entries from bloating the ledger, Stellar requires every account to hold a [minimum balance](../../../learn/fundamentals/lumens.mdx#minimum-balance) of 1 XLM before it actually exists.
+A valid keypair alone does not make an account. To prevent unused entries from bloating the ledger, Stellar requires every account to hold a [minimum balance](../../../learn/fundamentals/lumens.mdx#minimum-balance) of two base reserves before it actually exists (at the current base reserve of 0.5 XLM that works out to 1 XLM, but validators can change the base reserve — see the linked section for the current value). This is the ordinary, self-funded path shown throughout this tutorial.
+
+Alternatively, an account can be created with a `startingBalance` of `0` when another account sponsors its reserves ([CAP-33](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0033.md) sponsored reserves): the sponsor carries the two base reserves on the new account's behalf, so the account exists without holding the minimum balance itself. See the [Sponsored Reserves guide](sponsored-reserves.mdx) for how to set this up.
 
 On the test network you can ask Friendbot — a friendly funding service — to create and fund the account for you. In the SDK examples, below, you'll see that we "discover" the Friendbot endpoint via the RPC's `getNetwork` call, then issue a funding request.
 
@@ -279,14 +278,14 @@ import (
   "strings"
   "time"
 
-  "github.com/stellar/go/amount"
-  "github.com/stellar/go/keypair"
-  "github.com/stellar/go/network"
-  "github.com/stellar/go/txnbuild"
-  "github.com/stellar/go/xdr"
+  "github.com/stellar/go-stellar-sdk/amount"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
 
-  "github.com/stellar/stellar-rpc/client"
-  "github.com/stellar/stellar-rpc/protocol"
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
 
 const (
@@ -484,16 +483,18 @@ func check(err error) {
 ```java
 // File: main.java
 // Dependencies (Maven coordinates):
-//   org.stellar:java-stellar-sdk:0.43.0-SNAPSHOT
+//   network.lightsail:stellar-sdk:3.1.0
 //   com.fasterxml.jackson.core:jackson-databind:2.17.2
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.*;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.Collections;
 
 import org.stellar.sdk.*;
+import org.stellar.sdk.operations.*;
 import org.stellar.sdk.requests.sorobanrpc.*;
 import org.stellar.sdk.xdr.*;
 
@@ -533,7 +534,7 @@ public final class main {
     Transaction transaction = new TransactionBuilder(parentAccount, Network.TESTNET)
       .setBaseFee(Transaction.MIN_BASE_FEE)
       .setTimeout(TransactionBuilder.TIMEOUT_INFINITE)
-      .addOperation(new CreateAccountOperation.Builder(child.getAccountId(), "5").build())
+      .addOperation(CreateAccountOperation.builder().destination(child.getAccountId()).startingBalance(new BigDecimal("5")).build())
       .build();
     transaction.sign(parent);
 
@@ -548,7 +549,7 @@ public final class main {
     log("Balance for account %s", parent.getAccountId());
     log("XLM: %d", nativeBalance);
 
-    AssetTypeCreditAlphaNum12 usdcAsset = Asset.createNonNative("USDC", TESTNET_USDC_ISSUER);
+    Asset usdcAsset = Asset.createNonNativeAsset("USDC", TESTNET_USDC_ISSUER);
     long trustlineBalance = getTrustlineBalance(parent.getAccountId(), usdcAsset);
     log("USDC trustline balance (raw): %d", trustlineBalance);
   }
@@ -621,6 +622,96 @@ public final class main {
   private static void log(String format, Object... args) {
     System.out.println(String.format(format, args));
   }
+}
+```
+
+```rust
+use std::{cell::RefCell, rc::Rc, time::Duration};
+
+use soroban_client::{
+    account::{Account, AccountBehavior},
+    asset::{Asset, AssetBehavior},
+    keypair::{Keypair, KeypairBehavior},
+    network::{NetworkPassphrase, Networks},
+    operation::{self, Operation},
+    transaction::{TransactionBehavior, TransactionBuilder, TransactionBuilderBehavior},
+    xdr, Options, Server,
+};
+
+const TESTNET_USDC_ISSUER: &str = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server_url = "https://soroban-testnet.stellar.org";
+    let server = Server::new(server_url, Options::default()).expect("Cannot create server");
+
+    //
+    // Generate keypairs
+    //
+    let parent = Keypair::random()?;
+    println!("Secret: {}", parent.secret_key()?);
+    println!("Public: {}", parent.public_key());
+
+    //
+    // Fund a new account via friendbot
+    //
+    let account_data = server.request_airdrop(&parent.public_key()).await?;
+    println!("SUCCESS! You have a new account:\n{account_data:?}");
+
+    let child = Keypair::random()?;
+    let mut parent_account =
+        Account::new(&parent.public_key(), &account_data.sequence_number()).unwrap();
+
+    //
+    // Fund a new account via CreateAccount operation
+    //
+    let mut builder = TransactionBuilder::new(&mut parent_account, Networks::testnet(), None);
+    builder.fee(1000u32);
+    builder.add_operation(
+        Operation::new()
+            .create_account(&child.public_key(), operation::ONE * 5)
+            .unwrap(),
+    );
+
+    let mut tx = builder.build();
+    tx.sign(&[parent]);
+
+    let response = server.send_transaction(tx).await?;
+    let hash = response.hash;
+    println!("Tx hash: {}", hash);
+
+    //
+    // Polling for transaction completion
+    //
+    server
+        .wait_transaction(&hash, Duration::from_secs(15))
+        .map_err(|_| "Failed to create account")
+        .await?;
+
+    //
+    // Fetch native and USDC balances for account
+    //
+    let account_id = child.xdr_account_id();
+    let ledger_key = xdr::LedgerKey::Account(xdr::LedgerKeyAccount { account_id });
+    let response = server.get_ledger_entries(vec![ledger_key]).await?;
+    if let xdr::LedgerEntryData::Account(account) = response.entries.unwrap()[0].to_data() {
+        // Convert the balance from stroops
+        let balance = account.balance / operation::ONE;
+        println!("XLM: {balance}");
+    }
+
+    let account_id = child.xdr_account_id();
+    let asset = Asset::new("USDC", Some(TESTNET_USDC_ISSUER))?.into();
+    let ledger_key = xdr::LedgerKey::Trustline(xdr::LedgerKeyTrustLine { account_id, asset });
+    let response = server.get_ledger_entries(vec![ledger_key]).await?;
+    let entries = response.entries.unwrap_or_default();
+        let usdc_balance = match entries.first().map(|e| e.to_data()) {
+        Some(xdr::LedgerEntryData::Trustline(t)) => t.balance,
+        _ => 0,
+    };
+    println!("USDC trustline balance (raw): {}", usdc_balance);
+
+    Ok(())
 }
 ```
 

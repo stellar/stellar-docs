@@ -15,8 +15,6 @@ Welcome to the official home repository for [Documentation][docs] for the [Stell
 - [Using Markdown](#using-markdown)
   - [Markdown Basics](#markdown-basics)
   - [Custom Markdown](#custom-markdown)
-    - [Alert](#alert)
-    - [Code Example](#code-example)
 
 ## Contributing
 
@@ -63,11 +61,8 @@ If you have questions, feel free to ask in the [Stellar Developer Discord](https
 
 To begin development on the documentation, you will first need to install the following:
 
-- Node.js (v22, or higher): see https://nodejs.org/en/download/package-manager for details for your system
-- npm: e.g. `sudo apt install npm` on Ubuntu
-- yarn: `npm install yarn`
-  - If you're getting dependency errors, try using `npm install yarn --legacy-peer-deps`
-  - After `install` command succeeds run `corepack enable && corepack prepare yarn@stable --activate` to actually get yarn
+- Node.js (v24, or higher): see https://nodejs.org/en/download/package-manager for details for your system
+- pnpm: e.g., `corepack enable pnpm`
 
 ### Development
 
@@ -76,26 +71,31 @@ Once all the prerequisites have been installed, you can run the following comman
 ```bash
 git clone https://github.com/stellar/stellar-docs
 cd stellar-docs
-yarn install
-npx docusaurus start
+pnpm install
+pnpm start
 ```
 
 This will begin the development server, and open a browser window/tab pointing
 to `http://localhost:3000/docs/`. This development server will auto-reload when
 it detects changes to the repository.
 
+> **Already cloned this repo before we moved to pnpm?** Delete the old
+> `node_modules` directory before running `pnpm install` — pnpm uses a different
+> `node_modules` layout than Yarn, so installing on top of an existing one can
+> fail.
+
 After you've made your changes, use the following commands to ensure the consistent
 MDX file formatting and style across the repository:
 
 ```bash
-npm run check:mdx # this will search for problems in the MDX files
-npm run format:mdx # this will fix any problems that were found
+pnpm check:mdx # this will search for problems in the MDX files
+pnpm format:mdx # this will fix any problems that were found
 ```
 
 After that you need to build the `routes.txt` file, to do that run the next command
 
 ```bash
-yarn build
+pnpm build
 ```
 
 ## Repository Structure
@@ -150,45 +150,40 @@ Our repository uses some custom React components that can be used inside the
 
 **Make sure that there is an empty line within the wrapper.** For example,
 
-```text
-<Alert>
+````markdown
+<CodeExample>
 <!-- EMPTY LINE AFTER THE COMPONENT'S OPENING TAG IS REQUIRED -->
 
-Note: the testnet is reset every three months, so when building on it, make sure you have a plan to recreate necessary accounts and other data. For more info, check out the [best practices for using the testnet](../../learn/fundamentals/networks.mdx).
+```javascript
+console.log("hello world");
+```
+
+```python
+print("hello world")
+```
 
 <!-- EMPTY LINE BEFORE THE COMPONENT'S CLOSING TAG IS REQUIRED -->
-</Alert>
-```
-
-#### Alert
-
-![Testnet reset alert](./readme-imgs/alert.png)
-
-`<Alert />` is used to convey hints, warnings, etc. For example,
-[Build a SEP-31 Anchor on Testnet][alert-example]
-
-```markdown
-import { Alert } from "@site/src/components/Alert";
-
-<Alert>
-
-Note: the testnet is reset every three months, so when building on it, make sure you have a plan to recreate necessary accounts and other data. For more info, check out the [best practices for using the testnet](../../fundamentals-and-concepts/testnet-and-pubnet).
-
-</Alert>
-```
+</CodeExample>
+````
 
 #### Code Example
 
-![Create account code example](./readme-imgs/code-example.png)
+![Create account code example](./static/img/github/code-example.png)
 
-`<CodeExample />` is a code snippet component. You can include snippets for more
-than one language. See an example including a snippet for `JavaScript` and
-`Python` below. It is using [Prism React Renderer][prism] for syntax
-highlighting.
+`<CodeExample />` is a code snippet component. You can use this component when
+you want to include snippets for more than one language. See an example
+including a snippet for `JavaScript` and `Python` below. It is using [Prism
+React Renderer][prism] for syntax highlighting. If you're only making a code
+snippet for a _single programming language_, you should just stick with a
+"normal" markdown code fence using backticks.
+
+> [!NOTE]
+> The `CodeExample` component has been added to the list of globally available
+> components, in `/src/theme/MDXComponents.ts`. This means it's not required to
+> `import { CodeExample } ...` in a page if you're planning to use it. It's just
+> always available in MDX file.
 
 ````markdown
-import { CodeExample } from "@site/src/components/CodeExample";
-
 <CodeExample>
 
 ```js
@@ -219,24 +214,39 @@ print(f"Public Key: {pair.public_key}")
 ````
 
 Languages that are currently being used in Documentation and API Reference are
-below:
+below. This snippet is copied from `config/constants.ts` and is **only the
+subset of languages used as `CodeExample` tab labels**, not every language
+Prism can highlight. If you add a fenced language in docs, add the same key
+here *and* in `config/constants.ts` so the tab does not fall back to
+“Example”.
 
 ```js
-// https://github.com/stellar/stellar-docs/blob/main/src/components/CodeExample.js
+// https://github.com/stellar/stellar-docs/blob/main/config/constants.ts
 
-const CODE_LANGS = {
+export const CODE_LANGS = {
   bash: 'bash',
   cpp: 'C++',
+  css: 'CSS',
   curl: 'cURL',
+  dart: 'Flutter',
+  flutter: 'Flutter',
+  swift: 'Swift',
+  docker: 'Dockerfile',
   go: 'Go',
-  html: 'html',
+  html: 'HTML',
+  kotlin: 'Kotlin',
+  kt: 'Kotlin',
   java: 'Java',
   javascript: 'JavaScript',
   js: 'JavaScript',
+  jsx: 'JSX',
   json: 'JSON',
   json5: 'JSON5',
   python: 'Python',
   scss: 'SCSS',
+  sql: 'SQL',
+  rust: 'Rust',
+  php: 'PHP',
   toml: 'TOML',
   ts: 'TypeScript',
   tsx: 'TSX',
@@ -245,10 +255,9 @@ const CODE_LANGS = {
 };
 ```
 
-**Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://www.stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://www.stellar.org/privacy-policy).**
+**Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://stellar.org/privacy-policy).**
 
 [docs]: https://developers.stellar.org/docs
-[api]: https://developers.stellar.org/docs/data/apis
 [stellar]: https://stellar.org
 [contrib]: https://github.com/stellar/.github/blob/master/CONTRIBUTING.md
 [coc]: https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md
@@ -257,7 +266,6 @@ const CODE_LANGS = {
 [commonmark]: https://commonmark.org/help/
 [tutorial]: https://www.markdowntutorial.com/
 [guide]: https://www.markdownguide.org/
-[alert-example]: https://developers.stellar.org/docs/anchoring-assets/enabling-cross-border-payments/setting-up-test-server
 [prism]: https://github.com/FormidableLabs/prism-react-renderer
 [open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web
 [open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs

@@ -1,0 +1,559 @@
+---
+title: OpenZeppelin Relayer
+description: OpenZeppelin Relayer is a service that provides infrastructure to relay transactions to the Stellar network.
+sidebar_label: OpenZeppelin Relayer
+sidebar_position: 43
+---
+
+Launchtube, which served as an experimental service for fee sponsorship and contract invocations, has been instrumental in early-stage deployments and developer experimentation. However, while functional for testing and early use cases, Launchtube does not have the maturity, scalability and auditing as OpenZeppelin’s Relayer service, which is why the Stellar Development Foundation is discontinuing the Launchtube service and provides the Relayer service as a replacement.
+
+OpenZeppelin Relayer, also known as [Stellar Channels Service](https://docs.openzeppelin.com/relayer/1.3.x/guides/stellar-channels-guide), is a managed infrastructure for submitting Stellar Soroban transactions with automatic parallel processing and fee management. The service handles all the complexity of transaction submission, allowing you to focus on building your application.
+
+## OpenZeppelin Relayer Status
+
+To see live status of the OpenZeppelin relayer, please visit this [Status] page: https://status.channels.openzeppelin.com/.
+
+## Smart contract invocation
+
+Let’s create a simple application that submits a transaction, invoking a smart contract function, using Relayer. The application calls the Increment smart contract and returns the current counter value.
+
+The application is based on the Next.js framework and has server side code and client side code. The OpenZeppelin Relayer SDK makes HTTPS-requests to OpenZeppelin endpoints, which will trigger CORS errors when run client side, but by using the SDK server side, CORS will not be an issue.
+
+### Prerequisites
+
+This guide assumes you have deployed the Increment smart contract example code found [here](https://github.com/stellar/soroban-examples/tree/v22.0.1/increment). See the [Getting Started](../build/smart-contracts/getting-started) tutorial section 3 and 4 for more information about building and deploying the Increment contract.
+
+### Server Side
+
+In this simple application we only have one function server side, and that’s a function calling a smart contract function, by submitting a transaction through Relayer.
+
+#### 1. Initialize Relayer client
+
+First the two necessary SDKs are imported, and the Relayer client is initialized. In this tutorial we use testnet, so the Relayer service endpoint for testnet is used as the base URL. The API key can be generated [here](https://channels.openzeppelin.com/testnet/gen).
+
+```js
+"use server";
+import * as StellarSDK from "@stellar/stellar-sdk";
+import * as RPChannels from "@openzeppelin/relayer-plugin-channels";
+
+// Initialize Channels Client
+const client = new RPChannels.ChannelsClient({
+  baseUrl: "https://channels.openzeppelin.com/testnet",
+  apiKey: "c344ee79-6294-4dc3-8f7d-000000000000",
+});
+```
+
+#### 2. Initialize contract, RPC and account
+
+Next we initialize the resources we need to build the transaction. Both the `contractId` and `sourceId` are arguments of the function and will be provided client side.
+
+```js
+// Initialize Contract and RPC Server
+const contract = new StellarSDK.Contract(contractId);
+const rpc = new StellarSDK.rpc.Server("https://soroban-testnet.stellar.org");
+// Get Source Account
+const account = await rpc.getAccount(sourceId);
+```
+
+#### 3. Build transaction
+
+`TransactionBuilder` takes the user account and network information as parameters, and operations can be added. In this case we want to add the contract invocation by using `contract.call()`, with the contract function name and arguments as parameters.
+
+```js
+const tx = new StellarSDK.TransactionBuilder(account, {
+  fee: "100",
+  networkPassphrase: StellarSDK.Networks.TESTNET,
+})
+  .addOperation(contract.call(func, ...args))
+  .setTimeout(30)
+  .build();
+```
+
+#### 4. Simulate transaction and get XDRs
+
+The final steps before we can submit the transaction to Relayer is to simulate the transaction, bundle the transaction and simulation, and extract the transaction’s function and auth XDRs.
+
+We are extracting the function and auth from the assembled transaction, in XDR format, because that’s what we need to submit to Relayer.
+
+```js
+// Simulate to get auth entries
+const simulation = await rpc.simulateTransaction(tx);
+const assembled = StellarSDK.rpc.assembleTransaction(tx, simulation).build();
+// Extract function and auth XDRs
+const op = assembled.operations[0];
+const contractFunc = op.func.toXDR("base64");
+const contractAuth = (op.auth ?? []).map((a) => a.toXDR("base64"));
+```
+
+#### 5. Build Relayer request and submit it
+
+Now we have completed all necessary steps to submit a transaction to Relayer. First the request is built, and then the request is submitted to Relayer.
+
+```typescript
+// Build request for Relayer
+const request: RPChannels.ChannelsFuncAuthRequest = {
+  func: contractFunc,
+  auth: contractAuth,
+};
+// Submit to Channels Relayer
+const response: RPChannels.ChannelsTransactionResponse =
+  await client.submitSorobanTransaction(request);
+```
+
+A successful submission will return a response of the following format:
+
+```js
+{
+  transactionId: string; // Internal tracking ID
+  hash: string; // Stellar transaction hash
+  status: string; // Transaction status (e.g., "confirmed")
+}
+```
+
+#### 6. Get returned value from contract
+
+The invoked Increment contract function will return the updated, incremented value so let’s get this value so we can show it in the client (frontend).
+
+To get the return value we simply poll for the transaction result until we get a response with `rpc.pollTransaction()`, which will return an object with more details than we need, so only the value is returned.
+
+```js
+// Poll for transaction result
+let txResponse = await rpc.pollTransaction(response.hash!);
+// Return the result using the public SDK helper
+return StellarSDK.scValToNative(txResponse.returnValue);
+```
+
+#### 7. The complete code
+
+The previous six steps contain all the functionality needed for invoking a smart contract function through Relayer. This is the complete code for the function that we will call from the client side (frontend):
+
+```js title="backend/index.tsx"
+"use server";
+import * as StellarSDK from '@stellar/stellar-sdk';
+import * as RPChannels from '@openzeppelin/relayer-plugin-channels';
+
+// Initialize Channels Client
+const client = new RPChannels.ChannelsClient({
+  baseUrl: 'https://channels.openzeppelin.com/testnet',
+  apiKey: 'c344ee79-6294-4dc3-8f7d-000000000000',
+});
+
+export const SendContractTransaction = async (sourceId: string, contractId: string, func: string, args: StellarSDK.xdr.ScVal[]) => {
+  // Initialize Contract and RPC Server
+  const contract = new StellarSDK.Contract(contractId);
+  const rpc = new StellarSDK.rpc.Server('https://soroban-testnet.stellar.org');
+  // Get Source Account
+  const account = await rpc.getAccount(sourceId);
+  // Build the transaction
+  const tx = new StellarSDK.TransactionBuilder(account, {
+    fee: '100',
+    networkPassphrase: StellarSDK.Networks.TESTNET,
+  })
+  .addOperation(contract.call(func, ...args))
+  .setTimeout(30)
+  .build();
+  // Simulate to get auth entries
+  const simulation = await rpc.simulateTransaction(tx);
+  const assembled = StellarSDK.rpc.assembleTransaction(tx, simulation).build();
+  // Extract function and auth XDRs
+  const op = assembled.operations[0];
+  const contractFunc = op.func.toXDR('base64');
+  const contractAuth = (op.auth ?? []).map((a) => a.toXDR('base64'));
+  // Build request for Relayer
+  const request: RPChannels.ChannelsFuncAuthRequest = {
+    func: contractFunc,
+    auth: contractAuth,
+  };
+  // Submit to Channels Relayer
+  const response: RPChannels.ChannelsTransactionResponse = await client.submitSorobanTransaction(request);
+  // Poll for transaction result
+  let txResponse = await rpc.pollTransaction(response.hash!);
+  // Return the decoded result from the ScVal
+  return StellarSDK.scValToNative(txResponse.returnValue);
+}
+```
+
+### Client Side
+
+The client side code shows a button on the page in the browser, and when clicked, the server side function will be called with the relevant parameters. When the function returns a value, the value is shown on the page instead of the button. The functionality is very simple, but serves well as an end-to-end example of submitting a transaction with Relayer.
+
+#### 1. Call server side function
+
+The client code has a function `callContract()` that can be invoked from the button click. The function calls the server side function `SendContractTransaction()` with the `sourceId`, `contractId`, contract function name and auth.
+
+```js
+const [result, setResult] = React.useState("");
+
+const callContract = async () => {
+  const response = await SendContractTransaction(
+    "GAZQUIHE242WV4CK7LLM5ZV4SM6SLV4CEY4LLAKEYD2O000000000000",
+    "CDAZOG4V2KAPVBBKCAMHUT367AUGYWYEHD652UOJVER5ERNYGSOROBAN",
+    "increment",
+    [],
+  );
+
+  setResult(response);
+};
+```
+
+The response is stored as the result state.
+
+#### 2. Markup code
+
+The page markup code checks if result contains a value. If not, the button for invoking the callContract function is shown, and if result does contain a value, it’s shown on the page instead. That’s all there is to the client side markup code.
+
+```html
+<div
+  className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black"
+>
+  <main
+    className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start"
+  >
+    {result ? (
+    <h2 className="mb-10 text-2xl font-semibold text-black dark:text-white">
+      Result from Relayer: {result}
+    </h2>
+    ) : (
+    <h2 className="mb-10 text-2xl font-semibold text-black dark:text-white">
+      <button
+        className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+        onClick="{callContract}"
+      >
+        Call Contract via Relayer
+      </button>
+    </h2>
+    )}
+  </main>
+</div>
+```
+
+3. The complete code This is the complete code for the client side (frontend):
+
+```jsx title="page.tsx"
+"use client"
+import React from "react";
+import { SendContractTransaction } from "./backend";
+
+export default function Home() {
+  const [result, setResult] = React.useState('');
+
+  const callContract = async () => {
+    const args: [] = [];
+    const response = await SendContractTransaction(
+      'GAZQUIHE242WV4CK7LLM5ZV4SM6SLV4CEY4LLAKEYD2O000000000000',
+      'CDAZOG4V2KAPVBBKCAMHUT367AUGYWYEHD652UOJVER5ERNYGSOROBAN',
+      "increment",
+      [],
+    );
+
+    setResult(response);
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
+      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
+        {result ? (
+          <h2 className="mb-10 text-2xl font-semibold text-black dark:text-white">
+            Result from Relayer: {result}
+          </h2>
+        ) : (
+          <h2 className="mb-10 text-2xl font-semibold text-black dark:text-white">
+            <button
+              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+              onClick={callContract}
+            >
+              Call Contract via Relayer
+            </button>
+          </h2>
+        )}
+      </main>
+    </div>
+  );
+}
+```
+
+## Account transfer
+
+Let’s create another simple application, this application submits a transfer transaction, sending XLM tokens from one account to another, using Relayer.
+
+The application is based on the Next.js framework and has server side code and client side code. The OpenZeppelin Relayer SDK makes HTTPS-requests to OpenZeppelin endpoints, which will trigger CORS errors when run client side, but by using the SDK server side, CORS will not be an issue.
+
+### Server Side
+
+In this simple application we only have one function server side, and that’s a function making a transfer of XLM tokens from one account to another, by submitting a transaction through Relayer.
+
+#### 1. Initialize Relayer client
+
+First the two necessary SDKs are imported, and the Relayer client is initialized. In this tutorial we use testnet, so the Relayer service endpoint for testnet is used as the base URL. The API key can be generated [here](https://channels.openzeppelin.com/testnet/gen).
+
+```js
+"use server";
+import * as StellarSDK from "@stellar/stellar-sdk";
+import * as RPChannels from "@openzeppelin/relayer-plugin-channels";
+
+// Initialize Channels Client
+const client = new RPChannels.ChannelsClient({
+  baseUrl: "https://channels.openzeppelin.com/testnet",
+  apiKey: "c344ee79-6294-4dc3-8f7d-000000000000",
+});
+```
+
+#### 2. Initialize RPC and source account
+
+Next we initialize the resources we need to build the transaction. In this example code the source secret key is hardcoded, but this must be handled in a more secure manner in production applications.
+
+```js
+// Initialize RPC Server
+const rpc = new StellarSDK.rpc.Server("https://soroban-testnet.stellar.org");
+
+// Define source account details - this should be securely managed and not hardcoded in production
+const sourceSecret = "SADMGRVM3MDTZ54FN3SBEKSTRCVEY4WE5JAVCERJJBFR000000000000";
+// Load the source account from the secret key
+const sourceKeypair = StellarSDK.Keypair.fromSecret(sourceSecret);
+const sourcePublicKey = sourceKeypair.publicKey();
+
+// Load account details from the network
+const sourceAccount = await rpc.getAccount(sourcePublicKey);
+```
+
+#### 3. Build and sign transaction
+
+`TransactionBuilder` takes the source account and network information as parameters, and operations can be added. In this case we want to add the `payment()` operation to transfer an amount of XLM tokens (native asset) from the source account to the destination. The transaction is signed with the source keypair.
+
+```js
+// Build the transaction
+const transaction = new StellarSDK.TransactionBuilder(sourceAccount, {
+  fee: StellarSDK.BASE_FEE,
+  networkPassphrase: StellarSDK.Networks.TESTNET,
+})
+  .addOperation(
+    StellarSDK.Operation.payment({
+      destination: destinationPublicKey,
+      asset: StellarSDK.Asset.native(),
+      amount: amount.toString(),
+    }),
+  )
+  .setTimeout(30)
+  .build();
+
+transaction.sign(sourceKeypair);
+```
+
+#### 4. Submit the transaction
+
+Now we have completed all necessary steps to submit the transaction to Relayer. The Relayer SDK function `submitTransaction()` takes the transaction in XDR-format as an argument.
+
+```js
+// Submit to Channels Relayer
+const response = await client.submitTransaction({
+  xdr: transaction.toXDR(),
+});
+```
+
+A successful submission will return a response of the following format:
+
+```js
+{
+  transactionId: string; // Internal tracking ID
+  hash: string; // Stellar transaction hash
+  status: string; // Transaction status (e.g., "confirmed")
+}
+```
+
+#### 5. Return the transaction hash
+
+As a final step the transaction hash is returned.
+
+```js
+return response.hash;
+```
+
+#### 6. The complete code
+
+The previous five steps contain all the functionality needed for transferring XLM tokens from the source account to another account through Relayer. This is the complete code for the function that we will call from the client side (frontend):
+
+```js title="backend/index.tsx"
+"use server";
+import * as StellarSDK from '@stellar/stellar-sdk';
+import * as RPChannels from '@openzeppelin/relayer-plugin-channels';
+
+// Initialize Channels Client
+const client = new RPChannels.ChannelsClient({
+  baseUrl: 'https://channels.openzeppelin.com/testnet',
+  apiKey: 'c344ee79-6294-4dc3-8f7d-000000000000',
+});
+
+export const SendTransaction = async (destinationPublicKey: string, amount: string) => {
+  // Initialize RPC Server
+  const rpc = new StellarSDK.rpc.Server('https://soroban-testnet.stellar.org');
+
+  // Define source account details - this should be securely managed and not hardcoded in production
+  const sourceSecret = 'SADMGRVM3MDTZ54FN3SBEKSTRCVEY4WE5JAVCERJJBFR000000000000';
+  // Load the source account from the secret key
+  const sourceKeypair = StellarSDK.Keypair.fromSecret(sourceSecret);
+  const sourcePublicKey = sourceKeypair.publicKey();
+
+  // Load account details from the network
+  const sourceAccount = await rpc.getAccount(sourcePublicKey);
+
+  try {
+    // Build the transaction
+    const transaction = new StellarSDK.TransactionBuilder(sourceAccount, {
+      fee: StellarSDK.BASE_FEE, // Or use server.fetchBaseFee() for dynamic fees
+      networkPassphrase: StellarSDK.Networks.TESTNET // Use Networks.PUBLIC for mainnet
+    })
+    .addOperation(
+      StellarSDK.Operation.payment({
+        destination: destinationPublicKey,
+        asset: StellarSDK.Asset.native(), // XLM is the native asset
+        amount: amount.toString() // Amount in XLM (e.g., "10" for 10 XLM)
+      })
+    )
+    .setTimeout(30) // Transaction expires after 30 seconds
+    .build();
+
+    // Sign the transaction
+    transaction.sign(sourceKeypair);
+
+    const response = await client.submitTransaction({
+      xdr: transaction.toXDR(), // base64 envelope XDR
+    });
+
+    return response.hash;
+  } catch (error) {
+    console.error('Failed to submit Stellar transaction via OpenZeppelin Relayer:', error);
+    throw error;
+  }
+}
+```
+
+### Client Side
+
+The client side code shows a form with input fields for a transfer-to-address, and amount to transfer, on the page in the browser. When the form is filled out and submitted, the server side function will be called with the form values as parameters. When the function returns with the transaction hash, the hash is shown on the page instead of the form. The functionality is very simple, but serves well as an end-to-end example of submitting a token transfer transaction with Relayer.
+
+#### 1. Call server side function
+
+The client code has a function `sendXLM()` that works as a form action function. The function calls the server side function `SendTransaction()` with the transfer destination public key and amount as parameters.
+
+```js
+const [result, setResult] = React.useState('');
+
+const sendXLM = async (formData: FormData) => {
+  const to = formData.get('toAddress') as string;
+  const amount = formData.get('amount') as string;
+
+  const response = await SendTransaction(to, amount);
+  setResult(response);
+};
+```
+
+The response is stored as the result state.
+
+#### 2. Markup code
+
+The page markup code checks if `result` contains a value. If not, the form for submitting a transfer is shown, and if `result` does contain a value, it’s shown on the page instead. That’s all there is to the client side markup code.
+
+```html
+<div
+  className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black"
+>
+  <main
+    className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start"
+  >
+    {result ? (
+    <h2 className="mb-10 text-2xl font-semibold text-black dark:text-white">
+      Transaction Hash: {result}
+    </h2>
+    ) : (
+    <form action="{sendXLM}" className="max-w-sm mx-auto">
+      <div className="mb-5">
+        <label
+          htmlFor="toAddress"
+          className="block mb-2.5 text-sm font-medium text-heading"
+          >To (Address)</label
+        >
+        <input
+          type="text"
+          id="toAddress"
+          name="toAddress"
+          className="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body"
+          placeholder="G.........."
+          required
+        />
+      </div>
+      <div className="mb-5">
+        <label
+          htmlFor="amount"
+          className="block mb-2.5 text-sm font-medium text-heading"
+          >Amount (XLM)</label
+        >
+        <input
+          type="number"
+          id="amount"
+          name="amount"
+          className="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body"
+          placeholder="10"
+          required
+        />
+      </div>
+      <button
+        type="submit"
+        className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+      >
+        Submit
+      </button>
+    </form>
+    )}
+  </main>
+</div>
+```
+
+#### 3. The complete code
+
+This is the complete code for the client side (frontend):
+
+```js title="page.tsx"
+"use client"
+import React from "react";
+import { SendTransaction } from "./backend";
+
+export default function Home() {
+  const [result, setResult] = React.useState('');
+
+  const sendXLM = async (formData: FormData) => {
+    const to = formData.get('toAddress') as string;
+    const amount = formData.get('amount') as string;
+
+    const response = await SendTransaction(to, amount);
+    setResult(response);
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
+      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
+        {result ? (
+          <h2 className="mb-10 text-2xl font-semibold text-black dark:text-white">
+            Transaction Hash: {result}
+          </h2>
+        ) : (
+          <form action={sendXLM} className="max-w-sm mx-auto">
+            <div className="mb-5">
+              <label htmlFor="toAddress" className="block mb-2.5 text-sm font-medium text-heading">To (Address)</label>
+              <input type="text" id="toAddress" name="toAddress" className="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body" placeholder="G.........." required />
+            </div>
+            <div className="mb-5">
+              <label htmlFor="amount" className="block mb-2.5 text-sm font-medium text-heading">Amount (XLM)</label>
+              <input type="number" id="amount" name="amount" className="bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-base focus:ring-brand focus:border-brand block w-full px-3 py-2.5 shadow-xs placeholder:text-body" placeholder="10" required />
+            </div>
+            <button type="submit" className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Submit</button>
+          </form>
+        )}
+      </main>
+    </div>
+  );
+}
+```
+
+### OpenZeppelin Relayer documentation
+
+For more information see the OpenZeppelin Relayer documentation [here](https://github.com/OpenZeppelin/openzeppelin-relayer).

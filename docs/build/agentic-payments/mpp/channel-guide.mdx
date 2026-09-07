@@ -1,0 +1,319 @@
+---
+title: MPP Session Guide
+description: Set up session-based off-chain payments for high-frequency use on Stellar using the Machine Payments Protocol (MPP).
+sidebar_position: 30
+---
+
+This guide explains how to use the MPP **session** intent with `@stellar/mpp`. The session intent is implemented using a [one-way payment channel](https://github.com/stellar-experimental/one-way-channel) Soroban contract — the funder deposits tokens once, then makes many off-chain payments by signing cumulative commitments. No on-chain transaction is needed per payment, making this ideal for high-frequency AI agent interactions.
+
+This worked example assumes the channel is funded in USDC. Commitment amounts and prices below are therefore denominated in USDC, because channel commitments always use the asset deposited into the channel.
+
+## How channel payments work
+
+```
+Client (Funder)           Server (Recipient)         Soroban RPC / Network
+  |                              |                          |
+  |  --- CHANNEL SETUP (pre-funded on-chain) ---            |
+  |                              |                          |
+  | Build + sign deploy tx       |                          |
+  | (commitment key + USDC       |                          |
+  |  deposit)                    |                          |
+  |----------------------------->|                          |
+  |                              |                          |
+  |                              | Broadcast deploy tx      |
+  |                              |------------------------->|
+  |                              |                          |
+  |                              | Channel deployed (C...)  |
+  |                              |<-------------------------|
+  |                              |                          |
+  | 200 OK + receipt             |                          |
+  |<-----------------------------|                          |
+  |                              |                          |
+  |  --- VOUCHER PAYMENTS (off-chain, repeatable) ---       |
+  |                              |                          |
+  | GET /resource                |                          |
+  |----------------------------->|                          |
+  |                              |                          |
+  | 402 Payment Required         |                          |
+  | { channel: C..., amount,     |                          |
+  |   cumulativeAmount, network, |                          |
+  |   reference }                |                          |
+  |<-----------------------------|                          |
+  |                              |                          |
+  | Simulate prepare_commitment  |                          |
+  | (read-only, no tx cost)      |                          |
+  |----------------------------------------------------->   |
+  |                              |                          |
+  | Commitment bytes             |                          |
+  |<-----------------------------------------------------   |
+  |                              |                          |
+  | Sign commitment bytes        |                          |
+  | locally with ed25519 key     |                          |
+  |                              |                          |
+  | Credential: action=voucher,  |                          |
+  | amount=<new cumulative>,     |                          |
+  | signature=<hex>              |                          |
+  |----------------------------->|                          |
+  |                              |                          |
+  |                              | Simulate                 |
+  |                              | prepare_commitment       |
+  |                              | (read-only, no tx cost)  |
+  |                              |------------------------->|
+  |                              |                          |
+  |                              | Commitment bytes         |
+  |                              |<-------------------------|
+  |                              |                          |
+  |                              | Verify ed25519 sig       |
+  |                              | locally (Keypair.verify) |
+  |                              |                          |
+  |                              | Update cumulative in     |
+  |                              | store                    |
+  |                              |                          |
+  | 200 OK + receipt             |                          |
+  |<-----------------------------|                          |
+  |                              |                          |
+  |   ... (repeat voucher flow;  |                          |
+  |    no on-chain tx needed)    |                          |
+  |                              |                          |
+  |  --- CLOSE (server-initiated settlement) ---            |
+  |                              |                          |
+  |                              | close() with highest     |
+  |                              | commitment amount +      |
+  |                              | signature                |
+  |                              |------------------------->|
+  |                              |                          |
+  |                              | Settlement confirmed     |
+  |                              | (USDC transferred to     |
+  |                              |  recipient, remainder    |
+  |                              |  returned to funder)     |
+  |                              |<-------------------------|
+```
+
+Each commitment is cumulative. The server tracks the highest commitment it has seen; closing the channel batch-settles all payments in a single on-chain transaction.
+
+## Prerequisites
+
+Before using channel mode, you need a deployed [one-way-channel contract](https://github.com/stellar-experimental/one-way-channel) on Stellar Testnet or Mainnet. The contract is initialized with:
+
+- A **commitment key** — an ed25519 keypair. The client signs commitments with the private key; the contract verifies with the public key.
+- A **token deposit** — the funder's initial balance in the channel asset. This example uses USDC.
+
+See the [one-way-channel repo](https://github.com/stellar-experimental/one-way-channel) for deployment instructions.
+
+## Session server
+
+Create `channel-server.js`:
+
+```js title="channel-server.js"
+import express from "express";
+import { Mppx, Store } from "mppx/server";
+import { stellar } from "@stellar/mpp/channel/server";
+import { StrKey } from "@stellar/stellar-sdk";
+
+const PORT = 3001;
+const CHANNEL_CONTRACT = process.env.CHANNEL_CONTRACT; // C... (56 chars)
+const COMMITMENT_PUBKEY = process.env.COMMITMENT_PUBKEY; // 64-char hex ed25519 public key
+const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY; // Shared secret for MPP credential verification
+
+if (!CHANNEL_CONTRACT || !COMMITMENT_PUBKEY) {
+  console.error(
+    "Set CHANNEL_CONTRACT and COMMITMENT_PUBKEY environment variables",
+  );
+  process.exit(1);
+}
+
+if (!MPP_SECRET_KEY) {
+  console.error(
+    "Set MPP_SECRET_KEY to a strong secret for MPP credential verification",
+  );
+  process.exit(1);
+}
+
+// Convert raw ed25519 public key (hex) to a Stellar G... address
+const commitmentPublicKeyG = StrKey.encodeEd25519PublicKey(
+  Buffer.from(COMMITMENT_PUBKEY, "hex"),
+);
+
+const mppx = Mppx.create({
+  secretKey: MPP_SECRET_KEY,
+  methods: [
+    stellar.channel({
+      channel: CHANNEL_CONTRACT,
+      commitmentKey: commitmentPublicKeyG,
+      store: Store.memory(), // tracks cumulative amounts + replay protection
+      network: "stellar:testnet",
+    }),
+  ],
+});
+
+const app = express();
+
+app.get("/my-service", async (req, res) => {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        headers.append(key, entry);
+      }
+    } else {
+      headers.set(key, value);
+    }
+  }
+
+  const webReq = new Request(`http://localhost:${PORT}${req.url}`, {
+    method: req.method,
+    headers,
+  });
+
+  const result = await mppx.channel({
+    amount: "0.1", // 0.1 USDC per request (human-readable)
+    description: "API call",
+  })(webReq);
+
+  if (result.status === 402) {
+    const challenge = result.challenge;
+    challenge.headers.forEach((value, key) => res.setHeader(key, value));
+    return res.status(402).send(await challenge.text());
+  }
+
+  const response = result.withReceipt(
+    Response.json({ secret: "valuable content" }),
+  );
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  return res.status(response.status).send(await response.text());
+});
+
+app.listen(PORT, () => {
+  console.log(
+    `MPP channel server listening on http://localhost:${PORT}/my-service`,
+  );
+});
+```
+
+Start the server:
+
+```bash
+CHANNEL_CONTRACT=CABC... COMMITMENT_PUBKEY=<64-hex-chars> MPP_SECRET_KEY=replace-me node channel-server.js
+```
+
+## Session client
+
+Create `channel-client.js`:
+
+```js title="channel-client.js"
+import { Keypair } from "@stellar/stellar-sdk";
+import { Mppx } from "mppx/client";
+import { stellar } from "@stellar/mpp/channel/client";
+import { readFileSync } from "node:fs";
+
+// Load commitment secret key from .env
+const env = Object.fromEntries(
+  readFileSync(".env", "utf-8")
+    .split("\n")
+    .filter((l) => l.includes("="))
+    .map((l) => l.split("=")),
+);
+const COMMITMENT_SECRET = env.COMMITMENT_SECRET?.trim(); // 64-char hex ed25519 secret
+
+if (!COMMITMENT_SECRET) {
+  console.error("Add COMMITMENT_SECRET=<64-hex-chars> to .env");
+  process.exit(1);
+}
+
+// Convert raw hex ed25519 seed to a Stellar Keypair
+const commitmentKey = Keypair.fromRawEd25519Seed(
+  Buffer.from(COMMITMENT_SECRET, "hex"),
+);
+console.log(`Commitment public key: ${commitmentKey.publicKey()}`);
+
+// Polyfill global fetch — 402 responses are handled automatically
+Mppx.create({
+  methods: [
+    stellar.channel({
+      commitmentKey,
+      onProgress(event) {
+        switch (event.type) {
+          case "challenge":
+            console.log(
+              `Challenge: ${event.amount} base units via channel ${event.channel.slice(0, 12)}...`,
+            );
+            break;
+          case "signed":
+            console.log(
+              `Commitment signed (cumulative: ${event.cumulativeAmount} base units)`,
+            );
+            break;
+        }
+      },
+    }),
+  ],
+});
+
+// Requests are automatically paid with off-chain commitment signatures
+const res1 = await fetch("http://localhost:3001/my-service");
+console.log(`Request 1 (${res1.status}):`, await res1.json());
+
+// Second request increments cumulative amount; still off-chain
+const res2 = await fetch("http://localhost:3001/my-service");
+console.log(`Request 2 (${res2.status}):`, await res2.json());
+```
+
+Add the commitment secret key to `.env`:
+
+```bash title=".env"
+COMMITMENT_SECRET=<64-hex-chars>
+```
+
+Run the client:
+
+```bash
+node channel-client.js
+```
+
+Each request signs an increasing cumulative commitment off-chain. The server verifies the ed25519 signature against the on-chain `commitment_key` in the contract (via Soroban simulation, no transaction needed) and returns the protected content immediately.
+
+## Closing the channel
+
+When the server wants to settle, it closes the channel using the highest commitment amount and signature it has tracked. The server must persist the highest cumulative amount and its corresponding ed25519 signature so it can supply them at close time.
+
+```js
+import { close } from "@stellar/mpp/channel/server";
+import { Keypair } from "@stellar/stellar-sdk";
+
+const SIGNER_SECRET = process.env.SIGNER_SECRET;
+if (!SIGNER_SECRET) {
+  throw new Error("Set SIGNER_SECRET to a Stellar secret key (S...)");
+}
+
+// Close the channel using the highest commitment seen by the server
+const txHash = await close({
+  channel: CHANNEL_CONTRACT,
+  amount: 2000000n, // cumulative committed amount in base units (bigint)
+  signature: lastCommitmentSig, // Uint8Array — the ed25519 signature for this commitment
+  feePayer: {
+    envelopeSigner: Keypair.fromSecret(SIGNER_SECRET), // signs the close transaction
+  },
+  network: "stellar:testnet",
+});
+console.log("Channel closed, tx:", txHash);
+```
+
+Closing submits a single on-chain transaction that transfers the cumulative committed amount from the channel to the recipient. The remainder is returned to the funder.
+
+## Subpath exports
+
+Channel mode uses separate subpath exports to avoid bundling unused code:
+
+| Path | Purpose |
+| --- | --- |
+| `@stellar/mpp/channel/server` | `stellar`, `channel`, `close`, `getChannelState`, `watchChannel` |
+| `@stellar/mpp/channel/client` | `stellar`, `channel` |
+| `@stellar/mpp/channel` | Channel method schema (Zod) |
+
+## Additional documentation
+
+- [one-way-channel contract](https://github.com/stellar-experimental/one-way-channel) — Soroban contract, deployment scripts, and parameters
+- [@stellar/mpp on GitHub](https://github.com/stellar/stellar-mpp-sdk) — Full API reference and integration tests
+- [MPP Charge Guide](./charge-guide.mdx) — Charge mode (per-request on-chain settlement)
+- [MPP Specification](https://mpp.dev) — Protocol specification
