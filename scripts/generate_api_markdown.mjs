@@ -229,23 +229,36 @@ function renderSchema(schema, lines) {
 // Sections
 // ---------------------------------------------------------------------------
 
-function fencedJson(value, lines) {
+/** Fenced JSON block, or null when there is nothing to show or it is too big. */
+function fencedJson(value) {
   const json = JSON.stringify(value, null, 2);
-  if (json === undefined || json.length > MAX_EXAMPLE_CHARS) return;
-  lines.push('```json', json, '```');
+  if (json === undefined || json.length > MAX_EXAMPLE_CHARS) return null;
+  return ['```json', json, '```'];
+}
+
+/**
+ * Push a labelled example. The heading goes in only when the block renders,
+ * so an example over MAX_EXAMPLE_CHARS leaves no empty "Example:" behind.
+ */
+function pushExample(label, value, lines) {
+  const block = fencedJson(value);
+  if (!block) return;
+  lines.push('', label, '', ...block);
 }
 
 /** Examples attached to a media-type object ({example} or {examples: {..}}). */
 function renderExamples(media, lines) {
   if (media.example !== undefined) {
-    lines.push('', 'Example:', '');
-    fencedJson(media.example, lines);
+    pushExample('Example:', media.example, lines);
     return;
   }
   const entries = Object.entries(media.examples ?? {});
   for (const [name, entry] of entries) {
-    lines.push('', entries.length > 1 ? `Example (${name}):` : 'Example:', '');
-    fencedJson(entry?.value !== undefined ? entry.value : entry, lines);
+    pushExample(
+      entries.length > 1 ? `Example (${name}):` : 'Example:',
+      entry?.value !== undefined ? entry.value : entry,
+      lines,
+    );
   }
 }
 
@@ -289,11 +302,9 @@ function renderRequestBody(op, lines) {
     if (media.example !== undefined || media.examples) {
       renderExamples(media, lines);
     } else if (media.schema?.example !== undefined) {
-      lines.push('', 'Example:', '');
-      fencedJson(media.schema.example, lines);
+      pushExample('Example:', media.schema.example, lines);
     } else if (op.jsonRequestBodyExample != null) {
-      lines.push('', 'Example:', '');
-      fencedJson(op.jsonRequestBodyExample, lines);
+      pushExample('Example:', op.jsonRequestBodyExample, lines);
     }
   }
 }
