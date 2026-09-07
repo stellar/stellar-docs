@@ -120,6 +120,20 @@ function propertyLine(name, schema, required) {
 
 const MAX_INLINE_EXAMPLE_CHARS = 300; // property examples are short; skip outliers
 
+/**
+ * JSON-encode an example for inline display, or return null when it is too long
+ * or carries a character we would have to escape inside a code span. `unsafe`
+ * is stricter in table cells, where a pipe or backslash breaks the row.
+ */
+function inlineExample(value, unsafe = /`/) {
+  if (value === undefined) return null;
+  const json = JSON.stringify(value);
+  if (json === undefined || json.length > MAX_INLINE_EXAMPLE_CHARS || unsafe.test(json)) {
+    return null;
+  }
+  return json;
+}
+
 /** Trailing detail bullets (enum/default/example/pattern/size) for a schema node. */
 function detailLines(schema, pad, lines) {
   if (schema.enum) {
@@ -128,11 +142,9 @@ function detailLines(schema, pad, lines) {
   if (schema.default !== undefined) {
     lines.push(`${pad}Default: \`${JSON.stringify(schema.default)}\`.`);
   }
-  if (schema.example !== undefined) {
-    const example = JSON.stringify(schema.example);
-    if (example !== undefined && example.length <= MAX_INLINE_EXAMPLE_CHARS && !example.includes('`')) {
-      lines.push(`${pad}Example: \`${example}\`.`);
-    }
+  const example = inlineExample(schema.example);
+  if (example) {
+    lines.push(`${pad}Example: \`${example}\`.`);
   }
   if (schema.pattern && !schema.pattern.includes('`')) {
     lines.push(`${pad}Pattern: \`${schema.pattern}\`.`);
@@ -245,6 +257,14 @@ function renderParameters(parameters, lines) {
       if (param.schema?.default !== undefined) {
         desc += ` Default: \`${JSON.stringify(param.schema.default)}\`.`;
       }
+      // A parameter carries its example either on itself or on its schema.
+      const example = inlineExample(
+        param.example !== undefined ? param.example : param.schema?.example,
+        /[`|\\]/,
+      );
+      if (example) {
+        desc += `${desc ? ' ' : ''}Example: \`${example}\`.`;
+      }
       lines.push(`| \`${param.name}\` | ${typeLabel(param.schema)} | ${param.required ? 'yes' : 'no'} | ${desc} |`);
     }
   }
@@ -253,6 +273,8 @@ function renderParameters(parameters, lines) {
 function renderRequestBody(op, lines) {
   const body = op.requestBody;
   lines.push('', `## Request body${body.required ? ' (required)' : ''}`);
+  const bodyDesc = inlineText(body.description);
+  if (bodyDesc) lines.push('', bodyDesc);
   for (const [contentType, media] of Object.entries(body.content ?? {})) {
     lines.push('', `Content type: \`${contentType}\``, '');
     if (media.schema) renderSchema(media.schema, lines);
@@ -419,6 +441,11 @@ function patchComponentPages() {
   for (const source of sources) {
     const src = readFileSync(source, 'utf8');
     if (!UNWRAP_COMPONENTS.some((name) => src.includes(`<${name}`))) continue;
+    // scripts/rewrite_md_code_examples.mjs runs after this one and regenerates
+    // the twin of every <CodeExample> page from source, unwrapping all four
+    // components. Writing those twins here would only be overwritten, so it
+    // owns them.
+    if (/<CodeExample\b/.test(src)) continue;
     candidates++;
 
     const twin = proseTwinPath(source);
