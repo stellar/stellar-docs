@@ -134,7 +134,7 @@ function inlineExample(value, unsafe = /`/) {
   return json;
 }
 
-/** Trailing detail bullets (enum/default/example/pattern/size) for a schema node. */
+/** Trailing detail bullets (enum/default/example/pattern/bounds) for a schema node. */
 function detailLines(schema, pad, lines) {
   if (schema.enum) {
     lines.push(`${pad}Possible values: ${schema.enum.map((v) => `\`${v}\``).join(', ')}.`);
@@ -149,12 +149,17 @@ function detailLines(schema, pad, lines) {
   if (schema.pattern && !schema.pattern.includes('`')) {
     lines.push(`${pad}Pattern: \`${schema.pattern}\`.`);
   }
-  if (schema.minItems !== undefined || schema.maxItems !== undefined) {
-    const bounds = [];
-    if (schema.minItems !== undefined) bounds.push(`min ${schema.minItems}`);
-    if (schema.maxItems !== undefined) bounds.push(`max ${schema.maxItems}`);
-    lines.push(`${pad}Items: ${bounds.join(', ')}.`);
-  }
+  bounds('Items', schema.minItems, schema.maxItems, pad, lines);
+  bounds('Length', schema.minLength, schema.maxLength, pad, lines);
+  bounds('Properties', schema.minProperties, schema.maxProperties, pad, lines);
+}
+
+/** "Items: min 1, max 5." — skipped when the schema sets neither bound. */
+function bounds(label, min, max, pad, lines) {
+  const parts = [];
+  if (min !== undefined) parts.push(`min ${min}`);
+  if (max !== undefined) parts.push(`max ${max}`);
+  if (parts.length) lines.push(`${pad}${label}: ${parts.join(', ')}.`);
 }
 
 /**
@@ -207,13 +212,16 @@ function renderChildren(schema, depth, lines) {
 function renderSchema(schema, lines) {
   if (!schema || typeof schema !== 'object') return;
   const topDesc = inlineText(schema.description);
-  const isLeaf = !schema.properties && !schema.items && !schema.allOf && !schema.oneOf && !schema.anyOf;
-  if (isLeaf || schema.oneOf || schema.anyOf) {
+  // An object root introduces itself through its property bullets. Anything
+  // else — a leaf, an array, a set of variants — loses its type unless we name
+  // it, because renderChildren only ever emits the children.
+  const isObjectRoot = Boolean(schema.properties || schema.allOf) && !schema.items;
+  if (isObjectRoot) {
+    if (topDesc) lines.push(topDesc);
+  } else {
     lines.push(`Schema: ${typeLabel(schema)}${topDesc ? ` — ${topDesc}` : ''}`);
-    detailLines(schema, '', lines);
-  } else if (topDesc) {
-    lines.push(topDesc);
   }
+  detailLines(schema, '', lines);
   renderChildren(schema, 0, lines);
 }
 
