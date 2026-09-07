@@ -184,7 +184,14 @@ function renderChildren(schema, depth, lines) {
     if (schema[key]) {
       schema[key].forEach((variant, i) => {
         const name = variant?.title ?? `variant ${i + 1}`;
-        lines.push(`${pad}- ${key === 'oneOf' ? 'One of' : 'Any of'}: **${name}** — ${typeLabel(variant)}`);
+        const parts = [
+          `${pad}- ${key === 'oneOf' ? 'One of' : 'Any of'}: **${name}** — ${typeLabel(variant)}`,
+        ];
+        // Untitled variants carry their meaning in the description, so dropping
+        // it leaves "variant 1 — string" and no way to tell the options apart.
+        const desc = inlineText(variant?.description);
+        if (desc) parts.push('—', desc);
+        lines.push(parts.join(' '));
         renderChildren(variant, depth + 1, lines);
       });
       return;
