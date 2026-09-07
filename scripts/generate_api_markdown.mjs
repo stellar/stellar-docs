@@ -202,9 +202,14 @@ function renderChildren(schema, depth, lines) {
     detailLines(child, `${pad}  `, lines);
     renderChildren(child, depth + 1, lines);
   }
-  if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+  // `additionalProperties` is a schema or the bare `true` (Horizon's
+  // Problem.extras). typeLabel() answers "any" for the bare form, which has no
+  // children to walk.
+  if (schema.additionalProperties) {
     lines.push(`${pad}- (additional properties) — ${typeLabel(schema.additionalProperties)}`);
-    renderChildren(schema.additionalProperties, depth + 1, lines);
+    if (typeof schema.additionalProperties === 'object') {
+      renderChildren(schema.additionalProperties, depth + 1, lines);
+    }
   }
 }
 
