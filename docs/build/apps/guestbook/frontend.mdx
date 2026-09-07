@@ -51,9 +51,9 @@ async function signup() {
   console.log("signing up");
   try {
     // The createWallet function takes two strings, an app name and a user name.
-    // It returns the public key of the passkey, a contract address which will
-    // be the user's wallet, and a built transaction (ready to submit) to create
-    // the smart wallet on-chain.
+    // It returns the ID of the passkey, a contract address which will be the
+    // user's wallet, and a signed transaction (ready to submit) to create the
+    // smart wallet on-chain.
     const { keyIdBase64, contractId, signedTx } = await account.createWallet(
       "Ye Olde Guestbook",
       "User Name Goes Here",
@@ -68,6 +68,12 @@ async function signup() {
     if (!signedTx) {
       error(500, {
         message: "built transaction missing",
+      });
+    }
+
+    if (!user.contractAddress) {
+      error(500, {
+        message: "missing user contract address",
       });
     }
 
@@ -301,8 +307,12 @@ import { user } from '$lib/state/UserState.svelte';
 import { account, send } from '$lib/passkeyClient';
 
 async function signGuestbook() {
+  isLoading = true;
   try {
-    isLoading = true;
+    if (!user.keyId || !user.contractAddress) {
+      throw 'user missing keyId';
+    }
+
     const at = await ye_olde_guestbook.write_message({
       author: user.contractAddress,
       title: messageTitle,
@@ -425,6 +435,12 @@ import { networks, type Message } from 'ye_olde_guestbook';
 
 import { rpc } from '$lib/passkeyClient';
 
+// The contract stores the message ID in the ledger key, not in the Message
+// struct. So, we add the ID to the type we return to the frontend.
+interface MessageWithIndex extends Message {
+  id: number;
+}
+
 // First, we need a function to build these LedgerKeys so we can query the network
 function buildMessageLedgerKey(messageId: number) {
   const ledgerKey = xdr.LedgerKey.contractData(
@@ -466,7 +482,7 @@ export async function getMessageCount() {
 // Now we can iterate and make ledger key for each relevant message,
 // and add that to our getLedgerEntries query. The maximum number of ledger entries
 // to query is 200.
-export async function getAllMessages(): Promise<Message[]> {
+export async function getAllMessages(): Promise<MessageWithIndex[]> {
   const totalCount = await getMessageCount();
   const ledgerKeysArray = [];
   for (let messageId = 2; messageId <= totalCount; messageId++) {
@@ -475,9 +491,12 @@ export async function getAllMessages(): Promise<Message[]> {
 
   const result = await rpc.getLedgerEntries(...ledgerKeysArray);
   const messages = result.entries.map((message) => {
-    return {
-      ...scValToNative(message.val.contractData().val()),
-    };
+    // the key is a vector, like ['Message', 2], so the ID is the second element
+    const key = scValToNative(message.val.contractData().key())[1];
+    const val = scValToNative(message.val.contractData().val()) as MessageWithIndex;
+    val.id = key;
+
+    return val;
   });
 
   return messages;
@@ -570,28 +589,30 @@ let { message, messageId }: Props = $props();
 
 let isEditing: boolean = $state(false);
 let isLoading: boolean = $state(false);
-let messageTitle = $state(message.title);
-let messageText = $state(message.text);
 
 // Store the original values from the contract's storage. The form will be "bound"
 // to these values later on, when the user is modifying the entry.
-let messageTitle = message.title;
-let messageText = message.text;
+let messageTitle = $state(message.title);
+let messageText = $state(message.text);
 
 /**
  * If the user chooses to cancel the editing the message, we should revert the
  * message state back to the original values.
  */
 const cancelEdit = () => {
-    messageTitle = message.title;
-    messageText = message.text;
-    editing = false;
+  messageTitle = message.title;
+  messageText = message.text;
+  isEditing = false;
 };
 
 const submitEdit = async () => {
   console.log('submitting message edit');
   isLoading = true;
   try {
+    if (!user.keyId) {
+      throw 'user missing keyId';
+    }
+
     const at = await ye_olde_guestbook.edit_message({
       message_id: messageId,
       title: messageTitle,
