@@ -69,16 +69,12 @@ For signup, we call `account.createWallet()`. Under the hood, Smart Account Kit:
 
 ```svelte title="src/lib/components/ConnectButtons/Signup.svelte"
 <script lang="ts">
-    import { toaster } from '$lib/toaster';
     import { account, userDismissedPasskey } from '$lib/smartAccountClient';
     import { PUBLIC_NATIVE_TOKEN_CONTRACT } from '$env/static/public';
-    import { wallet } from '$lib/state/UserState.svelte';
 
     let username: string = $state('');
-    let isSigningUp: boolean = $state(false);
 
     async function signup() {
-        isSigningUp = true;
         try {
             const { fundResult, submitResult } = await account.createWallet(
                 'Ye Olde Guestbook',
@@ -95,42 +91,30 @@ For signup, we call `account.createWallet()`. Under the hood, Smart Account Kit:
                 },
             );
 
+            // No wallet means there's nothing to log in to, so this one is fatal.
             if (!submitResult?.success) {
                 throw submitResult?.error ?? new Error('failed to deploy smart account');
             }
 
-            console.log('[signup] contractAddress', wallet.contractAddress);
-
-            // Funding is a convenience, not a reason to fail signup.
+            // An empty wallet is still a wallet. There's a "Fund Wallet" button
+            // in the settings menu if this part didn't take.
             if (fundResult && !fundResult.success) {
                 console.warn('[fund]', fundResult.error);
             }
         } catch (err: unknown) {
-            if (userDismissedPasskey(err)) {
-                toaster.warning({
-                    title: 'Cancelled',
-                    description: 'Passkey prompt dismissed.',
-                });
-                return;
-            }
-
+            // A dismissed passkey prompt isn't an error worth shouting about.
+            if (userDismissedPasskey(err)) return;
             console.error('[signup]', err);
-            toaster.error({
-                title: 'Error',
-                description: 'Something went wrong signing up. Please try again later.',
-            });
-        } finally {
-            isSigningUp = false;
         }
     }
+
+    // ...omitted: the toasts, and the `isSigningUp` flag driving the spinner
 </script>
 ```
 
-Two details in there are worth dwelling on, because they're the kind of thing that's obvious in hindsight and baffling in the moment.
+The thing to take from that is `createWallet` reporting **two** outcomes which don't deserve equal treatment: a failed deploy leaves the user with nothing, while a failed top-up leaves them with a working (if empty) smart account. Treating those the same way would mean failing signup over play money.
 
-The first is that `createWallet` reports **two** outcomes, and they don't deserve equal treatment. If `submitResult` failed, the wallet was never deployed and there's nothing to log in to, so we throw. If `fundResult` failed, the user has a perfectly good smart account that just happens to be empty, and there's a "Fund Wallet" button in the settings menu they can hit later. Failing signup over that would be rude, so we log a warning and carry on.
-
-The second is `userDismissedPasskey`. A user who opens the passkey prompt and thinks better of it has not encountered an error, and telling them "something went wrong" is a small lie that makes your app feel broken. Checking for the dismissal first (and every passkey flow in this app does) is the difference between a gentle "Cancelled" toast and a scary red one.
+`userDismissedPasskey` earns its keep for a similar reason. A user who opens the passkey prompt and thinks better of it has not encountered an error, and telling them "something went wrong" is a small lie that makes your app feel broken. Every passkey flow in this app checks for the dismissal first.
 
 #### User login
 
@@ -139,8 +123,6 @@ For returning users, `account.connectWallet({ prompt: true })` asks the browser'
 ```svelte title="src/lib/components/ConnectButtons/Login.svelte"
 <script lang="ts">
     import { account, userDismissedPasskey } from '$lib/smartAccountClient';
-    import { toaster } from '$lib/toaster';
-    import { wallet } from '$lib/state/UserState.svelte';
 
     async function login() {
         try {
@@ -148,23 +130,13 @@ For returning users, `account.connectWallet({ prompt: true })` asks the browser'
             // SmartAccountKit uses the selected credential to look up the
             // matching smart account contract via its IndexedDB index.
             await account.connectWallet({ prompt: true });
-            console.log('[login] contractAddress', wallet.contractAddress);
         } catch (err: unknown) {
-            if (userDismissedPasskey(err)) {
-                toaster.warning({
-                    title: 'Cancelled',
-                    description: 'Passkey prompt dismissed.',
-                });
-                return;
-            }
-
+            if (userDismissedPasskey(err)) return;
             console.error('[login]', err);
-            toaster.error({
-                title: 'Error',
-                description: 'Something went wrong logging in. Please try again later.',
-            });
         }
     }
+
+    // ...omitted: the same toast handling as Signup
 </script>
 
 <button class="btn preset-tonal-primary" onclick={login}>Login</button>
@@ -182,10 +154,7 @@ async function logout() {
     await account.disconnect();
   } catch (err: unknown) {
     console.error("[logout]", err);
-    toaster.error({
-      title: "Error",
-      description: "Something went wrong logging out. Please try again later.",
-    });
+    // ...omitted: the error toast
   }
 }
 ```
@@ -208,11 +177,7 @@ async function getBalance() {
     balance = (await getNativeBalance(wallet.contractAddress!)).toString();
   } catch (err: unknown) {
     console.error("[balance]", err);
-    toaster.error({
-      title: "Error",
-      description:
-        "Something went wrong checking your balance. Please try again later.",
-    });
+    // ...omitted: the error toast
   }
 }
 ```
@@ -287,34 +252,7 @@ The recipient here is `networks.testnet.contractId`, which is the guestbook cont
 
 ## Sign the guestbook
 
-Now the main event: writing a guestbook entry. The page has a simple form with title and message inputs:
-
-```svelte title="src/routes/sign/+page.svelte"
-<label class="label">
-    <span class="label-text">Title</span>
-    <input bind:value={messageTitle} class="input" type="text" placeholder="Title" />
-</label>
-
-<label class="label">
-    <span class="label-text">Message</span>
-    <textarea
-        bind:value={messageText}
-        class="textarea"
-        rows="4"
-        placeholder="Write your message here"></textarea>
-</label>
-
-<button
-    onclick={signGuestbook}
-    type="button"
-    class="btn preset-filled-primary-500"
-    disabled={signButtonDisabled}
->
-    <span>Sign!</span>
-</button>
-```
-
-The `signGuestbook` function is where the contract call happens:
+Now the main event: writing a guestbook entry. The page itself is an ordinary form, with inputs bound to `messageTitle` and `messageText` and a Sign button wired to the function below, so we'll skip the markup and go straight to where the contract call happens:
 
 ```ts title="src/routes/sign/+page.svelte"
 import { goto } from "$app/navigation";
@@ -322,12 +260,10 @@ import { resolve } from "$app/paths";
 import { Api } from "@stellar/stellar-sdk/rpc";
 
 import { account, rpc } from "$lib/smartAccountClient";
-import { toaster } from "$lib/toaster";
 import { wallet } from "$lib/state/UserState.svelte";
 import ye_olde_guestbook from "$lib/contracts/ye_olde_guestbook";
 
 async function signGuestbook() {
-  isLoading = true;
   try {
     if (!wallet.contractAddress) {
       throw "user missing contract address";
@@ -355,21 +291,11 @@ async function signGuestbook() {
     }
     const messageId = response.returnValue.u32();
 
-    toaster.success({
-      title: "Success",
-      description: "Huzzah!! You signed my guestbook! Thanks.",
-    });
     goto(resolve(`/read/${messageId}`));
   } catch (err: unknown) {
     console.error("[sign]", err);
-    toaster.error({
-      title: "Error",
-      description:
-        "Something went wrong signing the guestbook. Please try again later.",
-    });
-  } finally {
-    isLoading = false;
   }
+  // ...omitted: success and error toasts, and the isLoading flag
 }
 ```
 
@@ -419,19 +345,7 @@ export const load: PageServerLoad = async ({ params }) => {
 
 `read_message` is a read-only function, so the bindings client simulates it and we can use the result directly. No signing and no submission needed. The `result.unwrap()` call is there because our contract function returns a Rust `Result`, which the bindings faithfully carry across into TypeScript.
 
-The page component then displays the message using a shared `GuestbookMessage` component:
-
-```svelte title="src/routes/read/[id]/+page.svelte"
-<script lang="ts">
-    import GuestbookMessage from '$lib/components/GuestbookMessage.svelte';
-    import type { PageData } from './$types';
-
-    let { data }: { data: PageData } = $props();
-</script>
-
-<h1 class="h1">Read Message {data.id}</h1>
-<GuestbookMessage message={data.message} messageId={parseInt(data.id)} />
-```
+The page component then hands that `message` straight to a shared `GuestbookMessage` component for display, which is where we're headed next.
 
 ### Read all entries
 
@@ -478,7 +392,6 @@ import { account } from "$lib/smartAccountClient";
 import { wallet } from "$lib/state/UserState.svelte";
 
 const submitEdit = async () => {
-  isLoading = true;
   try {
     if (!wallet.contractAddress) {
       throw "user missing contract address";
@@ -495,22 +408,10 @@ const submitEdit = async () => {
     if (!result.success) {
       throw result.error;
     }
-
-    toaster.success({
-      title: "Success",
-      description: "Message edited successfully.",
-    });
   } catch (err: unknown) {
     console.error("[edit]", err);
-    toaster.error({
-      title: "Error",
-      description:
-        "Something went wrong editing your message. Please try again later.",
-    });
-  } finally {
-    isEditing = false;
-    isLoading = false;
   }
+  // ...omitted: the toasts, and the isEditing/isLoading flags
 };
 ```
 
