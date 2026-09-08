@@ -14,6 +14,141 @@ RPC's JSON-RPC API uses JSON-RPC 2.0 to communicate with clients. Requests to th
 
 Both formats utilise JSON for the overall structure which are relatively simple and do not require any special client code, although there are client [SDKs] available. Some values contained within are XDR encoded and can be decoded using Stellar [SDKs].
 
+## Response Differences
+
+The [endpoint mapping](#endpoint-mapping) below pairs each Horizon endpoint with an RPC method, but the two responses do not have the same shape. Horizon curates the ledger for you. RPC hands you the ledger entry as the protocol stores it. Plan for these differences before you swap one call for the other.
+
+| Concern | Horizon | RPC |
+| --- | --- | --- |
+| Shape | One aggregated resource per endpoint | One ledger entry per requested key |
+| Amounts | Decimal string with seven places, such as `"1252.7872975"` | Signed 64-bit integer of stroops, such as `"12527872975"` |
+| Encoding | Parsed JSON fields | Base64 XDR, or JSON when you pass `xdrFormat` |
+| Flags and thresholds | Named booleans and named thresholds | A raw `uint32` bitmask and a four-byte hex string |
+| Entry not found | HTTP `404` | HTTP `200`, and the key is absent from `entries` |
+| Collections | HAL `_links` and a `paging_token` for paging | No paging, and a limit of 200 keys per call |
+
+### Example: Account Balances
+
+Horizon's [`GET /accounts/{address}`] response is an aggregation. It joins the account entry with the account's trustline entries. The [`AccountEntry`] structure holds no trustlines of its own. It holds only a count of the account's sub-entries. So one Horizon call becomes one [`getLedgerEntries`] call with an account key plus one trustline key per asset, and you must already know each asset.
+
+The example below uses a Testnet account. A [Testnet data reset](../../networks/README.mdx#testnet-and-futurenet-data-reset) clears it, so use your own account and asset to follow along. This Horizon request returns both balances at once:
+
+```bash
+curl "https://horizon-testnet.stellar.org/accounts/GA2242THTLFWPCW2SF3TTLDWJ3C543UUNFTFIMDJUZYXNW2EMEAXZBRH"
+```
+
+Horizon answers with one resource. The response below is trimmed to the fields this comparison uses:
+
+```json
+{
+  "subentry_count": 1,
+  "thresholds": {
+    "low_threshold": 0,
+    "med_threshold": 0,
+    "high_threshold": 0
+  },
+  "flags": {
+    "auth_required": false,
+    "auth_revocable": false,
+    "auth_immutable": false,
+    "auth_clawback_enabled": false
+  },
+  "balances": [
+    {
+      "balance": "1252.7872975",
+      "limit": "922337203685.4775807",
+      "is_authorized": true,
+      "asset_type": "credit_alphanum4",
+      "asset_code": "USDC",
+      "asset_issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+    },
+    {
+      "balance": "9009.2998203",
+      "asset_type": "native"
+    }
+  ],
+  "signers": [
+    {
+      "weight": 1,
+      "key": "GA2242THTLFWPCW2SF3TTLDWJ3C543UUNFTFIMDJUZYXNW2EMEAXZBRH",
+      "type": "ed25519_public_key"
+    }
+  ]
+}
+```
+
+The same data over RPC takes two keys. The first key is the account, the second is the USDC trustline. See [Building ledger keys](./rpc/api-reference/methods/getLedgerEntries.mdx#building-ledger-keys) for how to build each one.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getLedgerEntries",
+  "params": {
+    "keys": [
+      "AAAAAAAAAAA1rmpnmstnitqRdzmsdk7F3m6UaWZUMGmmcXbbRGEBfA==",
+      "AAAAAQAAAAA1rmpnmstnitqRdzmsdk7F3m6UaWZUMGmmcXbbRGEBfAAAAAFVU0RDAAAAAEI+fQXy7K+/7BkrIVo/G+lq7bjY5wJUq+NBPgIH3lay"
+    ],
+    "xdrFormat": "json"
+  }
+}
+```
+
+RPC answers with one entry per key. This is the `result` object of that response, trimmed the same way:
+
+```json
+{
+  "entries": [
+    {
+      "dataJson": {
+        "account": {
+          "balance": "90092998203",
+          "num_sub_entries": 1,
+          "flags": 0,
+          "thresholds": "01000000",
+          "signers": []
+        }
+      },
+      "lastModifiedLedgerSeq": 1397061
+    },
+    {
+      "dataJson": {
+        "trustline": {
+          "balance": "12527872975",
+          "limit": "9223372036854775807",
+          "flags": 1
+        }
+      },
+      "lastModifiedLedgerSeq": 3657583
+    }
+  ],
+  "latestLedger": 4561910
+}
+```
+
+Both responses describe the same account. Read them side by side:
+
+- Horizon's `native` balance of `9009.2998203` is the account entry's `balance` of `90092998203` stroops.
+- Horizon's USDC balance of `1252.7872975` is the trustline entry's `balance` of `12527872975` stroops. It is a separate entry, so it needs a separate key.
+- Horizon's `limit` of `922337203685.4775807` is the trustline entry's `limit` of `9223372036854775807`, the largest value a 64-bit amount can hold.
+- Horizon's `thresholds` object splits the entry's four-byte `thresholds` string. That string is `[weight of master|low|medium|high]`, so `"01000000"` means a master key weight of `1` and no other threshold set.
+- Horizon's `signers` array adds the master key, which the raw account entry never lists.
+- Horizon's `flags` booleans expand the entry's `flags` bitmask. The trustline's `flags` value of `1` is `AUTHORIZED_FLAG`, which Horizon reports as `is_authorized`.
+
+:::note
+
+Pass `"xdrFormat": "json"` to read an entry without an SDK, as the responses above do. Do not build an application on that JSON. The [`getLedgerEntries`] specification warns that its shape changes whenever the underlying XDR changes. Decode the default base64 XDR with one of the [SDKs] instead.
+
+:::
+
+### Amounts Are Raw Integers
+
+Every classic amount on the ledger is a signed 64-bit integer of stroops. Horizon divides it by ten million and returns a string with seven decimal places. RPC returns the integer itself. Divide it in your own code, and use a big-number type so you do not lose precision. See [Amount precision](../../learn/fundamentals/stellar-data-structures/assets.mdx#amount-precision).
+
+### A Missing Entry Is Not an Error
+
+Horizon answers `404` when a resource does not exist. RPC answers `200` and leaves the key out of `entries`, so a request for two keys can return one entry. Match each returned entry back to its own key rather than to the position you sent it in.
+
 ## Endpoint Mapping
 
 Applications that use the following Horizon endpoints can typically migrate directly to the RPC using the referenced methods.
@@ -41,7 +176,7 @@ Endpoints without mappings do not have a direct replacement in the RPC API. To b
 | [`GET /operations/{id}/effects`] | No direct RPC equivalent | Retrieve the operation by ID (as above) and then parse its associated transaction and events for effects. | [Effects](../analytics/hubble/analyst-guide/queries-for-horizon-like-data.mdx#effects) |
 | [`GET /fee_stats`] | [`getFeeStats`] [`simulateTransaction`] | Indexed data not recommended. | [Fee Stats](../analytics/hubble/analyst-guide/queries-for-horizon-like-data.mdx#fee-stats) |
 | [`GET /accounts`] | No direct RPC equivalent | Ingest all ledger history via [`getLedgers`] to build and maintain a complete list of accounts. | [Accounts](../analytics/hubble/analyst-guide/queries-for-horizon-like-data.mdx#accounts) |
-| [`GET /accounts/{address}`] | [`getLedgerEntries`] | Use [`getLedgerEntries`] for a specific account address. Note: RPC will not provide trust line information associated with the account directly, as Horizon does. You will need to derive this from ledger entries. | [Accounts](../analytics/hubble/analyst-guide/queries-for-horizon-like-data.mdx#accounts) |
+| [`GET /accounts/{address}`] | [`getLedgerEntries`] | Use [`getLedgerEntries`] for a specific account address. Note: RPC will not provide trust line information associated with the account directly, as Horizon does. You will need to derive this from ledger entries. See [Example: Account Balances](#example-account-balances). | [Accounts](../analytics/hubble/analyst-guide/queries-for-horizon-like-data.mdx#accounts) |
 | [`GET /claimable_balances`] | No direct RPC equivalent | Ingest all ledger history via [`getLedgers`] to build and maintain a complete list of claimable balances. | [Claimable Balances](../analytics/hubble/analyst-guide/queries-for-horizon-like-data.mdx#claimable-balances) |
 | [`GET /claimable_balances/{id}`] | [`getLedgerEntries`] | Use [`getLedgerEntries`] to retrieve a specific claimable balance by ID. | [Claimable Balances](../analytics/hubble/analyst-guide/queries-for-horizon-like-data.mdx#claimable-balances) |
 | [`GET /claimable_balances/{id}/transactions`] | No direct RPC equivalent | Trace transactions that interact with the specific claimable balance ID from their historical ledger data. | [Claimable Balances](../analytics/hubble/analyst-guide/queries-for-horizon-like-data.mdx#claimable-balances) |
@@ -78,6 +213,7 @@ That is still narrower than Horizon's effects. Anything CAP-67 does not model, s
 :::
 
 [CAP-67]: https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md
+[`AccountEntry`]: https://github.com/stellar/stellar-xdr/blob/v28.0/Stellar-ledger-entries.x#L190
 [Horizon]: ./horizon/README.mdx
 [RPC]: ./rpc/README.mdx
 [Horizon's REST-like API]: ./horizon/api-reference/README.mdx
