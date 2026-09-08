@@ -154,6 +154,21 @@ const config: Config = {
         googleTagManager: {
           containerId: "GTM-M2JLH37",
         },
+        sitemap: {
+          // Files under static/ bypass the Docusaurus build, so pages served
+          // from there never appear in the generated sitemap. /launch/usdt0 is
+          // a permanent page and was invisible to crawlers without this.
+          createSitemapItems: async ({
+            defaultCreateSitemapItems,
+            ...rest
+          }) => {
+            const items = await defaultCreateSitemapItems(rest);
+            return [
+              ...items,
+              { url: "https://developers.stellar.org/launch/usdt0" },
+            ];
+          },
+        },
       } satisfies Preset.Options,
     ],
   ],
