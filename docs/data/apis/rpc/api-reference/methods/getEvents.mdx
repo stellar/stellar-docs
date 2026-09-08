@@ -10,6 +10,39 @@ import rpcSpec from "@site/static/stellar-rpc.openrpc.json";
   method={rpcSpec.methods.filter((meth) => meth.name === "getEvents")[0]}
 />
 
+### Event ordering
+
+`getEvents` returns events in ascending order of their `id`. The `id` holds a [TOID](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0035.md#specification) and an event index, so the sort key is the ledger sequence, then the transaction index, then the operation index, then the event index.
+
+Protocol 23 keeps events in two separate XDR fields. `TransactionMetaV4.events` holds the transaction-level events. Each `OperationMetaV2.events` holds the events of one operation. A transaction-level event also carries a [stage](https://github.com/stellar/stellar-xdr/blob/v23.0/Stellar-ledger.x#L488-L498), because these events happen at different points of the ledger apply flow. Operation events all happen when the transaction is applied.
+
+Stellar RPC re-derives the execution order of Stellar Core and builds each cursor from it:
+
+| XDR field | Stage | Transaction index | Operation index |
+| --- | --- | --- | --- |
+| `TransactionMetaV4.events` | `BEFORE_ALL_TXS` | `0` | `0` |
+| `OperationMetaV2.events` | not applicable | index of the transaction | index of the operation |
+| `TransactionMetaV4.events` | `AFTER_TX` | index of the transaction | `4095` |
+| `TransactionMetaV4.events` | `AFTER_ALL_TXS` | `1048575` | `0` |
+
+A TOID gives 12 bits to the operation index and 20 bits to the transaction index. `4095` is therefore the largest operation index, which sorts an `AFTER_TX` event after every operation of its transaction. `1048575` is the largest transaction index, which sorts an `AFTER_ALL_TXS` event after every transaction of the ledger. Transaction indexes start at `1`, so index `0` sorts before every transaction of the ledger.
+
+Events in one ledger come back in this order:
+
+1. Every fee charge event.
+2. For each transaction, in transaction order: its operation events, then its post-transaction events.
+3. Every fee refund event.
+
+To reproduce this order from meta XDR, sort your own events by the same four values. The [`getTransaction`](./getTransaction.mdx) and [`getTransactions`](./getTransactions.mdx) methods return the two XDR fields separately, as `transactionEventsXdr` and `contractEventsXdr`.
+
+:::note
+
+`transactionIndex` and `operationIndex` come from the cursor. On a transaction-level event they hold the sort values in the table above, not a real position in the ledger. Read `transactionHash` to find the transaction that a fee event belongs to.
+
+:::
+
+Fee events are the only transaction-level events today. Stellar Core emits the fee charge at the `BEFORE_ALL_TXS` stage. It emits a Soroban fee refund at the `AFTER_ALL_TXS` stage. Both are `contract` events from the native asset contract, and their topics are the symbol `fee` and the fee source address. A refund carries a negative amount. Stellar Core emits no event when the amount is zero.
+
 ### Using the Lab
 
 Let's test the example request for **Native XLM Transfer Events** directly on [the Stellar Laboratory](https://laboratory.stellar.org).
