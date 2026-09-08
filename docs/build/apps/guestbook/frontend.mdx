@@ -7,22 +7,22 @@ So, we now have all the pieces in place, and we're ready to connect the dots.
 
 ## Account type things
 
-Since we've just gone through the smart-account setup, let's begin there. We'll create the functions for signup, login, and the "profile menu" that drops down when a user is logged in (with buttons for viewing the wallet on a block explorer, sending a donation, requesting more Testnet funds, etc.).
+Since we've just gone through the smart account setup, let's begin there. We'll create the functions for signup, login, and the "profile menu" that drops down when a user is logged in (with buttons for viewing the wallet on a block explorer, sending a donation, requesting more Testnet funds, etc.).
 
 :::info
 
-We're using [Svelte state](https://svelte.dev/docs/svelte/$state) to keep the user's smart-account contract address and credential ID in a little store. Your implementation may differ depending on your frontend, state management, and project design. Draw inspiration from the pattern rather than the exact code.
+We're using [Svelte state](https://svelte.dev/docs/svelte/$state) to keep track of the user's smart account address, in the `wallet` object we built on the [previous page](./setup-passkeys.mdx#tracking-the-connected-wallet). Your implementation may differ depending on your frontend, state management, and project design. Draw inspiration from the pattern rather than the exact code.
 
 :::
 
 ### Connect Buttons setup
 
-The `ConnectButtons.svelte` component shows either the Signup/Login buttons (when logged out) or a Settings popover (when logged in). It also silently reconnects on page load if we have a saved credential ID:
+The `ConnectButtons.svelte` component shows either the Signup and Login buttons (when logged out) or the Settings popover (when logged in). On mount, it also tries to reconnect a returning user:
 
 ```svelte title="src/lib/components/ConnectButtons/ConnectButtons.svelte"
 <script lang="ts">
-    import { user } from '$lib/state/UserState.svelte';
-    import { account } from '$lib/passkeyClient';
+    import { wallet } from '$lib/state/UserState.svelte';
+    import { account } from '$lib/smartAccountClient';
 
     import Settings from './Settings.svelte';
     import Signup from './Signup.svelte';
@@ -30,29 +30,22 @@ The `ConnectButtons.svelte` component shows either the Signup/Login buttons (whe
     import { onMount } from 'svelte';
 
     onMount(async () => {
-        if (!user.keyId) return;
-
         try {
-            // Silent reconnect using the credentialId saved in localStorage.
-            // No passkey prompt on page reload.
-            const result = await account.connectWallet({ credentialId: user.keyId });
-            if (!result) return;
+            // The kit keeps its own session, so this restores a returning user
+            // without prompting them for their passkey again.
+            const restored = await account.connectWallet();
 
-            user.set({
-                keyId: result.credentialId,
-                contractAddress: result.contractId,
-            });
-        } catch (err) {
-            // Credential is cached but SAK can't resolve it (stale session,
-            // different device, etc.). Keep the cached address so Settings
-            // still renders.
+            if (restored) {
+                console.log('[connected] contractAddress', wallet.contractAddress);
+            }
+        } catch (err: unknown) {
             console.warn('[connect] silent reconnect failed:', err);
         }
     });
 </script>
 
 <div class="flex space-x-1 md:space-x-2">
-    {#if !user.contractAddress}
+    {#if !wallet.contractAddress}
         <Signup />
         <Login />
     {:else}
@@ -61,74 +54,111 @@ The `ConnectButtons.svelte` component shows either the Signup/Login buttons (whe
 </div>
 ```
 
+Note that `connectWallet()` is called here with no arguments. That's deliberate: without `prompt: true`, the kit will restore an existing session if it finds one and otherwise do nothing at all. No passkey prompt fires on page load, which is exactly what you want. We never assign to `wallet.contractAddress` in this component either, because the kit emits `walletConnected` and our `Wallet` class is already listening.
+
 Let's dig into each interaction.
 
 #### User signup
 
-For signup, we call `account.createWallet(appName, userName, { autoSubmit: true })`. Under the hood, Smart Account Kit:
+For signup, we call `account.createWallet()`. Under the hood, Smart Account Kit:
 
 1. Runs the WebAuthn ceremony to create a new passkey on the user's device,
-2. Builds a deploy transaction for a fresh [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) using the passkey's public key as the initial signer, and
-3. Because `autoSubmit: true`, submits the deploy transaction through our `/api/relay` proxy.
-
-Once the wallet is deployed we call `fundContract(contractId)` to airdrop 25 Testnet XLM into it.
+2. Builds a deploy transaction for a fresh [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) using the passkey's public key as the initial signer,
+3. Submits that deploy transaction through our `/api/send` route (because we passed `autoSubmit: true`), and
+4. Tops the new account up with some Testnet XLM (because we passed `autoFund: true`).
 
 ```svelte title="src/lib/components/ConnectButtons/Signup.svelte"
 <script lang="ts">
     import { toaster } from '$lib/toaster';
-    import { account, fundContract } from '$lib/passkeyClient';
-    import { user } from '$lib/state/UserState.svelte';
+    import { account, userDismissedPasskey } from '$lib/smartAccountClient';
+    import { PUBLIC_NATIVE_TOKEN_CONTRACT } from '$env/static/public';
+    import { wallet } from '$lib/state/UserState.svelte';
 
     let username: string = $state('');
+    let isSigningUp: boolean = $state(false);
 
     async function signup() {
+        isSigningUp = true;
         try {
-            const result = await account.createWallet('Ye Olde Guestbook', username, {
-                autoSubmit: true,
-            });
+            const { fundResult, submitResult } = await account.createWallet(
+                'Ye Olde Guestbook',
+                username,
+                {
+                    // deploys the smart account through the relayer and
+                    // connects once the deployment has landed
+                    autoSubmit: true,
+                    // tops up the new account from Friendbot so the user has
+                    // some Testnet XLM to work with
+                    autoFund: true,
+                    // required when `autoFund: true`
+                    nativeTokenContract: PUBLIC_NATIVE_TOKEN_CONTRACT,
+                },
+            );
 
-            if (result.submitResult && !result.submitResult.success) {
-                throw new Error(result.submitResult.error ?? 'wallet deploy failed');
+            if (!submitResult?.success) {
+                throw submitResult?.error ?? new Error('failed to deploy smart account');
             }
 
-            user.set({
-                keyId: result.credentialId,
-                contractAddress: result.contractId,
-            });
+            console.log('[signup] contractAddress', wallet.contractAddress);
 
-            await fundContract(result.contractId);
-        } catch (err) {
-            console.error(err);
+            // Funding is a convenience, not a reason to fail signup.
+            if (fundResult && !fundResult.success) {
+                console.warn('[fund]', fundResult.error);
+            }
+        } catch (err: unknown) {
+            if (userDismissedPasskey(err)) {
+                toaster.warning({
+                    title: 'Cancelled',
+                    description: 'Passkey prompt dismissed.',
+                });
+                return;
+            }
+
+            console.error('[signup]', err);
             toaster.error({
                 title: 'Error',
                 description: 'Something went wrong signing up. Please try again later.',
             });
+        } finally {
+            isSigningUp = false;
         }
     }
 </script>
 ```
 
+Two details in there are worth dwelling on, because they're the kind of thing that's obvious in hindsight and baffling in the moment.
+
+The first is that `createWallet` reports **two** outcomes, and they don't deserve equal treatment. If `submitResult` failed, the wallet was never deployed and there's nothing to log in to, so we throw. If `fundResult` failed, the user has a perfectly good smart account that just happens to be empty, and there's a "Fund Wallet" button in the settings menu they can hit later. Failing signup over that would be rude, so we log a warning and carry on.
+
+The second is `userDismissedPasskey`. A user who opens the passkey prompt and thinks better of it has not encountered an error, and telling them "something went wrong" is a small lie that makes your app feel broken. Checking for the dismissal first (and every passkey flow in this app does) is the difference between a gentle "Cancelled" toast and a scary red one.
+
 #### User login
 
-For returning users, `account.connectWallet({ prompt: true })` prompts the browser's passkey picker, and Smart Account Kit uses the selected credential to look up the corresponding smart-account contract in IndexedDB.
+For returning users, `account.connectWallet({ prompt: true })` asks the browser's passkey picker to let the user choose a credential. Smart Account Kit takes the selected credential and resolves the smart account contract it belongs to.
 
 ```svelte title="src/lib/components/ConnectButtons/Login.svelte"
 <script lang="ts">
-    import { account } from '$lib/passkeyClient';
+    import { account, userDismissedPasskey } from '$lib/smartAccountClient';
     import { toaster } from '$lib/toaster';
-    import { user } from '$lib/state/UserState.svelte';
+    import { wallet } from '$lib/state/UserState.svelte';
 
     async function login() {
         try {
-            const result = await account.connectWallet({ prompt: true });
-            if (!result) throw new Error('wallet connection was cancelled');
+            // `prompt: true` asks the user's authenticator to pick a passkey;
+            // SmartAccountKit uses the selected credential to look up the
+            // matching smart account contract via its IndexedDB index.
+            await account.connectWallet({ prompt: true });
+            console.log('[login] contractAddress', wallet.contractAddress);
+        } catch (err: unknown) {
+            if (userDismissedPasskey(err)) {
+                toaster.warning({
+                    title: 'Cancelled',
+                    description: 'Passkey prompt dismissed.',
+                });
+                return;
+            }
 
-            user.set({
-                keyId: result.credentialId,
-                contractAddress: result.contractId,
-            });
-        } catch (err) {
-            console.error(err);
+            console.error('[login]', err);
             toaster.error({
                 title: 'Error',
                 description: 'Something went wrong logging in. Please try again later.',
@@ -136,123 +166,128 @@ For returning users, `account.connectWallet({ prompt: true })` prompts the brows
         }
     }
 </script>
+
+<button class="btn preset-tonal-primary" onclick={login}>Login</button>
 ```
 
-:::info
-
-No reverse-lookup indexer is needed for login. Earlier iterations of this tutorial used Mercury/Zephyr to resolve a passkey credential to a contract address; Smart Account Kit instead keeps that mapping in the browser's IndexedDB, which is written whenever a wallet is created or connected.
-
-:::
+This is the flow that used to need Mercury and a Zephyr program of your own. The credential-to-contract lookup still has to happen, it's just not your problem any more: the kit checks its local IndexedDB index first and falls back to a hosted indexer. Have a look back at the [prerequisites](./passkeys-prerequisites.mdx) if you skipped that part, because it's the one place where "I didn't configure it" is easy to mistake for "it isn't happening."
 
 #### User logout
 
-Logout is just clearing local state:
+Logging out is a single call. `account.disconnect()` clears the kit's stored session and emits `walletDisconnected`, which our `Wallet` class picks up to null out the address, which flips `ConnectButtons` back to showing Signup and Login. No manual state juggling and no page reload.
 
-```ts title="src/lib/state/UserState.svelte.ts"
-reset = () => {
-  this.keyId = null;
-  this.contractAddress = null;
-  window.localStorage.clear();
-  window.location.reload();
-};
+```ts title="src/lib/components/ConnectButtons/Settings.svelte"
+async function logout() {
+  try {
+    await account.disconnect();
+  } catch (err: unknown) {
+    console.error("[logout]", err);
+    toaster.error({
+      title: "Error",
+      description: "Something went wrong logging out. Please try again later.",
+    });
+  }
+}
 ```
 
 With those three flows our dapp is ready to onboard users.
 
 ### The "profile menu"
 
-When a user is logged in, the Settings popover shows their balance, their contract address, and buttons for funding, donating, and logging out. Two flows here are worth a look: reading the balance (no signing), and sending a donation (the first user-signed transaction in the tutorial).
+When a user is logged in, the Settings popover shows their balance, their contract address, and buttons for funding, donating, and logging out. Three of those are worth a look: reading a balance (no signing at all), topping the wallet up, and sending a donation (the first user-signed transaction in the tutorial).
 
 #### Reading the balance
 
-The SAC stores each holder's balance in a `ContractData` ledger entry keyed by `['Balance', ownerAddress]`. We read it directly with `rpc.getLedgerEntries` — no simulation, no signing, and importantly no `contract.Client.from()` (whose SAC-spec round-trip trips the browser bundle).
+This one's already done. We wrote `getNativeBalance` back on the [setup page](./setup-passkeys.mdx#a-couple-of-helpers), and it simulates a `balance` call against the native Stellar Asset Contract. Simulation costs nothing and needs no signature, so reading a balance is about as cheap as an interaction gets.
 
 ```ts title="src/lib/components/ConnectButtons/Settings.svelte"
-import { rpc } from "$lib/passkeyClient";
-import { Address, Asset, xdr, scValToNative } from "@stellar/stellar-sdk";
-import { PUBLIC_STELLAR_NETWORK_PASSPHRASE } from "$env/static/public";
+let balance: string = $state("0");
 
 async function getBalance() {
-  const nativeContractId = Asset.native().contractId(
-    PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-  );
-  const ownerScVal = new Address(user.contractAddress!).toScVal();
-  const balanceKey = xdr.LedgerKey.contractData(
-    new xdr.LedgerKeyContractData({
-      contract: new Address(nativeContractId).toScAddress(),
-      key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Balance"), ownerScVal]),
-      durability: xdr.ContractDataDurability.persistent(),
-    }),
-  );
-
-  const { entries } = await rpc.getLedgerEntries(balanceKey);
-  if (entries.length === 0) return "0";
-  const data = entries[0].val.contractData().val();
-  const record = scValToNative(data) as { amount?: bigint };
-  return (record.amount ?? 0n).toString();
+  try {
+    balance = (await getNativeBalance(wallet.contractAddress!)).toString();
+  } catch (err: unknown) {
+    console.error("[balance]", err);
+    toaster.error({
+      title: "Error",
+      description:
+        "Something went wrong checking your balance. Please try again later.",
+    });
+  }
 }
 ```
 
-A freshly-deployed wallet with no transfers yet has no `Balance(...)` entry at all, which is why we handle `entries.length === 0` as "balance is zero."
+Remember that the value comes back in stroops, so there's a `/ 1e7` in the markup that renders it as XLM.
+
+#### Funding the wallet
+
+Signup already funded the account once, but Testnet play money has a way of running out. `account.fundWallet()` is the same machinery behind the `autoFund` option, exposed as a button.
+
+```ts title="src/lib/components/ConnectButtons/Settings.svelte"
+// `account.fundWallet()` reports expected failures in the result rather
+// than throwing, but `toaster.promise` depends on that rejection.
+async function fundWallet() {
+  const result = await account.fundWallet(PUBLIC_NATIVE_TOKEN_CONTRACT);
+
+  if (!result.success) {
+    throw result.error;
+  }
+
+  return result;
+}
+```
+
+That comment is doing more work than it looks like. Smart Account Kit reports _expected_ failures (the relayer refused, the transaction failed on-chain) in a `{ success, error }` result rather than by throwing, which is generally very pleasant. But `toaster.promise` wants a rejected promise to show its error state. So we translate between the two conventions, and this little `if (!result.success) throw result.error` shim shows up in a few places in the codebase for exactly that reason.
+
+:::note
+
+This is worth internalizing before you go hunting for a bug that isn't there: with the kit's submission methods, a `try`/`catch` alone will _not_ catch a failed transaction. You have to check `result.success`. The `catch` block is for the unexpected stuff (a dismissed passkey, a network blip, a programming error).
+
+:::
 
 #### Sending a donation
 
-The donate button is a simple dialog with a number input. The interesting piece is `sendDonation`: we build the SAC `transfer(from, to, amount)` call directly with `contract.AssembledTransaction.build()`, passing explicit `ScVal` args so we don't need the SAC spec. Then `send(at)` hands the transaction to Smart Account Kit's `signAndSubmit`, which runs the passkey ceremony and submits through `/api/relay`.
+The hubris of soliciting donations on a guestbook is a matter for the maintainer's conscience. Mechanically, though, it's a lovely demonstration, because a donation is the first thing in this tutorial that moves real value and needs the user's passkey.
 
-```ts title="src/lib/components/ConnectButtons/DonateButton.svelte"
-import { SAK_DEPLOYER_PUBLIC_KEY, send } from "$lib/passkeyClient";
-import { networks } from "ye_olde_guestbook";
-import { user } from "$lib/state/UserState.svelte";
-import { Address, Asset, contract, xdr } from "@stellar/stellar-sdk";
-import {
-  PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-  PUBLIC_STELLAR_RPC_URL,
-} from "$env/static/public";
+It's also a one-liner:
 
-let donation: number | undefined = $state();
+```svelte title="src/lib/components/ConnectButtons/DonateButton.svelte"
+<script lang="ts">
+    import { account } from '$lib/smartAccountClient';
+    import { networks } from 'ye_olde_guestbook';
+    import { PUBLIC_NATIVE_TOKEN_CONTRACT } from '$env/static/public';
 
-async function sendDonation() {
-  if (!donation) throw new Error("undefined donation amount");
+    let donation: number | undefined = $state();
 
-  const nativeContractId = Asset.native().contractId(
-    PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-  );
-  const amountI128 = xdr.ScVal.scvI128(
-    new xdr.Int128Parts({
-      hi: xdr.Int64.fromString("0"),
-      lo: xdr.Uint64.fromString(
-        BigInt(Math.round(donation * 10_000_000)).toString(),
-      ),
-    }),
-  );
+    async function sendDonation() {
+        if (!donation) {
+            throw 'undefined donation amount';
+        }
 
-  const at = await contract.AssembledTransaction.build({
-    contractId: nativeContractId,
-    method: "transfer",
-    args: [
-      new Address(user.contractAddress!).toScVal(), // from: smart account
-      new Address(networks.testnet.contractId).toScVal(), // to: guestbook
-      amountI128,
-    ],
-    rpcUrl: PUBLIC_STELLAR_RPC_URL,
-    networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-    // G-address stand-in for the source — stellar-sdk's Account rejects
-    // C-addresses. signAndSubmit re-signs with its own deployer before
-    // submitting, so this only affects the initial simulation.
-    publicKey: SAK_DEPLOYER_PUBLIC_KEY,
-    timeoutInSeconds: 60,
-    parseResultXdr: (result: xdr.ScVal) => result,
-  });
+        // `account.transfer()` signs with the connected passkey and submits
+        // through the relayer in one step. Easy peasy!
+        const result = await account.transfer(
+            PUBLIC_NATIVE_TOKEN_CONTRACT,
+            networks.testnet.contractId,
+            donation,
+        );
 
-  await send(at);
-}
+        if (!result.success) {
+            throw result.error;
+        }
+
+        console.log('[donate]', result);
+    }
+</script>
 ```
 
-The `from` argument is the user's smart account `C...` address — that's what the SAC checks against when enforcing authorization, via the smart account's passkey-signed auth entry. `send()` hands the assembled transaction to Smart Account Kit's `signAndSubmit`, which signs the auth entry, re-simulates, and submits via `/api/relay` → OZ Channels.
+`account.transfer()` takes the token contract, the recipient, and an amount in whole tokens (the kit handles the conversion to stroops for you), then builds the transfer, prompts the user's authenticator, signs the authorization entry, re-simulates with the real signature in place, and submits through our relayer route. That last re-simulation matters more than you'd think: a WebAuthn signature is substantially larger than the placeholder used in the first simulation, so the resource fees have to be recalculated before submission. The kit does it; you just need to know it's happening if you ever go building transactions by hand.
+
+The recipient here is `networks.testnet.contractId`, which is the guestbook contract itself, pulled straight from our generated bindings. The `from` address is implicit: it's the connected smart account, and the SAC enforces that with the passkey-signed authorization entry.
 
 ## Sign the guestbook
 
-Now the main event: writing a guestbook entry. The page has a simple form with title + message inputs:
+Now the main event: writing a guestbook entry. The page has a simple form with title and message inputs:
 
 ```svelte title="src/routes/sign/+page.svelte"
 <label class="label">
@@ -262,60 +297,104 @@ Now the main event: writing a guestbook entry. The page has a simple form with t
 
 <label class="label">
     <span class="label-text">Message</span>
-    <textarea bind:value={messageText} class="textarea" rows="4" placeholder="Write your message here"></textarea>
+    <textarea
+        bind:value={messageText}
+        class="textarea"
+        rows="4"
+        placeholder="Write your message here"></textarea>
 </label>
 
-<button onclick={signGuestbook} type="button" class="btn preset-filled-primary-500" disabled={signButtonDisabled}>
+<button
+    onclick={signGuestbook}
+    type="button"
+    class="btn preset-filled-primary-500"
+    disabled={signButtonDisabled}
+>
     <span>Sign!</span>
 </button>
 ```
 
-The `signGuestbook` function is where the contract call happens. It looks identical in shape to the `sendDonation` function — just pointed at a different contract:
+The `signGuestbook` function is where the contract call happens:
 
 ```ts title="src/routes/sign/+page.svelte"
 import { goto } from "$app/navigation";
 import { resolve } from "$app/paths";
+import { Api } from "@stellar/stellar-sdk/rpc";
+
+import { account, rpc } from "$lib/smartAccountClient";
+import { toaster } from "$lib/toaster";
+import { wallet } from "$lib/state/UserState.svelte";
 import ye_olde_guestbook from "$lib/contracts/ye_olde_guestbook";
-import { send } from "$lib/passkeyClient";
-import { user } from "$lib/state/UserState.svelte";
 
 async function signGuestbook() {
+  isLoading = true;
   try {
-    isLoading = true;
+    if (!wallet.contractAddress) {
+      throw "user missing contract address";
+    }
     const at = await ye_olde_guestbook.write_message({
-      author: user.contractAddress!,
+      author: wallet.contractAddress,
       title: messageTitle,
       text: messageText,
     });
 
-    await send(at);
+    const result = await account.signAndSubmit(at);
 
-    // The AssembledTransaction's result is a Rust-flavored Result<u32>
-    // from the contract bindings. Unwrap it to get the message id.
-    const messageId = at.result.unwrap();
+    if (!result.success) {
+      throw result.error;
+    }
 
+    // The relayer reports a hash rather than the invocation's return
+    // value, so read the new message's id back from the network.
+    const response = await rpc.pollTransaction(result.hash);
+    if (
+      response.status !== Api.GetTransactionStatus.SUCCESS ||
+      !response.returnValue
+    ) {
+      throw new Error(`Transaction ${result.hash} did not return a value`);
+    }
+    const messageId = response.returnValue.u32();
+
+    toaster.success({
+      title: "Success",
+      description: "Huzzah!! You signed my guestbook! Thanks.",
+    });
     goto(resolve(`/read/${messageId}`));
-  } catch (err) {
-    console.error(err);
+  } catch (err: unknown) {
+    console.error("[sign]", err);
+    toaster.error({
+      title: "Error",
+      description:
+        "Something went wrong signing the guestbook. Please try again later.",
+    });
   } finally {
     isLoading = false;
   }
 }
 ```
 
-The `write_message` function comes from our generated contract bindings. Thanks to those bindings, invoking a Soroban function looks like any other typed TypeScript call.
+The `write_message` function comes from our generated contract bindings, so invoking a Soroban function looks like any other typed TypeScript call. `account.signAndSubmit()` then does the passkey ceremony, the re-simulation, and the submission.
 
-The contract returns the message ID, and we redirect the user to the page for that particular entry.
+:::caution
+
+Here's a gotcha that will bite you the first time, so let's be explicit about it. Our contract's `write_message` function returns the new message's ID, and you might reasonably expect to find it on the assembled transaction after submitting. You won't. When a transaction goes out through a relayer, what comes back is a **transaction hash**, not the invocation's return value, because the relayer submitted it from a channel account and we only ever saw the receipt.
+
+So to get the message ID, we take the hash, poll the network for that transaction with `rpc.pollTransaction()`, and pull the `returnValue` off the result. It's an extra round trip, and it's the price of not making your users think about fees.
+
+:::
+
+With the ID in hand, we redirect the user to the page for their shiny new entry.
 
 ## Read guestbook entries
 
 ### Read a single entry
 
-We use a server-side `load` function so this query runs on the server (and could benefit from caching if we were using a paid RPC). The `[id]` in the filename is a path parameter.
+Reading doesn't involve passkeys, relayers, or signatures at all, which makes it a nice palate cleanser. We use a server-side `load` function so the query runs on the server (and could benefit from caching if we were using a paid RPC). The `[id]` in the filename is a path parameter.
 
 ```ts title="src/routes/read/[id]/+page.server.ts"
 import { error } from "@sveltejs/kit";
 import guestbook from "$lib/contracts/ye_olde_guestbook";
+
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ params }) => {
@@ -328,18 +407,19 @@ export const load: PageServerLoad = async ({ params }) => {
       id: params.id,
       message: result.unwrap(),
     };
-  } catch (err) {
-    throw error(
-      500,
-      "Sorry, something went wrong. Most likely, the message you're looking for doesn't exist.",
-    );
+  } catch (err: unknown) {
+    console.error(err);
+    error(500, {
+      message:
+        "Sorry, something went wrong. Most likely, the message you're looking for doesn't exist.",
+    });
   }
 };
 ```
 
-`read_message` is a read-only function, so we can return the simulation result directly — no signing or submission needed.
+`read_message` is a read-only function, so the bindings client simulates it and we can use the result directly. No signing and no submission needed. The `result.unwrap()` call is there because our contract function returns a Rust `Result`, which the bindings faithfully carry across into TypeScript.
 
-The page component displays the message using a shared `GuestbookMessage` component:
+The page component then displays the message using a shared `GuestbookMessage` component:
 
 ```svelte title="src/routes/read/[id]/+page.svelte"
 <script lang="ts">
@@ -355,33 +435,73 @@ The page component displays the message using a shared `GuestbookMessage` compon
 
 ### Read all entries
 
-For the "list all entries" page, we keep the query logic server-side in `src/lib/server/getLedgerEntries.ts`. The implementation uses `rpc.getLedgerEntries()` to fetch the contract's instance storage (which holds the message count) and then a batched fetch for every message ID. See the [repository source](https://github.com/AshFrancis/ye-olde-guestbook/blob/main/src/lib/server/getLedgerEntries.ts) for the full implementation.
+For the "list all entries" page, we keep the query logic server-side in `src/lib/server/getLedgerEntries.ts`. Rather than invoking the contract once per message, it reads the ledger directly: one `rpc.getLedgerEntries()` call against the contract's instance storage to find the message count, then a single batched call for every message ID from there.
+
+```ts title="src/lib/server/getLedgerEntries.ts"
+export async function getAllMessages(): Promise<MessageWithIndex[]> {
+  const totalCount = await getMessageCount();
+  const ledgerKeysArray = [];
+
+  // if the total count is only 1, then we have just the welcome message
+  if (totalCount < 2) {
+    return [];
+  }
+
+  for (let messageId = 2; messageId <= totalCount; messageId++) {
+    ledgerKeysArray.push(buildMessageLedgerKey(messageId));
+  }
+
+  const result = await rpc.getLedgerEntries(...ledgerKeysArray);
+  const messages = result.entries.map((message) => {
+    const key = scValToNative(message.val.contractData().key())[1]; // scVal of the key is ['Message', 2]
+    const val = scValToNative(
+      message.val.contractData().val(),
+    ) as MessageWithIndex;
+    val.id = key;
+
+    return val;
+  });
+
+  return messages;
+}
+```
+
+This is a genuinely useful trick to have in your pocket. Because we know how the contract lays out its storage keys (a `Message(u32)` variant of the `DataKey` enum, remember), we can construct those ledger keys ourselves and ask RPC for all of them in one request. See the [full implementation](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/server/getLedgerEntries.ts) for the key-building helper and the message-count read.
 
 ## Edit a guestbook entry
 
-Inside the `GuestbookMessage` component, the logged-in author of a message can edit it. When they submit the edit, we call `edit_message` the same way we called `write_message` — build, send, done.
+Inside the `GuestbookMessage` component, the logged-in author of a message can edit it. When they submit the edit, we call `edit_message` the same way we called `write_message`: build, sign, submit, done.
 
 ```ts title="src/lib/components/GuestbookMessage.svelte"
 import ye_olde_guestbook from "$lib/contracts/ye_olde_guestbook";
-import { send } from "$lib/passkeyClient";
+import { account } from "$lib/smartAccountClient";
+import { wallet } from "$lib/state/UserState.svelte";
 
 const submitEdit = async () => {
   isLoading = true;
   try {
+    if (!wallet.contractAddress) {
+      throw "user missing contract address";
+    }
+
     const at = await ye_olde_guestbook.edit_message({
       message_id: messageId,
       title: messageTitle,
       text: messageText,
     });
 
-    await send(at);
+    const result = await account.signAndSubmit(at);
+
+    if (!result.success) {
+      throw result.error;
+    }
 
     toaster.success({
       title: "Success",
       description: "Message edited successfully.",
     });
-  } catch (err) {
-    console.error(err);
+  } catch (err: unknown) {
+    console.error("[edit]", err);
     toaster.error({
       title: "Error",
       description:
@@ -394,6 +514,8 @@ const submitEdit = async () => {
 };
 ```
 
-Notice we don't pass an `author` argument here. The contract's `edit_message` function reads the author from its own storage and requires authentication from _that_ specific smart account. This ensures the original author is the only account that can modify their entries — not even the guestbook host can change them.
+Notice we don't pass an `author` argument here, and there's no `pollTransaction` either. We don't need the author because the contract's `edit_message` function reads it from its own storage and requires authentication from _that_ specific smart account, which means the original author is the only one who can modify their entry. Not even the guestbook's host can change it. And we don't need to poll because `edit_message` doesn't return anything we care about, so the hash is a perfectly good receipt.
 
-That's the full flow. With `send(at)` as a one-liner for "sign with my smart account and submit via the relayer," wiring a Soroban dapp to a smart wallet becomes about as light as it gets.
+That's the full flow. With `account.signAndSubmit(at)` standing in for "sign this with my passkey and get it on-chain without charging my user," wiring a Soroban dapp up to a smart wallet gets about as light as it's ever been.
+
+Way to go! Now go put something in the guestbook.

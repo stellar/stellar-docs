@@ -5,66 +5,68 @@ sidebar_position: 40
 
 Passkeys are a great way to connect users with your dapp without the friction of seed phrases or browser extensions. Learn more on the [smart wallets guide](../../guides/contract-accounts/smart-wallets.mdx).
 
-For this tutorial we'll be using [Smart Account Kit](https://github.com/stellar/smart-account-kit), which handles the WebAuthn ceremony, deploys an audited [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) per user, and stores credential metadata in IndexedDB so sessions survive page reloads.
+For this tutorial we'll be using [Smart Account Kit](https://github.com/stellar/smart-account-kit), which handles the WebAuthn ceremony and deploys an audited [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) for each of your users.
 
-Before we wire up the SDK, we have two prerequisites to set up: an **OpenZeppelin Relayer API key** (so users don't pay their own fees), and a **funder G-account** (so we can drop some Testnet XLM into freshly-deployed smart wallets).
+Here's the good news: this page used to be a long one. The previous version of this tutorial had you provision a Launchtube token _and_ compile and deploy a Zephyr program to Mercury before you could write a single line of passkey code. Both of those chores are gone. You have exactly one prerequisite now: an API key for the relayer.
 
 ## OpenZeppelin Relayer
 
-Previous iterations of this tutorial used Launchtube as a paymaster service. Launchtube has since been retired; its successor is the [OpenZeppelin Relayer](https://docs.openzeppelin.com/relayer/1.4.x/guides/stellar-channels-guide) with the Stellar Channels plugin. The relayer submits transactions for us through a pool of managed channel accounts, covering fees and sequence-number coordination.
+Earlier versions of this tutorial used Launchtube as a paymaster service. Launchtube has since been retired (the [`stellar/launchtube`](https://github.com/stellar/launchtube) repository is archived and the hosted service is offline), and its successor is the [OpenZeppelin Relayer](https://docs.openzeppelin.com/relayer/guides/stellar-channels-guide) running the Stellar Channels plugin. The relayer submits transactions on your users' behalf through a pool of managed channel accounts, so it takes care of fees, sequence numbers, and source accounts. If you're coming from the EVM world, this is the rough equivalent of a [paymaster](https://eips.ethereum.org/EIPS/eip-4337#extension-paymasters).
 
-We'll use the hosted Testnet relayer at `https://channels.openzeppelin.com/testnet`. To authenticate with it, you need an API key.
+We'll use the hosted Testnet relayer at `https://channels.openzeppelin.com/testnet`. To authenticate with it, you'll need an API key.
 
 1. Visit [https://channels.openzeppelin.com/testnet/gen](https://channels.openzeppelin.com/testnet/gen) to generate a Testnet key.
 2. Copy the key into your `.env` file:
 
-   ```shell
+   ```sh
    PRIVATE_RELAYER_BASE_URL="https://channels.openzeppelin.com/testnet"
    PRIVATE_RELAYER_API_KEY=<paste-your-testnet-api-key>
    ```
 
+That's the whole prerequisite. Told you it was shorter.
+
 :::info
 
-The `PRIVATE_` and `PUBLIC_` prefixes are a SvelteKit convention. Variables prefixed `PRIVATE_` are only readable from server-side code via [`$env/static/private`](https://svelte.dev/docs/kit/$env-static-private), so the relayer key never ships to the browser. Variables prefixed `PUBLIC_` are bundled into the client via [`$env/static/public`](https://svelte.dev/docs/kit/$env-static-public).
+The `PRIVATE_` and `PUBLIC_` prefixes are a SvelteKit convention. Variables prefixed `PRIVATE_` are only readable from server-side code via [`$env/static/private`](https://svelte.dev/docs/kit/$env-static-private), so the relayer key never ships to the browser. Variables prefixed `PUBLIC_` are inlined into the client bundle via [`$env/static/public`](https://svelte.dev/docs/kit/$env-static-public).
 
 :::
 
 :::warning Never expose the relayer key client-side
 
-Any browser call to OpenZeppelin's Channels relayer has to carry the API key as a Bearer header, which would expose it to anyone inspecting network traffic. This tutorial keeps the key server-side by routing all submissions through a same-origin `/api/relay` proxy (implemented as a Cloudflare Pages Function). We'll build that proxy in the [next section](./setup-passkeys.mdx).
+Calls to the Channels relayer authenticate with the API key in an `Authorization: Bearer` header. Put that call in the browser and you've handed the key to anyone who opens their network tab, and they can then spend your credits on whatever they like. This tutorial keeps the key server-side by routing every submission through a same-origin `/api/send` route, which we'll build on the [next page](./setup-passkeys.mdx).
 
 :::
 
-## Funder account
+## What you no longer have to set up
 
-Friendbot only funds classic `G...` accounts, not contract `C...` accounts. So, when a new user signs up and their smart wallet is deployed, we need a way to drop a little XLM into it so they can transact. We handle this with a dedicated **funder** — a classic Stellar account holding some Testnet XLM that our server-side `/api/fund/[address]` endpoint uses to send 25 XLM to each freshly-created wallet.
+Two things that used to live on this page are now handled for you. It's worth knowing _who_ is doing that work, though, because "I don't configure it" is not the same as "it isn't happening."
 
-1. Create a new Testnet keypair using the Stellar Lab or the Stellar CLI:
+### Funding new wallets
 
-   ```shell
-   stellar keys generate funder --network testnet --fund
-   ```
+[Friendbot](../../../networks/README.mdx#friendbot) still only funds classic `G...` accounts, so it can't top up a `C...` contract address directly. The old workaround was a funder account of your own: you'd generate a keypair, park some Testnet XLM in it, and run an `/api/fund` endpoint that transferred lumens to each new smart wallet.
 
-2. Grab the secret key:
+Smart Account Kit does this dance internally now. Ask it to fund a wallet and it creates a temporary account, funds _that_ from Friendbot, and transfers the XLM on to your user's contract address. So there's no funder keypair to generate and no secret key in your `.env`. We'll see the two places this shows up (at signup, and behind a "Fund Wallet" button) on the [frontend page](./frontend.mdx).
 
-   ```shell
-   stellar keys secret funder
-   ```
+### The reverse-lookup indexer
 
-3. Add it to `.env`:
+When a returning user taps their passkey, your dapp gets a credential ID back from the authenticator. It still needs to turn that credential ID into the smart account contract address the credential was added to, and that reverse lookup still requires indexed network data. That requirement did not go away with Launchtube.
 
-   ```shell
-   PRIVATE_FUNDER_SECRET_KEY=S...ECRETKEY
-   ```
+What changed is that you no longer build the indexer yourself. Smart Account Kit ships an indexer client that defaults to Mercury's hosted `smart-account-indexer` for Testnet and Mainnet. Its read endpoints are public, so there's no JWT to fetch and no Zephyr program to compile and deploy. You can point `indexerUrl` at any wire-compatible provider, or pass `indexerUrl: false` to switch discovery off entirely.
 
-Smart Account Kit stores credential metadata in the browser's IndexedDB, so there's no passkey → contract reverse-lookup indexer to set up.
+:::note
+
+This is a boundary that's easy to blur when migrating an older passkey app, so to be explicit about it: the OpenZeppelin Relayer replaced Launchtube's **submission and fee-sponsorship** role. It did _not_ replace Mercury's **indexing and reverse-lookup** role. If you rip out your Launchtube code and your indexer configuration in the same commit, you'll break returning-user login on any device that hasn't seen that passkey before.
+
+:::
+
+The other half of this story is local: we'll configure the kit with `IndexedDBStorage` so a connected session survives a page reload. That's a per-browser cache sitting in front of the indexer, not a substitute for it.
 
 ## Troubleshooting
 
-Things that can trip you up while getting these prerequisites wired up:
+Things that can trip you up while getting this wired up:
 
-1. **Relayer key returns 401/403.** Regenerate the key at [https://channels.openzeppelin.com/testnet/gen](https://channels.openzeppelin.com/testnet/gen). The Testnet key is free to re-issue.
-2. **Funder account has no XLM.** Re-fund it via [Friendbot](https://friendbot.stellar.org) or `stellar keys fund funder --network testnet`. Each funding adds 10,000 XLM, which is plenty for this tutorial.
-3. **`PRIVATE_*` env vars come back undefined.** SvelteKit reads them from `.env` at build time. If you edit `.env` while `pnpm dev` is running, restart the dev server.
+1. **The relayer returns a 401 or a 403.** Generate a fresh key at [https://channels.openzeppelin.com/testnet/gen](https://channels.openzeppelin.com/testnet/gen). Testnet keys are free to re-issue, so there's no harm in doing this whenever you're suspicious of one.
+2. **Your `PRIVATE_*` variables come back undefined.** SvelteKit reads `.env` when the dev server starts. If you edited the file while `pnpm dev` was running, restart it.
+3. **Login can't find a wallet you know you created.** You're probably in a different browser or profile than the one you signed up in, with an empty IndexedDB, which means you're exercising the indexer path. Give it a few ledgers to catch up on a freshly deployed wallet, and check your browser console for a failed request to the indexer.
 
-If you get stuck, drop a question in the [`#passkeys`](https://discord.com/channels/897514728459468821/1250851135561142423) channel on the [Stellar Developer Discord](https://discord.gg/stellardev).
+If you get stuck, drop a question in the [`#passkeys`](https://discord.com/channels/897514728459468821/1250851135561142423) channel on the [Stellar Developer Discord](https://discord.gg/stellardev). There's usually somebody around who's ready and willing to help out!

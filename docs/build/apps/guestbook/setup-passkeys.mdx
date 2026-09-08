@@ -3,420 +3,266 @@ title: Setup Passkeys
 sidebar_position: 50
 ---
 
-With the relayer key and funder account in place, we wire up Smart Account Kit (browser-side) and a same-origin proxy endpoint that forwards transactions on to the OpenZeppelin Relayer (server-side, so the API key stays off the wire).
+With the relayer key in place, we're ready to put Smart Account Kit to work and get our users connected. This takes two files:
 
-Two library files:
+- `src/lib/smartAccountClient.ts` is the browser-facing piece. It configures the kit and exports an `account` that the rest of the app uses for everything.
+- `src/routes/api/send/+server.ts` is the server-facing piece. It's a small proxy that adds our relayer API key to outgoing submissions, so the key never reaches the browser.
 
-- `src/lib/passkeyClient.ts` — the browser-facing smart account and a `send()` wrapper.
-- `src/lib/server/relayer.ts` — the server-side submitter. Forwards `{func, auth}` payloads to OpenZeppelin Channels with Bearer auth, and pushes fully-signed XDR envelopes straight to Stellar RPC.
+That's genuinely it. Compared to the Launchtube-and-Mercury era, a _lot_ of scaffolding has collapsed into the kit itself.
 
-Two SvelteKit API routes expose that server logic to the client:
+## The smart account client
 
-- `src/routes/api/relay/+server.ts` — the `/api/relay` proxy. Smart Account Kit POSTs here directly (we set `relayerUrl: '/api/relay'` in the kit config).
-- `src/routes/api/fund/[address]/+server.ts` — airdrops 25 Testnet XLM to newly-deployed wallets via our funder G-account.
+The `account` export is the **primary** point of interaction between the dapp and the user's passkey. Users sign up with `account.createWallet()`, log in with `account.connectWallet()`, sign and submit with `account.signAndSubmit()`, and log out with `account.disconnect()`. This `account` is a pretty tough workhorse.
 
-## Passkey client
+We're creating it in `src/lib/smartAccountClient.ts` so it's available throughout the frontend. The [`$lib` import alias](https://svelte.dev/docs/kit/$lib) is a SvelteKit thing, but the important part is that this file and its exports need to be reachable from anywhere in your app. How you arrange that in another framework is an exercise left to the reader.
 
-The `account` export is our user-facing smart account. Users sign up with `account.createWallet()`, log in with `account.connectWallet()`, and the `send()` helper signs + submits any Soroban call through the `/api/relay` proxy.
-
-This file lives at `src/lib/passkeyClient.ts`. The SvelteKit [`$lib` import alias](https://svelte.dev/docs/kit/$lib) makes it reachable from anywhere in the frontend.
-
-```ts title="src/lib/passkeyClient.ts"
-import { Server } from "@stellar/stellar-sdk/rpc";
-import type { AssembledTransaction } from "@stellar/stellar-sdk/contract";
-import type { SmartAccountKit } from "smart-account-kit";
+```ts title="src/lib/smartAccountClient.ts"
+import { Server, Api } from "@stellar/stellar-sdk/rpc";
+import {
+  Account,
+  Address,
+  BASE_FEE,
+  Contract,
+  TransactionBuilder,
+  scValToNative,
+} from "@stellar/stellar-sdk";
+import { SmartAccountKit, IndexedDBStorage } from "smart-account-kit";
+import { browser } from "$app/environment";
 
 import {
   PUBLIC_STELLAR_RPC_URL,
   PUBLIC_STELLAR_NETWORK_PASSPHRASE,
   PUBLIC_ACCOUNT_WASM_HASH,
   PUBLIC_WEBAUTHN_VERIFIER_ADDRESS,
+  PUBLIC_NATIVE_TOKEN_CONTRACT,
 } from "$env/static/public";
 
 /**
- * A Stellar RPC server instance. Safe to import from server routes — this is
- * the stock stellar-sdk RPC client, with no browser dependencies.
+ * A configured Stellar RPC server instance used to interact with the network.
  */
 export const rpc = new Server(PUBLIC_STELLAR_RPC_URL);
 
-// SmartAccountKit depends on WebAuthn + IndexedDB, and its ESM build trips
-// Node's strict directory-import resolver during SvelteKit's SSR prerender.
-// We dynamic-import it on first touch so the server bundle never pulls it in.
-let kitPromise: Promise<SmartAccountKit> | null = null;
-
-function loadKit(): Promise<SmartAccountKit> {
-  if (kitPromise) return kitPromise;
-  kitPromise = import("smart-account-kit").then(
-    ({ SmartAccountKit, IndexedDBStorage }) => {
-      return new SmartAccountKit({
-        rpcUrl: PUBLIC_STELLAR_RPC_URL,
-        networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-        accountWasmHash: PUBLIC_ACCOUNT_WASM_HASH,
-        webauthnVerifierAddress: PUBLIC_WEBAUTHN_VERIFIER_ADDRESS,
-        storage: new IndexedDBStorage(),
-        rpName: "Ye Olde Guestbook",
-        // Route submissions through our same-origin proxy so the Channels
-        // API key lives on the server, not in the client bundle.
-        relayerUrl: "/api/relay",
-      });
-    },
-  );
-  return kitPromise;
-}
-```
-
-The key configuration values:
-
-- **`accountWasmHash`** — the Wasm hash of the [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) contract. Every new user wallet is a fresh instance of this contract. The shared Testnet hash is pre-filled in `.env.example`.
-- **`webauthnVerifierAddress`** — the contract address of the shared WebAuthn signature verifier, which validates `secp256r1` signatures on-chain.
-- **`relayerUrl: '/api/relay'`** — same-origin proxy so the OZ Channels API key never reaches the browser.
-- **`storage: new IndexedDBStorage()`** — persists the user's credential ID + contract address so sessions survive reloads.
-
-Next, the `account` export — a `Proxy` that lazy-loads the kit on first method call. This means server-side imports of this module never pay the cost of loading the browser-only SDK.
-
-```ts title="src/lib/passkeyClient.ts"
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AccountMethod = (...args: any[]) => Promise<any>;
-
-export const account: Record<string, AccountMethod> = new Proxy(
-  {} as Record<string, AccountMethod>,
-  {
-    get(_target, prop: string | symbol) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return async (...args: any[]) => {
-        const kit = await loadKit();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const fn = (kit as any)[prop];
-        if (typeof fn !== "function") {
-          throw new Error(`smart account has no method ${String(prop)}`);
-        }
-        return fn.apply(kit, args);
-      };
-    },
-  },
-);
-```
-
-That's enough for authentication. Two small helpers round out the module:
-
-```ts title="src/lib/passkeyClient.ts"
 /**
- * Signs the supplied AssembledTransaction with the connected smart account
- * (triggering a passkey prompt) and submits it through the /api/relay proxy.
+ * The smart account client. Wallets are OpenZeppelin smart account contracts,
+ * authenticated with WebAuthn passkeys.
  */
-export async function send<T>(tx: AssembledTransaction<T>) {
-  const kit = await loadKit();
-  return kit.signAndSubmit(tx);
-}
-
-/**
- * Hits the /api/fund/[address] endpoint to airdrop 25 Testnet XLM into a
- * freshly-deployed smart wallet.
- */
-export async function fundContract(address: string) {
-  return fetch(`/api/fund/${address}`).then(async (res) => {
-    if (res.ok) return res.json();
-    else throw await res.text();
-  });
-}
+export const account = new SmartAccountKit({
+  rpcUrl: PUBLIC_STELLAR_RPC_URL,
+  networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+  accountWasmHash: PUBLIC_ACCOUNT_WASM_HASH,
+  webauthnVerifierAddress: PUBLIC_WEBAUTHN_VERIFIER_ADDRESS,
+  // Transactions are POSTed to our own `/api/send` route, which forwards them
+  // on to the OpenZeppelin Relayer Channels service. The Channels API key
+  // stays server-side.
+  relayerUrl: "/api/send",
+  // IndexedDB isn't available while server-rendering, but the kit is only
+  // ever driven from the browser anyway.
+  storage: browser ? new IndexedDBStorage() : undefined,
+  // the "relying-party" name will be displayed in the passkey prompt from the
+  // user's authenticator
+  rpName: "Ye Olde Guestbook",
+  timeoutInSeconds: 30,
+});
 ```
 
-:::note No SAC wrapper
+Worth calling out a few of those options:
 
-Earlier iterations (and the passkey-kit version of this tutorial) exposed a `native` SAC client so components could write `native.transfer({from, to, amount})`. Smart Account Kit doesn't ship an equivalent. Trying to load the SAC spec dynamically via `contract.Client.from()` turned out to be fragile under production bundling (the spec's XDR encoder trips in the browser bundle), so this tutorial builds SAC calls directly with stellar-sdk primitives when it needs them — see the [frontend walkthrough](./frontend.mdx) and the fund endpoint below.
+- **`accountWasmHash`** is the Wasm hash of the [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) contract code. Every user's wallet is a fresh instance deployed from this executable. The hash is just the Sha256 of the compiled contract file, and it's returned when that contract is installed on the network. The shared Testnet value comes pre-filled in `.env.example`, so there's nothing for you to compile or deploy here.
+- **`webauthnVerifierAddress`** is the contract address of the shared verifier that checks `secp256r1` signatures on-chain. Also pre-filled.
+- **`relayerUrl`** points at our _own_ `/api/send` route rather than at OpenZeppelin directly. That's the whole trick for keeping the API key server-side, and we'll build that route below.
+- **`storage`** decides where a connected session lives. `IndexedDBStorage` means a session survives a page reload. As noted in the [prerequisites](./passkeys-prerequisites.mdx), this is a per-browser cache sitting in front of the indexer, not a replacement for it.
+- **`rpName`** is the "relying party" name, which is the label your users will see in their authenticator's prompt. Make it something they'll recognize.
+
+:::note
+
+If you're server-rendering any part of your app, note the `browser` guard on `storage`. IndexedDB is a browser API, so handing the kit an `IndexedDBStorage` during SSR will fall over. Ye Olde Guestbook sets `export const ssr = false` in `src/routes/+layout.ts` and renders entirely on the client, but the guard costs nothing and saves a confusing error later.
 
 :::
 
-## Server-side relayer
+### A couple of helpers
 
-The server-side submitter lives at `src/lib/server/relayer.ts`. SvelteKit [enforces that the `$lib/server` directory never leaks into client code](https://svelte.dev/docs/kit/server-only-modules#Your-modules), so the API key can't escape the server bundle.
+The kit covers authentication, but there are two small things the guestbook needs often enough to be worth wrapping. Both live at the end of the same file.
 
-Because of how OpenZeppelin Channels handles fees, we split by payload shape:
+First, reading an XLM balance. There's no SAC client to instantiate here: we simulate a `balance` call against the native Stellar Asset Contract and read the return value. Simulation is free and doesn't touch the ledger, so this needs no signature and no fees.
 
-- **`{ func, auth }`** (Soroban host function + auth entries) → forwarded to OZ Channels, which wraps it in a channel-account transaction and pays fees. This is the sponsored path that user actions take (`kit.signAndSubmit`).
-- **`{ xdr }`** (fully-signed envelope) → sent straight to Stellar RPC. Smart Account Kit's wallet-deploy flow takes this path: it signs with its shared deployer keypair (well-known, pre-funded on Testnet). OZ Channels rejects signed envelopes where `tx.fee != tx.sorobanData.resourceFee` — stellar-sdk's default fee includes a safety margin that breaks that strict equality — so we bypass the relayer for this specific case.
+```ts title="src/lib/smartAccountClient.ts"
+/**
+ * Read an address's native XLM balance by simulating a `balance` call against
+ * the native Stellar Asset Contract.
+ *
+ * @param address - The address whose balance to read
+ * @returns The balance, in stroops
+ */
+export async function getNativeBalance(address: string): Promise<bigint> {
+  const transaction = new TransactionBuilder(
+    // We use a dummy account for simulation-only transactions.
+    new Account(
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "0",
+    ),
+    {
+      fee: BASE_FEE,
+      networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+    },
+  )
+    .addOperation(
+      new Contract(PUBLIC_NATIVE_TOKEN_CONTRACT).call(
+        "balance",
+        new Address(address).toScVal(),
+      ),
+    )
+    .setTimeout(30)
+    .build();
 
-```ts title="src/lib/server/relayer.ts"
-import { Server } from "@stellar/stellar-sdk/rpc";
-import { TransactionBuilder } from "@stellar/stellar-sdk";
+  const simulation = await rpc.simulateTransaction(transaction);
+
+  if (!Api.isSimulationSuccess(simulation) || !simulation.result) {
+    throw new Error("Unable to read balance");
+  }
+
+  return scValToNative(simulation.result.retval) as bigint;
+}
+```
+
+Second, a bit of passkey ergonomics that took us longer to get right than we'd like to admit. When a user opens the passkey prompt and then dismisses it, that's not an error you want to shout about. Trouble is, "the user changed their mind" arrives as different exception names depending on the browser, the platform, and whether it came wrapped in a `cause`. So we sniff for it:
+
+```ts title="src/lib/smartAccountClient.ts"
+/**
+ * Figure out if authenticating with a passkey was simply the user
+ * dismissing the prompt. This can present itself in a few different ways,
+ * depending on a user's computer/browser/etc.
+ */
+export function userDismissedPasskey(err: unknown): boolean {
+  const nameOf = (e: unknown) => (e as { name?: string } | null)?.name;
+  const name =
+    nameOf(err) ?? nameOf((err as { cause?: unknown } | null)?.cause);
+  return name === "NotAllowedError" || name === "AbortError";
+}
+```
+
+Every passkey flow in the app runs its errors past this first, so a cancelled prompt shows a gentle "Cancelled" toast instead of a scary red "something went wrong."
+
+## Tracking the connected wallet
+
+The kit emits events as wallets connect and disconnect, which is a tidy way to keep UI state in sync without every component reaching into the kit. In Ye Olde Guestbook that's a small reactive class:
+
+```ts title="src/lib/state/UserState.svelte.ts"
+import { account } from "$lib/smartAccountClient";
+
+class Wallet {
+  contractAddress: string | null = $state(null);
+
+  constructor() {
+    account.events.on(
+      "walletConnected",
+      ({ contractId }) => (this.contractAddress = contractId),
+    );
+    account.events.on(
+      "walletDisconnected",
+      () => (this.contractAddress = null),
+    );
+  }
+}
+
+export const wallet = new Wallet();
+```
+
+The `$state` rune is Svelte 5's reactivity primitive, so this is the most framework-flavored file in the tutorial. The transferable idea is the shape of it: subscribe to `account.events` once, in one place, and let the rest of your components read a single piece of state. Swap `$state` for a React `useState` in a context provider, a Vue `ref`, or a plain observable, and the pattern holds.
+
+## The submission route
+
+Now for the server side, where we need to be careful about leaking credentials.
+
+Smart Account Kit doesn't talk to OpenZeppelin directly. Because we configured `relayerUrl: '/api/send'`, it POSTs to our own origin instead, deliberately sending no credentials of its own (it's running in the browser, so it has none worth sending). This route is what adds the API key and forwards the request on.
+
+In SvelteKit, any file named `+server.ts` runs [only on the server](https://svelte.dev/docs/kit/routing#server), and anything under `$lib/server` [can't be imported into client code at all](https://svelte.dev/docs/kit/server-only-modules#Your-modules). Those are the places your secrets are safe. Some of this is SvelteKit-specific, but every full-stack framework has an equivalent seam.
+
+The kit sends one of two payload shapes, and Channels accepts both:
+
+- `{ func, auth }` is a Soroban host function plus its authorization entries. This is what user actions take, and it's the sponsored path: Channels wraps the call in a channel-account transaction and pays the fees.
+- `{ xdr }` is a fully signed transaction envelope.
+
+You must never mix the two in one request, so the route validates that before forwarding.
+
+```ts title="src/routes/api/send/+server.ts"
+import type { RequestHandler } from "./$types";
+import { error, json } from "@sveltejs/kit";
 
 import {
   PRIVATE_RELAYER_BASE_URL,
   PRIVATE_RELAYER_API_KEY,
 } from "$env/static/private";
-import {
-  PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-  PUBLIC_STELLAR_RPC_URL,
-} from "$env/static/public";
 
-export interface RelaySuccess {
-  hash: string;
-}
+/**
+ * The smart account kit POSTs either `{ func, auth }` (a smart contract
+ * invocation) or `{ xdr }` (a fully signed envelope) to this endpoint. It
+ * deliberately sends no credentials, because it runs in the browser. This route
+ * adds the OpenZeppelin Relayer Channels API key and forwards the request on,
+ * so the key never leaves the server.
+ */
+export const POST: RequestHandler = async ({ url, request, fetch }) => {
+  // ensure requests are coming from our own frontend
+  if (!request.headers.get("origin")?.includes(url.origin)) {
+    error(403, { message: "hostname mismatch" });
+  }
 
-export async function submitToRelayer(
-  payload: { xdr: string } | { func: string; auth: string[] },
-): Promise<RelaySuccess> {
-  if ("xdr" in payload) {
-    return submitSignedXdrToRpc(payload.xdr);
+  // parse the request body and get the transaction details
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    error(400, { message: "request body must be a JSON object" });
   }
-  return submitSorobanToChannels(payload);
-}
+  const { func, auth, xdr }: { func?: string; auth?: string[]; xdr?: string } =
+    body;
 
-async function submitSorobanToChannels(payload: {
-  func: string;
-  auth: string[];
-}): Promise<RelaySuccess> {
-  if (!PRIVATE_RELAYER_BASE_URL || !PRIVATE_RELAYER_API_KEY) {
-    throw new Error("OpenZeppelin Relayer is not configured.");
+  // Channels takes either a signed transaction envelope, or a host function
+  // plus its auth entries. But, you must never mix the two shapes!
+  if (func && xdr) {
+    error(400, {
+      message:
+        "request body must contain a transaction OR a function, not both",
+    });
   }
-  const baseUrl = PRIVATE_RELAYER_BASE_URL.replace(/\/+$/, "");
-  const response = await fetch(baseUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${PRIVATE_RELAYER_API_KEY}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(extractError(data, response.status));
-  const hash = extractHash(data);
-  if (!hash) throw new Error("relayer returned no transaction hash");
-  return { hash };
-}
+  if (!func && !xdr) {
+    error(400, {
+      message: "request body must contain either a function or a transaction",
+    });
+  }
 
-async function submitSignedXdrToRpc(xdr: string): Promise<RelaySuccess> {
-  const rpc = new Server(PUBLIC_STELLAR_RPC_URL);
-  const tx = TransactionBuilder.fromXDR(xdr, PUBLIC_STELLAR_NETWORK_PASSPHRASE);
-  const sendResult = await rpc.sendTransaction(tx);
-  if (sendResult.status === "ERROR") {
-    const detail = sendResult.errorResult
-      ? sendResult.errorResult.result().switch().name
-      : "unknown";
-    throw new Error(`RPC rejected transaction: ${detail}`);
-  }
-  if (sendResult.status !== "PENDING") {
-    throw new Error(`unexpected RPC status: ${sendResult.status}`);
-  }
-  // Poll briefly for confirmation so we surface failures early.
-  for (let attempt = 0; attempt < 15; attempt++) {
-    const status = await rpc.getTransaction(sendResult.hash);
-    if (status.status === "SUCCESS") return { hash: sendResult.hash };
-    if (status.status === "FAILED")
-      throw new Error("transaction failed on-chain");
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  return { hash: sendResult.hash };
-}
+  const params = func ? { func, auth } : { xdr };
 
-function extractError(data: unknown, status: number): string {
-  if (data && typeof data === "object") {
-    const d = data as {
-      error?: unknown;
-      data?: { details?: { message?: unknown } };
-    };
-    const nested =
-      d.data && typeof d.data === "object" ? d.data.details?.message : null;
-    if (typeof nested === "string") return nested;
-    if (typeof d.error === "string") return d.error;
-  }
-  return `relayer returned HTTP ${status}`;
-}
+  try {
+    const res = await fetch(`${PRIVATE_RELAYER_BASE_URL}/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${PRIVATE_RELAYER_API_KEY}`,
+      },
+      body: JSON.stringify({ params }),
+    });
 
-function extractHash(data: unknown): string | null {
-  if (!data || typeof data !== "object") return null;
-  const outer = data as { data?: { hash?: unknown }; hash?: unknown };
-  const inner =
-    outer.data && typeof outer.data === "object" ? outer.data.hash : undefined;
-  const hash = inner ?? outer.hash;
-  return typeof hash === "string" && hash.length > 0 ? hash : null;
-}
+    // Pass the relayer's response through untouched. The kit understands both
+    // the `{ success, data }` envelope and a bare transaction result.
+    return json(await res.json(), { status: res.ok ? 200 : res.status });
+  } catch (err: unknown) {
+    console.error("[send]", err);
+    error(502, {
+      message: err instanceof Error ? err.message : "relayer submission failed",
+    });
+  }
+};
 ```
 
-Channels accepts a simple `fetch` with a Bearer header; [`@openzeppelin/relayer-plugin-channels`](https://www.npmjs.com/package/@openzeppelin/relayer-plugin-channels) is a more batteries-included option if you're on Node.
+A few things this route is doing on purpose:
 
-## API routes
+- **The `origin` check** is a first, cheap line of defense. Without it, anyone who finds `yourdomain.com/api/send` can submit their own transactions while _you_ pick up the tab for the fees.
+- **Passing the relayer's response through untouched** keeps the route dumb, which is a feature. The kit already understands both the `{ success, data }` envelope Channels returns and a bare transaction result, so re-shaping the response here would only give us something new to keep in sync.
 
-Now we expose the relayer and funder to the client via two SvelteKit routes. Anything named `*server.{ts,svelte}` runs [only on the server](https://svelte.dev/docs/kit/routing#server) — exactly where secrets belong.
+:::warning
 
-### `/api/relay`
+An origin header is trivially forged by anything that isn't a browser, so please don't mistake the check above for real authorization. Before you put something like this on Mainnet you'll want actual rate limiting, a way to bound _which_ transactions you're willing to sponsor, and some monitoring on your relayer credits. Otherwise a bad actor can happily drain them.
 
-Smart Account Kit's `signAndSubmit()` POSTs here automatically because we set `relayerUrl: '/api/relay'` in the kit config.
-
-:::warning Production checklist
-
-For production, add rate limiting and origin checking to this endpoint so a bad actor can't burn your relayer credits forwarding arbitrary transactions. Out of scope for this tutorial, but don't skip it before going to Mainnet.
+Implementing all of that is outside the scope of this tutorial, but it's very much inside the scope of shipping to real users.
 
 :::
 
-```ts title="src/routes/api/relay/+server.ts"
-import type { RequestHandler } from "./$types";
-import { error, json } from "@sveltejs/kit";
-
-import { submitToRelayer } from "$lib/server/relayer";
-
-export const POST: RequestHandler = async ({ request }) => {
-  const body = await request.json().catch(() => null);
-  if (!body || typeof body !== "object") {
-    throw error(400, "request body must be a JSON object");
-  }
-
-  const xdr = typeof body.xdr === "string" ? body.xdr.trim() : "";
-  const func = typeof body.func === "string" ? body.func.trim() : "";
-
-  try {
-    if (xdr.length > 0) {
-      return json(await submitToRelayer({ xdr }));
-    }
-    if (func.length > 0) {
-      const auth = Array.isArray(body.auth)
-        ? body.auth.filter((a: unknown): a is string => typeof a === "string")
-        : [];
-      return json(await submitToRelayer({ func, auth }));
-    }
-    throw error(400, "provide either `xdr` or `func` (+ optional `auth`)");
-  } catch (err) {
-    // Re-throw SvelteKit HttpErrors (from the 400s above) unchanged.
-    if (err && typeof err === "object" && "status" in err && "body" in err)
-      throw err;
-    console.error("[relay] submission failed:", err);
-    throw error(
-      502,
-      err instanceof Error ? err.message : "relayer submission failed",
-    );
-  }
-};
-```
-
-### `/api/fund/[address]`
-
-Friendbot doesn't fund `C...` addresses, so we sponsor new smart wallets from a classic G-account funder. We build the SAC `transfer(from, to, amount)` call directly and assemble the Soroban transaction by hand, sidestepping `contract.Client.from(...)` and `rpc.prepareTransaction`/`assembleTransaction` — both paths ship subtle failures under the Cloudflare Workers bundler.
-
-```ts title="src/routes/api/fund/[address]/+server.ts"
-import type { RequestHandler } from "./$types";
-import { error, json } from "@sveltejs/kit";
-
-import {
-  Address,
-  Asset,
-  BASE_FEE,
-  Contract,
-  Keypair,
-  Operation,
-  TransactionBuilder,
-  xdr,
-} from "@stellar/stellar-sdk";
-import { Api, Server } from "@stellar/stellar-sdk/rpc";
-
-import { PRIVATE_FUNDER_SECRET_KEY } from "$env/static/private";
-import {
-  PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-  PUBLIC_STELLAR_RPC_URL,
-} from "$env/static/public";
-
-export const GET: RequestHandler = async ({ params }) => {
-  const fundKeypair = Keypair.fromSecret(PRIVATE_FUNDER_SECRET_KEY);
-  const rpc = new Server(PUBLIC_STELLAR_RPC_URL);
-
-  try {
-    const nativeContractId = Asset.native().contractId(
-      PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-    );
-    const sac = new Contract(nativeContractId);
-
-    const amount = xdr.ScVal.scvI128(
-      new xdr.Int128Parts({
-        hi: xdr.Int64.fromString("0"),
-        lo: xdr.Uint64.fromString((25n * 10_000_000n).toString()),
-      }),
-    );
-    const transferArgs = [
-      new Address(fundKeypair.publicKey()).toScVal(),
-      new Address(params.address).toScVal(),
-      amount,
-    ];
-
-    // Simulate to extract the Soroban transaction data + minResourceFee.
-    const simAccount = await rpc.getAccount(fundKeypair.publicKey());
-    const simTx = new TransactionBuilder(simAccount, {
-      fee: BASE_FEE,
-      networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-    })
-      .addOperation(sac.call("transfer", ...transferArgs))
-      .setTimeout(60)
-      .build();
-
-    const sim = await rpc.simulateTransaction(simTx);
-    if (Api.isSimulationError(sim)) {
-      throw new Error(`simulation failed: ${sim.error}`);
-    }
-    if (!Api.isSimulationSuccess(sim)) {
-      throw new Error("simulation did not succeed");
-    }
-
-    const simAuth = sim.result?.auth ?? [];
-    const sorobanData = sim.transactionData.build();
-    const minResourceFee = Number(sim.minResourceFee);
-
-    // Rebuild the tx from scratch with the assembled fee + Soroban data.
-    // Avoids `rpc.prepareTransaction`/`assembleTransaction`, both of which
-    // go through `TransactionBuilder.cloneFrom` + `instanceof Transaction`.
-    const account = await rpc.getAccount(fundKeypair.publicKey());
-    const assembledTx = new TransactionBuilder(account, {
-      fee: (Number(BASE_FEE) + minResourceFee).toString(),
-      networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-    })
-      .addOperation(
-        Operation.invokeHostFunction({
-          func: xdr.HostFunction.hostFunctionTypeInvokeContract(
-            new xdr.InvokeContractArgs({
-              contractAddress: new Address(nativeContractId).toScAddress(),
-              functionName: "transfer",
-              args: transferArgs,
-            }),
-          ),
-          auth: simAuth,
-        }),
-      )
-      .setSorobanData(sorobanData)
-      .setTimeout(60)
-      .build();
-
-    assembledTx.sign(fundKeypair);
-
-    const sendResult = await rpc.sendTransaction(assembledTx);
-    if (sendResult.status === "ERROR") {
-      const reason = sendResult.errorResult
-        ? sendResult.errorResult.result().switch().name
-        : "unknown";
-      throw new Error(`RPC rejected fund tx: ${reason}`);
-    }
-    if (sendResult.status !== "PENDING") {
-      throw new Error(`unexpected RPC status: ${sendResult.status}`);
-    }
-
-    const hash = sendResult.hash;
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const status = await rpc.getTransaction(hash);
-      if (status.status === "SUCCESS") {
-        return json({
-          status: 200,
-          message: "Smart wallet successfully funded",
-          hash,
-        });
-      }
-      if (status.status === "FAILED") {
-        throw new Error("fund transaction failed on-chain");
-      }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-    return json({ status: 202, message: "Fund tx pending", hash });
-  } catch (err) {
-    console.error("[fund]", err);
-    const detail = err instanceof Error ? err.message : String(err);
-    throw error(500, `Error when funding smart wallet: ${detail}`);
-  }
-};
-```
-
-That's the whole server side: one lib file and two API routes. Everything else — signup, login, donate, write/edit messages — lives in the frontend and talks to these routes through the `send()` / `fundContract()` helpers from `passkeyClient.ts`. On to the UI.
+Still with us?! Incredible! You're a rock star! And, you're ready to get into the interactions with the smart contract! See you on the next page!
