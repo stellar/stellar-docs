@@ -165,7 +165,11 @@ const config: Config = {
             const items = await defaultCreateSitemapItems(rest);
             return [
               ...items,
-              { url: "https://developers.stellar.org/launch/usdt0" },
+              {
+                url: `${rest.siteConfig.url}/launch/usdt0`,
+                changefreq: "weekly",
+                priority: 0.5
+              },
             ];
           },
         },
