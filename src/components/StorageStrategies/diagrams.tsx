@@ -440,7 +440,7 @@ const SVGS: Record<string, React.ReactNode> = {
           Allowance(from, spender)
         </text>
         <text x="135" y="72" textAnchor="middle" className="lbl-s mono">
-          &#123; amount, expiration_ledger &#125;
+          &#123; amount, live_until_ledger &#125;
         </text>
       </g>
       <rect className="ttl-track" x="40" y="98" width="190" height="6" />
