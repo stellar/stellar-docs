@@ -3,251 +3,267 @@ title: Setup Passkeys
 sidebar_position: 50
 ---
 
-Now, we've got the requisite accounts, tokens, etc. created, and we're ready to start putting the `passkey-kit` to work, getting our users connected!
+With the relayer key in place, we're ready to put Smart Account Kit to work and get our users connected. This takes two files:
 
-## Passkey client
+- `src/lib/smartAccountClient.ts` is the browser-facing piece. It configures the kit and exports an `account` that the rest of the app uses for everything.
+- `src/routes/api/send/+server.ts` is the server-facing piece. It's a small proxy that adds our relayer API key to outgoing submissions, so the key never reaches the browser.
 
-We'll start by creating an instance of the `PasskeyKit` class. We'll call it `account`, and this `account` will be the **primary** point of interaction for the dapp and the user's passkey. Every transaction will be signed using `account.sign()`, users will signup with `account.createWallet()`, users will login with `account.connectWallet()`. This `account` is a pretty tough workhorse! Let's make it happen.
+That's genuinely it. Compared to the Launchtube-and-Mercury era, a _lot_ of scaffolding has collapsed into the kit itself.
 
-We're creating this in `src/lib/passkeyClient.ts` so it's available to us in the rest of our frontend codebase. The [`$lib` import alias](https://svelte.dev/docs/kit/$lib) is a SvelteKit thing, but the important thing is we want this file (and its exports) to be available throughout **all** of our frontend files. How you make that happen for other frameworks is an exercise left to the reader.
+## The smart account client
 
-```js title="src/lib/passkeyClient.ts"
-import { PasskeyKit } from "passkey-kit";
+The `account` export is the **primary** point of interaction between the dapp and the user's passkey. Users sign up with `account.createWallet()`, log in with `account.connectWallet()`, sign and submit with `account.signAndSubmit()`, and log out with `account.disconnect()`. This `account` is a pretty tough workhorse.
+
+We're creating it in `src/lib/smartAccountClient.ts` so it's available throughout the frontend. The [`$lib` import alias](https://svelte.dev/docs/kit/$lib) is a SvelteKit thing, but the important part is that this file and its exports need to be reachable from anywhere in your app. How you arrange that in another framework is an exercise left to the reader.
+
+```ts title="src/lib/smartAccountClient.ts"
+import { Server, Api } from "@stellar/stellar-sdk/rpc";
+import {
+  Account,
+  Address,
+  BASE_FEE,
+  Contract,
+  TransactionBuilder,
+  scValToNative,
+} from "@stellar/stellar-sdk";
+import { SmartAccountKit, IndexedDBStorage } from "smart-account-kit";
+import { browser } from "$app/environment";
+
 import {
   PUBLIC_STELLAR_RPC_URL,
   PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-  PUBLIC_WALLET_WASM_HASH,
+  PUBLIC_ACCOUNT_WASM_HASH,
+  PUBLIC_WEBAUTHN_VERIFIER_ADDRESS,
+  PUBLIC_NATIVE_TOKEN_CONTRACT,
 } from "$env/static/public";
 
-export const account = new PasskeyKit({
+/**
+ * A configured Stellar RPC server instance used to interact with the network.
+ */
+export const rpc = new Server(PUBLIC_STELLAR_RPC_URL);
+
+/**
+ * The smart account client. Wallets are OpenZeppelin smart account contracts,
+ * authenticated with WebAuthn passkeys.
+ */
+export const account = new SmartAccountKit({
   rpcUrl: PUBLIC_STELLAR_RPC_URL,
   networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-  walletWasmHash: PUBLIC_WALLET_WASM_HASH,
+  accountWasmHash: PUBLIC_ACCOUNT_WASM_HASH,
+  webauthnVerifierAddress: PUBLIC_WEBAUTHN_VERIFIER_ADDRESS,
+  // Transactions are POSTed to our own `/api/send` route, which forwards them
+  // on to the OpenZeppelin Relayer Channels service. The Channels API key
+  // stays server-side.
+  relayerUrl: "/api/send",
+  // IndexedDB isn't available while server-rendering, but the kit is only
+  // ever driven from the browser anyway.
+  storage: browser ? new IndexedDBStorage() : undefined,
+  // the "relying-party" name will be displayed in the passkey prompt from the
+  // user's authenticator
+  rpName: "Ye Olde Guestbook",
+  timeoutInSeconds: 30,
 });
 ```
 
-The `PUBLIC_WALLET_WASM_HASH` variable is the Wasm hash of the smart wallet's contract code. This Wasm hash identifies the executable code that will be deployed for new smart wallets and is simply the Sha256 hash of the compiled contract executable file. This hash is returned during when a compiled contract is installed on the network.
+Worth calling out a few of those options:
 
-That's all there is to it! This `account` will be fully ready to authenticate users and sign transactions! (It's even easier than all the prerequisites isn't it!)
+- **`accountWasmHash`** is the Wasm hash of the [OpenZeppelin Smart Account](https://docs.openzeppelin.com/stellar-contracts/accounts/smart-account) contract code. Every user's wallet is a fresh instance deployed from this executable. The hash is just the Sha256 of the compiled contract file, and it's returned when that contract is installed on the network. The shared Testnet value comes pre-filled in `.env.example`, so there's nothing for you to compile or deploy here.
+- **`webauthnVerifierAddress`** is the contract address of the shared verifier that checks `secp256r1` signatures on-chain. Also pre-filled.
+- **`relayerUrl`** points at our _own_ `/api/send` route rather than at OpenZeppelin directly. That's the whole trick for keeping the API key server-side, and we'll build that route below.
+- **`storage`** decides where a connected session lives. `IndexedDBStorage` means a session survives a page reload. As noted in the [prerequisites](./passkeys-prerequisites.mdx), this is a per-browser cache sitting in front of the indexer, not a replacement for it.
+- **`rpName`** is the "relying party" name, which is the label your users will see in their authenticator's prompt. Make it something they'll recognize.
 
-Now, we've also added some useful "helpers" into the `$lib/passkeyClient.ts` file in our template. The [source code file](https://github.com/ElliotFriend/soroban-template-sveltekit-passkeys/blob/main/src/lib/passkeyClient.ts) is commented to reflect what these helpers are, and how they work. These are strictly for convenience, though. You could stop right here and come away with perfectly valid signed passkey transactions. These helpers are:
+:::note
 
-- A configured instance of the `rpc.Server` class so we can make RPC requests without having to know/import the RPC's URL all the time.
-
-  ```js title="src/lib/passkeyClient.ts"
-  import { Server } from "@stellar/stellar-sdk/rpc";
-
-  /**
-   * A configured Stellar RPC server instance used to interact with the network
-   */
-  export const rpc = new Server(PUBLIC_STELLAR_RPC_URL);
-  ```
-
-- A SAC client to interact with the native XLM asset contract. We're making an assumption that native lumens is a "good enough" asset interaction to get the tutorial working, and for playing on Testnet. You could easily export _another_ SAC client to interact with USDC, for example. The native contract address can be obtained from Stellar-CLI with the command `stellar contract id asset --asset native`.
-
-  ```js title="src/lib/passkeyClient.ts"
-  import { SACClient } from "passkey-kit";
-  import { PUBLIC_NATIVE_CONTRACT_ADDRESS } from "$env/static/public";
-
-  /**
-   * A client allowing us to easily create SAC clients for any asset on the
-   * network.
-   */
-  const sac = new SACClient({
-    rpcUrl: PUBLIC_STELLAR_RPC_URL,
-    networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
-  });
-
-  /**
-   * A SAC client for the native XLM asset.
-   */
-  export const native = sac.getSACClient(PUBLIC_NATIVE_CONTRACT_ADDRESS);
-  ```
-
-## Passkey server
-
-So, that's the client-facing passkey code (and some helpers) taken care of. What about the server-side, where we want to be cautious about leaking secrets and tokens?!
-
-We're setting this up in `src/lib/server/passkeyServer.ts`, for similar reasons we listed above. This gives us an importable `server` instance that can be accessed and used in other server-side logic. Svelte gives us the added benefit of [keeping the code in this directory safe](https://svelte.dev/docs/kit/server-only-modules#Your-modules). When we want to safeguard credentials and secrets, we can put any sensitive code in the `$lib/server` directory.
-
-```js title="src/lib/server/passkeyServer.ts"
-import { PasskeyServer } from "passkey-kit";
-
-import {
-  PUBLIC_LAUNCHTUBE_URL,
-  PUBLIC_MERCURY_URL,
-  PUBLIC_STELLAR_RPC_URL,
-} from "$env/static/public";
-import {
-  PRIVATE_LAUNCHTUBE_JWT,
-  PRIVATE_MERCURY_JWT,
-} from "$env/static/private";
-
-export const server = new PasskeyServer({
-  rpcUrl: PUBLIC_STELLAR_RPC_URL,
-  launchtubeUrl: PUBLIC_LAUNCHTUBE_URL,
-  launchtubeJwt: PRIVATE_LAUNCHTUBE_JWT,
-  mercuryUrl: PUBLIC_MERCURY_URL,
-  mercuryJwt: PRIVATE_MERCURY_JWT,
-  // mercuryKey: PRIVATE_MERCURY_KEY, // optionally
-});
-```
-
-And you're done with the `PasskeyServer`! Well done!
-
-This `server` instance will be used for sending transactions (via Launchtube) and reverse-looking-up contract addresses from a known passkey ID (via Mercury).
-
-### API routes
-
-Now, we'll need a way to utilize some of the functionality of this `server` from the client without exposing any of the sensitive information. For that, we'll set up a collection of (SvelteKit) routes to act as a backend, and _those routes_ (not the client-side code) will make use of the `server` instance. These files live in `src/routes/api/*` in the project repo.
-
-Some of the structure here is a bit Svelte-specific, but it should pretty easily make sense enough to non-Svelte developers regardless. The _one_ SvelteKit-specific thing to note is any file named `*server.{ts,svelte}` will **only** run [on the server](https://svelte.dev/docs/kit/routing#server). Your secrets, tokens, credentials, etc. are considered safe to use within these files.
-
-#### `/api/send`
-
-This API endpoint will send a transaction to the network, via Launchtube. It receives a `POST` request, whose `body` object contains a base64-encoded transaction.
-
-:::warning
-
-If you're creating a `yourdomain.com/api/send` method, you will probably need to do "something" to ensure that only the right "kinds" of transactions are actually sent to the network. I.e., make sure it's coming from your dapp, your users, etc. Otherwise, it would be possible for a bad actor to discover they could use this to send their own transactions, while you pick up the tab for the fees!
-
-The implementation of this is outside the scope of this tutorial, but be sure to consider these kinds of risks as you prepare for a more production-level deployment.
+If you're server-rendering any part of your app, note the `browser` guard on `storage`. IndexedDB is a browser API, so handing the kit an `IndexedDBStorage` during SSR will fall over. Ye Olde Guestbook sets `export const ssr = false` in `src/routes/+layout.ts` and renders entirely on the client, but the guard costs nothing and saves a confusing error later.
 
 :::
 
-```js title="src/routes/api/send/+server.ts"
-import { server } from "$lib/server/passkeyServer";
-import { json } from "@sveltejs/kit";
+### A couple of helpers
+
+The kit covers authentication, but there are two small things the guestbook needs often enough to be worth wrapping. Both live at the end of the same file.
+
+First, reading an XLM balance. There's no SAC client to instantiate here: we simulate a `balance` call against the native Stellar Asset Contract and read the return value. Simulation is free and doesn't touch the ledger, so this needs no signature and no fees.
+
+```ts title="src/lib/smartAccountClient.ts"
+/**
+ * Read an address's native XLM balance by simulating a `balance` call against
+ * the native Stellar Asset Contract.
+ *
+ * @param address - The address whose balance to read
+ * @returns The balance, in stroops
+ */
+export async function getNativeBalance(address: string): Promise<bigint> {
+  const transaction = new TransactionBuilder(
+    // We use a dummy account for simulation-only transactions.
+    new Account(
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "0",
+    ),
+    {
+      fee: BASE_FEE,
+      networkPassphrase: PUBLIC_STELLAR_NETWORK_PASSPHRASE,
+    },
+  )
+    .addOperation(
+      new Contract(PUBLIC_NATIVE_TOKEN_CONTRACT).call(
+        "balance",
+        new Address(address).toScVal(),
+      ),
+    )
+    .setTimeout(30)
+    .build();
+
+  const simulation = await rpc.simulateTransaction(transaction);
+
+  if (!Api.isSimulationSuccess(simulation) || !simulation.result) {
+    throw new Error("Unable to read balance");
+  }
+
+  return scValToNative(simulation.result.retval) as bigint;
+}
+```
+
+Second, a bit of passkey ergonomics that took us longer to get right than we'd like to admit. When a user opens the passkey prompt and then dismisses it, that's not an error you want to shout about. Trouble is, "the user changed their mind" arrives as different exception names depending on the browser, the platform, and whether it came wrapped in a `cause`. So we sniff for it:
+
+```ts title="src/lib/smartAccountClient.ts"
+/**
+ * Figure out if authenticating with a passkey was simply the user
+ * dismissing the prompt. This can present itself in a few different ways,
+ * depending on a user's computer/browser/etc.
+ */
+export function userDismissedPasskey(err: unknown): boolean {
+  const nameOf = (e: unknown) => (e as { name?: string } | null)?.name;
+  const name =
+    nameOf(err) ?? nameOf((err as { cause?: unknown } | null)?.cause);
+  return name === "NotAllowedError" || name === "AbortError";
+}
+```
+
+Every passkey flow in the app runs its errors past this first, so a cancelled prompt shows a gentle "Cancelled" toast instead of a scary red "something went wrong."
+
+## Tracking the connected wallet
+
+The kit emits events as wallets connect and disconnect, which is a tidy way to keep UI state in sync without every component reaching into the kit. In Ye Olde Guestbook that's a small reactive class:
+
+```ts title="src/lib/state/UserState.svelte.ts"
+import { account } from "$lib/smartAccountClient";
+
+class Wallet {
+  contractAddress: string | null = $state(null);
+
+  constructor() {
+    account.events.on(
+      "walletConnected",
+      ({ contractId }) => (this.contractAddress = contractId),
+    );
+    account.events.on(
+      "walletDisconnected",
+      () => (this.contractAddress = null),
+    );
+  }
+}
+
+export const wallet = new Wallet();
+```
+
+The `$state` rune is Svelte 5's reactivity primitive, so this is the most framework-flavored file in the tutorial. The transferable idea is the shape of it: subscribe to `account.events` once, in one place, and let the rest of your components read a single piece of state. Swap `$state` for a React `useState` in a context provider, a Vue `ref`, or a plain observable, and the pattern holds.
+
+## The submission route
+
+Now for the server side, where we need to be careful about leaking credentials.
+
+Smart Account Kit doesn't talk to OpenZeppelin directly. Because we configured `relayerUrl: '/api/send'`, it POSTs to our own origin instead, deliberately sending no credentials of its own (it's running in the browser, so it has none worth sending). This route is what adds the API key and forwards the request on.
+
+In SvelteKit, any file named `+server.ts` runs [only on the server](https://svelte.dev/docs/kit/routing#server), and anything under `$lib/server` [can't be imported into client code at all](https://svelte.dev/docs/kit/server-only-modules#Your-modules). Those are the places your secrets are safe. Some of this is SvelteKit-specific, but every full-stack framework has an equivalent seam.
+
+The kit sends one of two payload shapes, and Channels accepts both:
+
+- `{ func, auth }` is a Soroban host function plus its authorization entries. This is what user actions take, and it's the sponsored path: Channels wraps the call in a channel-account transaction and pays the fees.
+- `{ xdr }` is a fully signed transaction envelope.
+
+You must never mix the two in one request, so the route validates that before forwarding.
+
+```ts title="src/routes/api/send/+server.ts"
 import type { RequestHandler } from "./$types";
+import { error, json } from "@sveltejs/kit";
 
-export const POST: RequestHandler = async ({ request }) => {
-  const { xdr } = await request.json();
-  const res = await server.send(xdr);
-  return json(res);
+import {
+  PRIVATE_RELAYER_BASE_URL,
+  PRIVATE_RELAYER_API_KEY,
+} from "$env/static/private";
+
+/**
+ * The smart account kit POSTs either `{ func, auth }` (a smart contract
+ * invocation) or `{ xdr }` (a fully signed envelope) to this endpoint. It
+ * deliberately sends no credentials, because it runs in the browser. This route
+ * adds the OpenZeppelin Relayer Channels API key and forwards the request on,
+ * so the key never leaves the server.
+ */
+export const POST: RequestHandler = async ({ url, request, fetch }) => {
+  // ensure requests are coming from our own frontend
+  if (request.headers.get("origin") !== url.origin) {
+    error(403, { message: "hostname mismatch" });
+  }
+
+  // parse the request body and get the transaction details
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    error(400, { message: "request body must be a JSON object" });
+  }
+  const { func, auth, xdr }: { func?: string; auth?: string[]; xdr?: string } =
+    body;
+
+  // Channels takes either a signed transaction envelope, or a host function
+  // plus its auth entries. But, you must never mix the two shapes!
+  if (func && xdr) {
+    error(400, {
+      message:
+        "request body must contain a transaction OR a function, not both",
+    });
+  }
+  if (!func && !xdr) {
+    error(400, {
+      message: "request body must contain either a function or a transaction",
+    });
+  }
+
+  const params = func ? { func, auth } : { xdr };
+
+  try {
+    const res = await fetch(`${PRIVATE_RELAYER_BASE_URL}/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${PRIVATE_RELAYER_API_KEY}`,
+      },
+      body: JSON.stringify({ params }),
+    });
+
+    // Pass the relayer's response through untouched. The kit understands both
+    // the `{ success, data }` envelope and a bare transaction result.
+    return json(await res.json(), { status: res.ok ? 200 : res.status });
+  } catch (err: unknown) {
+    console.error("[send]", err);
+    error(502, {
+      message: err instanceof Error ? err.message : "relayer submission failed",
+    });
+  }
 };
 ```
 
-#### `/api/contract/[signer]`
+A few things this route is doing on purpose:
 
-This endpoint will reverse-lookup (via Mercury) a contract address given a passkey ID. The path parameter `[signer]` is how we'll give the passkey ID to the API `GET` request.
+- **The `origin` check** is a first, cheap line of defense. Without it, anyone who finds `yourdomain.com/api/send` can submit their own transactions while _you_ pick up the tab for the fees.
+- **The `params` wrapper** is what the Channels endpoint expects on the wire: `{ "params": { ... } }`, rather than the bare payload the kit sent us. You won't see it in the [OpenZeppelin Relayer guide](../../../tools/openzeppelin-relayer.mdx), because those examples go through the relayer SDK, which adds the wrapper for you. We're talking to the endpoint directly, so we add it ourselves.
+- **Passing the relayer's response through untouched** keeps the route dumb, which is a feature. The kit already understands both the `{ success, data }` envelope Channels returns and a bare transaction result, so re-shaping the response here would only give us something new to keep in sync.
 
-```js title="src/routes/api/contract/[signer]/+server.ts"
+:::warning
 
-import { server } from '$lib/server/passkeyServer';
-import type { RequestHandler } from './$types';
+An origin header is trivially forged by anything that isn't a browser, so please don't mistake the check above for real authorization. Before you put something like this on Mainnet you'll want actual rate limiting, a way to bound _which_ transactions you're willing to sponsor, and some monitoring on your relayer credits. Otherwise a bad actor can happily drain them.
 
-export const GET: RequestHandler = async ({ params }) => {
-    const contractId = await server.getContractId(params.signer!);
+Implementing all of that is outside the scope of this tutorial, but it's very much inside the scope of shipping to real users.
 
-    return new Response(String(contractId));
-};
-```
-
-#### `/api/fund/[address]`
-
-This is another helper, but on the API side of things! [Friendbot](../../../networks/README.mdx#friendbot) doesn't support `C...` addresses for Testnet funding. So, we're setting up an endpoint so we can add some funds to the dapp users' wallets. This gives them some tokens to play around with, and allows _us_ to receive those guestbook donations!
-
-This API endpoint is not strictly necessary. But, it is a useful way to see how these kinds of interactions can occur between a "regular" `G...` address and a soroban contract `C...` address.
-
-```js title="src/routes/api/fund/[address]/+server.ts"
-
-import { error, json } from '@sveltejs/kit';
-import { PRIVATE_FUNDER_SECRET_KEY } from '$env/static/private';
-import { native } from '$lib/passkeyClient';
-import type { RequestHandler } from './$types';
-import { Keypair } from '@stellar/stellar-sdk';
-import { basicNodeSigner } from '@stellar/stellar-sdk/contract';
-import { PUBLIC_STELLAR_NETWORK_PASSPHRASE } from '$env/static/public';
-
-export const GET: RequestHandler = async ({ params, fetch }) => {
-    const fundKeypair = Keypair.fromSecret(PRIVATE_FUNDER_SECRET_KEY);
-    const fundSigner = basicNodeSigner(fundKeypair, PUBLIC_STELLAR_NETWORK_PASSPHRASE);
-
-    try {
-        const { built, ...transfer } = await native.transfer({
-            from: fundKeypair.publicKey(),
-            to: params.address,
-            amount: BigInt(25 * 10_000_000),
-        });
-
-        await transfer.signAuthEntries({
-            publicKey: fundKeypair.publicKey(),
-            signAuthEntry: (auth) => fundSigner.signAuthEntry(auth),
-        });
-
-        await fetch('/api/send', {
-            method: 'POST',
-            body: JSON.stringify({
-                xdr: built!.toXDR(),
-            }),
-        });
-
-        return json({
-            status: 200,
-            message: 'Smart wallet successfully funded',
-        });
-    } catch (err) {
-        console.error(err);
-        error(500, {
-            message: 'Error when funding smart wallet',
-        });
-    }
-};
-```
-
-### Passkey client helpers
-
-Each of those API endpoints receives a corresponding function in the `$lib/passkeyClient.ts` file, just to make it a little easier on the client-side to make use of the API routes we just made.
-
-This allows us to write the `fetch` code once, and use it consistently everywhere else. They're pretty straightforward and don't really need much explanation. We'll add them to the end of the file:
-
-```js title="src/lib/passkeyClient.ts"
-/**
- * A wrapper function so it's easier for our client-side code to access the
- * `/api/send` endpoint we have created.
- *
- * @param xdr - The base64-encoded, signed transaction. This transaction
- * **must** contain a Soroban operation
- * @returns JSON object containing the RPC's response
- */
-export async function send(xdr: string) {
-  return fetch("/api/send", {
-    method: "POST",
-    body: JSON.stringify({
-      xdr,
-    }),
-  }).then(async (res) => {
-    if (res.ok) return res.json();
-    else throw await res.text();
-  });
-}
-
-/**
- * A wrapper function so it's easier for our client-side code to access the
- * `/api/contract/[signer]` endpoint we have created.
- *
- * @param signer - The passkey ID we want to find an associated smart wallet for
- * @returns The contract address to which the specified signer has been added
- */
-export async function getContractId(signer: string) {
-  return fetch(`/api/contract/${signer}`).then(async (res) => {
-    if (res.ok) return res.text();
-    else throw await res.text();
-  });
-}
-
-/**
- * A wrapper function so it's easier for our client-side code to access the
- * `/api/fund/[address]` endpoint we have created.
- *
- * @param address - The contract address to fund on the Testnet
- */
-export async function fundContract(address: string) {
-  return fetch(`/api/fund/${address}`).then(async (res) => {
-    if (res.ok) return res.json();
-    else throw await res.text();
-  });
-}
-```
+:::
 
 Still with us?! Incredible! You're a rock star! And, you're ready to get into the interactions with the smart contract! See you on the next page!
