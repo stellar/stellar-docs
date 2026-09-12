@@ -1,0 +1,224 @@
+---
+title: Use an externally managed contract executable
+description: Point many contracts at one shared Wasm hash with an executable reference entry, and upgrade the whole fleet with a single update
+---
+
+<head>
+  <title>Use an Externally Managed Contract Executable</title>
+  <meta charSet="utf-8" />
+  <meta
+    property="og:title"
+    content="Use an Externally Managed Contract Executable"
+  />
+  <meta
+    property="og:description"
+    content="Point many contracts at one shared Wasm hash with an executable reference entry, and upgrade the whole fleet with a single update"
+  />
+</head>
+
+## Overview
+
+Normally a contract's executable is a Wasm hash stored on the contract itself, and upgrading it means calling into that one contract. An _externally managed executable_ moves that hash into a separate, shared place: an **executable reference entry**.
+
+An executable reference entry is a persistent contract data entry, owned by a contract and keyed by a **tag**, whose value is a Wasm hash. Any contract can use another contract's executable reference entry as its own executable. When such a contract is invoked, its code is loaded from the Wasm hash the entry currently points at.
+
+That indirection is the whole point. When the entry's owner re-points the entry at a new Wasm hash, **every contract that uses the entry as its executable runs the new code at its next invocation** — no per-contract upgrade call, no transaction per contract. This is the "beacon" pattern: one entry acts as a beacon that a whole fleet of contracts follows.
+
+This feature is defined by [CAP-85](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0085.md), "Externally Managed Contract Executables."
+
+### Availability
+
+Executable reference entries require **protocol 28** and **soroban-sdk v28**.
+
+:::note
+
+Neither is released at the time of writing. Protocol 28 is listed as "Testnet, TBD" on the [software versions](../../../networks/software-versions.mdx) page, and the latest released Rust SDK is v27. The APIs below will not compile against soroban-sdk v27, and they will not work on Mainnet until protocol 28 is live there. Treat this guide as preparation, not as something to ship today.
+
+:::
+
+### When to use it
+
+Reach for an executable reference when:
+
+- A factory contract deploys many instances that all run the same implementation, and you want to upgrade them together.
+- You are deploying a fleet of per-user, per-pool, or per-asset contracts and cannot afford one upgrade transaction per contract.
+
+Stick with a plain `ContractExecutable::Wasm` upgrade when:
+
+- You have a single standalone contract. The indirection buys you nothing, and the entry adds a TTL you have to keep alive. See [Upgrading Wasm bytecode for a deployed contract](./upgrading-contracts.mdx).
+- You would have to reference an entry someone else owns. That hands them control over your contract's code. See [Trust](#trust) below.
+
+## Managing an entry you own
+
+`env.executable_refs()` manages the executable reference entries owned by the currently executing contract. A contract can only manage its own entries.
+
+| Method | Purpose |
+| --- | --- |
+| `set(&tag, &wasm_hash)` | Create the entry, or re-point an existing one at a new Wasm hash. |
+| `get(&tag) -> Option<BytesN<32>>` | Read the Wasm hash the entry points at. |
+| `has(&tag) -> bool` | Check whether the entry exists. |
+| `extend_ttl(&tag, threshold, extend_to)` | Extend the entry's TTL. |
+| `extend_ttl_with_limits(&tag, extend_to, min_ext, max_ext)` | Extend the entry's TTL with bounds on the extension. |
+| `get_ttl(&tag) -> u32` | Read the entry's TTL. Available under `testutils` only. |
+
+`set` is the dangerous one: calling it on an existing entry changes the code of every contract using that entry. A real contract must restrict who can call it. Gate it behind an admin `require_auth()`:
+
+```rust
+#![no_std]
+
+use soroban_sdk::{
+    contract, contractimpl, contracttype, Address, BytesN, Env, String,
+};
+
+#[contracttype]
+#[derive(Clone)]
+enum DataKey {
+    Admin,
+}
+
+#[contract]
+pub struct Beacon;
+
+#[contractimpl]
+impl Beacon {
+    pub fn __constructor(env: Env, admin: Address) {
+        env.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    /// Publish the executable reference entry keyed by `tag`, pointing it at
+    /// `wasm_hash`. If the entry already exists, every contract using it as
+    /// its executable runs `wasm_hash` at its next invocation, so only the
+    /// admin may call this.
+    pub fn publish(env: Env, tag: String, wasm_hash: BytesN<32>) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        env.executable_refs().set(&tag, &wasm_hash);
+    }
+
+    /// Read back the Wasm hash the entry currently points at.
+    pub fn published(env: Env, tag: String) -> Option<BytesN<32>> {
+        env.executable_refs().get(&tag)
+    }
+
+    /// Keep the entry alive. Anyone may call this — extending a TTL is safe.
+    pub fn extend(env: Env, tag: String) {
+        env.executable_refs().extend_ttl(&tag, 100_000, 500_000);
+    }
+}
+```
+
+The `wasm_hash` passed to `set` must be the hash of Wasm that has **already been uploaded** with `env.deployer().upload_contract_wasm(...)` (or the `stellar contract upload` CLI command). `set` panics otherwise.
+
+## Deploying a contract that uses a reference
+
+Pass `ContractExecutable::ExternalRef` to `deploy_contract` instead of `ContractExecutable::Wasm`. The reference names the entry's `owner` and its `tag`:
+
+```rust
+use soroban_sdk::{
+    contract, contractimpl, Address, BytesN, ContractExecutable, ContractExecutableRef, Env,
+    String,
+};
+
+#[contract]
+pub struct Factory;
+
+#[contractimpl]
+impl Factory {
+    /// Deploy a contract whose executable is read from the entry keyed by
+    /// `tag` and owned by `owner`.
+    pub fn deploy(env: Env, owner: Address, tag: String, salt: BytesN<32>) -> Address {
+        env.deployer().with_current_contract(salt).deploy_contract(
+            ContractExecutable::ExternalRef(ContractExecutableRef { owner, tag }),
+            (),
+        )
+    }
+}
+```
+
+The last argument is the constructor arguments, exactly as with a Wasm deploy. Pass `()` when the contract has no constructor or a zero-argument one, or a tuple such as `(a, b)` to forward arguments to `__constructor`. As always, the deployed address is derived from the deployer address and the salt.
+
+The referenced entry must already exist when `deploy_contract` runs, or the call panics.
+
+## Switching a deployed contract onto a reference
+
+An already-deployed contract can replace its own executable with a reference, the same way it would upgrade to a new Wasm hash:
+
+```rust
+use soroban_sdk::{
+    contract, contractimpl, Address, ContractExecutable, ContractExecutableRef, Env, String,
+};
+
+#[contract]
+pub struct Joinable;
+
+#[contractimpl]
+impl Joinable {
+    /// Join the fleet following the entry keyed by `tag` and owned by `owner`.
+    /// Gate this behind the contract's own admin check in a real contract.
+    pub fn follow(env: Env, owner: Address, tag: String) {
+        env.deployer()
+            .update_current_contract(ContractExecutable::ExternalRef(ContractExecutableRef {
+                owner,
+                tag,
+            }));
+    }
+}
+```
+
+`owner` may be the current contract itself, which is how a contract switches to an entry it owns and manages.
+
+As with any executable update, the change does not take effect immediately — the executable is replaced only after the invocation finishes successfully. The referenced entry must exist at the time of the call, or the call panics.
+
+## Rules and gotchas
+
+The protocol enforces rules on executable reference entries, which is why they are managed through `env.executable_refs()` rather than the ordinary storage functions.
+
+### Trust
+
+:::caution
+
+The owner of an executable reference entry controls the code of every contract that references it. Re-pointing the entry replaces those contracts' logic entirely — including any logic that guards their balances or their storage.
+
+Reference an entry only if you own it yourself, or if you trust the owner as much as you would trust an admin key on your own contract. If you are considering referencing a third party's entry, look at who can call their `set`-equivalent function before you deploy.
+
+:::
+
+### The Wasm must already be uploaded
+
+`set` requires the 32-byte hash of Wasm that is already on the ledger, uploaded via `Deployer::upload_contract_wasm`. It panics if no such Wasm exists.
+
+### Entries can never be removed
+
+Entries always have **persistent** durability, and **once created, an entry can never be removed**. Like any persistent entry it can be archived when its TTL expires and later restored, but there is no delete. Choose your tags deliberately — a tag you publish is a tag you own forever.
+
+### The entry must exist at deploy or update time
+
+Both `deploy_contract` and `update_current_contract` read the entry when they run. If the entry does not exist, the call panics. Publish the entry before you deploy anything that points at it.
+
+### Tags do not collide with ordinary storage keys — with one caveat
+
+Entries are stored in the owning contract's persistent storage under a protocol-defined key type, `ExecutableTag`. They do not collide with ordinary storage keys, including a `String` key holding the same value: `env.storage().persistent().set(&tag, ...)` and `env.executable_refs().set(&tag, ...)` write two different entries.
+
+The caveat: a caller can construct an `ExecutableTag` key off-chain and pass it into a contract as a `Val`. A contract that writes caller-supplied `Val`s into persistent storage can therefore collide with its own executable reference entries. If your contract accepts untyped `Val` storage keys from callers, wrap them in your own key type rather than using them directly.
+
+### Keep the entry's TTL alive
+
+An executable reference entry is a persistent entry with its own TTL, and it is needed to resolve the code of every contract that references it. If it is archived, those contracts cannot be invoked until it is restored.
+
+`Deployer::extend_ttl`, `Deployer::extend_ttl_for_code`, and `Deployer::extend_ttl_with_limits` extend the TTL of the contract instance, the code, **and any executable reference entry needed to resolve that code**, so the usual instance-and-code bumping covers the entry too. The owner can also extend the entry directly with `env.executable_refs().extend_ttl(...)`. See [Extending a contract's Wasm TTL](./extending-wasm-ttl.mdx) and [Storage strategies](../storage/storage-strategies.mdx).
+
+## The other variant
+
+`ContractExecutable` has two variants. `ContractExecutable::ExternalRef(ContractExecutableRef { owner, tag })` is the one described above; `ContractExecutable::Wasm(wasm_hash)` is the ordinary case, where the contract's executable is a specific uploaded Wasm blob:
+
+```rust
+env.deployer()
+    .with_current_contract(salt)
+    .deploy_contract(ContractExecutable::Wasm(wasm_hash), ());
+
+env.deployer()
+    .update_current_contract(ContractExecutable::Wasm(new_wasm_hash));
+```
+
+For the plain-Wasm workflows, see [Deploy a contract from installed Wasm bytecode using a deployer contract](./deploy-contract.mdx) and [Upgrading Wasm bytecode for a deployed contract](./upgrading-contracts.mdx).
