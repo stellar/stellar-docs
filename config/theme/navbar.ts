@@ -354,6 +354,11 @@ const data: NavbarItem = {
       activeBasePath: 'docs/data/analytics/hubble'
     },
     {
+      to: '/docs/data/analytics/public-dashboards',
+      label: 'Dashboards',
+      activeBasePath: 'docs/data/analytics/public-dashboards'
+    },
+    {
       to: '/docs/data/analytics/analytics-providers',
       label: 'Providers',
       activeBasePath: 'docs/data/analytics/analytics-providers'
