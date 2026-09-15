@@ -1,0 +1,152 @@
+---
+title: Data Lake Storage Format
+sidebar_position: 10
+---
+
+# Data Lake Storage Format
+
+Galexie stores ledger metadata in an object store as compressed XDR files.
+
+Most applications never read those files directly. Read them through the [ingest SDK](../ingest-sdk/README.mdx) or through [Stellar RPC](../../../apis/rpc/admin-guide/data-lake-integration.mdx) instead. Both hide the layout described here.
+
+Read this page if your application reads the object store itself, or if you build a data store that other Stellar tools must be able to read.
+
+[SEP-54: Ledger Metadata Storage](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0054.md) is the specification for this format. This page summarizes the specification and shows the layout of the public Stellar data lake.
+
+## Object keys
+
+Galexie writes all ledger files under one configurable path in the bucket. Inside that path, each file sits in a partition directory:
+
+```text
+<ledgers-path>/<partition>/<batch>.xdr.zst
+```
+
+Galexie omits the partition directory when [`files_per_partition`](./admin_guide/configuring.mdx#data-organization-optional) is 1.
+
+Both the partition name and the batch name start with 8 hexadecimal digits. That value is `0xFFFFFFFF` minus the first ledger sequence of the range. The subtraction reverses the order, so a listing returns the newest ledgers first. A client finds the latest ledger with one listing request and no index.
+
+The partition name then repeats the first and last ledger sequence of the partition:
+
+```text
+FFFFFFFF--0-15
+```
+
+The batch name repeats the first and last ledger sequence of the batch. When a batch holds one ledger, the name carries that one sequence only:
+
+```text
+FFFFFFFD--2-3.xdr.zst
+FFFFFFFD--2.xdr.zst
+```
+
+:::note
+
+A data store does not necessarily hold the whole ledger history. List the oldest partition to find where its history starts.
+
+:::
+
+## File contents
+
+Each ledger file is a [Zstandard](https://facebook.github.io/zstd/) compressed [`LedgerCloseMetaBatch`](https://github.com/stellar/stellar-xdr/blob/curr/Stellar-exporter.x) XDR value:
+
+```cpp
+// Batch of ledgers along with their transaction metadata
+struct LedgerCloseMetaBatch
+{
+    // starting ledger sequence number in the batch
+    uint32 startSequence;
+
+    // ending ledger sequence number in the batch
+    uint32 endSequence;
+
+    // Ledger close meta for each ledger within the batch
+    LedgerCloseMeta ledgerCloseMetas<>;
+};
+```
+
+Every batch in one data store holds the same number of ledgers. Refer to the [XDR](../../../../learn/fundamentals/data-format/xdr.mdx) documentation for more information on the encoding.
+
+Older data stores use the `.xdr.zstd` suffix instead of `.xdr.zst`. Both suffixes mean Zstandard. A client reads the suffix from an existing object rather than assuming one.
+
+## Configuration file
+
+SEP-54 requires a JSON configuration object at `<ledgers-path>/.config.json`. A client reads it to learn the batch and partition sizes before it builds any object key.
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `networkPassphrase` | string | The passphrase of the Stellar network that produced the ledgers. |
+| `version` | string | The version of the configuration file schema. |
+| `compression` | string | The compression algorithm. Only `zstd` is supported. |
+| `ledgersPerBatch` | integer | The number of ledgers in each batch file. |
+| `batchesPerPartition` | integer | The number of batch files in each partition directory. |
+
+The Galexie configuration file names the last two values [`ledgers_per_file` and `files_per_partition`](./admin_guide/configuring.mdx#data-organization-optional).
+
+Older data stores do not hold this file. A client that reads one must get the batch and partition sizes from its own configuration. The Go `datastore` package does that when the file is absent.
+
+## The public Stellar data lake
+
+A Stellar ledger data lake is available through the [AWS Open Data program](https://registry.opendata.aws/aws-public-blockchain). The bucket is public and needs no credentials. The Pubnet ledgers sit in one data store:
+
+```text
+s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet
+```
+
+Testnet resets. Each reset starts a new data store, in a directory named after the reset date:
+
+```text
+s3://aws-public-blockchain/v1.1/stellar/ledgers/testnet/<reset-date>
+```
+
+List `v1.1/stellar/ledgers/testnet/` to find the current reset directory. Use the directory itself as the `<ledgers-path>`, because each one holds its own `.config.json`.
+
+The Pubnet configuration file holds one ledger per batch and 64,000 batches per partition:
+
+```json title="v1.1/stellar/ledgers/pubnet/.config.json"
+{
+  "networkPassphrase": "Public Global Stellar Network ; September 2015",
+  "version": "1.0",
+  "compression": "zstd",
+  "ledgersPerBatch": 1,
+  "batchesPerPartition": 64000
+}
+```
+
+With those sizes, ledger 50000000 falls in the partition that starts at ledger 49984000, so its object key is:
+
+```text
+v1.1/stellar/ledgers/pubnet/FD054DFF--49984000-50047999/FD050F7F--50000000.xdr.zst
+```
+
+Download that ledger and print it as JSON with [`stellar xdr decode`](../../../../tools/cli/stellar-cli.mdx#stellar-xdr-decode):
+
+```sh
+curl -s https://aws-public-blockchain.s3.amazonaws.com/v1.1/stellar/ledgers/pubnet/FD054DFF--49984000-50047999/FD050F7F--50000000.xdr.zst \
+  | zstd -dc \
+  | stellar xdr decode --type LedgerCloseMetaBatch --input single --output json-formatted
+```
+
+## Object metadata
+
+Galexie also attaches metadata to each ledger object. The metadata lets a client filter objects without downloading them. Data stores that cannot hold user-defined object metadata, such as a plain file system, omit it.
+
+| Key | Description |
+| --- | --- |
+| `start-ledger` | The first ledger sequence in the batch. |
+| `end-ledger` | The last ledger sequence in the batch. |
+| `start-ledger-close-time` | The Unix timestamp of the close time of the first ledger. |
+| `end-ledger-close-time` | The Unix timestamp of the close time of the last ledger. |
+| `protocol-version` | The protocol version of the last ledger. |
+| `core-version` | The version of Stellar Core that produced the ledgers. |
+| `network-passphrase` | The passphrase of the Stellar network that produced the ledgers. |
+| `compression-type` | The compression algorithm of the object. |
+| `version` | The version of Galexie that wrote the object. |
+
+On Amazon S3 these arrive as `x-amz-meta-` response headers:
+
+```sh
+curl -sI https://aws-public-blockchain.s3.amazonaws.com/v1.1/stellar/ledgers/pubnet/FD054DFF--49984000-50047999/FD050F7F--50000000.xdr.zst
+```
+
+## Data integrity
+
+The format carries no proof that the ledgers in a data store are the ledgers the network closed. Verifying that is outside the scope of SEP-54. Read from a data store you run, or from an operator you trust.
