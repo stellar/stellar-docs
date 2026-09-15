@@ -1,0 +1,265 @@
+name: Apply PR autofix
+
+on:
+  workflow_run:
+    workflows:
+      - Prepare PR autofix
+    types:
+      - completed
+
+concurrency:
+  group: pr-autofix-apply-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+# A maintainer token is intentionally separate from GITHUB_TOKEN. GitHub does
+# not recursively run normal PR CI for ordinary pushes made with GITHUB_TOKEN.
+# Configure PR_AUTOFIX_TOKEN to enable bot commits; without it, contributors
+# still receive the fully validated patch as an artifact.
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  apply:
+    name: Apply validated patch
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      SOURCE_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+      SOURCE_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+      SOURCE_HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+      # Use a maintainer PAT with the minimum repository permissions needed to
+      # push PR branches. Fork PRs additionally need "Allow edits from maintainers".
+      PR_AUTOFIX_TOKEN: ${{ secrets.PR_AUTOFIX_TOKEN }}
+    steps:
+      # workflow_run executes this workflow from the trusted default branch.
+      # Nothing checked out from the PR is executed in this privileged job.
+      - name: Resolve current pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          pr_number="${SOURCE_PR_NUMBER:-}"
+          if [[ -z "$pr_number" ]]; then
+            pr_number="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SOURCE_HEAD_SHA}/pulls" \
+              --jq '[.[] | select(.state == "open")][0].number // empty')"
+          fi
+
+          if [[ -z "$pr_number" && -n "${SOURCE_HEAD_REPO:-}" && -n "${SOURCE_HEAD_REF:-}" ]]; then
+            head_owner="${SOURCE_HEAD_REPO%%/*}"
+            pr_number="$(gh api search/issues \
+              -f q="repo:${GITHUB_REPOSITORY} is:pr is:open head:${head_owner}:${SOURCE_HEAD_REF}" \
+              --jq '.items[0].number // empty')"
+          fi
+
+          if [[ -z "$pr_number" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pr="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"
+          state="$(jq -r '.state' <<<"$pr")"
+          draft="$(jq -r '.draft' <<<"$pr")"
+          head_sha="$(jq -r '.head.sha' <<<"$pr")"
+          head_repo="$(jq -r '.head.repo.full_name' <<<"$pr")"
+          head_ref="$(jq -r '.head.ref' <<<"$pr")"
+          maintainer_can_modify="$(jq -r '.maintainer_can_modify' <<<"$pr")"
+          same_repo="$(jq -r --arg repo "$GITHUB_REPOSITORY" '.head.repo.full_name == $repo' <<<"$pr")"
+
+          if [[ "$state" != "open" || "$draft" != "false" || "$head_sha" != "$SOURCE_HEAD_SHA" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "run=true"
+            echo "pr_number=$pr_number"
+            echo "head_sha=$head_sha"
+            echo "head_repo=$head_repo"
+            echo "head_ref=$head_ref"
+            echo "maintainer_can_modify=$maintainer_can_modify"
+            echo "same_repo=$same_repo"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download validated artifact
+        if: steps.pr.outputs.run == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: pr-autofix-${{ steps.pr.outputs.pr_number }}-${{ steps.pr.outputs.head_sha }}
+          path: ${{ runner.temp }}/pr-autofix
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Verify artifact metadata
+        id: artifact
+        if: steps.pr.outputs.run == 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          HEAD_REPO: ${{ steps.pr.outputs.head_repo }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/pr-autofix/metadata.json"
+          patch="$RUNNER_TEMP/pr-autofix/autofix.patch"
+
+          test -f "$metadata"
+          test -f "$patch"
+          test "$(jq -r '.pr_number' "$metadata")" = "$PR_NUMBER"
+          test "$(jq -r '.head_sha' "$metadata")" = "$HEAD_SHA"
+          test "$(jq -r '.head_repo' "$metadata")" = "$HEAD_REPO"
+          test "$(jq -r '.head_ref' "$metadata")" = "$HEAD_REF"
+
+          has_changes="$(jq -r '.has_changes' "$metadata")"
+          case "$has_changes" in
+            true|false) ;;
+            *) echo "::error::Invalid artifact metadata"; exit 1 ;;
+          esac
+          echo "has_changes=$has_changes" >> "$GITHUB_OUTPUT"
+
+      - name: Clear stale autofix comment
+        if: steps.pr.outputs.run == 'true' && steps.artifact.outputs.has_changes != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          marker='<!-- stellar-docs-pr-autofix -->'
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" \
+            | while read -r comment_id; do
+                [[ -z "$comment_id" ]] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" >/dev/null
+              done
+
+      - name: Checkout exact PR head without credentials
+        if: steps.pr.outputs.run == 'true' && steps.artifact.outputs.has_changes == 'true'
+        env:
+          HEAD_REPO: ${{ steps.pr.outputs.head_repo }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          mkdir work
+          cd work
+          git init
+          git remote add origin "https://github.com/${HEAD_REPO}.git"
+          git fetch --depth=1 origin "$HEAD_SHA"
+          git checkout --detach FETCH_HEAD
+
+      - name: Apply and constrain validated patch
+        if: steps.pr.outputs.run == 'true' && steps.artifact.outputs.has_changes == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          patch="$RUNNER_TEMP/pr-autofix/autofix.patch"
+          git apply --check "$patch"
+          git apply --index "$patch"
+
+          count=0
+          while IFS= read -r -d '' path; do
+            count=$((count + 1))
+            case "$path" in
+              routes.txt|docs/*.md|docs/*.mdx|src/pages/*.md|src/pages/*.mdx|meetings/*.md|meetings/*.mdx|src/*.js|src/*.jsx|src/*.ts|src/*.tsx)
+                ;;
+              *)
+                echo "::error::Artifact attempted to change disallowed path: $path"
+                exit 1
+                ;;
+            esac
+          done < <(git diff --cached --name-only -z)
+
+          if (( count == 0 || count > 500 )); then
+            echo "::error::Unexpected autofix file count: $count"
+            exit 1
+          fi
+
+          size="$(git diff --cached --binary | wc -c)"
+          if (( size > 2097152 )); then
+            echo "::error::Autofix patch is larger than 2 MiB"
+            exit 1
+          fi
+
+      - name: Create bot commit
+        id: commit
+        if: steps.pr.outputs.run == 'true' && steps.artifact.outputs.has_changes == 'true'
+        working-directory: work
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m '🤖 Apply automated PR fixes'
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push bot commit
+        id: push
+        if: steps.pr.outputs.run == 'true' && steps.artifact.outputs.has_changes == 'true'
+        working-directory: work
+        env:
+          HEAD_REPO: ${{ steps.pr.outputs.head_repo }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          SAME_REPO: ${{ steps.pr.outputs.same_repo }}
+          MAINTAINER_CAN_MODIFY: ${{ steps.pr.outputs.maintainer_can_modify }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${PR_AUTOFIX_TOKEN:-}" ]]; then
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$SAME_REPO" != 'true' && "$MAINTAINER_CAN_MODIFY" != 'true' ]]; then
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          auth="$(printf 'x-access-token:%s' "$PR_AUTOFIX_TOKEN" | base64 | tr -d '\n')"
+          set +e
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push "https://github.com/${HEAD_REPO}.git" "HEAD:refs/heads/${HEAD_REF}"
+          status=$?
+          set -e
+
+          if (( status == 0 )); then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update fallback comment
+        if: steps.pr.outputs.run == 'true' && steps.artifact.outputs.has_changes == 'true' && steps.push.outputs.pushed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ env.SOURCE_RUN_ID }}
+        run: |
+          set -euo pipefail
+          marker='<!-- stellar-docs-pr-autofix -->'
+          body="$marker
+          Autofix found a validated formatting, lint, or generated-route patch, but the upstream workflow could not push to this PR branch. Download and extract the \`pr-autofix-*\` artifact from the [autofix run]($RUN_URL), then run \`git apply autofix.patch\` on the PR branch."
+
+          comment_id="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n 1)"
+
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
+          fi
+
+      - name: Clear fallback comment after successful push
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          marker='<!-- stellar-docs-pr-autofix -->'
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" \
+            | while read -r comment_id; do
+                [[ -z "$comment_id" ]] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" >/dev/null
+              done
