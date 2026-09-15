@@ -26,7 +26,14 @@ import {
   TransactionBuilder,
   scValToNative,
 } from "@stellar/stellar-sdk";
-import { SmartAccountKit, IndexedDBStorage } from "smart-account-kit";
+import {
+  SmartAccountKit,
+  IndexedDBStorage,
+  WalletAmbiguousError,
+  WalletCodeNotAcceptedError,
+  WalletOwnershipError,
+  WalletProvenanceError,
+} from "smart-account-kit";
 import { browser } from "$app/environment";
 
 import {
@@ -79,9 +86,9 @@ If you're server-rendering any part of your app, note the `browser` guard on `st
 
 :::
 
-### A couple of helpers
+### A few helpers
 
-The kit covers authentication, but there are two small things the guestbook needs often enough to be worth wrapping. Both live at the end of the same file.
+The kit covers authentication, but there are three small things the guestbook needs often enough to be worth wrapping. All of them live at the end of the same file.
 
 First, reading an XLM balance. There's no SAC client to instantiate here: we simulate a `balance` call against the native Stellar Asset Contract and read the return value. Simulation is free and doesn't touch the ledger, so this needs no signature and no fees.
 
@@ -141,6 +148,76 @@ export function userDismissedPasskey(err: unknown): boolean {
 ```
 
 Every passkey flow in the app runs its errors past this first, so a cancelled prompt shows a gentle "Cancelled" toast instead of a scary red "something went wrong."
+
+Third, saying something useful when the kit refuses to connect at all. `connectWallet()` does more than look a contract up and hand it back: before it connects, it verifies how the smart account was created, what code that account is currently running, and that the passkey the user just presented is a live signer on it. Any of those checks failing means the kit throws instead of connecting, and "please try again later" is poor advice for most of them, because trying again with the same passkey will fail in exactly the same way.
+
+```ts title="src/lib/smartAccountClient.ts"
+/**
+ * Turn one of the kit's fail-closed connection errors into something we can
+ * actually show a user.
+ *
+ * @param err - The error thrown by `connectWallet()`
+ * @returns A toast title and description, or `null` if this wasn't a
+ * connection-verification failure and the caller should fall back to its own
+ * generic message
+ */
+export function describeConnectionError(
+  err: unknown,
+): { title: string; description: string } | null {
+  if (err instanceof WalletAmbiguousError) {
+    return {
+      title: "More than one wallet",
+      description:
+        "This passkey is registered to several smart accounts, and the guestbook has no way to ask which one you meant. Try the passkey you created here.",
+    };
+  }
+
+  if (err instanceof WalletOwnershipError) {
+    return {
+      title: "Passkey not recognized",
+      description:
+        "This passkey isn't a live signer on that smart account. Log in with the passkey you used when you signed up.",
+    };
+  }
+
+  if (err instanceof WalletProvenanceError) {
+    // This one is genuinely ambiguous. It covers a wallet whose creation
+    // history failed verification (permanent) and an indexer that is
+    // incomplete or lagging the network (transient), so the copy has to
+    // leave room for waiting it out.
+    return {
+      title: "Couldn't verify this wallet",
+      description:
+        "We could not confirm how this smart account was created. If you just signed up, the indexer may still be catching up, so give it a moment and try again.",
+    };
+  }
+
+  if (err instanceof WalletCodeNotAcceptedError) {
+    return {
+      title: "Unsupported wallet",
+      description:
+        "That smart account runs contract code this app does not accept, which usually means it was upgraded elsewhere.",
+    };
+  }
+
+  return null;
+}
+```
+
+Each of those maps to a check the kit runs on your behalf:
+
+- **`WalletAmbiguousError`** means the credential resolved to more than one smart account, and discovery won't guess which one you meant.
+- **`WalletOwnershipError`** means the passkey can't prove control of a signer on the account it resolved to, which usually means that signer was removed.
+- **`WalletProvenanceError`** means the account's creation history couldn't be verified. This is the one case worth retrying, because a lagging or incomplete indexer looks the same from here as a wallet that genuinely doesn't check out.
+- **`WalletCodeNotAcceptedError`** means the account is running contract code that isn't on the kit's accepted list, typically because it was upgraded somewhere else.
+
+Returning `null` for anything else matters as much as the four branches do. This helper only claims the errors it recognizes, and everything it doesn't recognize falls through to the caller's own generic message.
+
+:::note
+
+These checks are why a passkey that works perfectly well in one app can still be refused by another. The kit is deliberately fail-closed here, so it would rather decline to connect than hand your app a smart account it couldn't fully vouch for.
+
+:::
 
 ## Tracking the connected wallet
 
