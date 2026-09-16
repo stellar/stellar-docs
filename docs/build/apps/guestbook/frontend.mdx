@@ -114,7 +114,7 @@ For signup, we call `account.createWallet()`. Under the hood, Smart Account Kit:
 
 The thing to take from that is `createWallet` reporting **two** outcomes which don't deserve equal treatment: a failed deploy leaves the user with nothing, while a failed top-up leaves them with a working (if empty) smart account. Treating those the same way would mean failing signup over play money.
 
-`userDismissedPasskey` earns its keep for a similar reason. A user who opens the passkey prompt and thinks better of it has not encountered an error, and telling them "something went wrong" is a small lie that makes your app feel broken. Every passkey flow in this app checks for the dismissal first.
+`userDismissedPasskey` earns its keep for a similar reason. A user who opens the passkey prompt and thinks better of it has not encountered an error, and telling them "something went wrong" is a small lie that makes your app feel broken. The signup and login flows check for the dismissal first.
 
 #### User login
 
@@ -366,7 +366,7 @@ The page component then hands that `message` straight to a shared `GuestbookMess
 
 ### Read all entries
 
-For the "list all entries" page, we keep the query logic server-side in `src/lib/server/getLedgerEntries.ts`. Rather than invoking the contract once per message, it reads the ledger directly: one `rpc.getLedgerEntries()` call against the contract's instance storage to find the message count, then a single batched call for every message ID from there.
+For the "list all entries" page, we keep the query logic server-side in `src/lib/server/getLedgerEntries.ts`. Rather than invoking the contract once per message, it reads the ledger directly: one `rpc.getLedgerEntries()` call against the contract's instance storage to find the message count, then batched `getLedgerEntries` calls of at most 200 keys (the Stellar RPC cap).
 
 ```ts title="src/lib/server/getLedgerEntries.ts"
 export async function getAllMessages(): Promise<MessageWithIndex[]> {
@@ -382,22 +382,30 @@ export async function getAllMessages(): Promise<MessageWithIndex[]> {
     ledgerKeysArray.push(buildMessageLedgerKey(messageId));
   }
 
-  const result = await rpc.getLedgerEntries(...ledgerKeysArray);
-  const messages = result.entries.map((message) => {
-    const key = scValToNative(message.val.contractData().key())[1]; // scVal of the key is ['Message', 2]
-    const val = scValToNative(
-      message.val.contractData().val(),
-    ) as MessageWithIndex;
-    val.id = key;
-
-    return val;
-  });
+  const MAX_LEDGER_KEYS = 200;
+  const messages: MessageWithIndex[] = [];
+  for (
+    let offset = 0;
+    offset < ledgerKeysArray.length;
+    offset += MAX_LEDGER_KEYS
+  ) {
+    const chunk = ledgerKeysArray.slice(offset, offset + MAX_LEDGER_KEYS);
+    const result = await rpc.getLedgerEntries(...chunk);
+    for (const message of result.entries) {
+      const key = scValToNative(message.val.contractData().key())[1]; // scVal of the key is ['Message', 2]
+      const val = scValToNative(
+        message.val.contractData().val(),
+      ) as MessageWithIndex;
+      val.id = key;
+      messages.push(val);
+    }
+  }
 
   return messages;
 }
 ```
 
-This is a genuinely useful trick to have in your pocket. Because we know how the contract lays out its storage keys (a `Message(u32)` variant of the `DataKey` enum, remember), we can construct those ledger keys ourselves and ask RPC for all of them in one request. See the [full implementation](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/server/getLedgerEntries.ts) for the key-building helper and the message-count read.
+This is a genuinely useful trick to have in your pocket. Because we know how the contract lays out its storage keys (a `Message(u32)` variant of the `DataKey` enum, remember), we can construct those ledger keys ourselves and ask RPC for them in batches of at most 200. See the [key-building helper and message-count read](https://github.com/ElliotFriend/ye-olde-guestbook/blob/main/src/lib/server/getLedgerEntries.ts). That file currently sends all message keys in one request; use the batching shown above for lists longer than 200 keys.
 
 ## Edit a guestbook entry
 
