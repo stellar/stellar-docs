@@ -1,0 +1,107 @@
+---
+title: "Authority & Security Model"
+sidebar_position: 20
+description: What bounds an agent's spending authority when it drives the Stellar CLI, which controls exist today, and which do not.
+keywords:
+  [
+    Stellar,
+    agent,
+    authority,
+    spend limit,
+    allowance,
+    policy,
+    multisig,
+    security,
+  ]
+---
+
+# Authority & Security Model
+
+The Stellar CLI signs and submits transactions strictly as instructed. It operates without an intermediate proxy, approval service, or built-in transaction filter. Security and spend limits are achieved through **protocol-level constraints** on the Stellar network and **custodial scoping** of agent keys.
+
+## What the CLI Does (and Does Not) Enforce
+
+The CLI is an execution engine, not a policy controller. It does not include:
+
+- **Built-in Spend Caps or Allowlists:** A key capable of signing a payment can sign for the account's full balance to any address.
+- **Threat Scanning or 2FA:** The CLI does not analyze contract safety, prompt for 2FA, or flag high-risk transactions.
+- **General Interactive Prompts:** The `--auto-sign` flag only suppresses non-root Soroban sub-authorization prompts. Standard payments and token transfers never prompt for interactive confirmation.
+
+Safety must be enforced at the **protocol layer** (onchain limits and thresholds) or the **workflow layer** (key isolation and transaction staging).
+
+## Security Mechanisms
+
+### 1. Dedicated Agent Keypairs (Account Isolation)
+
+Isolate agent operations by generating a dedicated keypair loaded only with operational liquidity.
+
+```bash
+stellar keys generate agent-1 --network mainnet --secure-store
+
+```
+
+### 2. Protocol Allowances (Onchain Spend Limits)
+
+Keep primary treasury funds in a secure account and issue the agent account a capped, time-bound allowance using `stellar token approve`. The Stellar network rejects any transaction exceeding this cap.
+
+```bash
+# 1. Grant allowance from treasury to agent-1
+stellar token approve --id <TOKEN> --from treasury --spender agent-1 \
+  --amount 250000000 --expiration-ledger <LEDGER_SEQUENCE> --network mainnet
+
+# 2. Agent draws on allowance via the Stellar Asset Contract (SAC)
+SAC=$(stellar contract id asset --asset <CODE:ISSUER> --network mainnet)
+
+stellar contract invoke --id "$SAC" --source agent-1 --network mainnet \
+  -- transfer_from --spender agent-1 --from treasury --to <DESTINATION> --amount <SMALLEST_UNIT>
+
+```
+
+_Note: Non-native assets require the destination account to hold an active trustline. Missing trustlines fail with `Error(Contract, #13)`._
+
+### 3. Build-Only Handoffs (Human-in-the-Loop)
+
+To separate transaction assembly from signing authority, use `--build-only`. This generates unsigned XDR payloads for manual review or air-gapped signing.
+
+```bash
+# Build unsigned payment transaction
+stellar tx new payment --source treasury --destination <ADDRESS> \
+  --amount 10000000 --build-only --network mainnet > unsigned_tx.xdr
+
+# Sign offline without network exposure
+stellar tx sign unsigned_tx.xdr --sign-with-key treasury --network mainnet
+
+```
+
+### 4. Native Multisig Thresholds
+
+Assign the agent key a low weight on a primary treasury account. The agent can construct and propose transactions, but cannot execute operations above its threshold weight without additional signers.
+
+```bash
+stellar tx new set-options --source treasury \
+  --signer <AGENT_ADDRESS> --signer-weight 1 --master-weight 2 \
+  --low-threshold 2 --med-threshold 2 --high-threshold 2 \
+  --network mainnet
+
+```
+
+### 5. Sponsored Gas & Fee Bumping
+
+Fund an agent account with zero XLM balance using sponsored reserves. To execute any operation, the agent must submit its transaction payload to a co-signer, who wraps it in a fee-bump operation. Refusing to fee-bump a transaction acts as an immediate execution kill switch.
+
+## Key Storage Security
+
+By default, CLI keys are saved unencrypted in `~/.config/stellar/identity/<NAME>.toml`. Production agent setups should use secure key storage options:
+
+- **OS Keyring (`--secure-store`):** Stores seed phrases in the system credential manager (macOS Keychain, Windows Credential Manager, or Linux Secret Service).
+- **Hardware Wallets (`--ledger`):** Keeps signing keys on a physical device. Hardware confirmation acts as a physical approval gate before execution.
+
+## Recommended Security Architecture Matrix
+
+| Environment | Key Storage | Funding Strategy | Enforced Guardrails |
+| --- | --- | --- | --- |
+| **Development & Test** | Local TOML / `--secure-store` | Testnet Friendbot | None needed |
+| **Mainnet Trial** | OS Keychain (`--secure-store`) | Capped direct funding | Low balance limit (loss-tolerant amount) |
+| **Mainnet Treasury** | OS Keychain / Ledger | Allowance from main wallet | Short allowance expiry (`stellar token approve`) + periodic auditing (`stellar token allowance`) |
+| **Untrusted Environment** | OS Keychain | Sponsored reserves (0 XLM balance) | Mandatory signed fee-bumps per transaction |
+| **High-Value Operations** | Air-Gapped / Ledger | Main account | Propose-only (`--build-only`), multisig thresholds, offline hardware signing |

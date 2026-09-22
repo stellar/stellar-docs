@@ -1,0 +1,152 @@
+---
+title: Architecture
+sidebar_position: 10
+description: How the Stellar CLI is put together, where it keeps state, how read and write paths differ, and how an agent connects to it.
+keywords:
+  [Stellar, CLI, architecture, simulation, signing, local state, MCP, skills]
+---
+
+# Architecture
+
+The Stellar CLI is a single static binary that communicates directly with a Stellar RPC endpoint. It operates without server components, sessions, accounts, or intermediary proxies. Both human operators and autonomous agents run the exact same binary.
+
+Because no middleware sits between the client and the network, commands compose cleanly and no third-party service can block or modify transactions. See [Authority model](authority-model.mdx).
+
+## Local State
+
+| Path | Contents |
+| --- | --- |
+| `~/.config/stellar/identity/<NAME>.toml` | Identity keypairs (seed phrase, secret key, or watch-only public key) |
+| `~/.config/stellar/network/<NAME>.toml` | Network configurations (RPC URL and passphrase) |
+| `~/.config/stellar/config.toml` | Global defaults configured via `stellar network use` and `stellar keys use` |
+| OS Keychain | Seed phrases for identities configured with `--secure-store` |
+| Platform Data Directory | Simulation and transaction cache managed by `stellar cache` |
+
+Run `stellar doctor` to view resolved configuration and data paths for your OS (macOS, Linux, Windows). Override the default config directory using `--config-dir` or `XDG_CONFIG_HOME`.
+
+Identity files are saved in unencrypted plaintext unless created with `--secure-store`. Treat `~/.config/stellar/` as sensitive storage.
+
+`stellar network use` and `stellar keys use` update global defaults in `config.toml`. These modifications apply machine-wide rather than scoping to a shell session, project directory, or sub-process.
+
+## Configuration Precedence
+
+Precedence order (highest to lowest):
+
+1. Command-line flags
+2. Environment variables
+3. Saved configuration defaults (`config.toml`)
+4. Implicit fallbacks
+
+Every network, RPC, signing, and fee parameter maps to a `STELLAR_*` environment variable. Configuring an agent exclusively via environment variables isolates execution state to the active process without modifying global disk configuration.
+
+```bash
+export STELLAR_NETWORK=testnet
+export STELLAR_ACCOUNT=agent-1
+export STELLAR_NO_CACHE=true
+
+```
+
+`STELLAR_NO_CACHE` and `--no-cache` bypass simulation and transaction caches. Account balances are never cached; read operations always query live network state.
+
+Run `stellar env` to view resolved configuration values (sensitive values are masked; pass `--reveal` to unmask).
+
+### Network Fallback Warning
+
+On an unconfigured directory, commands silently fall back to `testnet`, even though `stellar env` reports `⚠️ No defaults or environment variables set`. If a global default is subsequently set on the machine (`stellar network use mainnet`), unflagged executions immediately resolve to `mainnet`. Explicitly pass `--network` in scripts and agent invocations to guarantee deterministic targeting.
+
+## Invocation Model
+
+Every command invocation parses `argv` as a stateless, single-shot execution. The CLI maintains no REPL or background daemon.
+
+To edit transaction envelopes interactively, run `stellar tx edit` to load the target payload into `$EDITOR`.
+
+Because each command is self-contained, stateless, and carries complete context in its arguments, the CLI is naturally suited for agent orchestration.
+
+## Read Path
+
+Reads execute as network simulations. The CLI sends the request to the RPC endpoint, where the network evaluates state without committing a transaction.
+
+Requirements: None (no keypair, funded account, signature, or fee required).
+
+```bash
+stellar token decimals --id <CODE:ISSUER> --network mainnet
+
+```
+
+### Mainnet Read Configuration
+
+The pre-installed `mainnet` entry is a placeholder URL. Configure a functional mainnet RPC endpoint before executing reads against mainnet:
+
+```bash
+stellar network add mainnet --rpc-url <YOUR_MAINNET_RPC_URL> \
+  --network-passphrase "Public Global Stellar Network ; September 2015"
+
+```
+
+Refer to the [RPC providers directory](../../../../data/apis/rpc/providers.mdx) for endpoints. The public endpoint `https://mainnet.sorobanrpc.com` requires no API key.
+
+## Write Path
+
+State-modifying commands execute in five sequential stages:
+
+1. **Simulate:** Send transaction payload to RPC to estimate footprint and fees.
+2. **Authorize:** Sign Soroban authorization entries (prompts for interactive approval unless `--auto-sign` is passed).
+3. **Sign:** Sign the complete transaction envelope with secret key.
+4. **Submit:** Broadcast payload to RPC endpoint.
+5. **Poll:** Query network until transaction reaches finality.
+
+Starting in v28.0.0, onchain execution failures expose underlying diagnostic event strings (e.g., `"trustline entry is missing for account"`) alongside contract host error codes (e.g., `Error(Contract, #13)`).
+
+## Composition & Piping
+
+Three architectural features enable unix-style transaction piping:
+
+1. **`--build-only`:** Generates unsigned, base64-encoded XDR to `stdout` without signing or submitting. Requires RPC connectivity and a funded account to query the current sequence number. (_Note:_ `stellar token transfer` and `stellar token approve` lack `--build-only`; use `stellar tx new payment --build-only` instead).
+2. **`stdin` Parsing:** All `stellar tx` subcommands accept XDR from standard input when positional arguments are omitted.
+3. **Offline Signing:** `stellar tx sign` and `stellar tx hash` operate entirely offline without network or RPC access.
+
+```bash
+stellar tx new payment --source agent-1 --destination <ADDRESS> --amount 10000000 --build-only --network testnet \
+  | stellar tx sign --sign-with-key agent-1 --network testnet \
+  | stellar tx send --network testnet
+
+```
+
+Always pass `--network` directly to `stellar tx sign`. Transaction signatures commit to the target network passphrase; omitting this parameter causes the sign command to fall back to global defaults, resulting in `TxBadAuth` errors at submission.
+
+This composition allows execution across air-gapped environments (Build online → Sign offline → Submit online) or human review workflows.
+
+## Token Resolution
+
+The `--id` flag across `stellar token` commands uses a single resolver that accepts four identifier formats:
+
+- `native` (Native XLM)
+- `CODE:ISSUER` (Classic Stellar Asset)
+- `C...` (Soroban Contract Address)
+- Saved contract alias
+
+Classic assets (`CODE:ISSUER`) automatically resolve to their corresponding Stellar Asset Contract (SAC). If the SAC is not yet deployed onchain, the CLI returns `sac_not_deployed` and prompts deployment via `stellar contract asset deploy`.
+
+## Dynamic Contract Interface Generation
+
+Passing `-- --help` to a contract invocation fetches the target contract's onchain metadata schema and dynamically generates typed CLI documentation:
+
+```bash
+stellar contract invoke --id <CONTRACT> --source agent-1 --network testnet -- --help
+stellar contract invoke --id <CONTRACT> --source agent-1 --network testnet -- <FUNCTION> --help
+
+```
+
+Arguments passed after `--` are validated by the generated interface, allowing agents to inspect and invoke arbitrary contract ABIs dynamically without local binding files.
+
+## Agent Integration Tools
+
+- **Raven MCP Server:** Hosted Model Context Protocol endpoint (`[https://raven.stellar.buzz/mcp](https://raven.stellar.buzz/mcp)`). Provides documentation search, network graph data, and ecosystem queries across `stellarDocs`, `scout`, and `lumenloop` namespaces. Read-only research endpoint requiring OAuth browser authentication; cannot sign or submit transactions.
+- **`stellar skill`:** Outputs built-in CLI usage documentation directly from the compiled binary. See [Skills](../skills.mdx).
+- **`AGENTS.md`:** Standard workspace template emitted by `stellar contract init` (v28.0.0+) providing build and test directives for contract development agents.
+
+## Related Pages
+
+- [Authority model](authority-model.mdx)
+- [Output and errors](output-and-errors.mdx)
+- [Build and submit transactions](../guides/build-and-submit-transactions.mdx)
