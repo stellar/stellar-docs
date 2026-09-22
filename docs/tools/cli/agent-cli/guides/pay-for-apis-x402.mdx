@@ -1,0 +1,183 @@
+---
+title: Pay for APIs with x402
+sidebar_position: 60
+description: Pay for x402-protected APIs on Stellar with USDC, using the stellar CLI only for the identity and the SEP-41 settlement rail.
+keywords: [Stellar, agent, x402, payments, USDC, SEP-41, CLI]
+---
+
+# Pay for APIs with x402
+
+Pay an x402-protected API in USDC from your agent's code, and confirm the payment settled onchain. The demo below costs 0.01 testnet USDC.
+
+## Ask your agent
+
+```text
+Pay for https://stellar.org/x402-demo/api/protected/testnet with x402 on Stellar testnet using
+USDC, then show me the response.
+```
+
+Your agent's x402 client library reads the server's `402` response, builds a Soroban authorization entry for the requested amount, and retries the request with that payment attached. None of this goes through the `stellar` binary, which has no x402 command. The CLI supplies the signing identity, and SEP-41 token transfers settle the payment underneath.
+
+## Before you start
+
+The prompt uses `https://stellar.org/x402-demo/api/protected/testnet`, Stellar's x402 demo endpoint. It charges 0.01 testnet USDC and sponsors the transaction fee. Every step below was run against it with `@x402/stellar` and `@x402/fetch`.
+
+Use Node 20 or later. On Node 18, `npm install` prints `EBADENGINE` for `@x402/stellar` and five transitive dependencies. A payment still settles on 18, but do not plan around it.
+
+## Steps
+
+1. Give the agent a funded identity. See [Quickstart](../quickstart.mdx) if you have not already. Skip `--secure-store` here: the x402 client needs the raw secret key in step 3, and a secure-store identity refuses to reveal it. This is the one flow where the key cannot live in the OS keychain.
+
+   ```bash
+   stellar keys generate agent-1 --network testnet --fund
+   ```
+
+2. Read the challenge before paying anything. The terms arrive as base64 JSON in the `payment-required` **response header**, not in the body, which is literally `{}`:
+
+   ```bash
+   curl -s -D - -o /dev/null <URL> \
+     | grep -i '^payment-required:' | sed 's/^payment-required: //' | tr -d '\r' \
+     | base64 -d | python3 -m json.tool
+   ```
+
+   It names the asset as a `C…` address, the amount in the token's smallest unit, the recipient, and the network as a CAIP-2 string such as `stellar:testnet`, which is not the CLI's `--network` value. Read the decimals with `stellar token decimals --id <ASSET>` before converting the amount: do not assume 7.
+
+3. Get the asset into the account. A `keys generate --fund` identity holds XLM and nothing else, so this step is not optional and it is the only hard one. `stellar token name --id <C_ADDRESS>` returns the `CODE:ISSUER` form you need for the next two commands. Open the trustline, then acquire the asset:
+
+   ```bash
+   stellar tx new change-trust --source-account agent-1 --line <CODE:ISSUER> --network testnet
+   stellar tx new path-payment-strict-receive --source-account agent-1 --network testnet \
+     --send-asset native --dest-asset <CODE:ISSUER> --destination agent-1 \
+     --dest-amount <SMALLEST_UNITS> --send-max <CEILING_IN_STROOPS>
+   ```
+
+   Both commands print nothing to stdout on success: exit 0 and a single `ℹ️  Signing transaction: <HASH>` line on stderr, with no result code. That is how the whole `tx new` family behaves; see [`tx new` has no machine-readable receipt](../reference/output-and-errors.mdx#tx-new-has-no-machine-readable-receipt). Re-read the balance to confirm.
+
+   A self-addressed path payment is a swap. Acquire several times the challenge amount, not exactly it: each paid call spends again and step 6 is not replayable, so one client-side mistake sends you back here.
+
+   `--send-max` is your ceiling in stroops, and the CLI has no command that quotes a price, so there is nothing to derive it from. Treat it as the most you are willing to spend rather than an estimate. A fill that would exceed it fails at `Payment(Underfunded)`-style rejection and costs only the base fee, so an honest low ceiling is cheap to retry and a generous one is real money on mainnet. On testnet 0.01 USDC has cost well under 1 XLM.
+
+4. Confirm it can actually pay:
+
+   ```bash
+   stellar token balance --id USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 --account agent-1 --network testnet
+   ```
+
+   That prints the balance in the token's smallest unit, so `10000000` is 1.0 USDC at 7 decimals. Add `--decimal` for the human figure. The challenge's `amount` is in the same smallest unit, so compare the two directly and convert only for display.
+
+   Before the trustline exists this exits `1` with `Error(Contract, #13)`, `"trustline entry is missing for account"`, rather than returning `0`.
+
+   The challenge names the asset as a `C…` contract address, not as `CODE:ISSUER`. Both name the same asset: `stellar contract id asset --asset USDC:GBBD47IF… --network testnet` resolves to `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`, which is what the demo endpoint asks for. Compare that way rather than assuming a mismatch.
+
+5. In your agent's code, install the client packages and wrap `fetch` with the Stellar scheme:
+
+   ```bash
+   npm install @x402/stellar @x402/fetch
+   ```
+
+{/* prettier-ignore-start */}
+
+   ```ts
+   import { wrapFetchWithPaymentFromConfig, decodePaymentResponseHeader } from "@x402/fetch";
+   import { createEd25519Signer } from "@x402/stellar";
+   import { ExactStellarScheme } from "@x402/stellar/exact/client";
+
+   const signer = createEd25519Signer(process.env.STELLAR_SECRET!, "stellar:testnet");
+
+   const fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
+     schemes: [{ network: "stellar:*", client: new ExactStellarScheme(signer) }],
+   });
+   ```
+
+{/* prettier-ignore-end */}
+
+`npm install` alone will not run that file. Save it as `pay.mjs`, drop the `!` non-null assertion, and run `node pay.mjs`, or keep the TypeScript and add a runner such as `tsx`. Pass the key in through the environment and never write it into the file:
+
+```bash
+STELLAR_SECRET="$(stellar keys secret <IDENTITY>)" node pay.mjs
+```
+
+`createEd25519Signer` implements `SignAuthEntry` and `SignTransaction` per SEP-43. The wrapped `fetch` makes the request, reads the `402`, builds the payment header, and retries, so you do not drive that loop yourself. If you need to control it, `new x402Client().register("stellar:*", new ExactStellarScheme(signer))` from `@x402/core/client` is the lower-level equivalent.
+
+6. Make the request. Read the settlement hash off the `payment-response` response header, not the body:
+
+{/* prettier-ignore-start */}
+
+   ```ts
+   const res = await fetchWithPayment("https://stellar.org/x402-demo/api/protected/testnet");
+
+   const header = res.headers.get("payment-response");
+   if (header) console.log(decodePaymentResponseHeader(header));
+
+   console.log(await res.text());
+   ```
+
+{/* prettier-ignore-end */}
+
+```console
+{
+  success: true,
+  payer: '<YOUR_ADDRESS>',
+  transaction: '137cbcc6e765d0f29bc4cabb2749b9eb1990b71becdd1c626a61cff86d5d1c98',
+  network: 'stellar:testnet'
+}
+```
+
+Read the body with `res.text()` unless you know the endpoint returns JSON. The demo endpoint serves `text/html`, so `res.json()` throws `Unexpected token '<'`.
+
+Capture the body on the first request. Each call pays again: a paid response is not replayable, so re-running the script to see output you truncated costs the amount a second time.
+
+7. Confirm settlement onchain with the hash from that header. `tx fetch result` takes it as `--hash`, not a positional argument:
+
+   ```bash
+   stellar tx fetch result --hash <TX_HASH> --network testnet
+   ```
+
+   A sponsored payment comes back as a fee bump wrapping the invocation: `fee_charged` on the outer fee-bump transaction and `"fee_charged":"0"` on the inner one, with `tx_fee_bump_inner_success` and a successful `invoke_host_function`. That zero is the facilitator paying the fee, not a free transaction.
+
+   That result proves an invocation succeeded. It does not prove what you paid or who you paid, because it carries no address and no amount. For that, read the events:
+
+   ```bash
+   stellar tx fetch events --hash <TX_HASH> --network testnet
+   ```
+
+   The `transfer` event names the payer, the recipient, the asset, and the amount as an `i128`. Check it against the challenge you read in step 2. Then re-read both balances. The asset balance from step 4 should be down by exactly the challenge's `amount`, and the native balance should be unchanged when `areFeesSponsored` is true:
+
+   ```bash
+   stellar token balance --id native --account agent-1 --network testnet
+   ```
+
+## Facilitators
+
+A facilitator is a third party that verifies and settles the payment for the server. Three exist today, with different maturity:
+
+- **OpenZeppelin's "Built on Stellar" facilitator** is free, public, covers both testnet and mainnet, sponsors transaction fees, and settles in roughly five seconds. It is the most production-credible option today.
+- **Coinbase's hosted facilitator** supports Stellar on testnet only.
+- **`OpenZeppelin/relayer-plugin-x402-facilitator`** is self-hostable if you want to run your own facilitator on the OpenZeppelin Relayer.
+
+`stellar/x402-stellar` is SDF's own tools and examples repository. It includes a facilitator example and a simple paywall demo (an Express API with x402 middleware and a React client), and is the place to start if you are reading real code rather than a package README.
+
+## Asset support
+
+x402 on Stellar works with any SEP-41 token. USDC is the default, and it is the only asset with a published testnet contract ID in Stellar's own docs. If your API prices in a different asset, you supply that asset's contract address to the scheme yourself.
+
+## Spending limits
+
+Stellar's own x402 announcement names an "x402-MCP server" that would let an agent "authorize payments via smart wallets within user-defined spending policies." That is listed as in active development, not shipped. There is no policy layer for x402 on Stellar today.
+
+The actual bound on an x402 agent's spending is the balance of the account it pays from, or an allowance you granted with `stellar token approve` if the signer sits behind one. Read [Authority model](../reference/authority-model.mdx) before pointing an x402 client at a mainnet key with a real balance.
+
+## Common pitfalls
+
+Coinbase's facilitator supports Stellar on testnet only. For mainnet, use a facilitator that supports Stellar mainnet.
+
+Freighter Mobile does not support x402 yet. The Freighter browser extension does. If your agent drives a mobile wallet for signing, x402 is not available through it today.
+
+A facilitator sits in your payment path as a third party. It verifies and settles on your behalf, which means it sees the payment before the network does. Choosing a facilitator is a trust decision, not just a configuration value.
+
+## Related pages
+
+- [Send tokens](send-tokens.mdx)
+- [Delegate spending](delegate-spending.mdx)
+- [Authority model](../reference/authority-model.mdx)
+- [Quickstart](../quickstart.mdx)
