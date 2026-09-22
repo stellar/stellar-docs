@@ -21,17 +21,15 @@ Build a payment from agent-1 to <ADDRESS> for 10 XLM without submitting it, then
 
    ```bash
    stellar tx new payment --source <SOURCE> --destination <ADDRESS> --amount <AMOUNT> \
-     --network <NETWORK> --build-only
+     --network <NETWORK> --build-only > unsigned.xdr
    ```
 
-   This prints unsigned base64 XDR to stdout and exits. It contacts RPC to read the source account's sequence number, but nothing is signed and nothing is submitted.
+   This writes unsigned base64 XDR to `unsigned.xdr` and exits. It contacts RPC to read the source account's sequence number, but nothing is signed and nothing is submitted.
 
 2. Sign it. This step needs no RPC connection, so it is the one stage you can run offline. Always pass `--network` or `--network-passphrase` on this stage:
 
    ```bash
-   stellar tx new payment --source <SOURCE> --destination <ADDRESS> --amount <AMOUNT> \
-     --network <NETWORK> --build-only \
-     | stellar tx sign --sign-with-key <SOURCE> --network <NETWORK>
+   stellar tx sign --sign-with-key <SOURCE> --network <NETWORK> < unsigned.xdr > signed.xdr
    ```
 
    A signature commits to the network passphrase. An unqualified `tx sign` falls back to the saved default network, which can silently be the wrong one and produces a valid-looking envelope that fails to submit.
@@ -39,21 +37,27 @@ Build a payment from agent-1 to <ADDRESS> for 10 XLM without submitting it, then
 3. Submit the signed envelope, back on a machine with network access:
 
    ```bash
-   stellar tx new payment --source <SOURCE> --destination <ADDRESS> --amount <AMOUNT> \
-     --network <NETWORK> --build-only \
-     | stellar tx sign --sign-with-key <SOURCE> --network <NETWORK> \
-     | stellar tx send --network <NETWORK>
+   stellar tx send --network <NETWORK> < signed.xdr
    ```
+
+When no one needs to review the envelope, the three stages compose into one pipeline:
+
+```bash
+stellar tx new payment --source <SOURCE> --destination <ADDRESS> --amount <AMOUNT> \
+  --network <NETWORK> --build-only \
+  | stellar tx sign --sign-with-key <SOURCE> --network <NETWORK> \
+  | stellar tx send --network <NETWORK>
+```
 
 ## What `--build-only` skips
 
-Every `tx new <OPERATION>` and every `contract` command accepts `--build-only`, which stops before signing and submitting. Building still reads the source account's sequence number over RPC, so it needs network access and a funded source account. `token transfer` and `token approve` do not accept `--build-only`, so use `tx new payment --build-only` for a payment handoff. Every `stellar tx` subcommand reads XDR from stdin, so build, sign, and send compose into a pipeline.
+Every `tx new <OPERATION>` accepts `--build-only`, and so do the `contract` commands that submit a transaction (`deploy`, `upload`, `invoke`, `extend`, `restore`, `asset deploy`). It stops before signing and submitting. Read-only commands such as `contract id asset` do not take it. Building still reads the source account's sequence number over RPC, so it needs network access and a funded source account. `token transfer` and `token approve` do not accept `--build-only`, so use `tx new payment --build-only` for a payment handoff. `tx sign`, `tx send`, `tx hash`, `tx simulate`, `tx decode`, and the other envelope commands read XDR from stdin, so build, sign, and send compose into a pipeline. `tx new` builds from flags and `tx fetch` takes `--hash`; neither reads stdin.
 
 ## Parsing the result
 
 `tx new <OPERATION>` has no `--output` flag and writes nothing to stdout on success. The transaction hash appears only in the `ℹ️  Signing transaction: <HASH>` line on stderr, and `--quiet` removes that line along with everything else. This is not like `token transfer`, which prints the bare hash as its last stdout line and does support `--output json`.
 
-To get a parseable receipt, let `tx send` produce it rather than trying to scrape an earlier stage. `tx send`, the last stage of the pipeline in step 3 above, returns JSON **on success only**, with top-level keys `status`, `ledger`, `application_order`, `fee_bump`, `tx_hash`, `created_at`, `envelope`, `result`, `result_meta`, and `events`. On success `status` is `SUCCESS`. The hash field is `tx_hash`, not `hash`. It has no `--output` flag, so the shape is always the indented one.
+To get a parseable receipt, let `tx send` produce it rather than trying to scrape an earlier stage. `tx send`, the last stage in step 3 above, returns JSON **on success only**, with top-level keys `status`, `ledger`, `application_order`, `fee_bump`, `tx_hash`, `created_at`, `envelope`, `result`, `result_meta`, and `events`. On success `status` is `SUCCESS`. The hash field is `tx_hash`, not `hash`. It has no `--output` flag, so the shape is always the indented one.
 
 On a submission failure it writes **zero bytes to stdout** and puts the error on stderr. Empty stdout with a non-zero exit is therefore a definite failure, not an ambiguous one, and the exception below is specifically about the case where stdout has content you could not parse.
 
@@ -64,8 +68,7 @@ Never merge stderr into stdout here. `tx send` writes `ℹ️  Transaction hash 
 Base64 XDR is not human-readable. Showing someone `AAAAAgAAAABfEbrRS/av…` and calling it an approval step is not an approval step: they cannot see the destination, the amount, or whether anything has already signed it. Render the envelope first:
 
 ```bash
-stellar tx new payment --source <SOURCE> --destination <ADDRESS> --amount <AMOUNT> \
-  --network <NETWORK> --build-only | stellar tx decode --output json-formatted
+stellar tx decode --output json-formatted < unsigned.xdr
 ```
 
 That prints `source_account`, `fee`, `seq_num`, `cond` (the timebounds, `"none"` if there are none), `memo`, the `operations` array, `ext`, and `signatures: []` on an unsigned envelope. `tx decode` needs no RPC connection. Do not skip `memo` when you review: it is the field that routes a deposit at an exchange, and a payment with the wrong memo reaches the right account and the wrong person.
@@ -75,8 +78,7 @@ That prints `source_account`, `fee`, `seq_num`, `cond` (the timebounds, `"none"`
 `stellar tx hash` then computes the envelope's hash without signing or submitting, also from stdin and also offline. Use it to confirm the thing you approved is the thing you are about to sign:
 
 ```bash
-stellar tx new payment --source <SOURCE> --destination <ADDRESS> --amount <AMOUNT> \
-  --network <NETWORK> --build-only | stellar tx hash --network <NETWORK>
+stellar tx hash --network <NETWORK> < unsigned.xdr
 ```
 
 The hash is unchanged by signing, so the same value should come back after `tx sign` and from the network on submit.
