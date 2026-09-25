@@ -1,0 +1,258 @@
+---
+sidebar_position: 60
+sidebar_label: "6. Creating Verifiable Contracts"
+title: "Creating Verifiable Contracts"
+description: "Learn how to create verifiable smart contracts on the Stellar blockchain, ensuring transparency and trust in your decentralized applications."
+pagination_next: build/apps/dapp-frontend
+---
+
+# 6. Creating Verifiable Contracts
+
+import Tabs from "@theme/Tabs";
+import TabItem from "@theme/TabItem";
+import { getPlatform } from "@site/src/helpers/getPlatform";
+
+When you deploy a contract, only its compiled Wasm bytecode lives on-chain. Anyone can read that bytecode, but it tells them nothing about _which source code_ produced it. A **verifiable contract** closes that gap: it embeds enough information for an independent third party to take the published source, rebuild it, and confirm that the result is byte-for-byte identical to what's deployed.
+
+This is what [SEP-58](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0058.md) standardizes. It defines a shared vocabulary for the build environment information needed to **reproduce a contract's Wasm bytes from source**, so that independent tools can interoperate without prescribing a single workflow.
+
+In this guide, we'll make the `hello_world` contract from the previous lessons verifiable by:
+
+1. Building it inside a pinned, reproducible container image.
+2. Publishing a source archive and recording its hash.
+3. Embedding SEP-58 metadata into the Wasm at build time.
+4. Inspecting that metadata and walking through how a verifier reproduces the build.
+
+:::info
+
+This tutorial assumes you've already completed [Setup](./setup.mdx) and [Hello World](./hello-world.mdx), and that you have a `hello_world` contract you can build.
+
+:::
+
+## Why reproducible builds?
+
+The whole scheme rests on one idea: if two people compile the same source code in the same environment, they should get the same bytecode. In practice, "the same environment" is surprisingly hard to pin down—the compiler version, build flags, and even the host architecture can all change the output.
+
+SEP-58 makes the environment explicit by recording four pieces of metadata directly inside the contract's Wasm custom section:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `bldimg` | Yes | Fully-qualified container image used for the build, pinned by digest. |
+| `bldopt` | No | A single shell-style flag passed verbatim as one argument to the build command. Repeat the field once per flag. |
+| `source_sha256` | Yes | SHA-256 of the source archive's bytes. |
+| `source_uri` | No | URI from which the source archive can be downloaded. |
+
+Because the metadata is embedded in the Wasm itself, it travels with the contract: anyone holding the deployed bytecode can read exactly how to rebuild it.
+
+## Step 1: Pin the build image
+
+Reproducibility starts with the toolchain. Instead of relying on whatever version of Rust and the Stellar CLI happen to be installed locally, we build inside a container image pinned by its digest.
+
+:::caution
+
+The digest **must** reference a single-architecture manifest, not a multi-arch manifest list. A manifest list resolves to different bytes on `linux/amd64` versus `linux/arm64`, which defeats reproducibility. Pull the per-architecture digest from your registry (for example, with `docker buildx imagetools inspect`) and pin that.
+
+:::
+
+Store the fully-qualified, digest-pinned image in a variable so we can reuse it consistently. The following example uses the Docker image for Stellar CLI 27.0.0 for arm64.
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+
+<TabItem value="unix" label="macOS/Linux">
+
+```sh
+IMAGE="docker.io/stellar/stellar-cli@sha256:c1297d0c2c6790dda6afaa3edd39a959ec12edd6ebe30282dd1d7a663e7c4109"
+```
+
+</TabItem>
+
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+$IMAGE = "docker.io/stellar/stellar-cli@sha256:c1297d0c2c6790dda6afaa3edd39a959ec12edd6ebe30282dd1d7a663e7c4109"
+```
+
+</TabItem>
+
+</Tabs>
+
+To keep an in-source toolchain selector (such as a `rust-toolchain.toml` in your project) from silently swapping the toolchain mid-build, export `RUSTUP_TOOLCHAIN` to the image's default before building. We'll pass this variable into the container in [Step 3](#step-3-build-with-embedded-metadata).
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+
+<TabItem value="unix" label="macOS/Linux">
+
+```sh
+export RUSTUP_TOOLCHAIN=$(docker run --rm --entrypoint rustup "$IMAGE" default | cut -d' ' -f1)
+```
+
+</TabItem>
+
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+$env:RUSTUP_TOOLCHAIN = (docker run --rm --entrypoint rustup $IMAGE default).Split(" ")[0]
+```
+
+</TabItem>
+
+</Tabs>
+
+## Step 2: Create and hash the source archive
+
+Verifiers need the exact source that produced the contract. Package it into an archive whose files live within a **single top-level directory**, so extracting it yields exactly one directory holding the source tree.
+
+`git archive` is a convenient way to produce such an archive from a specific commit—it includes only committed files and the `--prefix` gives us that single top-level directory:
+
+```sh
+git archive --format=tar.gz --prefix=source/ --output=hello-world-v1.0.0.tar.gz HEAD
+```
+
+:::tip
+
+Use the `--output` flag rather than redirecting with `> hello-world-v1.0.0.tar.gz`. On Windows, PowerShell 5.1 re-encodes redirected output and would corrupt the archive's bytes; `--output` writes the file directly and behaves the same on macOS, Linux, and Windows.
+
+:::
+
+The key thing to understand is that you **generate this archive once and keep it**. The `source_sha256` you'll record is the hash of _this exact file_, and a verifier downloads the same file from `source_uri` to check it against that hash—they never regenerate the archive themselves. So the archive itself doesn't need to be byte-for-byte reproducible; you just need the file you hashed to stay available, unchanged, at `source_uri`.
+
+Now compute the SHA-256 of the archive's bytes—this value goes into `source_sha256`:
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+
+<TabItem value="unix" label="macOS/Linux">
+
+```sh
+shasum -a 256 hello-world-v1.0.0.tar.gz
+```
+
+</TabItem>
+
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+Get-FileHash hello-world-v1.0.0.tar.gz -Algorithm SHA256
+```
+
+</TabItem>
+
+</Tabs>
+
+Upload the archive somewhere durable and use that location as `source_uri`. The `source_uri` is optional—if you omit it, verifiers must obtain the archive out of band—but publishing it makes verification self-service.
+
+:::caution
+
+Point `source_uri` at an archive you uploaded yourself (for example, as a release asset), not at an auto-generated "Source code (tar.gz)" link. Those archives are recreated on demand and their bytes—and therefore their hash—are [not guaranteed to stay stable](https://github.blog/open-source/git/update-on-the-future-stability-of-source-code-archives-and-hashes/); a change to git's compression [broke them across the ecosystem in 2023](https://reproducible-builds.org/docs/archives/). If that happens, your published `source_sha256` no longer matches.
+
+Keep your own copy of the archive too. If you lose the exact file you hashed, you may not be able to recreate identical bytes later, since `git archive` output isn't guaranteed to be reproducible across git versions.
+
+:::
+
+## Step 3: Build with embedded metadata
+
+Now build the contract inside the pinned image, passing each SEP-58 field with a `--meta` flag. Every build option that affects the output should also be recorded as a `bldopt` so a verifier can replay the exact same command.
+
+<Tabs groupId="platform" defaultValue={getPlatform()}>
+
+<TabItem value="unix" label="macOS/Linux">
+
+```sh
+docker run --rm -v "$PWD:/source" -e RUSTUP_TOOLCHAIN "$IMAGE" \
+  contract build \
+    --manifest-path=contracts/hello_world/Cargo.toml \
+    --package=hello_world \
+    --optimize \
+    --locked \
+    --meta bldimg="$IMAGE" \
+    --meta bldopt=--manifest-path=contracts/hello_world/Cargo.toml \
+    --meta bldopt=--package=hello_world \
+    --meta bldopt=--optimize \
+    --meta bldopt=--locked \
+    --meta source_uri=https://example.com/hello-world-v1.0.0.tar.gz \
+    --meta source_sha256=7f9b6cee586f8d029699ac11b32d28daa1c67c3181f6f92537b419d380575d7f
+```
+
+</TabItem>
+
+<TabItem value="windows" label="Windows (PowerShell)">
+
+```powershell
+docker run --rm -v "${PWD}:/source" -e RUSTUP_TOOLCHAIN $IMAGE `
+  contract build `
+    --manifest-path=contracts/hello_world/Cargo.toml `
+    --package=hello_world `
+    --optimize `
+    --locked `
+    --meta bldimg=$IMAGE `
+    --meta bldopt=--manifest-path=contracts/hello_world/Cargo.toml `
+    --meta bldopt=--package=hello_world `
+    --meta bldopt=--optimize `
+    --meta bldopt=--locked `
+    --meta source_uri=https://example.com/hello-world-v1.0.0.tar.gz `
+    --meta source_sha256=7f9b6cee586f8d029699ac11b32d28daa1c67c3181f6f92537b419d380575d7f
+```
+
+</TabItem>
+
+</Tabs>
+
+A few things to note:
+
+- Each `--meta bldopt=...` records one build flag verbatim. Repeat the flag once per option, mirroring exactly the flags you passed to `contract build`.
+- The `--locked` flag matters for reproducibility. Without it, Cargo may re-resolve dependencies against the registry instead of using the versions pinned in `Cargo.lock`, which can change the resulting bytecode.
+- Replace `source_uri` and `source_sha256` with the real values from [Step 2](#step-2-create-and-hash-the-source-archive).
+
+The optimized, metadata-bearing Wasm is written to `target/wasm32v1-none/release/hello_world.wasm`.
+
+## Step 4: Inspect the embedded metadata
+
+Confirm the metadata made it into the build with `stellar contract info meta`:
+
+```console
+$ stellar contract info meta --wasm target/wasm32v1-none/release/hello_world.wasm
+ℹ️ Loading contract spec from file...
+Contract meta:
+ • rsver: 1.96.0 (Rust version)
+ • rssdkver: 26.1.0#175aa41306f383057a8cdfc84b68d931664fc34e (Soroban SDK version and its commit hash)
+ • cliver: 27.0.0#5a7c5fe76530bf4248477ac812fc757146b98cc4
+ • bldimg: docker.io/stellar/stellar-cli@sha256:c1297d0c2c6790dda6afaa3edd39a959ec12edd6ebe30282dd1d7a663e7c4109
+ • bldopt: --manifest-path=contracts/hello_world/Cargo.toml
+ • bldopt: --package=hello_world
+ • bldopt: --optimize
+ • bldopt: --locked
+ • source_uri: https://example.com/hello-world-v1.0.0.tar.gz
+ • source_sha256: 7f9b6cee586f8d029699ac11b32d28daa1c67c3181f6f92537b419d380575d7f
+```
+
+You should see the SEP-58 fields you supplied—`bldimg`, each `bldopt`, `source_uri`, and `source_sha256`—alongside the SDK metadata the Stellar CLI adds automatically. Because the metadata is part of the Wasm, it's preserved on-chain once the contract is deployed. This is the same information a verifier will read to verify your contract's source code.
+
+Once you're satisfied, you can deploy the contract; just make sure you deploy with `--wasm PATH`. In this example, the full command would be `stellar contract deploy --wasm target/wasm32v1-none/release/hello_world.wasm`. Otherwise your contract will be rebuilt without the required metadata before being uploaded.
+
+## How verification works
+
+You don't have to run verification yourself: the point of SEP-58 is that _anyone_ can. But understanding the verifier's side shows why each step above matters. To verify a deployed contract, a third party:
+
+1. **Reads the metadata** from the deployed Wasm with `stellar contract info meta`, recovering `bldimg`, the `bldopt` flags, `source_uri`, and `source_sha256`.
+2. **Downloads the source archive** from `source_uri` and confirms its bytes hash to `source_sha256`. A mismatch means the published source isn't what was claimed.
+3. **Extracts the single top-level directory** and rebuilds, replaying the recorded `docker run` command—the same `bldimg`, the same `bldopt` flags, and exporting `RUSTUP_TOOLCHAIN` to the image's default.
+4. **Compares the rebuilt Wasm hash** against the deployed contract's bytecode. If they match, the deployed contract provably corresponds to the published source.
+
+If every step lines up, the contract is verified: the source you can read is exactly the code that's running on-chain.
+
+:::tip
+
+SEP-58 is intentionally narrow—it standardizes the _vocabulary_, not the tooling. That's what lets independent implementations interoperate: a verifier built by one team can check a contract built by another, as long as both speak the same metadata fields.
+
+:::
+
+## Summary
+
+In this lesson, we learned how to:
+
+- Embed SEP-58 build metadata (`bldimg`, `bldopt`, `source_uri`, `source_sha256`) into a contract.
+- Produce a deterministic source archive and record its SHA-256 hash.
+- Build inside a digest-pinned container image for reproducibility.
+- Inspect embedded metadata with `stellar contract info meta`.
+- Follow the verifier's workflow to confirm a deployed contract matches its source.
+
+Making your contracts verifiable gives users and integrators a way to trust—not just hope—that the code they're interacting with is the code you published.
