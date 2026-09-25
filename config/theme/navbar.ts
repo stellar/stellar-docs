@@ -439,6 +439,11 @@ const tools: NavbarItem = {
       activeBasePath: 'docs/tools/cli'
     },
     {
+      to: '/docs/tools/cli/agent-cli',
+      label: 'Stellar CLI for Agents',
+      activeBasePath: 'docs/tools/cli/agent-cli'
+    },
+    {
       to: '/docs/tools/lab',
       label: 'Lab',
       activeBasePath: 'docs/tools/lab'
