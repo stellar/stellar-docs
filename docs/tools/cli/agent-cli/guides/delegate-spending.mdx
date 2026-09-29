@@ -155,7 +155,7 @@ This bounds who agrees, not how much. A co-signed payment for the vault's entire
      --amount <AMOUNT> --expiration-ledger <LEDGER> --network <NETWORK>
    ```
 
-5. Prove the cap binds before you trust it. `contract invoke` needs the token's `C...` contract address, not `CODE:ISSUER`, so resolve it first. Add `--send no` to simulate without submitting, so the probe costs nothing:
+5. Prove the cap binds before you trust it. `token transfer-from` has no simulate-only mode, so probe with `contract invoke` and `--send no`, which simulates without submitting and costs nothing. `contract invoke` needs the token's `C...` contract address, not `CODE:ISSUER`, so resolve it first:
 
    ```bash
    SAC=$(stellar contract id asset --asset <CODE:ISSUER|native> --network <NETWORK>)
@@ -177,11 +177,18 @@ The spender needs its own funded account. It is the `--source` of the draw, so i
 
 The spender does **not** need a trustline for the asset. Measured on testnet: a spender with no trustline completed a `transfer_from`. The `--to` destination is what needs one, exactly as it would to receive an ordinary payment, and a missing one there fails with `Error(Contract, #13)`. The two are easy to conflate because the simplest test has the agent draw to itself, which makes it both.
 
-`stellar token` has no verb that draws on an allowance. There is no `transfer-from`, and running `stellar token transfer --from <OWNER> --sign-with-key <SPENDER>` fails with `{"error":{"type":"invoke","message":"...TxBadAuth..."}}`, because the transfer itself is still authorized by the owner, not the spender. That is the error once the trustline exists.
+Draw on the allowance with `stellar token transfer-from`. `--id` takes the same token identifier as `approve`, including `CODE:ISSUER` and `native`:
 
-The Stellar Asset Contract itself exposes `transfer_from`, authorized by the spender. `--to` needs a trustline for the asset, exactly like an ordinary transfer; without one this fails with `Error(Contract, #13)`.
+```bash
+stellar token transfer-from --id <TOKEN> --spender <SPENDER> --from <OWNER> \
+  --to <DESTINATION> --amount <SMALLEST_UNIT> --network <NETWORK>
+```
 
-Drawing more than the allowance holds fails at simulation with `Error(Contract, #9)`, and nothing is submitted. The diagnostic names both numbers, remaining first and requested second:
+`--spender` must be an identity or secret key you control. It signs, authorizes the draw, and is the transaction's source, so it pays the fee. The allowance is reduced by the amount transferred. Read it back with `stellar token allowance` afterward, the same way you would after granting it. With `--output json` the result is `{"tx_hash":"…","result":null}`.
+
+Do not reach for `stellar token transfer --from <OWNER> --sign-with-key <SPENDER>` instead. It fails with `{"error":{"type":"invoke","message":"...TxBadAuth..."}}`, because a plain transfer is authorized by the owner, not the spender.
+
+Drawing more than the allowance holds fails at simulation with `Error(Contract, #9)` and exit code 1, and nothing is submitted. The diagnostic names both numbers, remaining first and requested second:
 
 ```console
 ❌ error: transaction simulation failed: HostError: Error(Contract, #9)
@@ -201,19 +208,7 @@ fee_charged: 17315, result: TxFailed([OpInner(InvokeHostFunction(Trapped))])
 
 None of the strings above appear in that output, and the fee is charged. Match on `Trapped` plus the error event, and treat a fee-charged failure as proof the network refused rather than the client.
 
-`contract invoke --id` is stricter than `token --id`: it takes only a `C...` contract address or an alias, not `CODE:ISSUER`, so resolve the address first. For XLM the asset name is `native`, which has no `CODE:ISSUER` form. `contract id asset` is a pure read and needs no source account:
-
-```bash
-SAC=$(stellar contract id asset --asset <CODE:ISSUER|native> --network <NETWORK>)
-stellar contract invoke --id "$SAC" --source <SPENDER> --network <NETWORK> \
-  -- transfer_from \
-  --spender <SPENDER_ADDRESS> \
-  --from <OWNER_ADDRESS> \
-  --to <DESTINATION> \
-  --amount <SMALLEST_UNIT>
-```
-
-`--source` is the spender's identity, and it signs. The allowance is reduced by the amount transferred. Read it back with `stellar token allowance` afterward, the same way you would after granting it.
+`token transfer-from` also has no `--build-only`. When you need the unsigned envelope, as in [Pattern 3](#pattern-3-an-agent-with-no-xlm), call the Stellar Asset Contract's `transfer_from` through `contract invoke`. `contract invoke --id` is stricter than `token --id`: it takes only a `C...` contract address or an alias, not `CODE:ISSUER`, so resolve the address with `stellar contract id asset --asset <CODE:ISSUER|native>` first. That command is a pure read and needs no source account.
 
 ### Reading an allowance back
 
@@ -333,7 +328,7 @@ stellar tx encode --input json < bump.json \
 
 `tx sign` recognizes the fee bump and logs `Signing fee bump transaction`. The result carries `"fee_bump": true`, the inner transaction's `fee_charged` is `0`, and the agent's XLM balance stays at zero. Measured on testnet: a sponsored agent holding `0.0000000` XLM submitted both a classic asset payment and a Soroban `transfer_from` this way, with the treasury as `fee_account` on both. Classic here means a `CODE:ISSUER` asset. Native XLM is the one thing this agent can never send.
 
-Soroban works too, which is how a zero-XLM agent spends an allowance. `contract invoke --build-only` writes an unsimulated envelope with no resource fee and no authorization entries, so pipe it through `tx simulate` before signing:
+Soroban works too, which is how a zero-XLM agent spends an allowance. `token transfer-from` cannot stop before submitting, so build the draw with `contract invoke` instead. `contract invoke --build-only` writes an unsimulated envelope with no resource fee and no authorization entries, so pipe it through `tx simulate` before signing:
 
 ```bash
 stellar contract invoke --id <SAC> --source <AGENT> --network <NETWORK> --build-only \
