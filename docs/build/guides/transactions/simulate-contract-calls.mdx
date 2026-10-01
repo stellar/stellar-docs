@@ -1,0 +1,399 @@
+---
+title: Simulate contract calls to read data and preview changes
+description: Use the Stellar CLI and the JavaScript SDK to call read-only contract functions for free, and to preview the return value, state changes, and events of a write before submitting it.
+---
+
+Every smart contract invocation can be simulated with the Stellar RPC [`simulateTransaction`](../../../data/apis/rpc/api-reference/methods/simulateTransaction.mdx) method before anything is signed or sent to the network. Simulation runs the contract against the current ledger state and returns what would happen, without changing the ledger and without charging a fee.
+
+This makes simulation useful for two things:
+
+1. **Calling read-only functions.** A getter such as `balance`, `symbol`, or `get_config` doesn't need to be submitted at all. The return value from simulation is the answer.
+2. **Previewing writes.** For a function that changes state, such as `transfer`, simulation shows the return value, the ledger entries that would be created, updated, or deleted, the events that would be emitted, and the authorization that would be required. You can check all of this before you submit.
+
+This guide shows both, first with the [Stellar CLI](../../../tools/cli/stellar-cli.mdx), then with the [JavaScript SDK](https://github.com/stellar/js-stellar-sdk). The examples call the native XLM [Stellar Asset Contract](../../../tokens/stellar-asset-contract.mdx) on testnet, so you don't need to deploy anything.
+
+## Setup
+
+Create and fund two testnet identities, `alice` and `bob`, with the Stellar CLI:
+
+```bash
+stellar keys generate alice --network testnet --fund
+stellar keys generate bob --network testnet --fund
+```
+
+Get the ID of the native XLM contract on testnet:
+
+```bash
+stellar contract id asset --asset native --network testnet
+```
+
+```
+CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+```
+
+The CLI also accepts the alias `native` in place of this ID, which the CLI examples below use.
+
+## Using the Stellar CLI
+
+### Call a read-only function
+
+`stellar contract invoke` always simulates first. When the simulation shows no ledger writes, no events, and no required authorization, the CLI prints the result and stops. Nothing is signed or submitted.
+
+```bash
+stellar contract invoke \
+  --id native \
+  --source alice \
+  --network testnet \
+  -- \
+  balance --id alice
+```
+
+```
+ℹ️  Simulation identified as read-only. Send by rerunning with `--send=yes`.
+"100000000000"
+```
+
+The balance is in stroops, so this is 10,000 XLM.
+
+### Preview a write
+
+By default, the CLI submits any call that writes to the ledger, emits events, or requires authorization. Add `--send=no` to stop after simulation, whatever the function does:
+
+```bash
+stellar contract invoke \
+  --id native \
+  --source alice \
+  --network testnet \
+  --send=no \
+  -- \
+  transfer --from alice --to bob --amount 10000000
+```
+
+The CLI prints the contract events the call would emit:
+
+```
+📅 CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC - Success - Event: TransferWithAmountOnly (transfer), from: "GC6N…VHCV", to: "GASO…EJNSB", sep0011_asset: "native", amount: "10000000"
+```
+
+`transfer` returns nothing, so no return value is printed. Nothing has been submitted, so both balances stay the same.
+
+If the call would fail, simulation shows the error and the diagnostic events that led to it. For example, if `alice` tries to transfer more XLM than the account holds:
+
+```bash
+stellar contract invoke \
+  --id native \
+  --source alice \
+  --network testnet \
+  --send=no \
+  -- \
+  transfer --from alice --to bob --amount 1000000000000000
+```
+
+```
+❌ error: transaction simulation failed: HostError: Error(Contract, #10)
+
+Event log (newest first):
+   0: [Diagnostic Event] contract:CDLZ…CYSC, topics:[error, Error(Contract, #10)], data:["resulting balance is not within the allowed range", 10000000, -999900000000000, 9223372036854775807]
+   1: [Diagnostic Event] topics:[fn_call, CDLZ…CYSC, transfer], data:[GC6N…VHCV, GASO…EJNSB, 1000000000000000]
+```
+
+### See the full simulation response
+
+`--send=no` prints the events and return value, but not the state changes. To see everything the RPC returned, add `--very-verbose`. The CLI then logs the raw `SimulateTransactionResponse`, including the `state_changes` field, as base64 XDR.
+
+To get the response in a readable form, build the transaction with the CLI and send it to `simulateTransaction` yourself. `--build-only` writes the unsigned transaction to stdout. The RPC's `xdrFormat: "json"` parameter returns every XDR field decoded as JSON:
+
+```bash
+TX=$(stellar contract invoke \
+  --id native \
+  --source alice \
+  --network testnet \
+  --build-only \
+  -- \
+  transfer --from alice --to bob --amount 10000000)
+
+curl -s https://soroban-testnet.stellar.org \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"jsonrpc\": \"2.0\",
+    \"id\": 1,
+    \"method\": \"simulateTransaction\",
+    \"params\": { \"transaction\": \"$TX\", \"xdrFormat\": \"json\" }
+  }" \
+  | jq '.result | {
+      returnValue: .results[0].returnValueJson,
+      events: [.eventsJson[] | select(.event.type == "contract") | .event.body.v0],
+      stateChanges: [.stateChanges[] | {
+        type,
+        key: .keyJson,
+        balanceBefore: .beforeJson.data.account.balance,
+        balanceAfter: .afterJson.data.account.balance
+      }],
+      minResourceFee
+    }'
+```
+
+```json
+{
+  "returnValue": "void",
+  "events": [
+    {
+      "topics": [
+        { "symbol": "transfer" },
+        { "address": "GC6N…VHCV" },
+        { "address": "GASO…EJNSB" },
+        { "string": "native" }
+      ],
+      "data": { "i128": "10000000" }
+    }
+  ],
+  "stateChanges": [
+    {
+      "type": "updated",
+      "key": { "account": { "account_id": "GASO…EJNSB" } },
+      "balanceBefore": "100000000000",
+      "balanceAfter": "100010000000"
+    },
+    {
+      "type": "updated",
+      "key": { "account": { "account_id": "GC6N…VHCV" } },
+      "balanceBefore": "100000000000",
+      "balanceAfter": "99990000000"
+    }
+  ],
+  "minResourceFee": "23460"
+}
+```
+
+The response shows that the transfer would move 1 XLM from `alice` to `bob`, emit one `transfer` event, and update two account entries. The `jq` filter picks out account balances because the native asset contract stores G-address balances on the account entries. For other contracts, look at the whole `beforeJson` and `afterJson` objects. Contract storage appears as `contract_data` entries.
+
+The full response also contains the fields used to submit the transaction: `transactionDataJson` (the ledger footprint and resources), `results[0].authJson` (the authorization entries to sign), and `minResourceFee`.
+
+## Using the JavaScript SDK
+
+Install the SDK:
+
+```bash
+npm install @stellar/stellar-sdk
+```
+
+The examples below assume this setup:
+
+```js
+import {
+  Account,
+  Address,
+  BASE_FEE,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+  contract,
+  humanizeEvents,
+  nativeToScVal,
+  rpc,
+  scValToNative,
+} from "@stellar/stellar-sdk";
+
+const RPC_URL = "https://soroban-testnet.stellar.org";
+const server = new rpc.Server(RPC_URL);
+
+const CONTRACT_ID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const ALICE = "G..."; // output of `stellar keys address alice`
+const BOB = "G..."; // output of `stellar keys address bob`
+```
+
+### Call a read-only function
+
+Build a transaction that invokes the function, then pass it to `server.simulateTransaction()`. The return value is in `sim.result.retval` as an `ScVal`. `scValToNative` converts it to a JavaScript value.
+
+The transaction is never submitted, so the source account doesn't need to exist on the network or hold any funds. Any public key with sequence number `0` works:
+
+```js
+const reader = new Account(Keypair.random().publicKey(), "0");
+
+const tx = new TransactionBuilder(reader, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    Operation.invokeContractFunction({
+      contract: CONTRACT_ID,
+      function: "balance",
+      args: [new Address(ALICE).toScVal()],
+    }),
+  )
+  .setTimeout(30)
+  .build();
+
+const sim = await server.simulateTransaction(tx);
+
+if (rpc.Api.isSimulationError(sim)) {
+  throw new Error(sim.error);
+}
+
+console.log(scValToNative(sim.result.retval)); // 100000000000n
+```
+
+### Preview a write
+
+Simulating a write works the same way, but the response now describes what submitting the transaction would do. The source account must be the one that would submit it, so load it from the network:
+
+```js
+const source = await server.getAccount(ALICE);
+
+const tx = new TransactionBuilder(source, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    Operation.invokeContractFunction({
+      contract: CONTRACT_ID,
+      function: "transfer",
+      args: [
+        new Address(ALICE).toScVal(),
+        new Address(BOB).toScVal(),
+        nativeToScVal(10_000_000n, { type: "i128" }),
+      ],
+    }),
+  )
+  .setTimeout(30)
+  .build();
+
+const sim = await server.simulateTransaction(tx);
+
+if (rpc.Api.isSimulationError(sim)) {
+  // The call would fail. `sim.error` holds the host error, and `sim.events`
+  // holds the diagnostic events that led to it.
+  console.error(sim.error);
+  console.error(humanizeEvents(sim.events));
+  throw new Error("simulation failed");
+}
+```
+
+#### Return value
+
+```js
+console.log(scValToNative(sim.result.retval)); // null, since transfer returns nothing
+```
+
+#### Events
+
+`sim.events` includes the contract events the call would emit, plus diagnostic events that trace each function call and return. `humanizeEvents` decodes them into plain objects. Filter on `type` to keep only the contract events:
+
+```js
+const contractEvents = humanizeEvents(sim.events).filter(
+  (event) => event.type === "contract",
+);
+
+console.log(contractEvents);
+```
+
+```js
+[
+  {
+    contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    type: "contract",
+    topics: ["transfer", "GC6N…VHCV", "GASO…EJNSB", "native"],
+    data: 10000000n,
+  },
+];
+```
+
+#### State changes
+
+`sim.stateChanges` lists every ledger entry the call would touch. Each change has:
+
+- `type`: `"created"`, `"updated"`, or `"deleted"`
+- `key`: the `LedgerKey` of the entry
+- `before`: the `LedgerEntry` before the call, or `null` if it would be created
+- `after`: the `LedgerEntry` after the call, or `null` if it would be deleted
+
+Every XDR value has a `toJson()` method, which makes the changes easy to print:
+
+```js
+for (const change of sim.stateChanges ?? []) {
+  console.log(change.type, JSON.stringify(change.key.toJson()));
+  console.log("  before:", JSON.stringify(change.before?.toJson()));
+  console.log("  after: ", JSON.stringify(change.after?.toJson()));
+}
+```
+
+You can also read fields directly. For this transfer, both changes are `account` entries, and the balances show the 1 XLM moving from `alice` to `bob`:
+
+```js
+for (const change of sim.stateChanges ?? []) {
+  if (change.key.type === "account") {
+    console.log(
+      change.type,
+      change.before?.data.account.balance,
+      "->",
+      change.after?.data.account.balance,
+    );
+  }
+}
+```
+
+```
+updated 100000000000n -> 100010000000n
+updated 100000000000n -> 99990000000n
+```
+
+#### Authorization, footprint, and fees
+
+The rest of the response is what you need to submit the transaction:
+
+```js
+// Authorization entries that must be signed before submitting
+console.log(sim.result.auth.map((entry) => entry.toJson()));
+
+// Ledger entries the transaction will read and write
+const footprint = sim.transactionData.getFootprint();
+console.log(footprint.readWrite.map((key) => key.toJson()));
+
+// Resource fee, in stroops, on top of the inclusion fee
+console.log(sim.minResourceFee);
+```
+
+If the preview looks right, use `rpc.assembleTransaction(tx, sim)` (or `server.prepareTransaction(tx)`) to add this data to the transaction, then sign and submit it. See [Invoke a contract function in a transaction using SDKs](./invoke-contract-tx-sdk.mdx) for the full flow.
+
+### Using a contract client
+
+`contract.Client` generates methods from the contract's interface and simulates every call when you invoke one. The simulation response is available on the returned `AssembledTransaction`, and `isReadCall` tells you whether the call needs to be submitted at all:
+
+```js
+const client = await contract.Client.from({
+  contractId: CONTRACT_ID,
+  networkPassphrase: Networks.TESTNET,
+  rpcUrl: RPC_URL,
+  publicKey: ALICE,
+});
+
+// Read-only: the result comes straight from simulation
+const balance = await client.balance({ id: ALICE });
+console.log(balance.isReadCall); // true
+console.log(balance.result); // 100000000000n
+
+// Write: inspect the simulation before deciding to sign and send
+const transfer = await client.transfer({
+  from: ALICE,
+  to: BOB,
+  amount: 10_000_000n,
+});
+console.log(transfer.isReadCall); // false
+console.log(humanizeEvents(transfer.simulation.events));
+console.log(transfer.simulation.stateChanges);
+
+// When the preview looks right, sign and submit it, passing a
+// `signTransaction` function from a wallet or `contract.basicNodeSigner`:
+// await transfer.signAndSend({ signTransaction });
+```
+
+## Things to keep in mind
+
+- **Simulation reflects the ledger at the time you simulate.** If other transactions change the same entries before yours is applied, the real result can differ. The `latestLedger` field in the response tells you which ledger the simulation ran against.
+- **Fees aren't included in state changes.** The balances in `stateChanges` reflect only what the contract did. The transaction fee is charged to the source account separately when the transaction is applied.
+- **Simulation doesn't check signatures.** When the transaction has no authorization entries, simulation runs in recording mode: it records which addresses must authorize the call, but doesn't verify any signatures or run custom account `__check_auth` logic. A successful simulation doesn't guarantee the signed transaction will pass authorization. To check authorization entries you've already signed, simulate again with the `enforce` auth mode (`--auth-mode enforce` in the CLI, or the `authMode` argument to `server.simulateTransaction()`).
+- **Archived entries need restoring first.** If the call touches archived entries, the response includes a `restorePreamble` that describes the restore transaction to submit first. See [Restore archived contract data using the JavaScript SDK](../archival/restore-data-js.mdx).
+
+For more on how simulation works, see [Transaction simulation](../../../learn/fundamentals/contract-development/contract-interactions/transaction-simulation.mdx) and the [`simulateTransaction` RPC method guide](./simulateTransaction-Deep-Dive.mdx).
