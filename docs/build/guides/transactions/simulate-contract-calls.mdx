@@ -204,7 +204,7 @@ const BOB = "G...";
 
 ### Using a contract client
 
-`contract.Client` generates methods from the contract's interface and simulates every call when you invoke one. The simulation response is available on the returned `AssembledTransaction`, and `isReadCall` tells you whether the call needs to be submitted at all:
+`contract.Client` generates methods from the contract's interface. Calling a method builds the transaction and simulates it, and returns an `AssembledTransaction` that holds the simulation response. Create a client for the contract:
 
 ```js
 const client = await contract.Client.from({
@@ -213,91 +213,33 @@ const client = await contract.Client.from({
   rpcUrl: RPC_URL,
   publicKey: ALICE,
 });
+```
 
-// Read-only: the result comes straight from simulation
+#### Call a read-only function
+
+For a read-only function, the result comes straight from simulation. `isReadCall` tells you the call doesn't need to be submitted:
+
+```js
 const balance = await client.balance({ id: ALICE });
+
 console.log(balance.isReadCall); // true
 console.log(balance.result); // 100000000000n
+```
 
-// Write: inspect the simulation before deciding to sign and send
+#### Preview a write
+
+Calling a write function simulates it without signing or submitting anything. The full simulation response is in `simulation`:
+
+```js
 const transfer = await client.transfer({
   from: ALICE,
   to: BOB,
   amount: 10_000_000n,
 });
+
 console.log(transfer.isReadCall); // false
-console.log(humanizeEvents(transfer.simulation.events));
-console.log(transfer.simulation.stateChanges);
 
-// When the preview looks right, sign and submit it, passing a
-// `signTransaction` function from a wallet or `contract.basicNodeSigner`:
-// await transfer.signAndSend({ signTransaction });
-```
-
-`transfer.simulation` is the same response that `server.simulateTransaction()` returns. The next section describes its fields.
-
-### Building the transaction yourself
-
-To control the transaction directly, build it with `TransactionBuilder` and pass it to `server.simulateTransaction()`.
-
-#### Call a read-only function
-
-The return value is in `sim.result.retval` as an `ScVal`. `scValToNative` converts it to a JavaScript value.
-
-The transaction is never submitted, so the source account doesn't need to exist on the network or hold any funds. Any public key with sequence number `0` works:
-
-```js
-const reader = new Account(Keypair.random().publicKey(), "0");
-
-const tx = new TransactionBuilder(reader, {
-  fee: BASE_FEE,
-  networkPassphrase: Networks.TESTNET,
-})
-  .addOperation(
-    Operation.invokeContractFunction({
-      contract: CONTRACT_ID,
-      function: "balance",
-      args: [new Address(ALICE).toScVal()],
-    }),
-  )
-  .setTimeout(30)
-  .build();
-
-const sim = await server.simulateTransaction(tx);
-
-if (rpc.Api.isSimulationError(sim)) {
-  throw new Error(sim.error);
-}
-
-console.log(scValToNative(sim.result.retval)); // 100000000000n
-```
-
-#### Preview a write
-
-Simulating a write works the same way, but the response now describes what submitting the transaction would do. The source account must be the one that would submit it, so load it from the network:
-
-```js
-const source = await server.getAccount(ALICE);
-
-const tx = new TransactionBuilder(source, {
-  fee: BASE_FEE,
-  networkPassphrase: Networks.TESTNET,
-})
-  .addOperation(
-    Operation.invokeContractFunction({
-      contract: CONTRACT_ID,
-      function: "transfer",
-      args: [
-        new Address(ALICE).toScVal(),
-        new Address(BOB).toScVal(),
-        nativeToScVal(10_000_000n, { type: "i128" }),
-      ],
-    }),
-  )
-  .setTimeout(30)
-  .build();
-
-const sim = await server.simulateTransaction(tx);
+const sim = transfer.simulation;
 
 if (rpc.Api.isSimulationError(sim)) {
   // The call would fail. `sim.error` holds the host error, and `sim.events`
@@ -310,8 +252,10 @@ if (rpc.Api.isSimulationError(sim)) {
 
 ##### Return value
 
+`result` holds the return value, converted to a JavaScript value:
+
 ```js
-console.log(scValToNative(sim.result.retval)); // null, since transfer returns nothing
+console.log(transfer.result); // null, since transfer returns nothing
 ```
 
 ##### Events
@@ -378,7 +322,7 @@ updated 100000000000n -> 99990000000n
 
 ##### Authorization, footprint, and fees
 
-The rest of the response is what you need to submit the transaction:
+The rest of the response is what's needed to submit the transaction:
 
 ```js
 // Authorization entries that must be signed before submitting
@@ -392,7 +336,88 @@ console.log(footprint.readWrite.map((key) => key.toJson()));
 console.log(sim.minResourceFee);
 ```
 
-If the preview looks right, use `rpc.assembleTransaction(tx, sim)` (or `server.prepareTransaction(tx)`) to add this data to the transaction, then sign and submit it. See [Invoke a contract function in a transaction using SDKs](./invoke-contract-tx-sdk.mdx) for the full flow.
+##### Sign and submit
+
+If the preview looks right, sign and submit the transaction, passing a `signTransaction` function from a wallet or from `contract.basicNodeSigner`:
+
+```js
+await transfer.signAndSend({ signTransaction });
+```
+
+### Building the transaction yourself
+
+To control the transaction directly, build it with `TransactionBuilder` and pass it to `server.simulateTransaction()`. The response has the same fields as `transfer.simulation` above.
+
+#### Call a read-only function
+
+The return value is in `sim.result.retval` as an `ScVal`. `scValToNative` converts it to a JavaScript value.
+
+The transaction is never submitted, so the source account doesn't need to exist on the network or hold any funds. Any public key with sequence number `0` works:
+
+```js
+const reader = new Account(Keypair.random().publicKey(), "0");
+
+const tx = new TransactionBuilder(reader, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    Operation.invokeContractFunction({
+      contract: CONTRACT_ID,
+      function: "balance",
+      args: [new Address(ALICE).toScVal()],
+    }),
+  )
+  .setTimeout(30)
+  .build();
+
+const sim = await server.simulateTransaction(tx);
+
+if (rpc.Api.isSimulationError(sim)) {
+  throw new Error(sim.error);
+}
+
+console.log(scValToNative(sim.result.retval)); // 100000000000n
+```
+
+#### Preview a write
+
+For a write, the source account must be the one that would submit the transaction, so load it from the network:
+
+```js
+const source = await server.getAccount(ALICE);
+
+const tx = new TransactionBuilder(source, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    Operation.invokeContractFunction({
+      contract: CONTRACT_ID,
+      function: "transfer",
+      args: [
+        new Address(ALICE).toScVal(),
+        new Address(BOB).toScVal(),
+        nativeToScVal(10_000_000n, { type: "i128" }),
+      ],
+    }),
+  )
+  .setTimeout(30)
+  .build();
+
+const sim = await server.simulateTransaction(tx);
+
+if (rpc.Api.isSimulationError(sim)) {
+  throw new Error(sim.error);
+}
+
+console.log(humanizeEvents(sim.events));
+console.log(sim.stateChanges);
+```
+
+Read the events, state changes, authorization, footprint, and fees from `sim` as shown in [Using a contract client](#using-a-contract-client) above. The return value is in `sim.result.retval`.
+
+If the preview looks right, use `rpc.assembleTransaction(tx, sim)` (or `server.prepareTransaction(tx)`) to add the simulation data to the transaction, then sign and submit it. See [Invoke a contract function in a transaction using SDKs](./invoke-contract-tx-sdk.mdx) for the full flow.
 
 ## Things to keep in mind
 
