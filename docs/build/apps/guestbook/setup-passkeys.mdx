@@ -14,7 +14,7 @@ That's genuinely it. A _lot_ of the scaffolding a passkey dapp needs lives insid
 
 The `account` export is the **primary** point of interaction between the dapp and the user's passkey. Users sign up with `account.createWallet()`, log in with `account.connectWallet()`, sign and submit with `account.signAndSubmit()`, and log out with `account.disconnect()`. This `account` is a pretty tough workhorse.
 
-We're creating it in `src/lib/smartAccountClient.ts` so it's available throughout the frontend. The [`$lib` import alias](https://svelte.dev/docs/kit/$lib) is a SvelteKit thing, but the important part is that this file and its exports need to be reachable from anywhere in your app. How you arrange that in another framework is an exercise left to the reader.
+We're creating it in `src/lib/smartAccountClient.ts` so it's available throughout the frontend. The [`#lib` import alias](https://svelte.dev/docs/kit/$lib) is a SvelteKit thing, but the important part is that this file and its exports need to be reachable from anywhere in your app. How you arrange that in another framework is an exercise left to the reader.
 
 ```ts title="src/lib/smartAccountClient.ts"
 import { Server, Api } from "@stellar/stellar-sdk/rpc";
@@ -34,7 +34,7 @@ import {
   WalletOwnershipError,
   WalletProvenanceError,
 } from "smart-account-kit";
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 
 import {
   PUBLIC_STELLAR_RPC_URL,
@@ -42,7 +42,7 @@ import {
   PUBLIC_ACCOUNT_WASM_HASH,
   PUBLIC_WEBAUTHN_VERIFIER_ADDRESS,
   PUBLIC_NATIVE_TOKEN_CONTRACT,
-} from "$env/static/public";
+} from "$app/env/public";
 
 /**
  * A configured Stellar RPC server instance used to interact with the network.
@@ -140,10 +140,23 @@ Second, a bit of passkey ergonomics that took us longer to get right than we'd l
  * depending on a user's computer/browser/etc.
  */
 export function userDismissedPasskey(err: unknown): boolean {
-  const nameOf = (e: unknown) => (e as { name?: string } | null)?.name;
-  const name =
-    nameOf(err) ?? nameOf((err as { cause?: unknown } | null)?.cause);
-  return name === "NotAllowedError" || name === "AbortError";
+  // The names of errors when the passkey prompt is declined
+  const dismissalNames = ["NotAllowedError", "AbortError"];
+
+  // Sometimes the error is itself the dismissal
+  const errName = (err as { name?: string } | null)?.name;
+  if (errName && dismissalNames.includes(errName)) {
+    return true;
+  }
+
+  // Sometimes, the error might be "wrapped" inside another error as a `cause`
+  const cause = (err as { cause?: unknown } | null)?.cause;
+  const causeName = (cause as { name?: string } | null)?.name;
+  if (causeName && dismissalNames.includes(causeName)) {
+    return true;
+  }
+
+  return false;
 }
 ```
 
@@ -224,7 +237,7 @@ These checks are why a passkey that works perfectly well in one app can still be
 The kit emits events as wallets connect and disconnect, which is a tidy way to keep UI state in sync without every component reaching into the kit. In Ye Olde Guestbook that's a small reactive class:
 
 ```ts title="src/lib/state/UserState.svelte.ts"
-import { account } from "$lib/smartAccountClient";
+import { account } from "#lib/smartAccountClient.js";
 
 class Wallet {
   contractAddress: string | null = $state(null);
@@ -252,7 +265,7 @@ Now for the server side, where we need to be careful about leaking credentials.
 
 Smart Account Kit doesn't talk to OpenZeppelin directly. Because we configured `relayerUrl: '/api/send'`, it POSTs to our own origin instead, deliberately sending no credentials of its own (it's running in the browser, so it has none worth sending). This route is what adds the API key and forwards the request on.
 
-In SvelteKit, any file named `+server.ts` runs [only on the server](https://svelte.dev/docs/kit/routing#server), and anything under `$lib/server` [can't be imported into client code at all](https://svelte.dev/docs/kit/server-only-modules#Your-modules). Those are the places your secrets are safe. Some of this is SvelteKit-specific, but every full-stack framework has an equivalent seam.
+In SvelteKit, any file named `+server.ts` runs [only on the server](https://svelte.dev/docs/kit/routing#server), and anything in a `server` directory (like `src/lib/server`) [can't be imported into client code at all](https://svelte.dev/docs/kit/server-only-modules#Your-modules). Those are the places your secrets are safe. Some of this is SvelteKit-specific, but every full-stack framework has an equivalent seam.
 
 The kit sends one of two payload shapes, and Channels accepts both:
 
@@ -263,12 +276,12 @@ You must never mix the two in one request, so the route validates that before fo
 
 ```ts title="src/routes/api/send/+server.ts"
 import type { RequestHandler } from "./$types";
-import { error, json } from "@sveltejs/kit";
+import { error } from "@sveltejs/kit";
 
 import {
   PRIVATE_RELAYER_BASE_URL,
   PRIVATE_RELAYER_API_KEY,
-} from "$env/static/private";
+} from "$app/env/private";
 
 /**
  * The smart account kit POSTs either `{ func, auth }` (a smart contract
@@ -280,13 +293,13 @@ import {
 export const POST: RequestHandler = async ({ url, request, fetch }) => {
   // ensure requests are coming from our own frontend
   if (request.headers.get("origin") !== url.origin) {
-    error(403, { message: "hostname mismatch" });
+    error(403, "hostname mismatch");
   }
 
   // parse the request body and get the transaction details
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object") {
-    error(400, { message: "request body must be a JSON object" });
+    error(400, "request body must be a JSON object");
   }
   const { func, auth, xdr }: { func?: string; auth?: string[]; xdr?: string } =
     body;
@@ -294,15 +307,13 @@ export const POST: RequestHandler = async ({ url, request, fetch }) => {
   // Channels takes either a signed transaction envelope, or a host function
   // plus its auth entries. But, you must never mix the two shapes!
   if (func && xdr) {
-    error(400, {
-      message:
-        "request body must contain a transaction OR a function, not both",
-    });
+    error(
+      400,
+      "request body must contain a transaction OR a function, not both",
+    );
   }
   if (!func && !xdr) {
-    error(400, {
-      message: "request body must contain either a function or a transaction",
-    });
+    error(400, "request body must contain either a function or a transaction");
   }
 
   const params = func ? { func, auth } : { xdr };
@@ -320,12 +331,15 @@ export const POST: RequestHandler = async ({ url, request, fetch }) => {
     // The kit counts a submission as successful only when the status is ok
     // and the body carries a top-level `success: true`. Channels already
     // answers with that `{ success, data }` envelope, so pass it through.
-    return json(await res.json(), { status: res.ok ? 200 : res.status });
+    return Response.json(await res.json(), {
+      status: res.ok ? 200 : res.status,
+    });
   } catch (err: unknown) {
     console.error("[send]", err);
-    error(502, {
-      message: err instanceof Error ? err.message : "relayer submission failed",
-    });
+    error(
+      502,
+      err instanceof Error ? err.message : "relayer submission failed",
+    );
   }
 };
 ```
