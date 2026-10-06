@@ -3,7 +3,12 @@ title: Publishing History Archives
 sidebar_position: 50
 ---
 
-If you want to run a [Full Validator](../README.mdx#full-validator), you need to set up your node to publish a history archive. You can host an archive using a blob store such as Amazon's S3 or Digital Ocean's spaces, or you can simply serve a local archive directly via an HTTP server such as Nginx or Apache. If you're setting up a [Basic Validator](../README.mdx#basic-validator), you can skip this section. No matter what kind of node you're planning to run, make sure to set it up to `get` history, which is covered in [Environment Preparation](./environment-preparation.mdx).
+If you want to run a [Full Validator](../README.mdx#full-validator), you need to set up your node to publish a history archive covering the network's complete history. You can host an archive using a blob store such as Amazon's S3 or Digital Ocean's spaces, or you can simply serve a local archive directly via an HTTP server such as Nginx or Apache. If you're setting up a [Basic Validator](../README.mdx#basic-validator), you can skip this section. No matter what kind of node you're planning to run, make sure to set it up to `get` history, which is covered in [Environment Preparation](./environment-preparation.mdx).
+
+Getting to a complete archive takes two stages:
+
+- Configuring your node to publish, described in the sections below. This fills the archive forward from the moment your node starts.
+- [Completing the archive](#complete-history-archive), which backfills everything from before that point.
 
 :::caution[One archive per node]
 
@@ -160,7 +165,7 @@ server {
 
 Given the choice, it's best to configure your history archive _prior to_ your node's initial sync with an existing network. That way your validator's history publishes as you join, and subsequently sync with, the network.
 
-However, if you have not published an archive during the node's initial sync, the steps required to create a history archive for an existing validator — in other words, to upgrade a Basic Validator to a Full Validator — are quite straightforward. First, you'll need to stop your `stellar-core` instance:
+However, if you have not published an archive during the node's initial sync, the steps required to start publishing from an existing validator are quite straightforward. This is the first of the two stages on the way to a Full Validator; [completing the archive](#complete-history-archive) follows. First, you'll need to stop your `stellar-core` instance:
 
 ```bash
 systemctl stop stellar-core # modify this if not using systemctl
@@ -193,11 +198,15 @@ As you allow your node to join the network again, you can watch it start publish
 2019-04-25T12:30:43.275 GDUQJ [History INFO] Publishing 1 queued checkpoints [16895-16895]: Awaiting 0/0 prerequisites of: publish-000041ff
 ```
 
-At this stage your validator is successfully publishing its history, which enables other users to join the network using your archive.
+At this stage your validator is publishing each new checkpoint as the network advances, which lets other nodes catch up from your archive as far back as the point where you started publishing. Everything before that point is still missing, and filling it in is the second stage.
 
 ## Complete History Archive
 
-The [stellar-archivist](https://github.com/stellar/rs-stellar-archivist) command line tool scans, repairs, and mirrors history archives. Using the [SDF package repositories](https://github.com/stellar/packages), you can install it by running:
+This is the second stage. A [Full Validator](../README.mdx#full-validator) publishes an archive reaching back to the network's first ledger. The [stellar-archivist](https://github.com/stellar/rs-stellar-archivist) command line tool gives you what you need to close the gap.
+
+### Installing stellar-archivist
+
+Using the [SDF package repositories](https://github.com/stellar/packages), you can install it by running:
 
 ```bash
 apt-get install stellar-archivist-rs
@@ -207,12 +216,40 @@ The tool is also published on [crates.io](https://crates.io/crates/stellar-archi
 
 For detailed usage, please run `stellar-archivist-rs --help` (or `stellar-archivist --help` if installed from crates.io).
 
+### Where to run stellar-archivist
+
+stellar-archivist is a standalone tool. It does not link against or communicate with `stellar-core`; all it needs is read and write access to the archive itself. That access can be a local filesystem path (`file://`), an HTTP(S) source, or a cloud object store (`s3://`, `gcs://`, `azblob://`, `b2://`), so you can run it from any machine that can reach your archive.
+
+:::caution
+
+Run stellar-archivist on a separate host from your validator to avoid resource contention.
+
+Do **not** stop your validator to work on its archive. stellar-archivist operates on the archive files directly and does not interfere with live publishing. Your node should stay online and keep publishing checkpoints throughout.
+
+:::
+
+### Choosing a command
+
+| Your goal | Command |
+| --- | --- |
+| Find out whether an archive is complete, and where the gaps are | [`scan`](#scanning-an-archive) — read-only |
+| Fix missing or corrupt files in an archive you already have | [`repair`](#repairing-an-archive) |
+| Build an archive from scratch, or backfill a range of history | [`mirror`](#mirroring-an-archive) |
+
+All three accept `--low` and `--high` to restrict the work to a ledger range; both bounds are rounded outward to the nearest checkpoint.
+
+### Checking file contents with `--verify`
+
+By default, every command checks only that files exist. Adding `--verify` also checks that their contents are sound, which requires significantly more CPU and memory.
+
+Leave it off for routine completeness checks and for fixing missing files. Turn it on to find and fix corruption, where a file exists but its contents are wrong.
+
 ### Scanning an archive
 
-`scan` is read-only. It reports files that are missing, and when `--verify` is passed, it also checks file content integrity.
+`scan` is read-only. It walks the archive and reports the files that are missing, which is how you find out whether your archive has a gap and exactly where it is.[^1]
 
 ```bash
-stellar-archivist-rs scan file:///mnt/xvdf/stellar-core-archive/node_001 --verify --report report.json
+stellar-archivist-rs scan file:///mnt/xvdf/stellar-core-archive/node_001 --report report.json
 ```
 
 ```log
@@ -274,13 +311,12 @@ error: Archive issues found
 
 ### Repairing an archive
 
-`repair` scans and fixes an archive in place: it identifies missing or broken files at the destination and re-fetches them from a known-good source — such as the SDF public history archive. `--verify` validates file integrity at both the destination and the source.
+Once a scan has told you what is broken, `repair` fixes it in place: it identifies missing or broken files at the destination and re-fetches them from a known-good source — such as the SDF public history archive.
 
 ```bash
 stellar-archivist-rs repair \
   https://history.stellar.org/prd/core-testnet/core_testnet_001 \
-  file:///mnt/xvdf/stellar-core-archive/node_001 \
-  --verify
+  file:///mnt/xvdf/stellar-core-archive/node_001
 ```
 
 ```log
@@ -296,13 +332,13 @@ Repair runs in stages and reports each one separately: a main pass that audits t
 
 :::tip
 
-A report written by `scan` can be fed straight back in as a repair plan (with the `--plan` flag). A repair with a pre-existing plan skips the main pass, because the plan already says what is broken.
+The JSON report written by `scan` can be handed straight back to `repair` as a plan, using `--plan`. Repair then re-fetches exactly those files.
 
 ```bash
 stellar-archivist-rs repair \
   https://history.stellar.org/prd/core-testnet/core_testnet_001 \
   file:///mnt/xvdf/stellar-core-archive/node_001 \
-  --verify --plan report.json
+  --plan report.json
 ```
 
 :::
@@ -310,7 +346,7 @@ stellar-archivist-rs repair \
 A final scan confirms the archive has been repaired:
 
 ```bash
-stellar-archivist-rs scan file:///mnt/xvdf/stellar-core-archive/node_001 --verify
+stellar-archivist-rs scan file:///mnt/xvdf/stellar-core-archive/node_001
 ```
 
 ```log
@@ -328,13 +364,15 @@ Add `--dry-run` to report what would be repaired without writing anything. Combi
 
 ### Mirroring an archive
 
-`mirror` copies a source archive to a destination. Use it to onboard a fresh archive, or to backfill a range of history your validator did not publish itself. For example, run the following command against an empty destination:
+`mirror` copies a source archive to a destination. It is the command to reach for when backfilling: run it once to build a complete archive from scratch, or scope it with `--low` and `--high` to fill in just the range of history your validator did not publish itself.
+
+For example, run the following command against an empty destination:
 
 ```bash
 stellar-archivist-rs mirror \
   https://history.stellar.org/prd/core-testnet/core_testnet_001 \
   file:///mnt/xvdf/stellar-core-archive/node_001 \
-  --high 1023 --verify
+  --high 1023
 ```
 
 ```log
@@ -347,16 +385,25 @@ stellar-archivist-rs mirror \
 2026-08-20T17:09:23.851784Z  INFO Updated destination .well-known to checkpoint 1023 (0x000003ff)
 ```
 
+Afterwards, the destination contains a new archive covering history up to checkpoint 1023.
+
 :::tip
 
-Mirroring is resumable. Running it again against the same destination with a higher `--high` picks up from the destination's current checkpoint and copies only what is missing, unless you pass `--overwrite`.
+Mirroring is resumable. Running it again against the same destination with a higher `--high` picks up from the destination's current checkpoint and copies only what is missing.
+
+Files already present at the destination are skipped rather than re-fetched. Use `--overwrite` to re-fetch and replace them instead.
+
+Filling in a range older than your archive's latest checkpoint (recorded in `.well-known/stellar-history.json`) requires `--overwrite`:
+
+```bash
+stellar-archivist-rs mirror \
+  https://history.stellar.org/prd/core-testnet/core_testnet_001 \
+  file:///mnt/xvdf/stellar-core-archive/node_001 \
+  --low 63 --high 895 --overwrite
+```
 
 :::
 
-Once the archive is complete, start your Stellar Core instance again.
-
-```bash
-systemctl start stellar-core
-```
-
 You should now have a complete history archive being written by your full validator. Congratulations!
+
+[^1]: The sample output on this page was captured with `--verify`, which is why it reports hash mismatches alongside the missing files.

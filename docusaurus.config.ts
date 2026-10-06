@@ -36,8 +36,11 @@ const config: Config = {
       async: true,
     },
   ],
-  // Exposes a WebMCP `search_docs` tool to in-browser AI agents (#2556).
-  clientModules: ['./src/clientModules/webmcp.ts'],
+  clientModules: [
+    // Exposes a WebMCP `search_docs` tool to in-browser AI agents (#2556).
+    './src/clientModules/webmcp.ts',
+    './src/clientModules/apiReferenceMarkdownButton.js',
+  ],
   plugins: [
     "docusaurus-plugin-sass",
     [
@@ -150,6 +153,25 @@ const config: Config = {
         },
         googleTagManager: {
           containerId: "GTM-M2JLH37",
+        },
+        sitemap: {
+          // Files under static/ bypass the Docusaurus build, so pages served
+          // from there never appear in the generated sitemap. /launch/usdt0 is
+          // a permanent page and was invisible to crawlers without this.
+          createSitemapItems: async ({
+            defaultCreateSitemapItems,
+            ...rest
+          }) => {
+            const items = await defaultCreateSitemapItems(rest);
+            return [
+              ...items,
+              {
+                url: `${rest.siteConfig.url}/launch/usdt0`,
+                changefreq: "weekly",
+                priority: 0.5
+              },
+            ];
+          },
         },
       } satisfies Preset.Options,
     ],

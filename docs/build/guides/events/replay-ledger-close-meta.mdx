@@ -1,0 +1,254 @@
+---
+title: Replay a ledger to collect its LedgerCloseMeta
+description: Use Stellar Core to replay a single ledger from the history archives and collect its LedgerCloseMeta, including the diagnostic events.
+---
+
+:::caution
+
+Replaying a ledger is a complex and advanced process, and it isn't suitable for most application integrations, which are better served by [Stellar RPC](../../../data/apis/rpc/README.mdx) or an [indexer](../../../data/indexers/README.mdx). It's helpful when a transaction's diagnostic events are needed and aren't accessible any other way.
+
+:::
+
+:::tip
+
+An AI coding agent can do all of this for you. Give it a prompt that links to this guide, like:
+
+```
+Collect the LedgerCloseMeta for transaction ____ from ledger ____ and analyse from the diagnostic events why it failed. Follow the steps in:
+https://developers.stellar.org/docs/build/guides/events/replay-ledger-close-meta.md
+```
+
+:::
+
+When Stellar Core closes a ledger it can emit a `LedgerCloseMeta`, the complete record of what closing the ledger did: the transactions applied, their results, every ledger entry they created, updated, or deleted, and the events they emitted. Stellar RPC, Horizon, and Galexie are all built on it, and Stellar RPC's [`getLedgers`](../../../data/apis/rpc/api-reference/methods/getLedgers.mdx) method serves it.
+
+The meta a Stellar RPC serves is produced by a Stellar Core, and contains only what that Stellar Core was configured to produce. Diagnostic events are a common gap because of their size and the performance cost to generate and store them. Stellar Core leaves them off by default, but they are the part of the meta that explains why a contract failed and the only way to collect a trace of what contracts were called.
+
+A ledger can be replayed from the network's history archives, and its meta produced again, with whatever configuration is needed. This guide replays a single Mainnet ledger containing a failed contract call, collects its `LedgerCloseMeta` with diagnostic events included, and uses them to find out why the call failed.
+
+## Install
+
+Two tools are needed: `stellar-core` to replay the ledger, and `stellar-xdr` to decode the meta it writes. `jq` is used to explore the result.
+
+On macOS:
+
+```sh
+brew install stellar-core stellar-xdr jq
+```
+
+On Linux, install `stellar-core` from [SDF's apt repository](../../../validators/admin-guide/installation.mdx#configure-sdf-apt-repository-on-the-system), and `stellar-xdr` with cargo:
+
+```sh
+sudo apt install stellar-core jq
+cargo install --locked stellar-xdr --features cli
+```
+
+## Configure
+
+Stellar Core keeps its state in the directory it runs in: a SQLite database, a `buckets` directory holding the ledger state, and its logs. Create a directory for the replay:
+
+```sh
+mkdir replay
+cd replay
+```
+
+Create a `mainnet.cfg` file in it:
+
+```toml title="mainnet.cfg"
+NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
+ENABLE_SOROBAN_DIAGNOSTIC_EVENTS=true
+
+[[HOME_DOMAINS]]
+HOME_DOMAIN="www.stellar.org"
+QUALITY="HIGH"
+
+[[VALIDATORS]]
+NAME="sdf1"
+HOME_DOMAIN="www.stellar.org"
+PUBLIC_KEY="GCGB2S2KGYARPVIA37HYZXVRM2YZUEXA6S33ZU5BUDC6THSB62LZSTYH"
+HISTORY="curl -sf https://history.stellar.org/prd/core-live/core_live_001/{0} -o {1}"
+
+[[VALIDATORS]]
+NAME="sdf2"
+HOME_DOMAIN="www.stellar.org"
+PUBLIC_KEY="GCM6QMP3DLRPTAZW2UZPCPX2LF3SXWXKPMP3GKFZBDSF3QZGV2G5QSTK"
+HISTORY="curl -sf https://history.stellar.org/prd/core-live/core_live_002/{0} -o {1}"
+
+[[VALIDATORS]]
+NAME="sdf3"
+HOME_DOMAIN="www.stellar.org"
+PUBLIC_KEY="GABMKJM6I25XI4K7U6XWMULOUQIQ27BCTMLS6BYYSOWKTBUXVRJSXHYQ"
+HISTORY="curl -sf https://history.stellar.org/prd/core-live/core_live_003/{0} -o {1}"
+```
+
+The validators are there for two reasons. A quorum set is required for Stellar Core to start, even to replay a ledger without ever connecting to another node. And the `HISTORY` line of each validator is the command Stellar Core runs to download a file from that validator's history archive, with `{0}` replaced by the file's path in the archive and `{1}` by where to save it. The history archives are where the replay gets everything it needs. These are SDF's validators, as published in SDF's [stellar.toml](https://stellar.org/.well-known/stellar.toml).
+
+To replay a Testnet ledger instead, use the network passphrase and validators in [stellar-core_testnet.cfg](https://github.com/stellar/stellar-core/blob/master/docs/stellar-core_testnet.cfg).
+
+### Diagnostic events
+
+`ENABLE_SOROBAN_DIAGNOSTIC_EVENTS=true` is the line that adds [diagnostic events](../../../learn/fundamentals/stellar-data-structures/events.mdx) to the meta. With it, the Soroban host records events while it applies each Soroban transaction: a `fn_call` and `fn_return` for every contract function called, errors raised by the host, and logs. Contract events are included in the same list, so everything appears in the order it happened.
+
+**Diagnostic events are not part of the protocol.** They're written to a part of the meta that isn't hashed into the ledger, so turning them on doesn't change the result of the replay. The ledger comes out identical. The meta just says more about how it got there. The setting is off by default, and can't be turned on for a validator.
+
+## Replay
+
+Initialize the database:
+
+```sh
+stellar-core --conf mainnet.cfg new-db
+```
+
+Then catch up to the ledger, streaming its meta to a file. The ledger used here is 64681481, a Mainnet ledger with a failed contract call in it:
+
+```sh
+stellar-core --conf mainnet.cfg catchup 64681481/1 --metadata-output-stream meta.xdr
+```
+
+[`catchup`](../../../validators/admin-guide/commands.mdx#catchup) takes a destination ledger and a count, as `DESTINATION/COUNT`. It stops at the destination, after replaying at least that many ledgers. `64681481/1` replays at least one ledger, 64681481 itself.
+
+Progress is written to a `stellar-core-*.log` file in the directory rather than to the terminal, so catchup can look idle for minutes at a time. Add `--console` to see the log as it runs.
+
+### What catchup does
+
+**A ledger can't be replayed on its own.** Applying its transactions needs the state the previous ledger left behind: every account, trustline, offer, contract, and contract data entry. History archives don't store the state at every ledger. They store it every 64 ledgers, at checkpoints, along with the header and transactions of every ledger in between.
+
+So catchup works forward from the nearest checkpoint:
+
+1. It downloads the state at the last checkpoint before the ledger. Checkpoints fall on the ledgers one less than a multiple of 64, and for 64681481 that's ledger 64681471.
+2. It downloads the headers and transactions of the checkpoint containing the ledger.
+3. It applies the transactions, ledger by ledger, from 64681472 up to and including 64681481.
+
+Every ledger applied is written to `meta.xdr`, so it holds 10 ledgers, 64681472 through 64681481. Depending on where a ledger falls in its checkpoint, that's anywhere from 1 to 64.
+
+Downloading and preparing the state is most of the work. At the time of writing, Mainnet's state is about 5 GB to download, and catchup needs about 30 GB of free disk space while it unpacks, indexes, and merges it. With a fast connection this catchup took under 6 minutes, and replaying the 10 ledgers took 4 seconds of that.
+
+## Collect the ledger
+
+`meta.xdr` is a stream of XDR encoded `LedgerCloseMeta`, each prefixed with its length. `stellar-xdr` decodes the stream to JSON, one `LedgerCloseMeta` per line, and `jq` selects the ledger:
+
+```sh
+stellar-xdr decode --type LedgerCloseMeta --input stream-framed --output json meta.xdr \
+  | jq -c 'select(.v2.ledger_header.header.ledger_seq == 64681481)' \
+  > 64681481.json
+```
+
+The `v2` in the filter is the version of the `LedgerCloseMeta`. Ledgers from protocol 23 onward are `v2`, ledgers from protocols 20 to 22 are `v1`, and earlier ledgers are `v0`.
+
+`64681481.json` is the ledger's `LedgerCloseMeta`. The JSON is a lossless representation of the XDR, and encoding it produces exactly the bytes Stellar Core wrote:
+
+```sh
+stellar-xdr encode --type LedgerCloseMeta --output single 64681481.json > 64681481.xdr
+```
+
+With `--output single-base64` it's in the form Stellar RPC's `getLedgers` returns in `metadataXdr`.
+
+## Find out why the call failed
+
+Transaction `cb5e452f…` in ledger 64681481 invoked a contract and failed:
+
+```sh
+tx=cb5e452f29182e492d76ae62c997a86e2dc4556261711e6a7a60c3c75d484c31
+```
+
+In meta served without diagnostic events, its result is all there is to go on:
+
+```sh
+jq --arg tx "$tx" '.v2.tx_processing[]
+  | select(.result.transaction_hash == $tx)
+  | .result.result.result' 64681481.json
+```
+
+```json
+{
+  "tx_failed": [
+    {
+      "op_inner": {
+        "invoke_host_function": "trapped"
+      }
+    }
+  ]
+}
+```
+
+`trapped` says the contract stopped with an error, but not which error, or where. The diagnostic events say both. Every contract function called has a `fn_call` event, and every function that returns has a `fn_return` event. Indenting each call by the number of calls still open around it shows the call tree:
+
+```sh
+jq -r --arg tx "$tx" '.v2.tx_processing[]
+  | select(.result.transaction_hash == $tx)
+  | foreach .tx_apply_processing.v4.diagnostic_events[].event.body.v0.topics as $t (
+      {depth: 0};
+      if $t[0].symbol == "fn_call" then
+        {depth: (.depth + 1), call: (("  " * .depth) + $t[2].symbol)}
+      elif $t[0].symbol == "fn_return" then
+        {depth: (.depth - 1)}
+      else
+        {depth}
+      end;
+      .call // empty)' 64681481.json
+```
+
+```
+execute
+  swap_chained
+    transfer
+    swap
+      transfer
+      transfer
+      update
+    swap
+```
+
+The last `swap` never returns. The `error` events report what went wrong, starting at the point it went wrong:
+
+```sh
+jq -c --arg tx "$tx" '.v2.tx_processing[]
+  | select(.result.transaction_hash == $tx)
+  | .tx_apply_processing.v4.diagnostic_events[].event
+  | select(.body.v0.topics[0].symbol == "error")
+  | .body.v0.data' 64681481.json
+```
+
+With the function arguments trimmed:
+
+```
+{"vec":[{"string":"trying to access contract data key outside of the footprint"},{"address":"CDL5H2BZTIPBPIKJ2NOILZQYZRZE553H3SZX47DDBYEBXSWXIHZLGA2C"},{"vec":[{"symbol":"ChunkBitmap"},{"i32":-2}]}]}
+{"string":"escalating error to VM trap from failed host function call: has_contract_data"}
+{"vec":[{"string":"contract call failed"},{"symbol":"swap"},…]}
+{"string":"escalating error to VM trap from failed host function call: call"}
+{"vec":[{"string":"contract call failed"},{"symbol":"swap_chained"},…]}
+{"string":"escalating error to VM trap from failed host function call: call"}
+```
+
+The first error is the cause. During the last `swap`, contract `CDL5H2BZ…` checked for its `ChunkBitmap(-2)` entry, and that entry wasn't in the transaction's footprint. A Soroban transaction declares up front every ledger entry it will access, and the footprint is usually produced by simulating the transaction before it's submitted. An access outside the footprint typically means the ledger changed between the simulation and the execution, and the contract took a path the simulation didn't. The errors after it are the failure unwinding back through the contracts that called it.
+
+## Other ledgers
+
+The state stays in the directory between runs, and a catchup continues from the last ledger replayed. Collecting the next ledger doesn't need the state downloaded again:
+
+```sh
+stellar-core --conf mainnet.cfg catchup 64681482/1 --metadata-output-stream next.xdr
+```
+
+That replays exactly one ledger, 64681482, and took under a minute and a half, most of it loading the state from disk.
+
+For an earlier ledger, or one far enough ahead that replaying every ledger in between would take longer than downloading the state again, start over. `new-db` resets the database and empties the `buckets` directory, ready for a fresh catchup.
+
+## Notes
+
+- **Version.** Stellar Core has to support the protocol version the ledger closed under. Use a recent release.
+- **Trusted hash.** Catchup checks that the ledger headers it downloads form an unbroken chain, and that every ledger it replays reproduces its header's hash. The chain itself comes from the archive though. Given the ledger's hash from a source you trust, such as the `hash` Stellar RPC's `getLedgers` returns for it, pass it with `--trusted-hash` and catchup refuses history that doesn't lead to it.
+- **Appending.** If the file given to `--metadata-output-stream` already exists, Stellar Core appends to it. Delete it before a fresh run.
+- **Ordering.** Replayed meta isn't necessarily byte for byte identical to meta from another run, or another node. The order of ledger entry changes within a contract call can differ from run to run.
+- **Other settings.** A few other settings change what goes into the meta, like `EMIT_CLASSIC_EVENTS`, which adds events for classic operations. The [example config](https://github.com/stellar/stellar-core/blob/master/docs/stellar-core_example.cfg) documents them.
+- **Cleanup.** Everything catchup wrote is in the `replay` directory. Delete it when done.
+
+## Summary
+
+Replaying a ledger to collect its `LedgerCloseMeta` takes three commands and a filter:
+
+- `new-db` to initialize the database.
+- `catchup LEDGER/1 --metadata-output-stream meta.xdr` to replay the ledger from the nearest checkpoint.
+- `stellar-xdr decode` and `jq` to pull the one ledger out of the stream.
+
+The meta is whatever the config asks for. With `ENABLE_SOROBAN_DIAGNOSTIC_EVENTS=true` it includes the call trace and the errors that meta served without diagnostic events leaves out.

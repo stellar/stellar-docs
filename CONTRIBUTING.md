@@ -18,8 +18,10 @@ Before diving in, please read the org-wide [Stellar Contribution Guide](https://
     - [Images](#images)
     - [Code examples](#code-examples)
     - [Terminology and style](#terminology-and-style)
+    - [Promotional and third-party content](#promotional-and-third-party-content)
   - [Site Code and Infrastructure](#site-code-and-infrastructure)
     - [API reference pages are generated](#api-reference-pages-are-generated)
+    - [CLI pages come from the `stellar-cli` repo](#cli-pages-come-from-the-stellar-cli-repo)
     - [URLs are forever](#urls-are-forever)
     - [Patches and swizzles are a last resort](#patches-and-swizzles-are-a-last-resort)
     - [Tooling, editor config, and build settings](#tooling-editor-config-and-build-settings)
@@ -85,6 +87,11 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 - Write SEP and CAP references without zero-padding (for example, `SEP-1` and `CAP-1`, not `SEP-0001` and `CAP-0001`). Keep canonical filenames and URLs unchanged (for example, `sep-0001.md` and `cap-0001.md`).
 - Meeting notes (in `meetings/`) use the date as the title (`2026-05-07`), uniformly across the series.
 
+### Promotional and third-party content
+
+- **We don't accept promotional contributions.** PRs that add payment addresses, donation appeals, referral links, or marketing copy for a contributor's own product will be closed without review. This includes rewriting an existing page to center a specific project.
+- **Third-party tools and services belong on the pages built for them.** Several pages exist to list ecosystem tooling and providers. Entries there are descriptive rather than promotional: what the thing does and how it works with Stellar, not why a reader should choose it. If your project clearly fits into one of these list pages, feel free to directly open a PR. If you're uncertain where or if your project fits, feel free to open an issue proposing it.
+
 ## Site Code and Infrastructure
 
 The bar for changes to the site itself (components, theme, config, dependencies) is deliberately higher than for content.
@@ -94,6 +101,14 @@ The bar for changes to the site itself (components, theme, config, dependencies)
 The Horizon, Anchor Platform, and Stellar Disbursement Platform API reference pages are generated from the OpenAPI specs in `openapi/`. **Edit the spec sources, then regenerate** (`pnpm api`) and commit both together. PRs that hand-edit generated `*.api.mdx` files will be closed — the next regeneration would erase them.
 
 The same is true for Stellar RPC, and a subset of Anchor Platform functionality. They are generated from spec files in `openrpc/`. **Edit the spec sources, then regenerate** (`pnpm rpcspec:build`) and commit both together. PRs that hand-edit generated `*.openrpc.json` files only will be closed.
+
+### CLI pages come from the `stellar-cli` repo
+
+Three groups of pages under `docs/tools/cli/` are not authored here, so fixing even a typo means editing something else. The first two come from the build, which runs `pnpm stellar-cli:build` before `pnpm build` (see `.github/workflows/build.yml` and the `Dockerfile`).
+
+- **The cookbook guides** (`docs/tools/cli/cookbook/*.mdx`) — each guide page in this repo is a one-line stub. The build copies the `cookbook/` directory of [`stellar/stellar-cli`](https://github.com/stellar/stellar-cli/tree/main/cookbook) over it, so an edit made here is overwritten. Edit the file in `stellar-cli` instead; the "Edit this page" link on each rendered cookbook page already points there. The category's own `README.mdx` and `_category_.json` have no upstream counterpart, so those two are ours and you can edit them here.
+- **The CLI manual** (`docs/tools/cli/stellar-cli.mdx`) — also a stub. The build fills it from `FULL_HELP_DOCS.md` in `stellar/stellar-cli`, and that file is itself generated from the CLI's own `--help` text (`make docs` in that repo). To change this page, change the help text in the CLI's Rust sources.
+- **The plugin list** (`docs/tools/cli/plugins-list.mdx`) — committed output rather than a stub. `scripts/stellar_cli_plugins.mjs` rebuilds it from the public GitHub repositories that carry the `stellar-cli-plugin` topic. Forks and archived repositories are skipped. To get a plugin listed, add that topic to its repository; a hand-written entry is lost at the next regeneration.
 
 ### URLs are forever
 
