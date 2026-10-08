@@ -1,0 +1,69 @@
+---
+title: "2026-07-09"
+authors: kaankacar
+tags: [protocol]
+---
+
+import YouTube from "@site/src/components/YouTube";
+
+<YouTube ID="IIfVUmkzCdA" />
+
+This week was a protocol discussion. Dmytro Kozhevin (Dima) from the core team presented two CAPs: [CAP-85](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0085.md) and [CAP-84](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0084.md). He started with CAP-85, because CAP-84 had already drawn some concerns and was likely to take longer.
+
+## CAP-85: Externally Managed Contract Executables
+
+CAP-85 came out of ecosystem requests. Every Soroban contract can already update its own Wasm, but only one contract at a time. If you run a fleet of contract instances that must share the same code, for example a set of token contracts, you need a custom batching contract today. That only works if the whole update fits into one transaction's resource limits.
+
+The CAP adds a third executable type next to Wasm and the Stellar Asset Contract: an **executable reference**.
+
+- The contract does not store its own Wasm hash. It points to a contract data entry owned by another contract, which the CAP calls the owner contract. You can think of it as a manager contract.
+- Lookup gets one more step: find the reference, read the Wasm hash from the owner contract's entry, then load the code.
+- When the owner contract updates the hash, every contract that points to it updates atomically. No need to iterate over the fleet.
+- One manager contract can own many references, so a whole protocol with several different implementations can be updated in one transaction.
+- Existing contracts can switch to an executable reference with an update, and they can switch back to a plain Wasm executable later. Nothing is one-way.
+
+### Safety: the executable tag
+
+A plain contract data entry could be deleted, or set to a value that is not a valid Wasm hash. A bug in a manager contract could then make the whole fleet unusable until someone fixes the entry. To remove that class of errors, the CAP adds a new object type, `ExecutableTagObject`, which wraps a string and must be used as the key of a reference entry. Because the protocol can now recognize reference entries, it:
+
+- does not allow anyone to delete them, and
+- only allows updates to the hash of a Wasm that is already uploaded on chain.
+
+The only remaining way to break the fleet is to point it at valid Wasm that does the wrong thing, which the protocol cannot detect.
+
+### TTL extension and state archival
+
+The existing functions that extend the TTL of contract code will extend both the code and the reference entry when a contract uses a reference. The intent of these functions is to keep everything the contract needs to run alive, so extending only one of the two entries would be surprising.
+
+The reference entry is persistent storage, so state archival works as usual. If it gets archived, simulation generates a restore, someone pays the restore fee, and the contract keeps working.
+
+### Questions from chat
+
+- **Smart wallets and modules**: A smart wallet could use a manager contract to update all of its modules atomically. Dima called this a good example of a use that the CAP did not originally target.
+- **Authorization context**: Custom accounts receive a context that describes contract creation, so the CAP extends that structure with the new executable type. A policy could allow or block contracts created from a reference. This is a small backwards-compatibility point: an account that parses the context needs a newer SDK to read the new type. It only matters if the account itself creates such contracts.
+- **Alternatives**: The team compared other designs and chose the one that is the most flexible and ergonomic for Soroban.
+
+## CAP-84: Muxed Contract Addresses
+
+[CAP-67](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md) brought muxed addresses to Soroban, but only for classic `G` accounts. A muxed address bakes an off-chain identifier into the address. A custodian such as an exchange can serve thousands of users from a handful of on-chain accounts, and the identifier appears in the token events.
+
+CAP-84 extends the same idea to contracts. A muxed contract address is the 32-byte contract ID plus a 64-bit ID, and it gets its own strkey. The existing muxed address object and host functions cover the new type, so:
+
+- SEP-41 does not need to change, and
+- contracts that already accept muxed addresses pick up the new type automatically.
+
+### Is there demand?
+
+George raised the main concern in the [discussion thread](https://github.com/stellar/stellar-protocol/discussions/1950). The XDR change is small, but a new strkey type is a large ecosystem change. Every SDK, and every wallet or backend that handles addresses, has to support it. George asked for concrete use cases from builders, and asked whether Soroban's programmability could solve the problem without a protocol change. He gave claimable balances as an example of a feature that shipped before the need was clear.
+
+Dima's answers:
+
+- Jake Urban wrote the CAP and works with builders of custodial contract wallets. These builders want to integrate SEP-24 on and off ramps, but they cannot use memos or muxed destinations with contract accounts today.
+- Memos are not safe in Soroban. Authorization is detached from the transaction on purpose, so you cannot reliably tie a memo to a given event.
+- The other option discussed during CAP-67 was a new transfer function with a separate destination ID. That brings back the two-part address problem of memos, and every contract would need to change to support it.
+- An account per user is expensive and hard to operate, especially for contract accounts. A custom wrapper token would bypass most of the ecosystem.
+- Integrators that already parse the CAP-67 unified events get the muxed ID from the events without needing to handle the new strkey.
+
+Dima's view: the CAP is not guaranteed to be merged, but if the protocol supports muxed contract addresses, this is the cleanest way to do it. George agreed that the implementation details matter and asked for a concrete picture of how a custodial contract account would work with SEP-24 without the CAP. The discussion moved to the thread and continued the next week.
+
+Please add your comments to the [CAP-85](https://github.com/orgs/stellar/discussions/1969) and [CAP-84](https://github.com/stellar/stellar-protocol/discussions/1950) discussion threads.
