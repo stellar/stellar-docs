@@ -8,9 +8,9 @@ interface Props {
 }
 
 /**
- * A copyable command line. Deliberately not `@theme/CodeBlock`: inside a 400px
- * panel we want tight padding, wrapping instead of horizontal scroll, and no
- * syntax highlighting bundle.
+ * A compact, copyable snippet. Deliberately not `@theme/CodeBlock`: inside a
+ * 400px panel we want tight padding, wrapping instead of horizontal scroll,
+ * and no syntax highlighting bundle.
  */
 export default function CopyBlock({ code }: Props): ReactNode {
   const [copied, setCopied] = useState(false);
