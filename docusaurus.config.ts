@@ -190,6 +190,12 @@ const config: Config = {
   ],
   headTags: headTags,
   themeConfig: {
+    announcementBar: {
+      id: 'legacy-docs',
+      content:
+        'Stellar Docs has a new home. This version is no longer updated. Find the latest guides and references in the new <a href="https://developers.stellar.org">Stellar Developer Portal</a>.',
+      isCloseable: false,
+    },
     docs: {
       sidebar: {
         autoCollapseCategories: false,
@@ -216,7 +222,7 @@ const config: Config = {
         navbarItems.validators,
         ...navbarItems.translation,
         {
-          href: "https://github.com/stellar/stellar-docs",
+          href: "https://github.com/stellar/stellar-docs/tree/legacy-docs",
           position: "right",
           className: "header-github-link",
           'aria-label': "GitHub",
