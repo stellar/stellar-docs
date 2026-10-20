@@ -224,7 +224,8 @@ export const AGENT_SECTIONS = {
   },
   llmsTxt: {
     title: 'llms.txt',
-    href: '/llms.txt',
+    // This archive ships no llms.txt; point agents at the Developer Portal's.
+    href: 'https://developers.stellar.org/llms.txt',
     description: 'Machine-readable overview of the Stellar docs.',
   },
 } as const;

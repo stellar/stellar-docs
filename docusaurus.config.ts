@@ -22,8 +22,11 @@ const config: Config = {
   title: "Stellar Docs",
   tagline:
     "Stellar is a self-serve distributed ledger that you can use as a backend to power all kinds of apps and services",
-  url: "https://developers.stellar.org",
+  url: "https://legacydocs.stellar.org",
   baseUrl: "/",
+  // Archived site: keep it out of search results so it doesn't compete with
+  // the Developer Portal. Also skips the sitemap.
+  noIndex: true,
   trailingSlash: false,
   onBrokenAnchors: "ignore",
   onBrokenLinks: "throw",
@@ -96,21 +99,6 @@ const config: Config = {
     // Dumps the .md-twin → source-file map consumed by the postbuild step
     // that restores <CodeExample> content (scripts/rewrite_md_code_examples.mjs).
     './src/plugins/markdown-source-map/index.ts',
-    [
-      "docusaurus-plugin-llms",
-      {
-        generateLLMsTxt: false, // keep our curated static/llms.txt untouched
-        generateLLMsFullTxt: true,
-        docsDir: "docs",
-        llmsFullTxtFilename: "llms-full.txt",
-        title: "Stellar Developer Documentation",
-        description:
-          "Full text of the Stellar developer documentation, concatenated as Markdown for LLM ingestion.",
-        includeBlog: false,
-        excludeImports: true,
-        removeDuplicateHeadings: true,
-      },
-    ],
   ],
   markdown: {
     mermaid: true,
