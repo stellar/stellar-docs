@@ -133,7 +133,6 @@ const config: Config = {
           rehypePlugins: [rehypeKatex],
           sidebarPath: "config/sidebars.ts",
           sidebarItemsGenerator: require("./src/sidebar-generator"),
-          editUrl: "https://github.com/stellar/stellar-docs/edit/legacy-docs",
           exclude: ['**/component/**', '**/CONTRIBUTING.md'],
         },
         theme: {
