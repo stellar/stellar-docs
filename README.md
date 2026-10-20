@@ -1,9 +1,9 @@
-# Stellar Documentation and API Reference 🌌 <!-- omit in toc -->
+# Documentación estelar y referencia API 🌌 <!-- omitir en toc -->
 
-[![Apache 2.0 licensed](https://img.shields.io/badge/license-apache%202.0-blue.svg)](LICENSE)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/stellar/stellar-docs)
+[¡Sólo¡Sólo![Apache 2.0 con licencia](https://img.shields.io/badge/license-apache%202.0-blue.svg)](Licencia)
+[¡Sólo¡Sólo![Pregunta a DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/stellar/stellar-docs)
 
-Welcome to the official home repository for [Documentation][docs] for the [Stellar network][stellar].
+Bienvenido al repositorio oficial de... [Documentación][docs] para el [Stellar network][stellar].
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -20,7 +20,7 @@ Welcome to the official home repository for [Documentation][docs] for the [Stell
 
 Contributions are more than welcome! Thank you! 🎉
 
-Before diving in, please read our [Stellar Contribution Guide][contrib] for
+Antes de bucear, por favor lea nuestro [Stellar Contribution Guide][contrib] for
 details on contributing to Stellar's various repositories. Please take special
 note of the [code of conduct][coc].
 
