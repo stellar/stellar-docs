@@ -1,5 +1,8 @@
 # Stellar Documentation and API Reference 🌌 <!-- omit in toc -->
 
+> [!IMPORTANT]
+> Stellar Docs has a new home. This `legacy-docs` branch is archived and no longer updated. Its last commit from `main` is [`e43ac4b`](https://github.com/stellar/stellar-docs/commit/e43ac4b041942342b12f348d7be854d2c03f17f0) (2026-10-20). Find the latest guides and references on the [Stellar Developer Portal](https://developers.stellar.org).
+
 [![Apache 2.0 licensed](https://img.shields.io/badge/license-apache%202.0-blue.svg)](LICENSE)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/stellar/stellar-docs)
 
