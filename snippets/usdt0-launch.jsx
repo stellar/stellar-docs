@@ -407,7 +407,7 @@ html.dark .usdt0{
 }
 `;
   const SECTIONS = [
-    ["arrival", "Arrival"], ["access", "Access"], ["dayone", "Day one"], ["deploy", "Deploy"], ["build", "Before you build"],
+    ["arrival", "Arrival"], ["access", "Access"], ["dayone", "Day one"], ["deploy", "Deploy"], ["build", "Before you build"], ["faq", "FAQ"],
   ];
   const IDS = [
     ["Classic asset", "The asset code and issuer address. A trustline points at this pair.", "USDT0:GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q"],
@@ -683,7 +683,7 @@ html.dark .usdt0{
             </div>
             <a className="dep-link" target="_blank" rel="noopener noreferrer" href="https://docs.usdt0.to/technical-documentation/deployments?q=stellar">Contract deployments on docs.usdt0.to →</a>
           </div>
-          <div className="dep-note"><b><a href="https://stellar.expert/explorer/public/asset/USDT0-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q" target="_blank" rel="noopener noreferrer">This asset</a> sets <code>auth_revocable</code> and <code>auth_clawback_enabled</code></b> — a trustline can be revoked or a <a href="/docs/build/guides/transactions/clawbacks" target="_blank" rel="noopener noreferrer">balance clawed back</a>. <code>auth_required</code> is not set, so anyone can hold it. 💡 Soroswap maintains an <a href="https://github.com/soroswap/token-list/tree/main/assets" target="_blank" rel="noopener noreferrer">ecosystem token list</a> covering both classic assets and contract tokens (community-maintained rather than an official Stellar registry, and widely used).</div>
+          <div className="dep-note"><b><a href="https://stellar.expert/explorer/public/asset/USDT0-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q" target="_blank" rel="noopener noreferrer">This asset</a> sets <code>auth_revocable</code> and <code>auth_clawback_enabled</code></b> — the issuer can revoke a trustline or <a href="/docs/build/guides/transactions/clawbacks" target="_blank" rel="noopener noreferrer">clawback a balance</a>. <code>auth_required</code> is not set, so anyone can hold it. 💡 Soroswap maintains an <a href="https://github.com/soroswap/token-list/tree/main/assets" target="_blank" rel="noopener noreferrer">ecosystem token list</a> covering both classic assets and contract tokens (community-maintained rather than an official Stellar registry, and widely used).</div>
         </section>
         <section className="notes-sec" id="build" aria-labelledby="usdt0-bd-h">
           <div className="dep-head"><h2 id="usdt0-bd-h">Before you build — requirements and limitations</h2></div>
@@ -700,7 +700,7 @@ html.dark .usdt0{
               </div>
               <div className="note">
                 <div className="ntag">Route limits</div>
-                <p className="ncopy"><b>A route can enforce a minimum.</b> Minimum transfer amounts are set per contract, so call <a href="https://docs.usdt0.to/technical-documentation/developer" target="_blank" rel="noopener noreferrer"><code>quoteOFT()</code></a> for the route you intend to use rather than assuming any amount will go through.</p>
+                <p className="ncopy"><b>A route can enforce a minimum.</b> Minimum transfer amounts are set per contract, so call <a href="https://docs.usdt0.to/technical-documentation/developer" target="_blank" rel="noopener noreferrer"><code>quote_oft</code></a> for the route you intend to use rather than assuming any amount will go through.</p>
               </div>
               <div className="note">
                 <div className="ntag">Backing</div>
@@ -717,6 +717,87 @@ html.dark .usdt0{
             </div>
           </div>
         </section>
+      <section className="notes-sec" id="faq" aria-labelledby="fq-h">
+        <div className="dep-head"><h2 id="fq-h">FAQ</h2></div>
+        <div className="notes-body">
+          <div className="faqs">
+          <details className="faq">
+            <summary><span className="fq">Is USDT0 the same as USDT?</span></summary>
+            <div className="fa"><p className="ncopy">No &mdash; it is a separate asset with its own contract, worth the same and backed 1:1 by USDT locked
+     on Ethereum. The practical difference is deposits: a venue that supports USDT will not necessarily accept
+     USDT0 on Stellar. Check your destination lists USDT0 on Stellar specifically before you send.</p></div>
+          </details>
+          <details className="faq">
+            <summary><span className="fq">Which USDT0 on Stellar is the real one?</span></summary>
+            <div className="fa"><p className="ncopy">The one issued by <code>GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q</code> &mdash;
+     <a href='https://stellar.expert/explorer/public/asset/USDT0-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q' target='_blank' rel='noopener noreferrer'>check it on Stellar Expert</a>.
+     Asset codes on Stellar are not unique &mdash; anyone can issue an asset called USDT0 &mdash; so identity is
+     the code <b>and</b> the issuer together. Pin that issuer, and confirm the contract you derive from it
+     matches <code>CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF</code>.</p></div>
+          </details>
+          <details className="faq">
+            <summary><span className="fq">Why did my USDT0 payment fail with <code>op_no_trust</code>?</span></summary>
+            <div className="fa"><p className="ncopy">The destination account has no USDT0 trustline, and one must exist before the first payment can land.
+     A wallet often creates it when a user swaps into USDT0 in-app, but a transfer arriving from an exchange or
+     another wallet has no such fallback. If you custody for users, create it during onboarding &mdash;
+     <a href='/docs/build/guides/transactions/sponsored-reserves'>sponsored reserves</a>
+     can cover the reserve.</p></div>
+          </details>
+          <details className="faq">
+            <summary><span className="fq">How long does a transfer to Stellar take?</span></summary>
+            <div className="fa"><p className="ncopy">It depends on the chain you send from, not on Stellar. Stellar finalises in 5&ndash;7 seconds; the wait
+     is the source chain confirming and LayerZero verifying the message. From Polygon it is about a minute.
+     From Ethereum, Arbitrum, Tron and Solana &mdash; the routes carrying most volume &mdash; expect roughly
+     18&ndash;21 minutes. A few low-traffic routes take hours. The
+     <a href='https://usdt0.to/transfer' target='_blank' rel='noopener noreferrer'>transfer UI</a>
+     quotes an estimate for your route before you send.</p></div>
+          </details>
+          <details className="faq">
+            <summary><span className="fq">Why is my transfer slower than I expected?</span></summary>
+            <div className="fa"><p className="ncopy">Usually because the figure you saw was a network-wide best case rather than your route. Nothing on the
+     Stellar side is the bottleneck. If a transfer runs well past the estimate you were quoted, look up the message on
+     <a href='https://layerzeroscan.com/analytics/networks' target='_blank' rel='noopener noreferrer'>LayerZero Scan</a>,
+     which indexes Stellar as a destination, to see which step it is sitting at. USDT0 lists
+     <a href='https://docs.usdt0.to/resources/contact' target='_blank' rel='noopener noreferrer'>support contacts</a>
+     for transfers that stall.</p></div>
+          </details>
+          <details className="faq">
+            <summary><span className="fq">What does it cost to bring USDT0 to Stellar?</span></summary>
+            <div className="fa"><p className="ncopy">Three separate things, and two different calls report them. USDT0's own protocol fee is zero on most
+     routes and 0.03% where one applies:
+     <a href='https://docs.usdt0.to/technical-documentation/developer/' target='_blank' rel='noopener noreferrer'><code>quote_oft</code></a>
+     shows it as the gap between <code>amount_sent_ld</code> and <code>amount_received_ld</code>, so read it
+     there rather than trusting a published number. The LayerZero messaging fee is separate and comes back from
+     <a href='https://docs.usdt0.to/technical-documentation/developer/' target='_blank' rel='noopener noreferrer'><code>quote_send</code></a>,
+     paid in XLM when you send from Stellar &mdash; this is the part that varies most. And on Stellar, ordinary transactions cost a
+     <a href='/docs/learn/fundamentals/fees-resource-limits-metering'>minimum of 100 stroops</a>
+     per operation, which is unrelated to bridging.</p></div>
+          </details>
+          <details className="faq">
+            <summary><span className="fq">What is the difference between the Open Mesh and the Legacy Mesh?</span></summary>
+            <div className="fa"><p className="ncopy">On the Open Mesh each chain runs its own OFT contract, and moving between them burns on one side and
+     mints on the other. The
+     <a href='https://docs.usdt0.to/overview/the-legacy-mesh' target='_blank' rel='noopener noreferrer'>Legacy Mesh</a>
+     connects chains where Tether had already deployed native USDT &mdash; Ethereum, Tron, TON, Arbitrum, Solana
+     and Celo &mdash; through a shared non-custodial hub on Arbitrum, so those chains keep their existing USDT
+     contracts rather than migrating.</p></div>
+          </details>
+          <details className="faq">
+            <summary><span className="fq">Why did I receive slightly less than I sent?</span></summary>
+            <div className="fa"><p className="ncopy">Rounding, in the last decimal places only. USDT0 on Stellar carries seven decimals; cross-chain
+     transfers normalise to the OFT's six shared decimals. Send 1.2345678 and 1.234567 moves &mdash; the
+     remaining 0.0000008 is floored off as dust and refunded to you before the debit.</p></div>
+          </details>
+          <details className="faq">
+            <summary><span className="fq">Who can freeze or clawback USDT0 on Stellar?</span></summary>
+            <div className="fa"><p className="ncopy">The issuer. The asset sets <code>auth_revocable</code> and <code>auth_clawback_enabled</code>, so the
+     issuer can revoke a trustline or
+     <a href='/docs/build/guides/transactions/clawbacks'>clawback a balance</a>.
+     <code>auth_required</code> is not set, so anyone can hold it without approval.</p></div>
+          </details>
+          </div>
+        </div>
+      </section>
         <dl className="spec">
           <div><dt>Asset</dt><dd>USDT0</dd></div>
           <div><dt>Transfer</dt><dd><a href="https://usdt0.to/transfer" target="_blank" rel="noopener noreferrer">usdt0.to</a></dd></div>
@@ -728,7 +809,7 @@ html.dark .usdt0{
         </dl>
         <div className="sources">
           <b>Sources</b>
-          <a href="https://docs.usdt0.to/technical-documentation/developer/" target="_blank" rel="noopener noreferrer">USDT0 developer docs</a>
+          <a href="https://docs.usdt0.to/technical-documentation/developer/" target="_blank" rel="noopener noreferrer">USDT0 Docs</a>
           <a href="https://docs.usdt0.to/technical-documentation/deployments?q=stellar" target="_blank" rel="noopener noreferrer">USDT0 deployments</a>
           <a href="/docs/tokens/usdt0-layerzero" target="_blank" rel="noopener noreferrer">Stellar Docs</a>
           <a href="https://lab.stellar.org/smart-contracts/contract-list?$=network$id=mainnet&label=Mainnet&horizonUrl=https:////horizon.stellar.org&rpcUrl=https:////mainnet.sorobanrpc.com&passphrase=Public%20Global%20Stellar%20Network%20/;%20September%202015;&smartContracts$contractList$activeTab=known-assets;;" target="_blank" rel="noopener noreferrer">Stellar Lab</a>
