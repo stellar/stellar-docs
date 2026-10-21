@@ -23,6 +23,7 @@ Before diving in, please read the org-wide [Stellar Contribution Guide](https://
     - [API reference pages are generated](#api-reference-pages-are-generated)
     - [CLI pages come from the `stellar-cli` repo](#cli-pages-come-from-the-stellar-cli-repo)
     - [URLs are forever](#urls-are-forever)
+    - [Link health](#link-health)
     - [Patches and swizzles are a last resort](#patches-and-swizzles-are-a-last-resort)
     - [Tooling, editor config, and build settings](#tooling-editor-config-and-build-settings)
   - [Review Process](#review-process)
@@ -115,6 +116,14 @@ Three groups of pages under `docs/tools/cli/` are not authored here, so fixing e
 To the extent possible, anything that changes a page's URL needs redirect coverage (`routes.txt` participates in CI route checking; server-side redirects live in `nginx/`). If your PR moves or renames pages, call it out explicitly in the description.
 
 NGINX redirect syntax can be tricky and MUST be precise. Because curly braces `{}` are configuration-block delimiters, the entire regular expression must be enclosed in double quotes when it contains them. If a URL rewrite uses a regular expression, careful testing and review by maintainers are required.
+
+The `Check Routes Removal` workflow fails a PR that removes a route from `routes.txt` without a redirect, or that adds a redirect to a page that does not exist. To run the same check locally, use `node scripts/link-health/redirects.mjs --pr origin/main`.
+
+### Link health
+
+A weekly workflow (`.github/workflows/link-health.yml`) checks the external links in `docs/`, the Discord invites, the GitHub repositories that the docs link to, and the redirects. It does not fail the build. It keeps one open issue with the `link-health` label up to date, and it closes that issue when all checks pass.
+
+`.github/link-health/pointers.json` lists the pointers that the docs depend on: the Discord invites, with the server that each one must open, and the canonical repositories. When a pointer moves, change it in this file first, then fix each place that the report lists.
 
 ### Patches and swizzles are a last resort
 
