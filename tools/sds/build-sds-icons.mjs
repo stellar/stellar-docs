@@ -9,8 +9,8 @@ import { createRequire } from "node:module";
 // Mintlify icon name (any Font Awesome style folder) -> SDS asset, as "icons/<name>" or "logos/<name>".
 const MAP = {
   "file-lines": "icons/file-04",
-  "box-archive": "icons/archive",
-  "house": "icons/home-line",
+  "box-archive": "icons/folder",
+  "house": "icons/home-05",
   "magnifying-glass": "icons/search-md",
   "ellipsis-vertical": "icons/dots-vertical",
   "angle-right": "icons/chevron-right",
