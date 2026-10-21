@@ -405,6 +405,26 @@ html.dark .usdt0{
 @media (prefers-reduced-motion: reduce){
   .usdt0 .pkt,.usdt0 .lit{animation:none;opacity:0}
 }
+/* ---- FAQ questions: collapsed by default, but the answers stay in the DOM ---- */
+.usdt0 .faq{border-bottom:1px solid var(--rule)}
+.usdt0 .faq:last-child{border-bottom:0}
+.usdt0 .faq summary{
+  display:flex;gap:14px;align-items:baseline;list-style:none;cursor:pointer;
+  padding:11px 28px 11px 0;position:relative;
+}
+.usdt0 .faq summary::-webkit-details-marker{display:none}
+.usdt0 .faq summary::after{
+  content:"+";position:absolute;right:8px;top:10px;line-height:1;
+  font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--ink-3);
+}
+.usdt0 .faq[open] summary::after{content:"−"}
+.usdt0 .faq summary:hover .fq{color:var(--accent-ink)}
+.usdt0 .faq summary:focus-visible{outline:2px solid var(--accent-ink);outline-offset:-2px}
+.usdt0 .fq{font-weight:500}
+.usdt0 .fq code,.usdt0 .fa code{font-size:.92em}
+.usdt0 .fa{padding:0 28px 16px 0;max-width:78ch}
+.usdt0 .fa .ncopy{margin:0}
+@media (max-width:720px){ .usdt0 .faq summary{padding-right:26px} }
 `;
   const SECTIONS = [
     ["arrival", "Arrival"], ["access", "Access"], ["dayone", "Day one"], ["deploy", "Deploy"], ["build", "Before you build"], ["faq", "FAQ"],
