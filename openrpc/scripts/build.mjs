@@ -3,6 +3,11 @@ import mergeAllOf from "json-schema-merge-allof";
 import { dereferenceDocument } from "@open-rpc/schema-utils-js";
 import defaultResolver from "@json-schema-tools/reference-resolver";
 
+// Only *.json files are spec sources. This skips editor swap files and the like.
+function jsonFiles(dir) {
+  return fs.readdirSync(dir).filter(f => f.endsWith(".json"));
+}
+
 function sortByMethodName(methods) {
   return methods.slice().sort((a, b) => {
     if (a['name'] > b['name']) {
@@ -16,10 +21,17 @@ function sortByMethodName(methods) {
 }
 
 async function buildSpecFile(serviceName) {
+  // A service can reuse the components (schemas, content descriptors,
+  // examples) of another service. Its own files are loaded last and win.
+  const srcDirs = [
+    ...(services[serviceName].componentsFrom ?? []),
+    serviceName,
+  ];
+
   let methods = [];
   let methodsBase = `openrpc/src/${serviceName}/methods/`
   if (fs.existsSync(methodsBase)) {
-    let methodFiles = fs.readdirSync(methodsBase);
+    let methodFiles = jsonFiles(methodsBase);
     methodFiles.forEach(file => {
       let raw = fs.readFileSync(methodsBase + file);
       let parsed = JSON.parse(raw);
@@ -31,9 +43,10 @@ async function buildSpecFile(serviceName) {
   }
 
   let contentDescriptors = {};
-  let cdBase = `openrpc/src/${serviceName}/contentDescriptors/`
-  if (fs.existsSync(cdBase)) {
-    let cdFiles = fs.readdirSync(cdBase);
+  for (const dir of srcDirs) {
+    let cdBase = `openrpc/src/${dir}/contentDescriptors/`;
+    if (!fs.existsSync(cdBase)) continue;
+    let cdFiles = jsonFiles(cdBase);
     cdFiles.forEach(file => {
       let raw = fs.readFileSync(cdBase + file);
       let parsed = JSON.parse(raw);
@@ -45,9 +58,10 @@ async function buildSpecFile(serviceName) {
   }
 
   let schemas = {};
-  let schemasBase = `openrpc/src/${serviceName}/schemas/`
-  if (fs.existsSync(schemasBase)) {
-    let schemaFiles = fs.readdirSync(schemasBase);
+  for (const dir of srcDirs) {
+    let schemasBase = `openrpc/src/${dir}/schemas/`;
+    if (!fs.existsSync(schemasBase)) continue;
+    let schemaFiles = jsonFiles(schemasBase);
     schemaFiles.forEach(file => {
       let raw = fs.readFileSync(schemasBase + file);
       let parsed = JSON.parse(raw);
@@ -58,10 +72,11 @@ async function buildSpecFile(serviceName) {
     });
   }
 
-  let examples = {}
-  let examplesBase = `openrpc/src/${serviceName}/examples/`
-  if (fs.existsSync(examplesBase)) {
-    let examplesFiles = fs.readdirSync(examplesBase)
+  let examples = {};
+  for (const dir of srcDirs) {
+    let examplesBase = `openrpc/src/${dir}/examples/`;
+    if (!fs.existsSync(examplesBase)) continue;
+    let examplesFiles = jsonFiles(examplesBase);
     examplesFiles.forEach(file => {
       let raw = fs.readFileSync(examplesBase + file)
       let parsed = JSON.parse(raw)
@@ -72,10 +87,11 @@ async function buildSpecFile(serviceName) {
     })
   }
 
-  let examplePairingObjects = {}
-  let epoBase = `openrpc/src/${serviceName}/examplePairingObjects/`
-  if (fs.existsSync(epoBase)) {
-    let epoFiles = fs.readdirSync(epoBase)
+  let examplePairingObjects = {};
+  for (const dir of srcDirs) {
+    let epoBase = `openrpc/src/${dir}/examplePairingObjects/`;
+    if (!fs.existsSync(epoBase)) continue;
+    let epoFiles = jsonFiles(epoBase);
     epoFiles.forEach(file => {
       let raw = fs.readFileSync(epoBase + file)
       let parsed = JSON.parse(raw)
@@ -150,6 +166,28 @@ const services = {
           description: "Futurenet is meant to be a bleeding-edge, experimental network that runs an early, test version of the Stellar network."
         }
       ],
+    },
+  },
+  'stellar-rpc-beta': {
+    componentsFrom: ['stellar-rpc'],
+    starterFile: {
+      openrpc: "1.2.6",
+      info: {
+        title: "Stellar RPC (beta methods)",
+        description: "Methods that are only served by the archive Stellar RPC node, which is in beta. These methods are in development and can change without notice.",
+        termsOfService: "https://stellar.org/terms-of-service",
+        contact: {
+          name: "Stellar Development Foundation",
+          url: "https://stellar.org/connect",
+          email: "hello@stellar.org"
+        },
+        license: {
+          name: "Apache 2.0",
+          url: "https://www.apache.org/licenses/LICENSE-2.0.html"
+        },
+        version: "0.1.0"
+      },
+      servers: [],
     },
   },
   'anchor-platform': {
