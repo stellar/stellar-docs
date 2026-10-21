@@ -1,0 +1,76 @@
+name: Build and push legacy stellar-docs
+
+# Deployed to: https://legacydocs.stellar.org (https://github.com/stellar/ops/issues/5020)
+#
+# One-off build of the frozen `legacy-docs` branch (the Docusaurus site kept as
+# an archive). Runs from main so it can use the ECR push role, checks out
+# `legacy-docs`, and pushes prd/stellar-docs-legacy:<sha>. It never touches
+# prd/stellar-docs, which the developers-prd image updater watches.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  SOURCE_REF: legacy-docs
+  SLACK_CHANNEL: docs-builds
+
+jobs:
+  build-and-push:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          # Docusaurus uses Git history for last-update author and time.
+          fetch-depth: 0
+
+      - name: Determine image label
+        id: vars
+        run: |
+          echo "label=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: ECR login
+        id: ecr-login
+        uses: stellar/actions/sdf-ecr-login@main
+
+      - name: Build and push docker image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.ecr-registry }}
+          LABEL: ${{ steps.vars.outputs.label }}
+        run: |
+          set -eu
+          export TAG="${ECR_REGISTRY}/prd/stellar-docs-legacy:${LABEL}"
+          make docker-build
+          ecr-push "${TAG}"
+          echo "Pushed ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Slack notification — success
+        if: success()
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ env.SLACK_CHANNEL }}",
+              "text": "Legacy docs build complete for <${{ github.server_url }}/${{ github.repository }}/commit/${{ steps.vars.outputs.sha }}|${{ steps.vars.outputs.label }}> (prd/stellar-docs-legacy:${{ steps.vars.outputs.label }})."
+            }
+
+      - name: Slack notification — failure
+        if: failure()
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ env.SLACK_CHANNEL }}",
+              "text": "Legacy docs build failed for `${{ env.SOURCE_REF }}`: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|run ${{ github.run_id }}>."
+            }
