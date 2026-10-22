@@ -128,7 +128,7 @@ async function buildSpecFile(serviceName) {
 
   let data = JSON.stringify(spec, null, 2);
   fs.writeFileSync(`openrpc/${serviceName}.openrpc.json`, data);
-  fs.writeFileSync(`${services[serviceName].saveDir ?? 'static'}/${serviceName}.openrpc.json`, data);
+  fs.writeFileSync(`${services[serviceName].saveDir ?? '.'}/${serviceName}.openrpc.json`, data);
 
   console.log(`Built ${serviceName} specfile successfully.`);
 }
