@@ -23,6 +23,7 @@ const MAP = {
   "toolbox": "icons/tool-02",
   "message": "icons/message-square-01",
   "code": "icons/code-02",
+  "users": "icons/users-01",
   "discord": "logos/discord",
   "x-twitter": "logos/x-twitter",
   "youtube": "logos/youtube",
