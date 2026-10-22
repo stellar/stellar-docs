@@ -2,9 +2,12 @@
 
 Thank you for helping make the [Stellar developer docs](https://developers.stellar.org) better! 🎉
 
-This document covers how we work: what makes a PR easy to merge, the conventions we hold the content to, and the policies we apply to changes to the site itself. For environment setup, repository structure, and our custom markdown features, see the [README](README.md).
+This document covers how we work: what makes a PR easy to merge, the conventions we hold the content to, and the policies we apply to changes to the site itself. For environment setup, repository structure, and Mintlify components, see the [README](README.md).
 
 Before diving in, please read the org-wide [Stellar Contribution Guide](https://github.com/stellar/.github/blob/master/CONTRIBUTING.md) and [Code of Conduct](https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md).
+
+> [!IMPORTANT]
+> The site moved from Docusaurus to [Mintlify](https://www.mintlify.com/docs) in October 2026. If you contributed before then, skim [MIGRATING.md](MIGRATING.md) first. The change you'll notice most: we now write **internal links as root-relative paths with no extension**.
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -14,23 +17,24 @@ Before diving in, please read the org-wide [Stellar Contribution Guide](https://
   - [Development Quickstart](#development-quickstart)
   - [Content Conventions](#content-conventions)
     - [Links](#links)
-    - [Page metadata](#page-metadata)
-    - [Images](#images)
-    - [Code examples](#code-examples)
+    - [Pages and navigation](#pages-and-navigation)
+    - [Images and files](#images-and-files)
+    - [Components and code examples](#components-and-code-examples)
+    - [Meeting notes](#meeting-notes)
     - [Terminology and style](#terminology-and-style)
     - [Promotional and third-party content](#promotional-and-third-party-content)
   - [Site Code and Infrastructure](#site-code-and-infrastructure)
     - [API reference pages are generated](#api-reference-pages-are-generated)
     - [CLI pages come from the `stellar-cli` repo](#cli-pages-come-from-the-stellar-cli-repo)
     - [URLs are forever](#urls-are-forever)
-    - [Patches and swizzles are a last resort](#patches-and-swizzles-are-a-last-resort)
+    - [Custom code is a last resort](#custom-code-is-a-last-resort)
     - [Tooling, editor config, and build settings](#tooling-editor-config-and-build-settings)
   - [Review Process](#review-process)
 
 ## Ways to Contribute
 
 - **Fix something small** (typos, broken links, code errors): open a PR directly.
-- **Suggest missing content or structural changes**: open an [issue](https://github.com/stellar/stellar-docs/issues) first — search existing issues to avoid duplicates.
+- **Suggest missing content or structural changes**: open an [issue](https://github.com/stellar/stellar-docs/issues) first, and search existing issues to avoid duplicates.
 - **Pick up existing work**: issues labeled `good first issue` or `help wanted` are great entry points. Comment on the issue before starting so we can assign it.
 - **Not sure?** Ask in the [Stellar Developer Discord](https://discord.gg/stellardev). There's even a [`#docs`](https://discord.com/channels/897514728459468821/1331985629290168351) channel!
 
@@ -40,7 +44,7 @@ These guidelines exist because they're the difference between a PR that merges i
 
 - **One concern per PR.** A PR should do one describable thing. "Fix the broken links on the Hubble pages" merges fast; "clean up various things across 900 files" cannot be reviewed at all. If your change is mechanical and large, propose it in an issue first so we can agree on the approach (and possibly split it) before you do the work.
 - **Branch from current `main`, and don't stack.** Don't base a PR on another unmerged PR, and don't submit changes that depend on anchors, pages, or components that only exist in your other open PRs. Every PR must stand alone against `main`.
-- **Discuss before building, for anything non-trivial.** New components, styling that affects the whole site, tooling/config changes, restructured URLs — open an issue and get a nod before writing code. This protects your time more than ours.
+- **Discuss before building, for anything non-trivial.** New components, styling that affects the whole site, tooling or config changes, and restructured URLs: open an issue and get a nod before writing code. This protects your time more than ours.
 - **Keep a reasonable number of PRs in flight.** A handful of focused, active PRs gets better review attention than dozens of parallel ones.
 
 ## Development Quickstart
@@ -49,43 +53,61 @@ We use [pnpm](https://pnpm.io/). See the [README](README.md#quick-start) for ful
 
 ```bash
 pnpm install        # install dependencies
-pnpm start          # dev server with live reload
-pnpm build          # full production build (catches broken internal links)
-pnpm format:mdx     # prettier-format all md/mdx content
+pnpm start          # Mintlify dev server (mint dev) at http://localhost:3000
+pnpm format:mdx     # format all md/mdx content
+pnpm check          # formatting, component padding, and mint validate
+pnpm check:links    # broken links, anchors, redirects, and snippets
 ```
 
-A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:mdx` and re-commit. CI runs the same check, plus a full site build.
+A husky pre-commit hook runs the formatting and padding checks; if it fails, run `pnpm format:mdx` and re-commit. CI runs the same checks plus `mint validate`. Mintlify builds a preview deployment for PRs to `main` and comments with the link; for PRs from forks, a maintainer approves the preview first.
 
 ## Content Conventions
 
+We follow [Mintlify's conventions](https://www.mintlify.com/docs) wherever we can. The notes below cover the places people most often trip, and the few rules that are ours.
+
 ### Links
 
-- **Internal links are relative file paths, including the `.mdx` extension**: `[fees](../../learn/fundamentals/fees-resource-limits-metering.mdx#inclusion-fee)`. Docusaurus resolves these at build time, so a broken path fails the build instead of shipping a 404.
-- Section index pages live at `parent/README.mdx` — if you're linking to a subsection's landing page, that's usually the file you want.
+- **Internal links are root-relative URL paths with no file extension**: `[fees](/docs/learn/fundamentals/fees-resource-limits-metering#inclusion-fee)`. This is a change from what we asked for under Docusaurus. Use a path from the site root rather than a relative one (`../`), and leave off the `.mdx` or `.md` extension.
+- A section's landing page is its URL: link to `/docs/build`, not to `index.mdx` or `README.mdx`.
+- Run `pnpm check:links` before opening a PR. It catches broken links and anchors; nothing else does, because a broken link doesn't fail the build (for now).
+- Older pages still contain relative links. Converting them is welcome when you're already editing that area; please don't add new ones.
 - External links to other Stellar properties use `https://stellar.org/...` (no `www`).
+- Links inside the specs in `openapi/` and `openrpc/` use full `https://developers.stellar.org/...` URLs, so external consumers of those specs can resolve them.
 
-### Page metadata
+### Pages and navigation
 
-- Sidebar ordering is declared with `sidebar_position` in each page's frontmatter.
-- **Prefer the `README.mdx` convention over `_category_.json` for category metadata.** A category's index `README.mdx` frontmatter drives its title, sidebar label, and position, so do as much as possible there. Add a `_category_.json` file only when something genuinely can't be expressed in `README.mdx` — e.g., overriding `collapsible`/`collapsed`, or setting a category `description` (which isn't hoisted from the `README.mdx` frontmatter) — and include only those necessary keys.
-- Every page should have a frontmatter `title` and `description` (used for SEO and link previews).
+- **Every page needs an entry in `docs.json` under `navigation`.** There's no autogenerated sidebar, `_category_.json`, or `sidebar_position`: the order in `docs.json` is the order in the sidebar. A page left out still builds and has a URL, but nobody will find it.
+- A folder's landing page is `index.mdx`, set as its group's `root` in `docs.json`.
+- Every page has frontmatter `title` and `description` (used for SEO, link previews, and the AI-facing `llms.txt`). The `title` is the page's H1, so start the body at `##`. Use `sidebarTitle` when the sidebar needs a shorter label.
+- Pin anchors that other pages or external sites link to: `## SDEX {#sdex}`. Otherwise an edited heading silently breaks every link to it.
+- Pages that shouldn't be published (drafts, contributor docs) go in `.mintignore`. A page that should be reachable by URL but kept out of the sidebar and search engines can use `hidden: true` instead.
+- See Mintlify's [pages](https://www.mintlify.com/docs/organize/pages) and [navigation](https://www.mintlify.com/docs/organize/navigation) docs for every frontmatter and navigation option.
 
-### Images
+### Images and files
 
-- Prefer placing new images in `static/assets/` and referencing them by absolute path: `![alt text](/assets/section/image.png)`. Legacy images may live in `static/img/` and be referenced via `/img/...`. Avoid introducing new MDX image imports or `useBaseUrl` usage unless you need MDX-specific behavior (e.g., custom sizing).
+- Files are served from their path in the repo. Put new images in `assets/<section>/` and reference them with a root-relative path: `![alt text](/assets/section/image.png)`. Older images live in `img/` and are referenced via `/img/...`.
 - Always include meaningful alt text.
+- Paths are case-sensitive.
 
-### Code examples
+### Components and code examples
 
-- Multi-language examples use the `<CodeExample>` component: a blank line after the opening tag, one fenced code block per language, a blank line before the closing tag.
+- Use Mintlify's [built-in components](https://www.mintlify.com/docs/components/callouts) (callouts, `<Tabs>`, `<CodeGroup>`, `<Accordion>`, `<Steps>`, `<Card>`, and so on). They need no imports.
+- **Leave a blank line after every opening component tag and before every closing one.** `pnpm format:mdx` adds them, and the pre-commit hook checks.
+- Callouts (`<Note>`, `<Tip>`, `<Info>`, `<Warning>`, `<Danger>`) take no title. Make the first line bold instead.
+- Multi-language examples use `<CodeGroup>`: one fenced block per language, each with a title after the language (` ```js JavaScript `). Single-language examples are plain fenced code blocks. See the [README](README.md#code-groups) for an example.
+- Reusable content goes in `snippets/` and is imported with a root path: `import Security from "/snippets/anchor-platform/security.mdx";`.
 - In multi-part guides, show imports and shared setup in the first snippet; later snippets on the same page may assume them.
 - Generic example assets are `astroDollar` (and use a second clearly named non-native asset when you need two).
 
+### Meeting notes
+
+- Each meeting is a page at `meetings/YYYY/MM/DD.mdx`, titled with its date (`2026-05-07`), uniformly across the series. Copy an existing note for the layout, including the video embed.
+- Each note also needs an `<Update>` entry on `meetings/index.mdx` (newest first) with `rss={{ date: "YYYY-MM-DD" }}`, so the RSS feed carries the meeting date, and an entry in `docs.json` navigation.
+
 ### Terminology and style
 
-- "Stellar network" — lowercase *network*. Likewise *asset* and *anchor* are not capitalized.
+- "Stellar network": lowercase _network_. Likewise _asset_ and _anchor_ are not capitalized.
 - Write SEP and CAP references without zero-padding (for example, `SEP-1` and `CAP-1`, not `SEP-0001` and `CAP-0001`). Keep canonical filenames and URLs unchanged (for example, `sep-0001.md` and `cap-0001.md`).
-- Meeting notes (in `meetings/`) use the date as the title (`2026-05-07`), uniformly across the series.
 
 ### Promotional and third-party content
 
@@ -94,39 +116,38 @@ A husky pre-commit hook runs the prettier check; if it fails, run `pnpm format:m
 
 ## Site Code and Infrastructure
 
-The bar for changes to the site itself (components, theme, config, dependencies) is deliberately higher than for content.
+The bar for changes to the site itself (components, styling, `docs.json`, scripts, and dependencies) is deliberately higher than for content.
 
 ### API reference pages are generated
 
-The Horizon, Anchor Platform, and Stellar Disbursement Platform API reference pages are generated from the OpenAPI specs in `openapi/`. **Edit the spec sources, then regenerate** (`pnpm api`) and commit both together. PRs that hand-edit generated `*.api.mdx` files will be closed — the next regeneration would erase them.
+The Horizon, Anchor Platform, and Stellar Disbursement Platform API reference pages are rendered by Mintlify from the bundled OpenAPI specs in `openapi/`. **Edit the spec sources, then run `pnpm api:bundle`**, and commit the sources and the updated bundles together. Each endpoint page is a small `.mdx` file whose frontmatter names the spec and the endpoint (`openapi: "openapi/horizon/bundled.yml GET /accounts"`); adding an endpoint means adding one of those pages and a `docs.json` entry.
 
-The same is true for Stellar RPC, and a subset of Anchor Platform functionality. They are generated from spec files in `openrpc/`. **Edit the spec sources, then regenerate** (`pnpm rpcspec:build`) and commit both together. PRs that hand-edit generated `*.openrpc.json` files only will be closed.
+Stellar RPC and the Anchor Platform's JSON-RPC API are specified in `openrpc/`. **Edit the spec sources, then run `pnpm rpcspec:build`** (or `pnpm rpcspec:validate`) and commit the sources and the rebuilt `*.openrpc.json` files together. Their method pages are generated MDX: don't hand-edit the generated part of a method page (between the `rpc-method` comments). The generator isn't in the repo yet, so ask a maintainer to regenerate the pages when a spec change affects them. See [`openrpc/README.md`](openrpc/README.md).
 
 ### CLI pages come from the `stellar-cli` repo
 
-Three groups of pages under `docs/tools/cli/` are not authored here, so fixing even a typo means editing something else. The first two come from the build, which runs `pnpm stellar-cli:build` before `pnpm build` (see `.github/workflows/build.yml` and the `Dockerfile`).
+Three groups of pages under `docs/tools/cli/` are copies of content maintained in [`stellar/stellar-cli`](https://github.com/stellar/stellar-cli):
 
-- **The cookbook guides** (`docs/tools/cli/cookbook/*.mdx`) — each guide page in this repo is a one-line stub. The build copies the `cookbook/` directory of [`stellar/stellar-cli`](https://github.com/stellar/stellar-cli/tree/main/cookbook) over it, so an edit made here is overwritten. Edit the file in `stellar-cli` instead; the "Edit this page" link on each rendered cookbook page already points there. The category's own `README.mdx` and `_category_.json` have no upstream counterpart, so those two are ours and you can edit them here.
-- **The CLI manual** (`docs/tools/cli/stellar-cli.mdx`) — also a stub. The build fills it from `FULL_HELP_DOCS.md` in `stellar/stellar-cli`, and that file is itself generated from the CLI's own `--help` text (`make docs` in that repo). To change this page, change the help text in the CLI's Rust sources.
-- **The plugin list** (`docs/tools/cli/plugins-list.mdx`) — committed output rather than a stub. `scripts/stellar_cli_plugins.mjs` rebuilds it from the public GitHub repositories that carry the `stellar-cli-plugin` topic. Forks and archived repositories are skipped. To get a plugin listed, add that topic to its repository; a hand-written entry is lost at the next regeneration.
+- **The cookbook guides** (`docs/tools/cli/cookbook/*.mdx`) come from the [`cookbook/`](https://github.com/stellar/stellar-cli/tree/main/cookbook) directory.
+- **The CLI manual** (`docs/tools/cli/stellar-cli.mdx`) comes from `FULL_HELP_DOCS.md`, which is itself generated from the CLI's `--help` text (`make docs` in that repo).
+- **The plugin list** (`docs/tools/cli/plugins-list.mdx`) is rebuilt by `scripts/stellar_cli_plugins.mjs` from the public GitHub repositories that carry the `stellar-cli-plugin` topic. To get a plugin listed, add that topic to its repository.
+
+Automatic regeneration of the cookbook and manual is paused while the scripts are updated for Mintlify. Until then, the copies here are committed files: fix a mistake here _and_ in `stellar-cli`, so the next regeneration doesn't bring it back.
 
 ### URLs are forever
 
-To the extent possible, anything that changes a page's URL needs redirect coverage (`routes.txt` participates in CI route checking; server-side redirects live in `nginx/`). If your PR moves or renames pages, call it out explicitly in the description.
+To the extent possible, anything that changes a page's URL needs a redirect. Redirects are entries in `redirects.json` (`{ "source": "/old/path", "destination": "/new/path" }`; wildcards use `:slug*`). If your PR moves or renames pages, add the redirects and call it out in the description. `pnpm check:links` checks that redirect destinations exist.
 
-NGINX redirect syntax can be tricky and MUST be precise. Because curly braces `{}` are configuration-block delimiters, the entire regular expression must be enclosed in double quotes when it contains them. If a URL rewrite uses a regular expression, careful testing and review by maintainers are required.
+### Custom code is a last resort
 
-### Patches and swizzles are a last resort
+We keep custom code on this site as small as possible, and prefer Mintlify's built-in components and settings. When something seems to need custom code, work down this list and stop at the first rung that works:
 
-We keep the fork-surface of this site as small as possible. When something in a dependency is broken, work down this list and stop at the first rung that works:
+1. **Use what Mintlify provides**: a built-in component, a `docs.json` setting, or a frontmatter option.
+2. **Ask Mintlify**: file a request or report a bug, so the fix happens upstream.
+3. **Write a snippet component**: a `.jsx` file in `snippets/`. Don't add npm packages.
+4. **Site-wide CSS or JavaScript**: only with prior discussion. Every `.css` and `.js` file in the repo loads on _every_ page, so a stray script is a site-wide change. List any `.js` or `.css` file that isn't meant for the site (repo tooling, for example) in `.mintignore`.
 
-1. **Fix it upstream** — file an issue/PR against the dependency.
-2. **Configure around it** — plugin options, CSS, config.
-3. **Guard in our own code** — a client module or wrapper component we own.
-4. **`pnpm patch`** — only with an upstream issue filed, linked in a comment in the patch, and stated criteria for when the patch can be removed.
-5. **Swizzling ejected internals** — effectively never; "wrap"-style swizzles are considered case by case.
-
-PRs that add patches or swizzles without prior discussion in an issue will generally be closed with a request to follow this ladder.
+PRs that add site-wide styling or scripts without prior discussion in an issue will generally be closed with a request to follow this ladder.
 
 ### Tooling, editor config, and build settings
 
@@ -135,10 +156,10 @@ Don't commit editor configuration (`.vscode/`, etc.) or machine-specific build s
 ## Review Process
 
 - You can expect a first response from a docs maintainer **within one week** (usually faster).
-- PRs need maintainer approval to merge. CI must pass: prettier check, full site build, and route-removal check.
-- If we ask for changes and the conversation goes quiet for a long stretch, we may close the PR to keep the queue honest — closed is not rejected, and you're welcome to reopen when you're ready to continue.
+- PRs need maintainer approval to merge. CI must pass: formatting, component padding, and `mint validate`. A maintainer checks the Mintlify preview (for PRs from forks, after approving it). The link check runs too; it doesn't fail the build yet, but please don't add to it.
+- If we ask for changes and the conversation goes quiet for a long stretch, we may close the PR to keep the queue honest. Closed is not rejected, and you're welcome to reopen when you're ready to continue.
 - We close PRs that don't fit the conventions above, and we try to always say why and what a mergeable version would look like. Policy closes are about the change, never about you.
 
 ---
 
-*This guide was seeded in part by conventions proposed in [#1044](https://github.com/stellar/stellar-docs/pull/1044) — thanks to the community members who pushed for written standards.*
+_This guide was seeded in part by conventions proposed in [#1044](https://github.com/stellar/stellar-docs/pull/1044). Thanks to the community members who pushed for written standards._

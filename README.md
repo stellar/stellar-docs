@@ -12,9 +12,10 @@ Welcome to the official home repository for [Documentation][docs] for the [Stell
   - [Prerequisites](#prerequisites)
   - [Development](#development)
 - [Repository Structure](#repository-structure)
-- [Using Markdown](#using-markdown)
+- [Writing Content](#writing-content)
   - [Markdown Basics](#markdown-basics)
-  - [Custom Markdown](#custom-markdown)
+  - [Mintlify Components](#mintlify-components)
+    - [Code Groups](#code-groups)
 
 ## Contributing
 
@@ -22,14 +23,22 @@ Contributions are more than welcome! Thank you! 🎉
 
 Before diving in, please read our [Stellar Contribution Guide][contrib] for
 details on contributing to Stellar's various repositories. Please take special
-note of the [code of conduct][coc].
+note of the [code of conduct][coc]. Then read this repo's
+[CONTRIBUTING.md](CONTRIBUTING.md) for how we work and the conventions we hold
+the content to.
 
-Our documentation site is built using [Docusaurus][docusaurus]. The content is
-written in [MDX][mdx], which adds a lot of cool possibilities. Even if you're
-unfamiliar with plain markdown, do not fear! You can still contribute in a
-helpful and meaningful way. Markdown is super easy to learn, and will come quite
-naturally after only a bit of practice. You can always help fix typos, spelling,
-and broken links, too.
+Our documentation site is built with [Mintlify][mintlify]. The content is
+written in [MDX][mdx], which is Markdown with components mixed in. Even if
+you're unfamiliar with Markdown, do not fear! It's easy to learn, and you can
+always help fix typos, spelling, and broken links, too.
+
+> [!IMPORTANT]
+> **Contributed here before October 2026?** The site moved from Docusaurus to
+> Mintlify, and a few long-standing habits changed. The one you'll notice most:
+> we now write internal links as root-relative paths with no extension
+> (`[fees](/docs/learn/fundamentals/fees-resource-limits-metering)`), not
+> relative `.mdx` paths. [MIGRATING.md](MIGRATING.md)
+> has the full "we used to do X, now do Y" list.
 
 You can contribute to the docs in several ways:
 
@@ -59,14 +68,14 @@ If you have questions, feel free to ask in the [Stellar Developer Discord](https
 
 ### Prerequisites
 
-To begin development on the documentation, you will first need to install the following:
+To work on the documentation, you'll need:
 
 - Node.js (v24, or higher): see https://nodejs.org/en/download/package-manager for details for your system
 - pnpm: e.g., `corepack enable pnpm`
 
 ### Development
 
-Once all the prerequisites have been installed, you can run the following commands:
+Once the prerequisites are installed, run:
 
 ```bash
 git clone https://github.com/stellar/stellar-docs
@@ -75,63 +84,57 @@ pnpm install
 pnpm start
 ```
 
-This will begin the development server, and open a browser window/tab pointing
-to `http://localhost:3000/docs/`. This development server will auto-reload when
-it detects changes to the repository.
+`pnpm start` runs the Mintlify development server ([`mint dev`][mint-cli]) at
+`http://localhost:3000`, and reloads as you save changes. The first run takes a
+little longer, because it downloads Mintlify's preview client.
 
-> **Already cloned this repo before we moved to pnpm?** Delete the old
-> `node_modules` directory before running `pnpm install` — pnpm uses a different
-> `node_modules` layout than Yarn, so installing on top of an existing one can
-> fail.
-
-After you've made your changes, use the following commands to ensure the consistent
-MDX file formatting and style across the repository:
+Before you open a PR, fix formatting and run the checks CI runs:
 
 ```bash
-pnpm check:mdx # this will search for problems in the MDX files
-pnpm format:mdx # this will fix any problems that were found
+pnpm format:mdx   # fix formatting (and the blank lines around component tags)
+pnpm check        # formatting, component padding, and `mint validate`
+pnpm check:links  # broken links, anchors, redirects, and snippets
 ```
 
-After that you need to build the `routes.txt` file, to do that run the next command
-
-```bash
-pnpm build
-```
+A pre-commit hook runs the formatting checks for you. Mintlify also builds a
+preview deployment for PRs to `main`, and a bot comments on the PR with the
+link. For PRs from forks, a maintainer approves the preview first.
 
 ## Repository Structure
 
-- `/docs/` Contains all the documentation content. If you're contributing to the
-  actual documentation, rather than site functionality, this is likely where you
-  will want to be.
-  - `/docs/<subdirectory>/` Each subdirectory inside the `docs` directory
-    contains content documents relating to a common idea (asset issuance, or
-    running a validator node, for example). There can also be subdirectories
-    nested even further, which will follow the same rules. The location of a
-    document within this directory structure will have a direct impact on the
-    URL given to the document on the site (unless there is metadata or front
-    matter that overrides these defaults.)
-  - `/docs/<subdirectory>/_category_.json` This file contains information that
-    determines the directory's location and position within the site's sidebar.
-  - `/docs/<subdirectory>/<filename>.mdx` The actual documents live in these
-    files (written in Markdown), and also contains "front matter" which can
-    specify configuration parameter for the document's display, URL, etc. **All
-    filenames must use dashes for spaces instead of spaces or underscores**
-- `/src/` Contains non-documentation files like custom React components and
-  styling.
-- `/static/` Contains static assets. Anything in this directory will be copied
-  to the root of the final `build` directory.
-- `/nginx/` Contains configuration used to deploy and host the docs site. Unless
-  you're part of Stellar's IT Ops team, you probably don't need to do anything
-  with this. *Exception*:
-  - `/nginx/includes/redirects.conf` Contains redirect rules to avoid broken
-    links. If you find a broken link somewhere out in the wilds of the internet,
-    and there's no way for it to be changed, a redirect could be a useful tool.
-    (Note our aim isn't to *completely* avoid 404 pages for a user. That would
-    be impossible and impractical. These redirects are evaluated on a
-    case-by-case basis, and it may be determined that a redirect isn't the right
-    approach in some instances.)
+- `docs/` contains the documentation pages. If you're contributing to the
+  content, rather than the site itself, this is where you want to be.
+  - A page's URL is its path: `docs/learn/fundamentals/lumens.mdx` is served at
+    `/docs/learn/fundamentals/lumens`. A folder's landing page is its
+    `index.mdx`.
+  - **All filenames use dashes for spaces**, not spaces or underscores.
+- `meetings/` contains the developer meeting notes, laid out as
+  `meetings/YYYY/MM/DD.mdx`, and the changelog-style index page
+  (`meetings/index.mdx`).
+- `docs.json` is the site configuration: theme, navigation (the sidebar and
+  tabs), SEO, integrations, and so on. **Every page needs an entry in
+  `navigation`** to appear in the sidebar.
+- `redirects.json` holds the redirect rules (referenced from `docs.json`). If you
+  find a broken link out in the wilds of the internet, and there's no way for it
+  to be changed, a redirect could be a useful tool. (Note our aim isn't to
+  _completely_ avoid 404 pages for a user. That would be impossible and
+  impractical. Redirects are evaluated on a case-by-case basis.)
+- `snippets/` contains reusable content (`.mdx`) and custom components (`.jsx`)
+  that pages import. Snippets are never published as pages.
+- `assets/` and `img/` contain images and other static files. Files are served
+  from their path in the repo, so `assets/guestbook/foo.png` is at
+  `/assets/guestbook/foo.png`.
+- `openapi/` and `openrpc/` contain the API specifications that the Horizon,
+  Anchor Platform, Stellar Disbursement Platform, and Stellar RPC reference
+  pages are built from. See [CONTRIBUTING.md](CONTRIBUTING.md#site-code-and-infrastructure).
+- `style.css`, `sds-*.css`, and the `.js` files at the root are site-wide
+  styling and scripts. Mintlify loads every `.css` and `.js` file in the repo on
+  every page.
+- `.mintignore` lists files Mintlify should never publish (drafts, tooling,
+  and contributor docs).
+- `scripts/` and `tools/` contain repository tooling.
 
-## Using Markdown
+## Writing Content
 
 ### Markdown Basics
 
@@ -143,50 +146,37 @@ basics:
 - [Interactive markdown tutorial][tutorial]
 - [The markdown guide][guide]
 
-### Custom Markdown
+### Mintlify Components
 
-Our repository uses some custom React components that can be used inside the
-`MDX` documents. Use them as follows:
+Pages use Mintlify's built-in components, such as callouts (`<Note>`, `<Tip>`,
+`<Warning>`), `<Tabs>`, `<CodeGroup>`, `<Accordion>`, `<Steps>`, and
+`<Card>`. No imports are needed. The [Mintlify components
+documentation][mintlify-components] covers every component and its options.
 
-**Make sure that there is an empty line within the wrapper.** For example,
+**Leave a blank line after every opening component tag and before every closing
+one.** Without it, a closing tag right after a list can get swallowed into the
+last list item, and the build fails. `pnpm format:mdx` adds the blank lines for
+you. For example,
 
-````markdown
-<CodeExample>
-<!-- EMPTY LINE AFTER THE COMPONENT'S OPENING TAG IS REQUIRED -->
+```markdown
+<Note>
 
-```javascript
-console.log("hello world");
+Callouts don't take a title. Put a **bold first line** in the body instead.
+
+</Note>
 ```
 
-```python
-print("hello world")
-```
+#### Code Groups
 
-<!-- EMPTY LINE BEFORE THE COMPONENT'S CLOSING TAG IS REQUIRED -->
-</CodeExample>
-````
-
-#### Code Example
-
-![Create account code example](./static/img/github/code-example.png)
-
-`<CodeExample />` is a code snippet component. You can use this component when
-you want to include snippets for more than one language. See an example
-including a snippet for `JavaScript` and `Python` below. It is using [Prism
-React Renderer][prism] for syntax highlighting. If you're only making a code
-snippet for a _single programming language_, you should just stick with a
-"normal" markdown code fence using backticks.
-
-> [!NOTE]
-> The `CodeExample` component has been added to the list of globally available
-> components, in `/src/theme/MDXComponents.ts`. This means it's not required to
-> `import { CodeExample } ...` in a page if you're planning to use it. It's just
-> always available in MDX file.
+When you want the same example in more than one language, use `<CodeGroup>`.
+Each fenced code block gets a title right after its language, which becomes the
+tab label. If you're only showing a _single language_, stick with a normal
+fenced code block.
 
 ````markdown
-<CodeExample>
+<CodeGroup>
 
-```js
+```js JavaScript
 // create a completely new and unique pair of keys
 // see more about KeyPair objects: https://stellar.github.io/js-stellar-sdk/Keypair.html
 const pair = StellarSdk.Keypair.random();
@@ -197,7 +187,7 @@ pair.publicKey();
 // GCFXHS4GXL6BVUCXBWXGTITROWLVYXQKQLF4YH5O5JT3YZXCYPAFBJZB
 ```
 
-```python
+```python Python
 # stellar-sdk >= 2.0.0 required
 # create a completely new and unique pair of keys
 # see more about KeyPair objects: https://stellar-sdk.readthedocs.io/en/latest/api.html#keypair
@@ -210,50 +200,12 @@ print(f"Public Key: {pair.public_key}")
 # Public Key: GAG7SXULMNWCW6LX42JKZOZRA2JJXQT23LYY32OXA6XECUQG7RZTQJHO
 ```
 
-</CodeExample>
+</CodeGroup>
 ````
 
-Languages that are currently being used in Documentation and API Reference are
-below. This snippet is copied from `config/constants.ts` and is **only the
-subset of languages used as `CodeExample` tab labels**, not every language
-Prism can highlight. If you add a fenced language in docs, add the same key
-here *and* in `config/constants.ts` so the tab does not fall back to
-“Example”.
-
-```js
-// https://github.com/stellar/stellar-docs/blob/main/config/constants.ts
-
-export const CODE_LANGS = {
-  bash: 'bash',
-  cpp: 'C++',
-  css: 'CSS',
-  curl: 'cURL',
-  dart: 'Flutter',
-  flutter: 'Flutter',
-  swift: 'Swift',
-  docker: 'Dockerfile',
-  go: 'Go',
-  html: 'HTML',
-  kotlin: 'Kotlin',
-  kt: 'Kotlin',
-  java: 'Java',
-  javascript: 'JavaScript',
-  js: 'JavaScript',
-  jsx: 'JSX',
-  json: 'JSON',
-  json5: 'JSON5',
-  python: 'Python',
-  scss: 'SCSS',
-  sql: 'SQL',
-  rust: 'Rust',
-  php: 'PHP',
-  toml: 'TOML',
-  ts: 'TypeScript',
-  tsx: 'TSX',
-  typescript: 'TypeScript',
-  yaml: 'YAML',
-};
-```
+Code groups with the same tab titles stay in sync across a page, so a reader
+who picks Python sees Python everywhere. See Mintlify's [code block
+documentation][mintlify-code] for titles, line highlighting, and other options.
 
 **Remember that this is a community; we build together! 🫱🏻‍🫲🏽 Our code of conduct is [here](https://stellar.org/community/code-of-conduct) and our Privacy Policy is [here](https://stellar.org/privacy-policy).**
 
@@ -261,11 +213,13 @@ export const CODE_LANGS = {
 [stellar]: https://stellar.org
 [contrib]: https://github.com/stellar/.github/blob/master/CONTRIBUTING.md
 [coc]: https://github.com/stellar/.github/blob/master/CODE_OF_CONDUCT.md
-[docusaurus]: https://docusaurus.io
+[mintlify]: https://www.mintlify.com/docs
+[mint-cli]: https://www.mintlify.com/docs/cli/commands
+[mintlify-components]: https://www.mintlify.com/docs/components/callouts
+[mintlify-code]: https://www.mintlify.com/docs/create/code
 [mdx]: https://mdxjs.com
 [commonmark]: https://commonmark.org/help/
 [tutorial]: https://www.markdowntutorial.com/
 [guide]: https://www.markdownguide.org/
-[prism]: https://github.com/FormidableLabs/prism-react-renderer
 [open-in-github-codespaces]: https://github.com/codespaces/new?repo=stellar/stellar-docs&editor=web
 [open-in-code-anywhere]: https://app.codeanywhere.com/#https://github.com/stellar/stellar-docs

@@ -11,16 +11,24 @@ ecosystem fact you cannot confirm from these sources, say so and recommend human
 than guessing.
 
 ## 1. Mechanics
-- Links in `docs/**` markdown must be **relative** — flag both hard-coded
-  `https://developers.stellar.org/...` and root-absolute `/docs/...` links to in-repo pages.
+The site is built with Mintlify. Hold PRs to Mintlify's conventions and this repo's
+`CONTRIBUTING.md`; `MIGRATING.md` lists the old Docusaurus habits to flag.
+- Internal links in `docs/**` and `meetings/**` should be **root-relative with no file
+  extension**: `/docs/learn/fundamentals/lumens#lumen-supply-metrics`. Flag new relative links
+  (`./`, `../`), any `.mdx` in a link, links to `README.mdx` or `index.mdx` files, and
+  hard-coded `https://developers.stellar.org/...` links to in-repo pages.
   **Exception:** files under `openapi/` and `openrpc/` *should* use full
-  `https://developers.stellar.org/...` URLs. Every link should resolve to a real file; treat
-  `#anchor` resolution as best-effort (MDX slugs are hard to predict, and a broken anchor
-  won't fail the build).
-- Heading levels sequential; frontmatter `sidebar_position` must not collide with sibling
-  pages; no slug/anchor collisions.
-- Images exist and have alt text; code fences declare a language; MDX compiles (no unclosed
-  tags, no broken `import`).
+  `https://developers.stellar.org/...` URLs. Every link should resolve to a real page; treat
+  `#anchor` resolution as best-effort.
+- New, moved, or removed pages: check `docs.json` `navigation` was updated, and that moved or
+  removed URLs get an entry in `redirects.json`. Flag Docusaurus-only frontmatter
+  (`sidebar_position`, `sidebar_label`, `hide_title`, `slug`) and new `_category_.json` files.
+- Components: flag Docusaurus syntax (`:::note` admonitions, `<CodeExample>`, `<TabItem>`,
+  `import` from `@site/` or `@theme/`). Block component tags need a blank line after the opening
+  tag and before the closing tag. A body `# H1` duplicates the frontmatter `title`.
+- Heading levels sequential; no anchor collisions.
+- Images exist, use root-relative paths (`/assets/...`), and have alt text; code fences
+  declare a language.
 - No secrets, live keys, or personal data in examples.
 
 ## 2. Technical accuracy — verify against sources, don't assume
@@ -32,7 +40,7 @@ than guessing.
   activation, and a version cell must match the release its own citation links to).
 - **Network passphrases.** These are **fixed cryptographic constants**, not date-versioned
   values — a PR that "updates" a passphrase to a newer year is wrong. Verify any passphrase
-  matches `docs/networks/README.mdx` exactly.
+  matches `docs/networks/index.mdx` exactly.
 - **RPC vs Horizon.** Align new content with the repo's `docs/data/apis/` pages for the
   current recommendation (which API is preferred, deprecation status). Flag content that
   contradicts them.
@@ -49,7 +57,7 @@ than guessing.
 ## Reference sources (consult these instead of memorized facts)
 Prefer this repo's own pages — they are the living source of truth and update over time:
 - `docs/networks/software-versions.mdx` — current protocols, activation dates, component versions.
-- `docs/networks/README.mdx` — network passphrases and network IDs.
+- `docs/networks/index.mdx`: network passphrases and network IDs.
 - `docs/data/apis/` — RPC and Horizon guidance / status.
 - `docs/tools/sdks/` — the SDK list and canonical package names.
 - `.github/` and the area `CONTRIBUTING.md` files under `docs/` — repo conventions.
