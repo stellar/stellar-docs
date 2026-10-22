@@ -180,7 +180,7 @@ const config: Config = {
     announcementBar: {
       id: 'legacy-docs',
       content:
-        'Stellar Docs has a new home. This version is no longer updated. Find the latest guides and references in the new <a href="https://developers.stellar.org">Stellar Developer Portal</a>.',
+        'This version of the Stellar Docs is no longer updated. Find the latest guides and references in the new <a href="https://developers.stellar.org">Stellar Developer Portal</a>.',
       isCloseable: false,
     },
     docs: {
