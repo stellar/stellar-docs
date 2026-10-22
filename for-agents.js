@@ -87,6 +87,7 @@
 
   var state = { toolId: TOOLS[0].id, mode: "install" };
   var panel = null;
+  var returnFocus = null;
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -155,12 +156,18 @@
     panel.innerHTML = html;
   }
 
+  function refocus(selector) {
+    var el = panel.querySelector(selector);
+    if (el) el.focus();
+  }
+
   function ensurePanel() {
     if (panel) return panel;
     panel = document.createElement("div");
     panel.id = "for-agents-panel";
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-labelledby", "fa-panel-title");
+    panel.setAttribute("aria-modal", "true");
     panel.hidden = true;
     document.body.appendChild(panel);
 
@@ -168,8 +175,9 @@
       var el = e.target.closest("button");
       if (!el) return;
       if (el.classList.contains("fa-close")) return close();
-      if (el.dataset.tool) { state.toolId = el.dataset.tool; render(); return; }
-      if (el.dataset.mode) { state.mode = el.dataset.mode; render(); return; }
+      // render() replaces the panel's contents, so put focus back on the same pill.
+      if (el.dataset.tool) { state.toolId = el.dataset.tool; render(); refocus('[data-tool="' + state.toolId + '"]'); return; }
+      if (el.dataset.mode) { state.mode = el.dataset.mode; render(); refocus('[data-mode="' + state.mode + '"]'); return; }
       if (el.dataset.copy !== undefined) {
         navigator.clipboard.writeText(el.dataset.copy).then(function () {
           el.classList.add("is-copied");
@@ -182,6 +190,7 @@
   }
 
   function open() {
+    returnFocus = document.activeElement;
     ensurePanel();
     panel.hidden = false;
     document.body.classList.add("fa-open");
@@ -193,6 +202,8 @@
     if (!panel) return;
     panel.hidden = true;
     document.body.classList.remove("fa-open");
+    if (returnFocus && returnFocus.focus) returnFocus.focus();
+    returnFocus = null;
   }
 
   document.addEventListener("click", function (e) {
@@ -206,6 +217,14 @@
   });
 
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") close();
+    if (!panel || panel.hidden) return;
+    if (e.key === "Escape") return close();
+    // Keep Tab focus inside the open panel.
+    if (e.key !== "Tab") return;
+    var items = panel.querySelectorAll("button, a[href]");
+    if (!items.length) return;
+    var first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
 })();
