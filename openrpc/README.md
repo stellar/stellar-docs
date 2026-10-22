@@ -52,6 +52,31 @@ If you're here to add a new method to one of the specfiles, you'll want to:
      - For anchor-platform:
        `/platforms/anchor-platform/api-reference/rpc/methods`
 
+### Beta methods
+
+Methods that only the archive RPC node serves, and that can still change, go
+in `/openrpc/src/stellar-rpc-beta/` instead of `/openrpc/src/stellar-rpc/`.
+They build into a separate `/static/stellar-rpc-beta.openrpc.json`, so the main
+spec that third parties consume stays unchanged. The beta service reuses every
+component (schemas, content descriptors, examples) of `stellar-rpc`, so a beta
+method can `$ref` things like `#/components/schemas/Event` directly. A beta
+method's Docusaurus page imports the beta spec:
+
+```jsx
+import rpcSpec from "@site/static/stellar-rpc-beta.openrpc.json";
+```
+
+When a beta method ships in a general RPC release:
+
+1. Move its files from `/openrpc/src/stellar-rpc-beta/` into the matching
+   directories under `/openrpc/src/stellar-rpc/`. Merge or replace any
+   beta-local override that shares a name with a main spec component.
+2. Change the page import to `@site/static/stellar-rpc.openrpc.json`.
+3. Remove the beta caution from the page and any beta mentions that link
+   to it.
+4. Remove the `stellar-rpc-beta` service from `scripts/build.mjs` and
+   `scripts/validate.mjs` if no beta method remains.
+
 ## JSON-RPC
 
 These are specifications of the APIs presented by Stellar RPC and the Platform
