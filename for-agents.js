@@ -182,6 +182,8 @@
         navigator.clipboard.writeText(el.dataset.copy).then(function () {
           el.classList.add("is-copied");
           setTimeout(function () { el.classList.remove("is-copied"); }, 2000);
+        }).catch(function (err) {
+          console.error("For agents panel: copy failed", err);
         });
       }
     });
