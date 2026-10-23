@@ -3,6 +3,7 @@
 ## Table of Contents <!-- omit in toc -->
 
 - [TL;DR](#tldr)
+  - [Beta methods](#beta-methods)
 - [JSON-RPC](#json-rpc)
   - [Building](#building)
   - [Testing](#testing)
@@ -25,55 +26,36 @@ If you're here to add a new method to one of the specfiles, you'll want to:
    More about them [later on](#json-refs).
 3. Once your method is defined the way you want it, run the [build](#building)
    and [validate](#testing) scripts to generate updated "bundled" specfiles.
-4. Create a new Docusaurus page for the method. You can use one of the existing
-   files for inspiration, but the short version looks like this:
+4. Get the method's page generated. Method pages are MDX generated from the
+   bundled specfile (between `{/* rpc-method ... */}` and `{/* /rpc-method */}`
+   comments), with any hand-written prose before or after the generated part.
+   The generator isn't in this repo yet, so ask a maintainer to generate or
+   regenerate the page. New pages also need an entry in `docs.json` navigation.
+   Method pages live in:
 
-   ```jsx title="/path/to/<method_name>.mdx
-   ---
-   title: method_name
-   hide_title: true
-   description: Returns or does something.
-   ---
-
-   import { RpcMethod } from "@site/src/components/RpcMethod";
-   // this specfile for stellar-rpc
-   import rpcSpec from "@site/static/stellar-rpc.openrpc.json";
-   // this specfile for anchor-platform
-   // import rpcSpec from "../anchor-platform.openrpc.json";
-
-   <RpcMethod
-     method={rpcSpec.methods.filter((meth) => meth.name === "method_name")[0]}
-   />
-   ```
-
-   These files should be placed in:
-
-     - For stellar-rpc: `/docs/data/apis/rpc/api-reference/methods`
-     - For anchor-platform:
-       `/platforms/anchor-platform/api-reference/rpc/methods`
+   - For stellar-rpc: `/docs/data/apis/rpc/api-reference/methods`
+   - For anchor-platform:
+     `/docs/platforms/anchor-platform/api-reference/platform/rpc/methods`
 
 ### Beta methods
 
-Methods that only the archive RPC node serves, and that can still change, go
-in `/openrpc/src/stellar-rpc-beta/` instead of `/openrpc/src/stellar-rpc/`.
-They build into a separate `/static/stellar-rpc-beta.openrpc.json`, so the main
-spec that third parties consume stays unchanged. The beta service reuses every
-component (schemas, content descriptors, examples) of `stellar-rpc`, so a beta
-method can `$ref` things like `#/components/schemas/Event` directly. A beta
-method's Docusaurus page imports the beta spec:
-
-```jsx
-import rpcSpec from "@site/static/stellar-rpc-beta.openrpc.json";
-```
+Methods that only the archive RPC node serves, and that can still change, go in
+`/openrpc/src/stellar-rpc-beta/` instead of `/openrpc/src/stellar-rpc/`. They
+build into a separate `/stellar-rpc-beta.openrpc.json`, so the main spec that
+third parties consume stays unchanged. The beta service reuses every component
+(schemas, content descriptors, examples) of `stellar-rpc`, so a beta method can
+`$ref` things like `#/components/schemas/Event` directly. A beta method's page
+is generated from the beta spec, and keeps a hand-written beta `<Warning>` above
+the generated part.
 
 When a beta method ships in a general RPC release:
 
 1. Move its files from `/openrpc/src/stellar-rpc-beta/` into the matching
    directories under `/openrpc/src/stellar-rpc/`. Merge or replace any
    beta-local override that shares a name with a main spec component.
-2. Change the page import to `@site/static/stellar-rpc.openrpc.json`.
-3. Remove the beta caution from the page and any beta mentions that link
-   to it.
+2. Regenerate the method's page from the main spec.
+3. Remove the beta `<Warning>` from the page and any beta mentions that link to
+   it.
 4. Remove the `stellar-rpc-beta` service from `scripts/build.mjs` and
    `scripts/validate.mjs` if no beta method remains.
 
@@ -84,26 +66,26 @@ Server component of the Anchor Platform.
 
 ### Building
 
-> _Note:_ The build process will provide output files at
-> `/static/stellar-rpc.openrpc.json` and
-> `/platforms/anchor-platform/api-reference/rpc/anchor-platform.openrpc.json`.
-> These files _should_ be included in any commits. However, this build process
-> is re-run as part of our Docusaurus deployment. So, it's necessary to update
-> the actual source JSON files, and not just these built files, as they will be
-> overwritten at deploy-time.
+> _Note:_ The build process writes `/stellar-rpc.openrpc.json`,
+> `/stellar-rpc-beta.openrpc.json`, and
+> `/docs/platforms/anchor-platform/api-reference/platform/rpc/anchor-platform.openrpc.json`.
+> Commit these files along with your source changes: nothing rebuilds them at
+> deploy time, and the site serves the committed copies (for example at
+> `https://developers.stellar.org/stellar-rpc.openrpc.json`). Always change the
+> source JSON files too, not just the built files, or the next build overwrites
+> your edit.
 
 The specification is split into multiple files to improve readability. The
 complete spec can be compiled into a single document as follows. (Run this
-command from the root `soroban-docs` directory.)
+command from the root of this repository.)
 
 ```bash
 pnpm rpcspec:build
 # Build successful.
 ```
 
-This will output the files to `/static/stellar-rpc.openrpc.json` and
-`/platforms/anchor-platform/api-reference/rpc/anchor-platform.openrpc.json`.
-These files will have all schema `$ref`s resolved.
+This will output the files listed in the note above. These files will have all
+schema `$ref`s resolved.
 
 ### Testing
 
@@ -197,8 +179,10 @@ required in the example pairing objects:
 > it as required here.
 
 [method objects]: https://spec.open-rpc.org/#method-object
-[contentDescriptor objects]: https://spec.open-rpc.org/#content-descriptor-object
+[contentDescriptor objects]:
+  https://spec.open-rpc.org/#content-descriptor-object
 [schema objects]: https://spec.open-rpc.org/#schema-object
-[JSON Schema Specification 7]: https://json-schema.org/draft-07/json-schema-release-notes.html
+[JSON Schema Specification 7]:
+  https://json-schema.org/draft-07/json-schema-release-notes.html
 [example objects]: https://spec.open-rpc.org/#example-object
 [example pairing objects]: https://spec.open-rpc.org/#example-pairing-object
