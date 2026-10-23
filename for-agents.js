@@ -6,6 +6,7 @@
   window.__forAgentsPanelLoaded = true;
 
   var RAVEN_MCP_URL = "https://raven.stellar.buzz/mcp";
+  var DOCS_MCP_URL = "https://developers.stellar.org/mcp";
   var SKILL_REPO_URL = "https://github.com/stellar/stellar-dev-skill";
 
   var npxSkillsInstall = {
@@ -21,6 +22,7 @@
     {
       id: "claude-code", label: "Claude Code",
       raven: { snippets: ['claude mcp add --transport http stellar-raven "' + RAVEN_MCP_URL + '"\n# then run /mcp -> Authenticate -> sign in in your browser'] },
+      docsMcp: { snippets: ['claude mcp add --transport http --scope user stellar-docs "' + DOCS_MCP_URL + '"\n# then run /mcp to confirm it is connected'] },
       skills: {
         install: { note: "Adds the skill to your tool permanently.", snippets: ["/plugin marketplace add stellar/stellar-dev-skill", "/plugin install stellar-dev@stellar-dev"] },
         tryWithoutInstalling: browseSkillsInstead
@@ -29,6 +31,7 @@
     {
       id: "codex", label: "Codex",
       raven: { snippets: ['codex mcp add stellar-raven --url "' + RAVEN_MCP_URL + '"\ncodex mcp login stellar-raven  # opens your browser'] },
+      docsMcp: { snippets: ['codex mcp add stellar-docs --url "' + DOCS_MCP_URL + '"'] },
       skills: {
         install: { note: "Codex reads skills from ~/.codex/skills/.", snippets: ["git clone " + SKILL_REPO_URL + " ~/.codex/skills/stellar-dev-skill"] },
         tryWithoutInstalling: browseSkillsInstead
@@ -37,6 +40,7 @@
     {
       id: "vscode", label: "VS Code",
       raven: { snippets: ['code --add-mcp \'{"name":"stellar-raven","type":"http","url":"' + RAVEN_MCP_URL + '"}\''] },
+      docsMcp: { note: "Adds the server to your user profile.", snippets: ['code --add-mcp \'{"name":"stellar-docs","type":"http","url":"' + DOCS_MCP_URL + '"}\''] },
       skills: { install: npxSkillsInstall, tryWithoutInstalling: browseSkillsInstead }
     },
     {
@@ -45,13 +49,21 @@
         note: "Add to ~/.cursor/mcp.json (or .cursor/mcp.json per project). Cursor runs the OAuth sign-in on first use.",
         snippets: ['{\n  "mcpServers": {\n    "stellar-raven": { "url": "' + RAVEN_MCP_URL + '" }\n  }\n}']
       },
+      docsMcp: {
+        note: "Add to ~/.cursor/mcp.json (or .cursor/mcp.json per project).",
+        snippets: ['{\n  "mcpServers": {\n    "stellar-docs": { "url": "' + DOCS_MCP_URL + '" }\n  }\n}']
+      },
       skills: { install: npxSkillsInstall, tryWithoutInstalling: browseSkillsInstead }
     },
     {
       id: "claude-desktop", label: "Claude desktop",
       raven: {
-        note: "Go to Settings -> Connectors -> Add custom connector, paste the endpoint, and approve the browser sign-in.",
+        note: "Go to Customize -> Connectors -> Add -> Add custom connector, paste the endpoint, and approve the browser sign-in.",
         snippets: [RAVEN_MCP_URL]
+      },
+      docsMcp: {
+        note: "Go to Customize -> Connectors -> Add -> Add custom connector, paste the endpoint, and choose \"No sign in\" under Authentication.",
+        snippets: [DOCS_MCP_URL]
       },
       skills: { install: npxSkillsInstall, tryWithoutInstalling: browseSkillsInstead }
     },
@@ -60,6 +72,11 @@
       raven: {
         note: "For clients without native remote or OAuth support, bridge with mcp-remote.",
         snippets: ['{\n  "mcpServers": {\n    "stellar-raven": {\n      "command": "npx",\n      "args": [\n        "-y",\n        "mcp-remote@latest",\n        "' + RAVEN_MCP_URL + '",\n        "--transport",\n        "http-only"\n      ]\n    }\n  }\n}'],
+        links: [{ label: "mcp-remote", href: "https://github.com/geelen/mcp-remote" }]
+      },
+      docsMcp: {
+        note: "For clients without native remote MCP support, bridge with mcp-remote.",
+        snippets: ['{\n  "mcpServers": {\n    "stellar-docs": {\n      "command": "npx",\n      "args": [\n        "-y",\n        "mcp-remote@latest",\n        "' + DOCS_MCP_URL + '",\n        "--transport",\n        "http-only"\n      ]\n    }\n  }\n}'],
         links: [{ label: "mcp-remote", href: "https://github.com/geelen/mcp-remote" }]
       },
       skills: { install: npxSkillsInstall, tryWithoutInstalling: browseSkillsInstead }
@@ -75,6 +92,12 @@
         { label: "Try in chat", href: "https://raven.stellar.buzz/playground" },
         { label: "View source", href: "https://github.com/stellar-experimental/stellar-raven" }
       ]
+    },
+    docsMcp: {
+      title: "Stellar Docs MCP Server",
+      description: "Search and read these docs from your agent. No sign-in needed.",
+      guide: { label: "Full guide", href: "/docs/build/building-with-ai#stellar-docs-mcp-server" },
+      links: []
     },
     skills: {
       title: "Stellar Skills",
@@ -111,9 +134,22 @@
     return TOOLS[0];
   }
 
+  function mcpSection(section, entry) {
+    var html = '<section class="fa-section"><div class="fa-section-head"><h3 class="fa-section-title">' + esc(section.title) + "</h3>" +
+      link(section.guide) + "</div><p class=\"fa-desc\">" + esc(section.description) + "</p>";
+    if (entry.note) html += '<p class="fa-note">' + esc(entry.note) + "</p>";
+    entry.snippets.forEach(function (c) { html += copyBlock(c); });
+    var links = section.links.concat(entry.links || []);
+    if (links.length) {
+      html += '<div class="fa-links">';
+      links.forEach(function (l) { html += link(l, true); });
+      html += "</div>";
+    }
+    return html + "</section>";
+  }
+
   function render() {
     var t = tool();
-    var raven = t.raven;
     var skills = t.skills[state.mode];
     var html = "";
 
@@ -128,14 +164,8 @@
     });
     html += "</div></div>";
 
-    html += '<section class="fa-section"><div class="fa-section-head"><h3 class="fa-section-title">' + esc(SECTIONS.raven.title) + "</h3>" +
-      link(SECTIONS.raven.guide) + "</div><p class=\"fa-desc\">" + esc(SECTIONS.raven.description) + "</p>";
-    if (raven.note) html += '<p class="fa-note">' + esc(raven.note) + "</p>";
-    raven.snippets.forEach(function (c) { html += copyBlock(c); });
-    html += '<div class="fa-links">';
-    SECTIONS.raven.links.forEach(function (l) { html += link(l, true); });
-    (raven.links || []).forEach(function (l) { html += link(l, true); });
-    html += "</div></section>";
+    html += mcpSection(SECTIONS.raven, t.raven);
+    html += mcpSection(SECTIONS.docsMcp, t.docsMcp);
 
     html += '<section class="fa-section"><div class="fa-section-head"><h3 class="fa-section-title">' + esc(SECTIONS.skills.title) + "</h3>" +
       link(SECTIONS.skills.home, true) + "</div><p class=\"fa-desc\">" + esc(SECTIONS.skills.description) + "</p>";
