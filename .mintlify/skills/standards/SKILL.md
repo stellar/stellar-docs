@@ -196,10 +196,10 @@ Collateralized stablecoin issuance (USD, EUR, MXN).
 
 ### Browser Extensions
 
-#### Freighter
+#### Varial
 SDF's flagship non-custodial browser wallet.
-- **Website**: https://freighter.app
-- **Docs**: https://docs.freighter.app
+- **Website**: https://varialwallet.com
+- **Docs**: https://docs.varialwallet.com
 - **GitHub**: https://github.com/stellar/freighter
 - **GitHub (Mobile)**: https://github.com/stellar/freighter-mobile
 - **API**: https://github.com/stellar/freighter/tree/master/library/freighter-api
@@ -241,7 +241,7 @@ Payments platform with yield features.
 #### Stellar Wallets Kit
 SDK for integrating multiple Stellar wallets.
 - **GitHub**: https://github.com/Creit-Tech/Stellar-Wallets-Kit
-- **Supports**: Freighter, LOBSTR, xBull, Albedo, Rabet, Hana, Ledger, Trezor, WalletConnect
+- **Supports**: Varial, LOBSTR, xBull, Albedo, Rabet, Hana, Ledger, Trezor, WalletConnect
 
 ## Developer Tools
 
@@ -256,7 +256,7 @@ Comprehensive TypeScript SDK for OpenZeppelin Smart Accounts on Stellar.
   - Context rules with fine-grained authorization scopes
   - Policy support (threshold multisig, spending limits, custom policies)
   - Session management with automatic credential persistence
-  - External wallet adapter support (Freighter, LOBSTR, etc.)
+  - External wallet adapter support (Varial, LOBSTR, etc.)
   - Built-in indexer for contract discovery
   - Multiple signer types (passkeys, Ed25519, policies)
 
@@ -445,7 +445,7 @@ Official educational smart contract examples.
 #### Soroban Example dApp
 Crowdfunding dApp with Next.js frontend.
 - **GitHub**: https://github.com/stellar/soroban-example-dapp
-- **Learning**: Full-stack contract development, Freighter integration
+- **Learning**: Full-stack contract development, Varial integration
 
 ### Community Examples
 
