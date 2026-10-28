@@ -202,7 +202,7 @@ SDF's flagship non-custodial browser wallet.
 - **Docs**: https://docs.varialwallet.com
 - **GitHub**: https://github.com/stellar/freighter
 - **GitHub (Mobile)**: https://github.com/stellar/freighter-mobile
-- **API**: https://github.com/stellar/freighter/tree/master/library/freighter-api
+- **API**: https://github.com/stellar/freighter/tree/master/@stellar/freighter-api
 - **Features**: Smart contract support, mobile apps (iOS/Android), Discover browser
 
 #### xBull
