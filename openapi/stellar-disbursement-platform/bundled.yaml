@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Disbursement Platform API
-  version: 7.0.0
+  version: 7.1.0
   summary: The Stellar Disbursement Platform (SDP) is a tool built for organizations to make bulk payments to a group of recipients over the Stellar network.
   description: |
     The Stellar Disbursement Platform (SDP) is a tool built for organizations to make bulk payments to a group of recipients over the Stellar network.
@@ -68,6 +68,8 @@ tags:
       There are two parts to the registration flow. First, the wallet must authenticate and initiate a registration flow using the Anchor Platform Endpoints defined below. Note that these endpoints are hosted on a different host than the Stellar Disursement Platform.
 
       The second part of the registration flow is handled by the webview that is opened within the wallet application. This webview uses the endpoints defined in the Stellar Disbursement Platfrom Endpoints section to complete the registration process. The wallet application can chose not to use the webview and intstead integrate directly with the API.
+  - name: Reports
+    description: 'Reports endpoints return PDF reports: a per-distribution account statement and a per-payment transaction notice. Available only while reporting is enabled in the organization settings.'
   - name: Statistics
     description: Statistics endpoints return general aggregated data per organization, as well as disbursement-specific metrics. SDP users can use this data to monitor their disbursements over time.
   - name: Users
@@ -1403,6 +1405,206 @@ paths:
         '403':
           description: Forbidden
           $ref: '#/components/responses/ForbiddenResponse'
+      security:
+        - BearerAuth: []
+  /reports/statement:
+    get:
+      tags:
+        - Reports
+      summary: Download Account Statement
+      description: |
+        Returns a PDF statement of one distribution account for a period: the payments the account sent and received on the Stellar ledger, per asset, with opening and closing balances. The statement is built from the account's most recent 10,000 ledger payments (any asset, counting back from now), so a period that reaches further back is refused.
+      operationId: GetAccountStatement
+      parameters:
+        - $ref: '#/components/parameters/XWalletIdStatementAccount'
+        - name: from_date
+          in: query
+          required: true
+          description: First day of the period, `YYYY-MM-DD`, UTC.
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          required: true
+          description: Last day of the period, inclusive (to 23:59:59 UTC). Must not be before `from_date`.
+          schema:
+            type: string
+            format: date
+        - name: asset_code
+          in: query
+          required: false
+          description: Asset to report on, matched case-sensitively against the tenant's active assets; `XLM` or `NATIVE` selects the native asset. Omit it to cover every asset the account currently holds.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The statement PDF.
+          headers:
+            Content-Disposition:
+              description: '`attachment; filename=statement_<account>_<YYYYMMDD>-<YYYYMMDD>.pdf`. `<account>` is the account name in lower case, with each run of characters other than a-z and 0-9 replaced by `-`, e.g. `statement_main_20261001-20261031.pdf`.'
+              schema:
+                type: string
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: 'Bad Request: the query is invalid, no account was selected, the account can''t have a statement, or the period reaches past the account''s most recent 10,000 ledger payments.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Why the request was refused.
+                  extras:
+                    type: object
+                    description: Only with `invalid query parameters`. One entry per invalid parameter.
+                    properties:
+                      from_date:
+                        type: string
+                        description: Missing, not `YYYY-MM-DD`, or after `to_date`.
+                      to_date:
+                        type: string
+                        description: Missing, or not `YYYY-MM-DD`.
+              examples:
+                InvalidQuery:
+                  summary: Invalid query parameters
+                  value:
+                    error: invalid query parameters
+                    extras:
+                      from_date: from_date must be before or equal to to_date
+                NoAccountSelected:
+                  summary: X-Wallet-Id needed
+                  value:
+                    error: select a distribution account with the X-Wallet-Id header
+                NotStellarAccount:
+                  summary: Circle account
+                  value:
+                    error: Statement is only supported for Stellar distribution accounts
+                SharedHostAccount:
+                  summary: Tenant on the shared host account
+                  value:
+                    error: Statements are not available for tenants on the shared host distribution account
+                AccountNotProvisioned:
+                  summary: Account not provisioned yet
+                  value:
+                    error: The distribution account has not been provisioned yet
+                PeriodTooLong:
+                  summary: Period holds too many payments
+                  value:
+                    error: This period has too many ledger payments for one statement; choose a shorter period
+                PeriodTooOld:
+                  summary: Too many payments since the period
+                  value:
+                    error: The account has made too many ledger payments since this period for a statement this far back
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          description: 'Forbidden: reporting is disabled for the organization, the user''s role is not allowed, the API key lacks `read:reports`, or the key is used from an IP address it doesn''t allow.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                ReportsDisabled:
+                  summary: Reporting is disabled
+                  value:
+                    error: reports are not enabled for this organization
+                RoleNotAllowed:
+                  $ref: '#/components/examples/RoleNotAllowed'
+                InsufficientAPIKeyPermissions:
+                  $ref: '#/components/examples/InsufficientAPIKeyPermissions'
+                IPNotAllowed:
+                  $ref: '#/components/examples/IPNotAllowed'
+        '404':
+          description: 'Not Found: the `X-Wallet-Id` account is unknown or outside the caller''s access, or `asset_code` is unknown, retired, or not held by the account.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                WalletNotFound:
+                  summary: Account unknown or out of reach
+                  value:
+                    error: distribution wallet not found
+                AssetNotFound:
+                  summary: Asset not held
+                  value:
+                    error: asset not found for account
+      security:
+        - BearerAuth: []
+  /reports/payment/{id}:
+    get:
+      tags:
+        - Reports
+      summary: Download Transaction Notice
+      description: |
+        Returns a PDF transaction notice for one payment. There is no `X-Wallet-Id` header: the payment's own distribution account decides access.
+      operationId: GetTransactionNotice
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID of the payment.
+          schema:
+            type: string
+        - name: internal_notes
+          in: query
+          required: false
+          description: Free-text note printed in a marked box on the notice. Trimmed and cut to 500 characters; a blank note prints no box.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The transaction notice PDF.
+          headers:
+            Content-Disposition:
+              description: '`attachment; filename=transaction_notice_<payment id>.pdf`.'
+              schema:
+                type: string
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          description: 'Forbidden: reporting is disabled for the organization, the user''s role is not allowed, the API key lacks `read:reports`, or the key is used from an IP address it doesn''t allow.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                ReportsDisabled:
+                  summary: Reporting is disabled
+                  value:
+                    error: reports are not enabled for this organization
+                RoleNotAllowed:
+                  $ref: '#/components/examples/RoleNotAllowed'
+                InsufficientAPIKeyPermissions:
+                  $ref: '#/components/examples/InsufficientAPIKeyPermissions'
+                IPNotAllowed:
+                  $ref: '#/components/examples/IPNotAllowed'
+        '404':
+          description: 'Not Found: the payment is unknown, or its distribution account is outside the caller''s access.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                UnknownPayment:
+                  summary: No payment with this ID
+                  value:
+                    error: 'Cannot retrieve payment with ID: 2f1d3c4b-5a69-4788-9a0b-1c2d3e4f5a6b'
+                PaymentOutOfReach:
+                  summary: Payment on an account outside the caller's access
+                  value:
+                    error: payment not found
       security:
         - BearerAuth: []
   /payments:
@@ -3576,6 +3778,7 @@ paths:
                     - `mfa_disabled` (boolean): whether multi-factor authentication is turned off for dashboard sign-in.
                     - `captcha_disabled` (boolean): whether reCAPTCHA is turned off.
                     - `receiver_invitations_disabled` (boolean): whether receiver invitation messages are suppressed.
+                    - `reporting_enabled` (boolean): whether the Reports feature (`/reports/*`) is on for the organization. Defaults to `false`.
 
                     For example:
 
@@ -5454,6 +5657,14 @@ components:
           description: Total number of receivers
           format: int64
           example: 1000
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Why the request failed.
     MessageResponse:
       required:
         - message
@@ -5511,6 +5722,10 @@ components:
           type: string
           description: The link to the organization privacy policy
           example: https://stellar.org/privacy-policy
+        reporting_enabled:
+          type: boolean
+          description: Whether the Reports feature is on for the organization (default `false`).
+          example: false
         receiver_registration_message_template:
           type: string
           description: 'The custom template used to send invitations to receivers. The `default` message isn''t returned. In the message''s content it''s possible to add the following template variables: {{.OrganizationName}} which is the Organization Name configured and {{.RegistrationLink}} which is the link generated by SDP to send to the receiver (in case this is not present in the message, it''s automatically appended at the end).'
@@ -6563,6 +6778,7 @@ components:
               - write:distribution_wallets
               - read:statistics
               - read:exports
+              - read:reports
           minItems: 1
         distribution_wallet_ids:
           type: array
@@ -6658,6 +6874,7 @@ components:
               - write:distribution_wallets
               - read:statistics
               - read:exports
+              - read:reports
           minItems: 1
         distribution_wallet_ids:
           type: array
@@ -7182,6 +7399,14 @@ components:
         Optional. Selects the distribution account whose trustlines are affected. Omit it to act on the tenant's default account. An API key does not get that fallback: a key scoped to exactly one account may omit the header, any other key must send it.
       schema:
         type: string
+    XWalletIdStatementAccount:
+      name: X-Wallet-Id
+      in: header
+      required: false
+      description: |
+        Names the distribution account the statement covers. Archived accounts can be named. Can be omitted only when the caller can reach exactly one account (archived ones count).
+      schema:
+        type: string
   responses:
     UnauthorizedResponse:
       description: Unauthorized
@@ -7249,6 +7474,19 @@ components:
             extras:
               status: 404
               message: Resource not found
+  examples:
+    RoleNotAllowed:
+      summary: Role not allowed
+      value:
+        error: You don't have permission to perform this action.
+    InsufficientAPIKeyPermissions:
+      summary: API key without the required permission
+      value:
+        error: Insufficient API key permissions
+    IPNotAllowed:
+      summary: API key used from an IP it doesn't allow
+      value:
+        error: IP not allowed
   securitySchemes:
     BearerAuth:
       type: apiKey
