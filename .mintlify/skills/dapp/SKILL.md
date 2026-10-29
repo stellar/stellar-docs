@@ -1,6 +1,6 @@
 ---
 name: dapp
-description: Stellar dApp / frontend development. Covers the JavaScript stellar-sdk (browser + Node.js), Freighter wallet, Stellar Wallets Kit (multi-wallet), Wallet Standard, smart accounts with passkeys, transaction building / signing / submission, smart contract invocation from the client, simulation, and error handling. Use when building a React/Next.js/Node.js app that talks to Stellar — classic operations or smart contracts.
+description: Stellar dApp / frontend development. Covers the JavaScript stellar-sdk (browser + Node.js), Varial wallet, Stellar Wallets Kit (multi-wallet), Wallet Standard, smart accounts with passkeys, transaction building / signing / submission, smart contract invocation from the client, simulation, and error handling. Use when building a React/Next.js/Node.js app that talks to Stellar — classic operations or smart contracts.
 user-invocable: true
 argument-hint: "[dapp task]"
 ---
@@ -10,7 +10,7 @@ argument-hint: "[dapp task]"
 Client-side development with `@stellar/stellar-sdk`, wallet connection, signing, and submitting transactions. Covers both classic Stellar operations and smart contract invocation from the browser or Node.js.
 
 ## When to use this skill
-- Connecting Freighter or other wallets via Stellar Wallets Kit
+- Connecting Varial or other wallets via Stellar Wallets Kit
 - Building, simulating, signing, and submitting transactions
 - Invoking Stellar smart contracts from a frontend
 - Implementing smart accounts with passkeys
@@ -28,7 +28,7 @@ Client-side development with `@stellar/stellar-sdk`, wallet connection, signing,
 
 ## Goals
 - Single SDK instance for the app (RPC/Horizon + transaction building)
-- Freighter wallet integration (or multi-wallet via Stellar Wallets Kit)
+- Varial wallet integration (or multi-wallet via Stellar Wallets Kit)
 - Clean separation of client/server in Next.js
 - Transaction sending with proper confirmation handling
 
@@ -45,7 +45,7 @@ Client-side development with `@stellar/stellar-sdk`, wallet connection, signing,
 > **Requires Node.js 20+** — the Stellar SDK dropped Node 18 support.
 
 ```bash
-npm install @stellar/stellar-sdk @stellar/freighter-api
+npm install @stellar/stellar-sdk @stellar/varial-sdk
 # Or for multi-wallet support:
 npm install @stellar/stellar-sdk @creit.tech/stellar-wallets-kit
 ```
@@ -107,7 +107,7 @@ export const rpc = new StellarSdk.rpc.Server(config.rpcUrl);
 
 ## Wallet Integration
 
-### Freighter (Primary Browser Wallet)
+### Varial (Primary Browser Wallet)
 ```typescript
 // hooks/useFreighter.ts
 import { useState, useEffect, useCallback } from "react";
@@ -117,7 +117,7 @@ import {
   requestAccess,
   signTransaction,
   getNetwork,
-} from "@stellar/freighter-api";
+} from "@stellar/varial-sdk";
 
 export function useFreighter() {
   const [connected, setConnected] = useState(false);
@@ -147,7 +147,7 @@ export function useFreighter() {
   const connect = useCallback(async () => {
     const { isConnected: installed, error } = await isConnected();
     if (error || !installed) {
-      throw new Error("Freighter extension not installed");
+      throw new Error("Varial extension not installed");
     }
 
     // requestAccess prompts the user and returns the granted address.
@@ -637,7 +637,7 @@ await kit.transfer(tokenContract, recipient, amount);
 - **Multiple Signer Types**: Passkeys (secp256r1), Ed25519 keys, policies
 - **Context Rules**: Fine-grained authorization for different operations
 - **Policy Support**: Threshold multisig, spending limits, custom policies
-- **External Wallet Support**: Connect Freighter, LOBSTR via adapters
+- **External Wallet Support**: Connect Varial, LOBSTR via adapters
 - **Gasless Transactions**: Optional relayer integration for fee sponsoring
 
 ### Fee Sponsorship with OpenZeppelin Relayer

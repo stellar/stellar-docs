@@ -172,7 +172,7 @@ console.log(await res.json());
 - `STELLAR_NETWORK` — CAIP-2 network ID; defaults to `stellar:testnet`. Must match the server's network.
 - `STELLAR_SECRET_KEY` — your S... secret key (needs USDC trustline + balance)
 
-**Browser frontends:** this client uses Node `fetch` and `createEd25519Signer`, both of which run in Node. A vanilla browser cannot sign contract auth entries through a typical wallet extension without additional glue. For a browser payer, run the x402 client server-side and expose a thin proxy endpoint to the page, or wire up Wallets-Kit / Freighter with custom auth-entry signing.
+**Browser frontends:** this client uses Node `fetch` and `createEd25519Signer`, both of which run in Node. A vanilla browser cannot sign contract auth entries through a typical wallet extension without additional glue. For a browser payer, run the x402 client server-side and expose a thin proxy endpoint to the page, or wire up Wallets-Kit / Varial with custom auth-entry signing.
 
 ## Testnet runbook
 
@@ -355,7 +355,7 @@ Always test on testnet first. To switch a working setup to mainnet, change only 
 
 **Trying to sign auth entries from a browser**
 - Symptom: bundling errors, or a browser wallet that has no API to sign contract auth entries
-- Fix: run the x402 client server-side (e.g. an Express route the browser calls), or use Wallets-Kit / Freighter with custom auth-entry signing. `@x402/fetch` + `createEd25519Signer` target Node and assume a raw secret key.
+- Fix: run the x402 client server-side (e.g. an Express route the browser calls), or use Wallets-Kit / Varial with custom auth-entry signing. `@x402/fetch` + `createEd25519Signer` target Node and assume a raw secret key.
 
 **Passing a `Keypair` (or a network passphrase) to `createEd25519Signer`**
 - Symptom: `TypeError: encoded argument must be of type String`, or `Error: Unknown Stellar network: Test SDF Network ; September 2015`
