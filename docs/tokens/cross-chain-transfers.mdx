@@ -1,7 +1,7 @@
 ---
 title: "Cross-Chain USDC Transfers with CCTP"
 sidebarTitle: CCTP
-description: "Use Circle's Cross-Chain Transfer Protocol (CCTP) to move native USDC between Stellar and other supported chains."
+description: "Use Circle's Cross-Chain Transfer Protocol (CCTP) to move native USDC between Stellar and other supported chains, including transfers that start on Stellar."
 ---
 
 Circle's **Cross-Chain Transfer Protocol (CCTP)** supports native USDC transfers between Stellar and other CCTP-enabled chains — no wrapped assets, no third-party bridges.
@@ -15,3 +15,259 @@ CCTP on Stellar is documented and maintained by Circle. For contract addresses, 
 [CCTP on Stellar — Circle developer docs](https://developers.circle.com/cctp/references/stellar)
 
 </Info>
+
+This page covers the Stellar-specific parts of a transfer that starts on Stellar: the allowance the burn needs, how to get the destination mint done, and a worked example. For transfers into Stellar, follow Circle's [`CctpForwarder` guide](https://developers.circle.com/cctp/references/stellar#use-cctpforwarder-for-stellar-recipients).
+
+## Transfer flow from Stellar
+
+A transfer from Stellar to another chain has three steps:
+
+1. **Burn.** Call `deposit_for_burn` or `deposit_for_burn_with_hook` on the `TokenMessengerMinter` contract. The contract burns your USDC and emits a CCTP message.
+2. **Attest.** Circle's attestation service signs the message. Fetch the message and attestation with `GET /v2/messages/27?transactionHash=<hash>`. Stellar's CCTP domain is `27`. Use the Stellar transaction hash as it is, with no `0x` prefix.
+3. **Mint.** Someone calls `receiveMessage` on the destination chain's `MessageTransmitterV2` contract with the message and attestation. That can be you or a relayer. See [relayer options](#relayer-options).
+
+Circle lists Fast Transfer as not applicable for Stellar, because a standard attestation is already fast. A burn from Stellar attests at the finalized threshold (`2000`), even when you request `1000`.
+
+### Burn arguments
+
+`deposit_for_burn` takes these arguments. `deposit_for_burn_with_hook` takes the same arguments plus `hook_data`.
+
+| Argument | Type | Value |
+| --- | --- | --- |
+| `caller` | `Address` | The address that holds the USDC. It must authorize the call. |
+| `amount` | `i128` | The amount to burn, in Stellar's 7-decimal USDC units. |
+| `destination_domain` | `u32` | The [CCTP domain](https://developers.circle.com/cctp/concepts/supported-chains-and-domains#domain-identifiers) of the destination chain, for example `6` for Base. |
+| `mint_recipient` | `BytesN<32>` | The recipient on the destination chain, as 32 bytes. Left-pad a 20-byte EVM address with zeros. For Solana, use the recipient's USDC token account. |
+| `burn_token` | `Address` | The USDC Stellar Asset Contract (SAC). |
+| `destination_caller` | `BytesN<32>` | The only address allowed to call `receiveMessage`. 32 zero bytes allow anyone. |
+| `max_fee` | `i128` | The highest fee you accept, in 7-decimal USDC units. |
+| `min_finality_threshold` | `u32` | `2000` for a standard transfer. |
+| `hook_data` | `Bytes` | `deposit_for_burn_with_hook` only. Data for the destination, such as the Forwarding Service hook. |
+
+Stellar USDC has 7 decimals, while CCTP messages use 6. The burn takes only the first 6 decimals of `amount`, and the 7th decimal stays in your account. See [USDC precision](https://developers.circle.com/cctp/references/stellar#usdc-precision-for-cctp-and-stellar) in Circle's docs.
+
+The contract addresses are in Circle's [Stellar contracts list](https://developers.circle.com/cctp/references/stellar-contracts). The USDC SAC addresses are:
+
+| Network | USDC SAC |
+| --- | --- |
+| Mainnet | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
+| Testnet | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+
+## The allowance requirement
+
+`TokenMessengerMinter` does not take USDC with a `transfer` that you authorize. It pulls USDC from `caller` with `transfer_from` on the USDC SAC. So before the burn, `caller` must `approve` the `TokenMessengerMinter` contract as a spender for at least `amount`. See the [token interface](/docs/tokens/token-interface) for `approve` and `transfer_from`.
+
+A transaction can hold only one `InvokeHostFunctionOp` (see [Stellar transactions](/docs/learn/fundamentals/contract-development/contract-interactions/stellar-transaction)). So by default, a transfer from Stellar takes two transactions and two signatures: `approve`, then `deposit_for_burn`. To get to one signature, use one of these options.
+
+### Option 1: a wrapper contract
+
+Deploy a contract that calls `approve` and then `deposit_for_burn` in one invocation. One user signature covers the wrapper call and every authorization that the inner `approve` and `deposit_for_burn` calls need. The [stellar-cctp-demo](https://github.com/ElliotFriend/stellar-cctp-demo) repository has an example wrapper in `contracts/stellar/cctp-wrapper`:
+
+```rust
+pub fn approve_and_deposit(
+    env: Env,
+    tmm: Address,
+    caller: Address,
+    amount: i128,
+    destination_domain: u32,
+    mint_recipient: BytesN<32>,
+    burn_token: Address,
+    destination_caller: BytesN<32>,
+    max_fee: i128,
+    min_finality_threshold: u32,
+) {
+    caller.require_auth();
+
+    // approve an allowance so the TokenMessengerMinter contract can `transfer_from` our caller address
+    let live_until_ledger = (env.ledger().sequence() + 50).next_multiple_of(50);
+    token::Client::new(&env, &burn_token).approve(&caller, &tmm, &amount, &live_until_ledger);
+
+    let tmm_client = TmmClient::new(&env, &tmm);
+    tmm_client.deposit_for_burn(
+        &caller,
+        &amount,
+        &destination_domain,
+        &mint_recipient,
+        &burn_token,
+        &destination_caller,
+        &max_fee,
+        &min_finality_threshold,
+    );
+}
+```
+
+The same contract has `approve_and_deposit_with_hook`, which passes `hook_data` on to `deposit_for_burn_with_hook`.
+
+<Warning>
+
+The demo wrapper is unaudited and deployed on testnet only. Review and audit any wrapper contract before you use it on mainnet.
+
+</Warning>
+
+### Option 2: an existing allowance
+
+Approve the `TokenMessengerMinter` once, for a larger amount and a later expiration ledger. Each later burn then needs only one signature, until the allowance is spent or expires.
+
+Know the tradeoffs:
+
+- The `TokenMessengerMinter` contract can pull USDC up to the allowance until it expires.
+- An allowance is temporary storage with an expiration ledger. When it expires, the user must approve again.
+- A burn fails when the remaining allowance is less than `amount`.
+
+## Relayer options
+
+After the burn and the attestation, a transaction on the destination chain must call `receiveMessage`. You have these options:
+
+| Option | How it works | Tradeoffs |
+| --- | --- | --- |
+| Mint it yourself | Your app or backend calls `receiveMessage` on the destination chain. | You need a funded wallet on the destination chain, and the user may sign a second time there. There is no extra fee. You control timing and retries. |
+| Circle Forwarding Service | Put the `cctp-forward` hook in `hook_data` and leave `destination_caller` as 32 zero bytes. Circle submits the mint and takes its fee from the minted USDC. | Nobody needs gas on the destination chain. With a wrapper contract, the whole transfer takes one user signature. The route must be one that Circle supports, and the fee comes out of the transfer. |
+| Third-party relayer | Another service watches for the burn and calls `receiveMessage`. | Check the service's fees, supported routes, and what happens when a mint fails. |
+
+To restrict the mint to one relayer, set `destination_caller` to that relayer's address. The Forwarding Service does not work when `destination_caller` is set.
+
+### Use the Circle Forwarding Service
+
+1. Check that Circle's [supported blockchains table](https://developers.circle.com/cctp/concepts/supported-chains-and-domains#supported-blockchains) lists the destination chain under "Forwarding Service".
+2. Set `hook_data` to the 32-byte version 0 forwarding hook: `0x636374702d666f72776172640000000000000000000000000000000000000000`. This is `cctp-forward` followed by zero bytes. See Circle's [hook format](https://developers.circle.com/cctp/concepts/forwarding-service#hook-format).
+3. Quote the fee with `GET /v2/burn/USDC/fees/27/<destination domain>?forward=true`. Use the entry with `finalityThreshold` `2000`. `minimumFee` is the protocol fee in basis points, and `forwardFee` is in 6-decimal USDC units.
+4. Set `max_fee` to cover the protocol fee plus the forwarding fee, in Stellar's 7-decimal units. Multiply `forwardFee` by 10 to convert it.
+
+Circle does not support upfront fees for transfers from Stellar, so the fee comes out of the minted amount. Circle does not refund a `max_fee` that is higher than the gas used, so do not add a large buffer. When the forward is done, the attestation response shows `forwardState` and `forwardTxHash`.
+
+## Worked example
+
+This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. It uses `@stellar/stellar-sdk` v16.
+
+```ts TypeScript
+import {
+  Address,
+  BASE_FEE,
+  Contract,
+  Keypair,
+  Networks,
+  TransactionBuilder,
+  nativeToScVal,
+  rpc,
+  xdr,
+} from "@stellar/stellar-sdk";
+
+// Testnet values. For mainnet, use Circle's mainnet contract list,
+// the mainnet USDC SAC, and https://iris-api.circle.com.
+const RPC_URL = "https://soroban-testnet.stellar.org";
+const IRIS_URL = "https://iris-api-sandbox.circle.com";
+const TOKEN_MESSENGER_MINTER =
+  "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP";
+const USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+const STELLAR_DOMAIN = 27;
+const BASE_DOMAIN = 6;
+
+// "cctp-forward", hook version 0, no extra data
+const FORWARD_HOOK = Buffer.from(
+  "636374702d666f72776172640000000000000000000000000000000000000000",
+  "hex",
+);
+
+const server = new rpc.Server(RPC_URL);
+const signer = Keypair.fromSecret(process.env.STELLAR_SECRET_KEY!);
+
+function evmAddressToBytes32(address: string): Buffer {
+  const hex = address.toLowerCase().replace(/^0x/, "");
+  if (!/^[0-9a-f]{40}$/.test(hex)) {
+    throw new Error(`Invalid EVM address: ${address}`);
+  }
+  return Buffer.from(hex.padStart(64, "0"), "hex");
+}
+
+async function invoke(contractId: string, method: string, args: xdr.ScVal[]) {
+  const account = await server.getAccount(signer.publicKey());
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(new Contract(contractId).call(method, ...args))
+    .setTimeout(60)
+    .build();
+
+  const prepared = await server.prepareTransaction(tx);
+  prepared.sign(signer);
+  const sent = await server.sendTransaction(prepared);
+  if (sent.status !== "PENDING") {
+    throw new Error(`Submit failed: ${sent.status}`);
+  }
+  const result = await server.pollTransaction(sent.hash);
+  if (result.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`Transaction failed: ${result.status}`);
+  }
+  return sent.hash;
+}
+
+async function quoteMaxFee(amount: bigint): Promise<bigint> {
+  const res = await fetch(
+    `${IRIS_URL}/v2/burn/USDC/fees/${STELLAR_DOMAIN}/${BASE_DOMAIN}?forward=true`,
+  );
+  const quotes = await res.json();
+  const quote = quotes.find((q: any) => q.finalityThreshold === 2000);
+  // minimumFee is in basis points. forwardFee uses 6 decimals, so
+  // multiply by 10 for Stellar's 7-decimal units.
+  const protocolFee =
+    (amount * BigInt(Math.ceil(quote.minimumFee * 100))) / 1_000_000n;
+  return protocolFee + BigInt(quote.forwardFee.med) * 10n;
+}
+
+async function waitForAttestation(txHash: string) {
+  while (true) {
+    const res = await fetch(
+      `${IRIS_URL}/v2/messages/${STELLAR_DOMAIN}?transactionHash=${txHash}`,
+    );
+    if (res.ok) {
+      const { messages } = await res.json();
+      if (messages?.[0]?.status === "complete") return messages[0];
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+}
+
+async function bridgeToBase(amount: bigint, evmRecipient: string) {
+  const caller = signer.publicKey();
+  const maxFee = await quoteMaxFee(amount);
+
+  // Transaction 1: let the TokenMessengerMinter pull `amount` USDC.
+  const { sequence } = await server.getLatestLedger();
+  await invoke(USDC_SAC, "approve", [
+    new Address(caller).toScVal(),
+    new Address(TOKEN_MESSENGER_MINTER).toScVal(),
+    nativeToScVal(amount, { type: "i128" }),
+    nativeToScVal(sequence + 100, { type: "u32" }),
+  ]);
+
+  // Transaction 2: burn with the forwarding hook.
+  const burnHash = await invoke(
+    TOKEN_MESSENGER_MINTER,
+    "deposit_for_burn_with_hook",
+    [
+      new Address(caller).toScVal(),
+      nativeToScVal(amount, { type: "i128" }),
+      nativeToScVal(BASE_DOMAIN, { type: "u32" }),
+      nativeToScVal(evmAddressToBytes32(evmRecipient), { type: "bytes" }),
+      new Address(USDC_SAC).toScVal(),
+      nativeToScVal(Buffer.alloc(32), { type: "bytes" }), // any caller
+      nativeToScVal(maxFee, { type: "i128" }),
+      nativeToScVal(2000, { type: "u32" }),
+      nativeToScVal(FORWARD_HOOK, { type: "bytes" }),
+    ],
+  );
+
+  const message = await waitForAttestation(burnHash);
+  console.log("Burn:", burnHash, "Forward state:", message.forwardState);
+}
+
+// 5 USDC in 7-decimal units
+bridgeToBase(50_000_000n, "0xYourBaseSepoliaAddress").catch(console.error);
+```
+
+`forwardState` can stay empty for a short time after the attestation completes. Check the same endpoint again to see the destination transaction in `forwardTxHash`.
+
+To mint it yourself instead, call `deposit_for_burn` without `hook_data`, set `max_fee` from the quote without `forward=true`, and call `receiveMessage(message, attestation)` on the destination chain's `MessageTransmitterV2`. Do not call `deposit_for_burn_with_hook` with empty `hook_data`, because the contract rejects it.
+
+The [stellar-cctp-demo](https://github.com/ElliotFriend/stellar-cctp-demo) app runs these flows in a browser with Freighter, in both directions. It shows the two-transaction flow, the wrapper flow, and the Forwarding Service, and its `src/lib/stellar/cctp.ts` file has the Stellar calls.
