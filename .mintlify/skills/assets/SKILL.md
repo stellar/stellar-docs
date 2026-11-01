@@ -71,14 +71,15 @@ const usdc = new StellarSdk.Asset(
 import * as StellarSdk from "@stellar/stellar-sdk";
 
 const server = new StellarSdk.Horizon.Server("https://horizon-testnet.stellar.org");
+const rpcServer = new StellarSdk.rpc.Server("https://soroban-testnet.stellar.org");
 
 // 1. Create issuing account (should be separate from distribution)
 const issuerKeypair = StellarSdk.Keypair.random();
 const distributorKeypair = StellarSdk.Keypair.random();
 
-// 2. Fund accounts (testnet)
-await fetch(`https://friendbot.stellar.org?addr=${issuerKeypair.publicKey()}`);
-await fetch(`https://friendbot.stellar.org?addr=${distributorKeypair.publicKey()}`);
+// 2. Fund accounts (testnet). fundAddress throws if funding fails.
+await rpcServer.fundAddress(issuerKeypair.publicKey());
+await rpcServer.fundAddress(distributorKeypair.publicKey());
 ```
 
 ### Issue Asset
