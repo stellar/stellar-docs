@@ -138,7 +138,7 @@ Full patterns (three storage types, auth variants, cross-contract calls, events,
 stellar contract build
 
 # Create and fund an identity (testnet)
-stellar keys generate --global alice --network testnet --fund
+stellar keys generate alice --network testnet --fund
 
 # Deploy (constructor args go after the `--`)
 stellar contract deploy \
@@ -474,7 +474,7 @@ Fees are multidimensional (CPU instructions, ledger reads/writes, bytes, events,
 | `cannot find macro println` / `std` errors | Missing `#![no_std]` | Add as first line of `lib.rs`; use SDK types |
 | Calls fail after inactivity, data "missing" | Storage TTL expired → archived | Extend TTLs proactively; restore archived entries |
 | Temporary data vanished | Wrong storage type | Use `persistent()` for data that must survive |
-| `Error: identity "alice" not found` | CLI identity missing | `stellar keys generate --global alice --network testnet --fund` |
+| `Error: identity "alice" not found` | CLI identity missing | `stellar keys generate alice --network testnet --fund` |
 | `invalid argument format` on invoke | Wrong CLI arg syntax | Plain strings for addresses; JSON for complex types |
 | `transaction simulation failed` | Soroban tx not simulated/assembled | Simulate, then `assembleTransaction` before signing |
 | `tx_bad_auth` | Wrong network passphrase or signer | Match passphrase to network; check signing identity |
@@ -590,7 +590,7 @@ let vault_id = env.register(VaultContract, ());
 
 ```bash
 stellar container start local     # or: docker run --rm -it -p 8000:8000 stellar/quickstart:latest --local
-stellar keys generate --global test-account --network local --fund
+stellar keys generate test-account --network local --fund
 stellar contract deploy --wasm target/wasm32-unknown-unknown/release/contract.wasm \
   --source test-account --network local
 ```
@@ -600,7 +600,7 @@ Endpoints: RPC `http://localhost:8000/soroban/rpc`, Horizon `http://localhost:80
 ## Testnet
 
 ```bash
-stellar keys generate --global my-key --network testnet --fund
+stellar keys generate my-key --network testnet --fund
 stellar contract deploy --wasm ... --source my-key --network testnet
 ```
 
