@@ -29,9 +29,83 @@ Since XDR is a binary format and not as widely known as simpler formats like JSO
 
 The XDR data is still included (encoded as a base64 string) inside the JSON in case you need direct access to it.
 
+The examples on this page use the following libraries:
+
+| Language | Library | XDR types live in |
+| --- | --- | --- |
+| JavaScript | [`@stellar/stellar-sdk`](https://github.com/stellar/js-stellar-sdk) (v17+) | the `xdr` namespace export |
+| Rust | [`stellar-xdr`](https://docs.rs/stellar-xdr) (v30+) | the crate root, e.g. `stellar_xdr::ScAddress` |
+| Go | [`go-stellar-sdk`](https://github.com/stellar/go-stellar-sdk) | the `github.com/stellar/go-stellar-sdk/xdr` package |
+| Python | [`stellar-sdk`](https://stellar-sdk.readthedocs.io/en/stable/) (`stellar_sdk`) | the `stellar_sdk.xdr` module |
+
+Every XDR type in each library can be decoded from and encoded to base64. You have to tell the library which type you expect, because the bytes themselves don't say what they are:
+
+<CodeGroup>
+
+```js JavaScript
+import { xdr } from "@stellar/stellar-sdk";
+
+// Decode: every XDR class has a static `fromXdr`. Pass "base64" or "hex" for
+// strings, or pass a Uint8Array of raw bytes with no format argument.
+const scAddr = xdr.ScAddress.fromXdr(
+  "AAAAAAAAAABCPn0F8uyvv+wZKyFaPxvpau242OcCVKvjQT4CB95Wsg==",
+  "base64",
+);
+
+// Encode: `toXdr()` returns a Uint8Array, `toXdr("base64")` returns a string.
+const encoded = scAddr.toXdr("base64");
+```
+
+```rust Rust
+// Cargo.toml: stellar-xdr = { version = "30", features = ["base64"] }
+use stellar_xdr::{Limits, ReadXdr, ScAddress, WriteXdr};
+
+// Decoding and encoding come from the `ReadXdr` and `WriteXdr` traits, which
+// every generated type implements. `Limits` bounds the depth and length of
+// what will be read; use `Limits::none()` only for trusted input.
+let sc_addr = ScAddress::from_xdr_base64(
+    "AAAAAAAAAABCPn0F8uyvv+wZKyFaPxvpau242OcCVKvjQT4CB95Wsg==",
+    Limits::none(),
+)?;
+
+// `to_xdr` produces raw bytes; `to_xdr_base64` produces a string.
+let encoded = sc_addr.to_xdr_base64(Limits::none())?;
+```
+
+```go Go
+import "github.com/stellar/go-stellar-sdk/xdr"
+
+// Decode into a zero value of the type you expect. SafeUnmarshalBase64 also
+// rejects trailing bytes, so you know the whole input was consumed.
+var scAddr xdr.ScAddress
+err := xdr.SafeUnmarshalBase64(
+	"AAAAAAAAAABCPn0F8uyvv+wZKyFaPxvpau242OcCVKvjQT4CB95Wsg==",
+	&scAddr,
+)
+
+// Encode any XDR value back to base64 (or use scAddr.MarshalBinary() for raw bytes).
+encoded, err := xdr.MarshalBase64(scAddr)
+```
+
+```python Python
+from stellar_sdk import xdr
+
+# Every XDR class has `from_xdr` (base64 string) and `from_xdr_bytes` (raw bytes).
+sc_addr = xdr.SCAddress.from_xdr(
+    "AAAAAAAAAABCPn0F8uyvv+wZKyFaPxvpau242OcCVKvjQT4CB95Wsg=="
+)
+
+# ...and matching `to_xdr` / `to_xdr_bytes` methods to encode it again.
+encoded = sc_addr.to_xdr()
+```
+
+</CodeGroup>
+
 ## Digging into XDR structures
 
 Since the XDR format is a fundamental underpinning of the Stellar Network, we often find it necessary to dig into these raw binary data structures for clients to interact with things like transactions and authorization entries. It can be hard to understand because of its structure, but this section will aim to enlighten you on the ways to interact with it in a handful of popular languages. The Protocol's schema is defined in the [`stellar/stellar-xdr`](https://github.com/stellar/stellar-xdr) repository, though that contains far more than what we'll need for our purposes.
+
+Each library generates its types directly from those `.x` files, so the names line up closely across languages. The main differences are in naming conventions: a type such as `SCAddress` is `xdr.ScAddress` in JavaScript, `ScAddress` in Rust, `xdr.ScAddress` in Go, and `xdr.SCAddress` in Python. Fields follow each language's convention too: `contractID` in the `.x` file becomes `contractId` (JavaScript), `contract_id` (Rust and Python), and `ContractId` (Go).
 
 ### XDR's Common Forms {#xdrs-common-forms}
 
@@ -41,32 +115,54 @@ In the Stellar Protocol, XDR takes a handful of different forms that are importa
 
 These are the easiest to understand for anyone familiar with a programming language and includes things like integers, strings, and arrays of bytes. These are fairly straightforward to interact with, though things can get more complicated when you have aliases.
 
-For example, you have the `Uint64` alias in the Stellar Protocol (defined [Stellar-types.x](https://github.com/stellar/stellar-xdr/blob/70180d5e8d9caee9e8645ed8a38c36a8cf403cd9/Stellar-types.x#L14)), defined for readability instead of XDR's native "unsigned hyper" value. You can treat it exactly as you'd expect:
+For example, you have the `Uint64` alias in the Stellar Protocol (defined [Stellar-types.x](https://github.com/stellar/stellar-xdr/blob/70180d5e8d9caee9e8645ed8a38c36a8cf403cd9/Stellar-types.x#L14)), defined for readability instead of XDR's native "unsigned hyper" value. Each library maps it onto the closest native type, so you can mostly treat it exactly as you'd expect:
 
-```typescript
+<CodeGroup>
+
+```js JavaScript
 import { xdr } from "@stellar/stellar-sdk";
 
-const u64 = new xdr.Uint64(12345678);
+// 64-bit integers don't fit in a JavaScript `number`, so `Uint64` values are
+// native `bigint`s. The `xdr.Uint64(...)` helper (called without `new`)
+// converts and range-checks a number, string, or bigint for you.
+let u64 = xdr.Uint64(12345678); // 12345678n
+u64 = xdr.Uint64("1000000000000000"); // 1000000000000000n
+
+// Anywhere a Uint64 is expected, a bigint literal works directly.
+u64 = 1_000_000_000_000_000n;
 ```
 
-Some language variations will let you instantiate it in a number of ways. For example, since 64-bit integers are a little... [wonky](https://stackoverflow.com/a/9643650) in JavaScript, you can also initialize it with a [`BigInt`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt) or even a string type:
+```rust Rust
+use stellar_xdr::Uint64;
 
-```typescript
-import { xdr } from "@stellar/stellar-sdk";
-
-let u64 = new xdr.Uint64("1_000_000_000_000_000");
-u64 = new xdr.Uint64(1_000_000_000_000_000n);
+// `Uint64` is a type alias for `u64`, so it's just a native integer.
+let u64: Uint64 = 12345678;
+let u64: Uint64 = 1_000_000_000_000_000;
 ```
 
-You can see the full set of options to construct a `Uint64` in the definition for `UnsignedHyper` in the TypeScript definition here: [curr.d.ts](https://github.com/stellar/js-stellar-base/blob/master/types/curr.d.ts#L127-L136). In fact, this file should be your primary guide to navigating the XDR if you're using JavaScript.
+```go Go
+import "github.com/stellar/go-stellar-sdk/xdr"
 
-Other languages, such as Python (see `stellar-sdk`'s [uint64.html](https://stellar-sdk.readthedocs.io/en/stable/_modules/stellar_sdk/xdr/uint64.html) documentation), support arbitrarily-sized integers by default, so there are no such variations:
+// `xdr.Uint64` is a named type whose underlying type is `uint64`, so convert
+// to and from native integers with a type conversion.
+u64 := xdr.Uint64(12345678)
+var big xdr.Uint64 = 1_000_000_000_000_000
+native := uint64(big)
+```
 
-```python
+```python Python
 from stellar_sdk import xdr
 
+# Python integers are arbitrarily sized, so there is only one way to build it.
+# Aliases are thin wrapper classes: the native value is on an attribute named
+# after the underlying type.
 u64 = xdr.Uint64(1_000_000_000_000_000)
+print(u64.uint64)  # 1000000000000000
 ```
+
+</CodeGroup>
+
+In JavaScript, the other XDR integer types follow the same pattern: `Int64` and `Uint64` are `bigint`s and `Int32` and `Uint32` are `number`s, while the 128- and 256-bit types (`xdr.Int128`, `xdr.Uint256`, ...) are small classes holding a single `bigint` `.value`. In Python, every alias wraps its value the same way `Uint64` does, which is why you'll often see chains like `account_id.account_id.ed25519.uint256` when unwrapping nested aliases.
 
 As a result, many of the basic primitives can be initialized in the "intuitive" way for your respective language.
 
@@ -74,91 +170,206 @@ As a result, many of the basic primitives can be initialized in the "intuitive" 
 
 This is where things get a little more complicated. A _union type_ is a generic type that switches between different "arms", each of which is a different internal type. When parsing an XDR union type, it's important to determine which arm is being used before you try parsing what's inside.
 
-Let's take an [`SCAddress`](https://github.com/stellar/stellar-xdr/blob/70180d5e8d9caee9e8645ed8a38c36a8cf403cd9/Stellar-contract.x#L185-L191), for example. From the type definition, we can see that it's either an account (i.e. `SC_ADDRESS_TYPE_ACCOUNT`) or the hash of a contract (`SC_ADDRESS_TYPE_CONTRACT`). Right above that definition, you can see that these are constants of the `SCAddressType` enum defined as 0 or 1, respectively.
+Let's take an [`SCAddress`](https://github.com/stellar/stellar-xdr/blob/70180d5e8d9caee9e8645ed8a38c36a8cf403cd9/Stellar-contract.x#L185-L191), for example. From the type definition, we can see that it's either an account (i.e. `SC_ADDRESS_TYPE_ACCOUNT`) or the hash of a contract (`SC_ADDRESS_TYPE_CONTRACT`). Right above that definition, you can see that these are constants of the `SCAddressType` enum defined as 0 or 1, respectively. (Newer protocol versions have added more arms, such as muxed accounts, claimable balances, and liquidity pools, which is a good reminder to always handle the "none of the above" case.)
 
-In general, unions follow a particular pattern: switch on the type and match the appropriate enum value. So when you have one of these unions, you need to figure out which one it is:
+In general, unions follow a particular pattern: switch on the type and match the appropriate enum value. Each library models this differently:
+
+- **JavaScript**: each arm is its own class, and every union value has a string `.type` naming its arm. Switching on `.type` lets TypeScript narrow the value so the arm's field (e.g. `.accountId`) is available.
+- **Rust**: unions are `enum`s with one variant per arm, so you `match` on them. The compiler makes you handle every arm.
+- **Go**: unions are structs with a `Type` discriminant and one pointer field per arm. Switch on `Type`, then use the `Must<Arm>()` accessor (which panics on the wrong arm) or `Get<Arm>()` (which returns an `ok` flag).
+- **Python**: unions are classes with a `.type` discriminant and one attribute per arm; only the attribute for the active arm is set.
+
+So when you have one of these unions, you need to figure out which one it is:
 
 <CodeGroup>
 
-```typescript TypeScript
-import { xdr } from "@stellar/stellar-sdk";
-import Buffer from "buffer";
+```js JavaScript
+import { xdr, StrKey } from "@stellar/stellar-sdk";
 
 // suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
-switch (scAddr.switch()) {
-  case xdr.ScAddressType.scAddressTypeAccount().value:
-    console.log("The account is:", scAddr.accountId());
+switch (scAddr.type) {
+  case "scAddressTypeAccount":
+    // `accountId` is itself a union (PublicKey) with a single `ed25519` arm.
+    // Named byte types such as `Uint256Bytes` unwrap with `.toBytes()`.
+    console.log(
+      "The account is:",
+      StrKey.encodeEd25519PublicKey(scAddr.accountId.ed25519.toBytes()),
+    );
     break;
 
-  case xdr.ScAddressType.scAddressTypeContract().value:
-    console.log("The contract is:", scAddr.contractId());
+  case "scAddressTypeContract":
+    console.log(
+      "The contract is:",
+      StrKey.encodeContract(scAddr.contractId.toBytes()),
+    );
     break;
 
   default:
-    throw new Error(`Unexpected address type: ${scAddr.switch()}`);
+    throw new Error(`Unexpected address type: ${scAddr.type}`);
+}
+```
+
+```rust Rust
+use stellar_xdr::ScAddress;
+
+// suppose `sc_addr` is a `ScAddress` we're parsing
+match &sc_addr {
+    // `AccountId` and `ContractId` implement `Display` as their strkeys.
+    ScAddress::Account(account_id) => println!("The account is: {account_id}"),
+    ScAddress::Contract(contract_id) => println!("The contract is: {contract_id}"),
+    // `match` must be exhaustive, so the remaining arms have to be handled.
+    other => return Err(format!("Unexpected address type: {}", other.name()).into()),
+}
+```
+
+```go Go
+import (
+	"fmt"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/xdr"
+)
+
+// suppose `scAddr` is an xdr.ScAddress we're parsing
+switch scAddr.Type {
+case xdr.ScAddressTypeScAddressTypeAccount:
+	accountID := scAddr.MustAccountId()
+	fmt.Println("The account is:", accountID.Address())
+
+case xdr.ScAddressTypeScAddressTypeContract:
+	contractID := scAddr.MustContractId() // a [32]byte hash
+	fmt.Println("The contract is:", strkey.MustEncode(strkey.VersionByteContract, contractID[:]))
+
+default:
+	return fmt.Errorf("unexpected address type: %s", scAddr.Type)
 }
 ```
 
 ```python Python
-import SCAddressType, SCAddress from stellar_sdk.xdr.sc_address_type
+from stellar_sdk import StrKey, xdr
 
-if scAddr.type == SCAddressType.SC_ADDRESS_TYPE_ACCOUNT:
-    print("The account is:", scAddr.account_id);
-    break
+# suppose `sc_addr` is an instance of `xdr.SCAddress` we're parsing
+if sc_addr.type == xdr.SCAddressType.SC_ADDRESS_TYPE_ACCOUNT:
+    # AccountID -> PublicKey -> Uint256 -> bytes
+    raw = sc_addr.account_id.account_id.ed25519.uint256
+    print("The account is:", StrKey.encode_ed25519_public_key(raw))
 
-elif scAddr.type == SCAddressType.SC_ADDRESS_TYPE_CONTRACT:
-    print("The contract is:", scAddr.contract_id);
-    break
+elif sc_addr.type == xdr.SCAddressType.SC_ADDRESS_TYPE_CONTRACT:
+    # ContractID -> Hash -> bytes
+    raw = sc_addr.contract_id.contract_id.hash
+    print("The contract is:", StrKey.encode_contract(raw))
 
 else:
-    raise Exception(f"Unexpected address type: {scAddr.type}")
+    raise ValueError(f"Unexpected address type: {sc_addr.type}")
 ```
 
 </CodeGroup>
 
-You can see the references for these in the documentation ([Python](https://stellar-sdk.readthedocs.io/en/stable/api.html#scaddress) and [JavaScript](https://github.com/stellar/js-stellar-base/blob/master/types/curr.d.ts#L13881-L13886), respectively).
+You can see the references for these types in each library's documentation: [JavaScript](https://github.com/stellar/js-stellar-sdk/blob/main/docs/migration/xdr-migration.md) (every generated class also carries its `.x` definition as a TSDoc comment, so hovering in your editor shows it), [Rust](https://docs.rs/stellar-xdr/latest/stellar_xdr/enum.ScAddress.html), [Go](https://pkg.go.dev/github.com/stellar/go-stellar-sdk/xdr#ScAddress), and [Python](https://stellar-sdk.readthedocs.io/en/stable/api.html#scaddress).
 
-It's worth noting that you _could_ just use the defined enum constants directly, e.g.
-
-```typescript
-import { xdr } from "@stellar/stellar-sdk";
-import Buffer from "buffer";
-
-// suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
-switch (scAddr.switch().value) {
-  case 0:
-    console.log("The account is:", scAddr.accountId());
-    break;
-
-  case 1:
-    console.log("The contract is:", scAddr.contractId());
-    break;
-
-  default:
-    throw new Error(`Unexpected address type: ${scAddr.switch()}`);
-}
-```
-
-However, this is generally more error-prone and harder to read. You can also refer to them by their _name_ (`.name` in JS and `str(...)` in Python): this is marginally better for readability but worse for performance since you're doing string comparisons. It's very useful for logs, user-facing rendering, or other debugging, though.
-
-Unions appear in _many_ places throughout the XDR and they can be just one arm or a whole _bunch_ of arms. For example, the **s**mart **c**ontract **val**ue `ScVal` has 22 possible values since it's the universal representation for a value inside of a smart contract. You can see all of them being inspected in the JavaScript utility [`scValToNative`](https://stellar.github.io/js-stellar-sdk/js-stellar-base_src_scval.js.html#line279).
-
-Remember, XDR is the lowest level of communication on the Stellar Network. Generally speaking, there are high-level abstractions that should help with these structures. For example, the above parsing routine is exactly the purpose of the [`Address.fromScAddress`](https://stellar.github.io/js-stellar-sdk/Address.html#.fromScAddress) and [`Address.from_xdr_sc_address`](https://stellar-sdk.readthedocs.io/en/stable/api.html#stellar_sdk.address.Address) abstractions in the JavaScript and Python SDKs, respectively. This greatly simplifies your code:
+It's worth noting that you _could_ just use the numeric values of the enum constants directly, e.g.
 
 <CodeGroup>
 
-```typescript TypeScript
+```js JavaScript
+import { xdr } from "@stellar/stellar-sdk";
+
+// suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
+// `.type` is a string, so look up the enum member to get its number.
+switch (xdr.ScAddressType.fromName(scAddr.type).value) {
+  case 0:
+    console.log("The account is:", scAddr.accountId);
+    break;
+
+  case 1:
+    console.log("The contract is:", scAddr.contractId);
+    break;
+
+  default:
+    throw new Error(`Unexpected address type: ${scAddr.type}`);
+}
+```
+
+```rust Rust
+// suppose `sc_addr` is a `ScAddress` we're parsing
+// `discriminant()` returns the `ScAddressType` enum, which casts to its number.
+match sc_addr.discriminant() as i32 {
+    0 => println!("The account is: {sc_addr}"),
+    1 => println!("The contract is: {sc_addr}"),
+    _ => return Err(format!("Unexpected address type: {}", sc_addr.name()).into()),
+}
+```
+
+```go Go
+// suppose `scAddr` is an xdr.ScAddress we're parsing
+// ScAddressType is an int32 underneath, so untyped constants compare directly.
+switch scAddr.Type {
+case 0:
+	fmt.Println("The account is:", scAddr.MustAccountId().Address())
+case 1:
+	fmt.Println("The contract is:", scAddr.MustContractId())
+default:
+	return fmt.Errorf("unexpected address type: %s", scAddr.Type)
+}
+```
+
+```python Python
+# suppose `sc_addr` is an instance of `xdr.SCAddress` we're parsing
+# XDR enums are `IntEnum`s, so they compare equal to their numeric value.
+if sc_addr.type == 0:
+    print("The account is:", sc_addr.account_id)
+elif sc_addr.type == 1:
+    print("The contract is:", sc_addr.contract_id)
+else:
+    raise ValueError(f"Unexpected address type: {sc_addr.type}")
+```
+
+</CodeGroup>
+
+However, this is generally more error-prone and harder to read. You can also refer to arms by their _name_: `.type` is already a string in JavaScript, and you can get one with `.name()` in Rust, `.Type.String()` in Go, and `.type.name` in Python. Names are very useful for logs, user-facing rendering, or other debugging.
+
+Unions appear in _many_ places throughout the XDR and they can be just one arm or a whole _bunch_ of arms. For example, the **s**mart **c**ontract **val**ue `ScVal` has 22 possible values since it's the universal representation for a value inside of a smart contract. You can see all of them being inspected in the JavaScript utility [`scValToNative`](https://github.com/stellar/js-stellar-sdk/blob/main/src/base/scval.ts).
+
+Remember, XDR is the lowest level of communication on the Stellar Network. Generally speaking, there are high-level abstractions that should help with these structures. For example, the above parsing routine is exactly what turning an `ScAddress` into its string ("strkey") form does, and every library has a helper for it. This greatly simplifies your code:
+
+<CodeGroup>
+
+```js JavaScript
 import { Address } from "@stellar/stellar-sdk";
 
 // suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
 const address = Address.fromScAddress(scAddr);
+console.log(address.toString()); // "G..." or "C..."
+
+// ...and back again
+const roundTrip = Address.fromString(address.toString()).toScAddress();
+```
+
+```rust Rust
+use stellar_xdr::ScAddress;
+
+// suppose `sc_addr` is a `ScAddress` we're parsing
+// `ScAddress` implements `Display` and `FromStr` using strkeys.
+let address = sc_addr.to_string(); // "G..." or "C..."
+
+// ...and back again
+let round_trip: ScAddress = address.parse()?;
+```
+
+```go Go
+// suppose `scAddr` is an xdr.ScAddress we're parsing
+address, err := scAddr.String() // "G..." or "C..."
 ```
 
 ```python Python
-import Address from stellar_sdk;
+from stellar_sdk import Address
 
-# suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
-addr = Address.from_xdr_sc_address(scAddr)
+# suppose `sc_addr` is an instance of `xdr.SCAddress` we're parsing
+address = Address.from_xdr_sc_address(sc_addr)
+print(address.address)  # "G..." or "C..."
+
+# ...and back again
+round_trip = Address(address.address).to_xdr_sc_address()
 ```
 
 </CodeGroup>
@@ -175,43 +386,118 @@ Let's take, for example, the [`ContractEvent`](https://github.com/stellar/stella
 
 It's basically an empty slot into which you can add variations in the future. The [`SorobanTransactionMeta` structure](https://github.com/stellar/stellar-xdr/blob/c1a58e2f81a4d1b02adc6db9914e6f51960e1ce3/Stellar-ledger.x#L410) is a great example of this in action: When the structure was initially added to the protocol, it just contained the details of an invocation (events and a return value). Later, we needed more details about the invocation in the resulting metadata, so `SorobanTransactionMetaExt` was injected into the `ExtensionPoint` with a [`V1` variant](https://github.com/stellar/stellar-xdr/blob/c1a58e2f81a4d1b02adc6db9914e6f51960e1ce3/Stellar-ledger.x#L368C8-L368C35) containing metadata about fees charged as a result of the invocation.
 
-- The `contractID` should be self-explanatory: it's the hash of the contract ID that caused this event. It's a pointer, though, because not all events are related to a specific contract. Some may come from the system, diagnostics, etc.
+- The `contractID` should be self-explanatory: it's the hash of the contract ID that caused this event. It's a pointer, though, because not all events are related to a specific contract. Some may come from the system, diagnostics, etc. Each library represents an optional field in its own way: `null` in JavaScript, `Option` in Rust, a `nil` pointer in Go, and `None` in Python.
 
 It should not be surprising that the field is stored as a `Hash`: even though at the ecosystem layer we refer to contracts by their "strkey" or string representation (in the form `C...`), these are actually "friendlier" representations of a raw SHA-256 hash. This is common at the protocol layer: the simplest, most compact representation will always be used. There are generally SDK tools to make translating these into more user-friendly types (as demonstrated in the example below).
 
 - The `ContractType` is essentially a way to differentiate which of the fields in the structure you should expect to be present and isn't worth elaborating on.
 
-- Finally, we have the curious `v` union field.
+- Finally, we have the curious `body` union field, which switches on an integer `v`.
 
-You will often see unions in structures and vice-versa. If you have a handle on how each of these is traversed individually, you can handle them interleaved amongst each other. As a demonstration of how this is done with an SDK, even catered specifically to this structure, we can take a look at the source of the [`humanizeEvents` helper method](https://stellar.github.io/js-stellar-sdk/global.html#humanizeEvents) in the JavaScript SDK. Specifically, we'll look at the details of the [`extractEvent` subroutine](https://stellar.github.io/js-stellar-sdk/js-stellar-base_src_events.js.html), replicated here for convenience:
+You will often see unions in structures and vice-versa. If you have a handle on how each of these is traversed individually, you can handle them interleaved amongst each other. As a demonstration of how this is done with an SDK, even catered specifically to this structure, we can take a look at the source of the [`humanizeEvents` helper method](https://github.com/stellar/js-stellar-sdk/blob/main/src/base/events.ts) in the JavaScript SDK. Its `extractEvent` subroutine is replicated below for convenience, alongside the equivalent in the other languages:
 
-```js
+<CodeGroup>
+
+```js JavaScript
+import { StrKey, scValToNative } from "@stellar/stellar-sdk";
+
+// `event` is an `xdr.ContractEvent`
 function extractEvent(event) {
+  const contractId = event.contractId;
+  const body = event.body.value;
+
   return {
-    ...(typeof event.contractId === "function" &&
-      event.contractId() != null && {
-        contractId: StrKey.encodeContract(event.contractId()),
-      }),
-    type: event.type().name,
-    topics: event
-      .body()
-      .value()
-      .topics()
-      .map((t) => scValToNative(t)),
-    data: scValToNative(event.body().value().data()),
+    ...(contractId != null && {
+      contractId: StrKey.encodeContract(contractId.toBytes()),
+    }),
+    type: event.type.name,
+    topics: body.topics.map((t) => scValToNative(t)),
+    data: scValToNative(body.data),
   };
 }
 ```
 
+```rust Rust
+use stellar_xdr::{ContractEvent, ContractEventBody, ScVal};
+
+struct Event<'a> {
+    contract_id: Option<String>,
+    type_: &'static str,
+    topics: &'a [ScVal],
+    data: &'a ScVal,
+}
+
+fn extract_event(event: &ContractEvent) -> Event<'_> {
+    // `ContractEventBody` has a single variant, so this pattern is irrefutable.
+    let ContractEventBody::V0(body) = &event.body;
+
+    Event {
+        contract_id: event.contract_id.as_ref().map(|id| id.to_string()),
+        // `type` is a Rust keyword, so the field is named `type_`.
+        type_: event.type_.name(),
+        topics: &body.topics,
+        // Convert to native types with `TryFrom`, e.g. `i128::try_from(data.clone())`.
+        data: &body.data,
+    }
+}
+```
+
+```go Go
+import (
+	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/xdr"
+)
+
+type Event struct {
+	ContractID string
+	Type       string
+	Topics     []string
+	Data       string
+}
+
+func extractEvent(event xdr.ContractEvent) Event {
+	var out Event
+	if event.ContractId != nil {
+		out.ContractID = strkey.MustEncode(strkey.VersionByteContract, event.ContractId[:])
+	}
+	out.Type = event.Type.String()
+
+	body := event.Body.MustV0()
+	for _, t := range body.Topics {
+		// ScVal.String() renders a readable form; use t.GetSym(), t.GetI128(),
+		// etc. to extract a specific native value.
+		out.Topics = append(out.Topics, t.String())
+	}
+	out.Data = body.Data.String()
+	return out
+}
+```
+
+```python Python
+from stellar_sdk import StrKey, scval, xdr
+
+def extract_event(event: xdr.ContractEvent) -> dict:
+    out = {}
+    if event.contract_id is not None:
+        out["contract_id"] = StrKey.encode_contract(event.contract_id.contract_id.hash)
+    body = event.body.v0
+    out["type"] = event.type.name
+    out["topics"] = [scval.to_native(t) for t in body.topics]
+    out["data"] = scval.to_native(body.data)
+    return out
+```
+
+</CodeGroup>
+
 In this short and sweet example we can see tons of the nuances we've discussed in this guide at work:
 
-- By differentiating on whether or not the `contractId` returns a value or not (it's a pointer, remember?), we decide whether or not we want to turn the raw hash into an ecosystem-compatible contract ID.
-- We access the `.name` field of the event type, which turns it into a human-readable string rather than an opaque structure, just like we discussed in [Unions](#unions), earlier.
-- We inspect _deeply_ into the `body` member to extract the `topics` and `data` fields separately, converting each of those opaque `ScVal`ues into JavaScript-friendly equivalents.
+- By differentiating on whether or not the `contractId` has a value (it's a pointer, remember?), we decide whether or not we want to turn the raw hash into an ecosystem-compatible contract ID.
+- We take the _name_ of the event type, which turns it into a human-readable string rather than an opaque enum value, just like we discussed in [Unions](#unions), earlier.
+- We inspect _deeply_ into the `body` member to extract the `topics` and `data` fields separately, converting each of those opaque `ScVal`ues into language-friendly equivalents where the library offers a helper for it.
 
-In the last part, we "abuse" the fact that there is only one variation of the `body` union we discussed: there is only the initial version (an arm with `v == 0`), so we can use the `.value()` accessor to give us the underlying value directly rather than going through the rigamarole of differentiating the different cases. Calling `.v0()` would have been equivalent, but the benefit here is that if a `v == 1` variation is introduced that _also_ has a `topics` array and a `data` field (i.e. it adds additional fields rather than changing the v0 structure), this code will continue to work!
+In the last part, we "abuse" the fact that there is only one variation of the `body` union we discussed: there is only the initial version (an arm with `v == 0`), so we can reach the arm directly rather than going through the rigamarole of differentiating the different cases. The JavaScript version is the most forgiving here: every union value exposes its arm's payload as `.value`, so if a `v == 1` variation is introduced that _also_ has a `topics` array and a `data` field (i.e. it adds additional fields rather than changing the v0 structure), the code will continue to work! The other languages name the arm explicitly (`V0`, `MustV0()`, `.v0`), so they will fail loudly instead (at compile time in Rust, and at run time in Go and Python) and need updating when a new arm appears.
 
-There are many cases in which the different union arms share structure, and `.value()` lets you take advantage of that.
+There are many cases in which the different union arms share structure, and in JavaScript `.value` lets you take advantage of that.
 
 ## Record Marking / Frames in Streams {#record-marking--frames-in-streams}
 
