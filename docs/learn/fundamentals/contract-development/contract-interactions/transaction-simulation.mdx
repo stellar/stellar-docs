@@ -62,38 +62,37 @@ In this variant, we will leverage the "source account authorization" variant: th
 ```javascript JavaScript
 import {
   Asset,
+  BASE_FEE,
   Keypair,
   Networks,
   Operation,
-  authorizeEntry,
   TransactionBuilder,
-  xdr,
+  nativeToScVal,
 } from "@stellar/stellar-sdk";
-import { Server, assembleTransaction } from "@stellar/stellar-sdk/rpc";
+import { Server } from "@stellar/stellar-sdk/rpc";
 
-const s = Server("https://soroban-testnet.stellar.org");
+const s = new Server("https://soroban-testnet.stellar.org");
 
 // Pretend is is a real, funded account.
 const signer = Keypair.random();
 const xlmContract = Asset.native().contractId(Networks.TESTNET);
 
 async function main() {
-  const tx = new TransactionBuilder(await s.loadAccount(signer.publicKey()), {
+  const tx = new TransactionBuilder(await s.getAccount(signer.publicKey()), {
     networkPassphrase: Networks.TESTNET,
     fee: BASE_FEE,
   })
     .addOperation(
-      Operation.invokeContractFunction(
-        xlmContract,
-        [
-          ["balance", "symbol"],
-          [signer.publicKey(), "address"],
-        ].map((val, type) => nativeToScVal(val, { type })),
-      ),
+      Operation.invokeContractFunction({
+        contract: xlmContract,
+        function: "balance",
+        args: [nativeToScVal(signer.publicKey(), { type: "address" })],
+      }),
     )
+    .setTimeout(30)
     .build();
 
-  const preppedTx = s.prepareTransaction(tx);
+  const preppedTx = await s.prepareTransaction(tx);
   preppedTx.sign(signer);
 
   const sendTx = await s.sendTransaction(preppedTx);
@@ -115,17 +114,19 @@ In this variant, we'll extend the required signatures to more than one party, so
 
 ```typescript TypeScript
 import {
+  Address,
   Asset,
+  BASE_FEE,
   Keypair,
   Networks,
   Operation,
   authorizeEntry,
+  nativeToScVal,
   TransactionBuilder,
-  xdr,
 } from "@stellar/stellar-sdk";
-import { Server, assembleTransaction } from "@stellar/stellar-sdk/rpc";
+import { Api, Server, assembleTransaction } from "@stellar/stellar-sdk/rpc";
 
-const s = Server("https://soroban-testnet.stellar.org");
+const s = new Server("https://soroban-testnet.stellar.org");
 
 // Pretend these are real, funded accounts.
 const signers = [Keypair.random(), Keypair.random()];
@@ -136,51 +137,66 @@ async function main() {
   // occurs *from* the second keypair, which means the second keypair will
   // need to sign for an authorization entry to approve the transfer.
   const tx = new TransactionBuilder(
-    await s.loadAccount(signers[0].publicKey()),
+    await s.getAccount(signers[0].publicKey()),
     {
       networkPassphrase: Networks.TESTNET,
       fee: BASE_FEE,
     },
   )
     .addOperation(
-      Operation.invokeContractFunction(
-        xlmContract,
-        [
-          ["transfer", "symbol"],
-          [signers[1].publicKey(), "address"], // from
-          [signers[0].publicKey(), "address"], // to
-          [1000, "i128"], // amount
-        ].map((val, type) => nativeToScVal(val, { type })),
-      ),
+      Operation.invokeContractFunction({
+        contract: xlmContract,
+        function: "transfer",
+        args: [
+          nativeToScVal(signers[1].publicKey(), { type: "address" }), // from
+          nativeToScVal(signers[0].publicKey(), { type: "address" }), // to
+          nativeToScVal(1000, { type: "i128" }), // amount
+        ],
+      }),
     )
+    .setTimeout(30)
     .build();
 
-  const simResult = s.simulateTransaction(tx);
+  const simResult = await s.simulateTransaction(tx);
+  if (!Api.isSimulationSuccess(simResult) || !simResult.result) {
+    throw simResult;
+  }
 
   // For every auth entry that needs signing, sign it with the correct keypair.
   //
   // Inject the auths back into the simulation result so they
   // get assembled into our transaction.
-  simResult.result.auth = simResult.result.auth.map((entry) =>
-    authorizeEntry(
-      entry,
-      // Ignore source account entries, which is handled as a no-op.
-      entry.credentials().switch() !==
-        xdr.SorobanCredentialsType.sorobanCredentialsSourceAccount()
-        ? signers.find(
-            // Find the keypair that matches the entry's address.
-            (signer) =>
-              Address.fromScAddress(
-                entry.credentials().address().address(),
-              ).toString() === signer.publicKey(),
-          )
-        : null,
-      response.latestLedger + 12, // signature is valid for ~1m
-      Networks.TESTNET,
-    ),
+  simResult.result.auth = await Promise.all(
+    simResult.result.auth.map((entry) => {
+      const { credentials } = entry;
+      // Ignore source account entries, which the transaction signature covers.
+      // Simulation returns address entries as V2 (or legacy) credentials.
+      if (
+        credentials.type !== "sorobanCredentialsAddressV2" &&
+        credentials.type !== "sorobanCredentialsAddress"
+      ) {
+        return entry;
+      }
+
+      // Find the keypair that matches the entry's address.
+      const address = Address.fromScAddress(
+        credentials.value.address,
+      ).toString();
+      const signer = signers.find((kp) => kp.publicKey() === address);
+      if (!signer) {
+        throw new Error(`No keypair for ${address}`);
+      }
+
+      return authorizeEntry(
+        entry,
+        signer,
+        simResult.latestLedger + 12, // signature is valid for ~1m
+        Networks.TESTNET,
+      );
+    }),
   );
 
-  const preppedTx = assembleTransaction(tx, simResult);
+  const preppedTx = assembleTransaction(tx, simResult).build();
   preppedTx.sign(signers[0]);
 
   const sendTx = await s.sendTransaction(preppedTx);
