@@ -29,7 +29,7 @@ current `stellar-rpc` release — see [Stellar RPC OpenRPC spec](#stellar-rpc-op
   `@stellar` org — verify it's the real x402 package, not a lookalike.
 - Stellar RPC OpenRPC spec artifacts (under `openrpc/`): the per-method sources
   in `openrpc/src/stellar-rpc/`, the hardcoded `info.version` in
-  `openrpc/scripts/build.mjs`, and the generated `static/stellar-rpc.openrpc.json`.
+  `openrpc/scripts/build.mjs`, and the generated `stellar-rpc.openrpc.json` (repo root).
   The `stellar/stellar-rpc` state-file entry (already tracked, see the Go-client
   gotcha) gates this check too: a new `stellar-rpc` release triggers both the
   Go-client relocation check and the spec check. See
@@ -164,11 +164,15 @@ Artifacts:
 - Sources: `openrpc/src/stellar-rpc/` — `methods/`, `schemas/`, `examples/`,
   `examplePairingObjects/`, `contentDescriptors/`.
 - The hardcoded `info.version` string in `openrpc/scripts/build.mjs`.
-- Generated outputs (never hand-edit): `static/stellar-rpc.openrpc.json` is the
+- Generated outputs (never hand-edit): `stellar-rpc.openrpc.json` (repo root) is the
   committed artifact; `openrpc/stellar-rpc.openrpc.json` and
   `openrpc/stellar-rpc.refs-openrpc.json` are gitignored build intermediates.
 - Regenerate with `pnpm rpcspec:build`; build **and** validate with
   `pnpm rpcspec:validate`. Always finish on a clean validate.
+- The method pages in `docs/data/apis/rpc/api-reference/methods/` are generated
+  MDX built from the spec (the part between the `rpc-method` comments). Never
+  hand-edit that part. If a spec change alters a method's params, results, or
+  examples, say in the report that the affected pages need regenerating.
 
 Steps when in scope:
 
@@ -211,7 +215,7 @@ Steps when in scope:
 4. **Regenerate and commit together.** Run `pnpm rpcspec:build`, confirm
    `pnpm rpcspec:validate` passes (it validates every example against its
    schema), and commit the edited sources **and** the regenerated
-   `static/stellar-rpc.openrpc.json` on the same branch
+   `stellar-rpc.openrpc.json` (repo root) on the same branch
    (`chore/openrpc-<version>`, or fold into the run's branch). Do NOT push —
    same review-then-push rule as the SDK branches.
 
