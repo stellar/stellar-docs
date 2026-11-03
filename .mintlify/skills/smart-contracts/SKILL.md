@@ -134,7 +134,7 @@ Full patterns (three storage types, auth variants, cross-contract calls, events,
 ## Build, deploy, invoke
 
 ```bash
-# Build optimized WASM → target/wasm32-unknown-unknown/release/*.wasm
+# Build optimized WASM → target/wasm32v1-none/release/*.wasm
 stellar contract build
 
 # Create and fund an identity (testnet)
@@ -142,7 +142,7 @@ stellar keys generate alice --network testnet --fund
 
 # Deploy (constructor args go after the `--`)
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/my_contract.wasm \
+  --wasm target/wasm32v1-none/release/my_contract.wasm \
   --source alice \
   --network testnet \
   -- \
@@ -323,7 +323,7 @@ Import another contract's WASM to get a typed client:
 ```rust
 mod token_contract {
     soroban_sdk::contractimport!(
-        file = "../token/target/wasm32-unknown-unknown/release/token.wasm"
+        file = "../token/target/wasm32v1-none/release/token.wasm"
     );
 }
 
@@ -449,9 +449,7 @@ Worked examples: [soroban-examples](https://github.com/stellar/soroban-examples)
 The 64KB limit is real and the release profile in [SKILL.md](#project-setup) is mandatory. If you still exceed it:
 
 ```bash
-ls -la target/wasm32-unknown-unknown/release/*.wasm   # check size
-cargo install cargo-bloat
-cargo bloat --release --target wasm32-unknown-unknown # find heavy deps
+ls -la target/wasm32v1-none/release/*.wasm   # check size
 ```
 
 Then: split the contract, drop heavy dependencies, prefer `symbol_short!`, avoid large static data.
@@ -591,7 +589,7 @@ let vault_id = env.register(VaultContract, ());
 ```bash
 stellar container start local     # or: docker run --rm -it -p 8000:8000 stellar/quickstart:latest --local
 stellar keys generate test-account --network local --fund
-stellar contract deploy --wasm target/wasm32-unknown-unknown/release/contract.wasm \
+stellar contract deploy --wasm target/wasm32v1-none/release/contract.wasm \
   --source test-account --network local
 ```
 
@@ -711,12 +709,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: rustup target add wasm32-unknown-unknown
+      - run: rustup target add wasm32v1-none
+      - uses: stellar/stellar-cli@v28.1.0
+      - run: stellar contract build
       - run: cargo test
-      - run: cargo build --release --target wasm32-unknown-unknown
 ```
 
-For integration jobs, run `stellar/quickstart` as a service container and deploy with the CLI (`cargo install stellar-cli --locked`).
+Build with `stellar contract build`, not `cargo build`: soroban-sdk 28+ fails a plain `cargo build` for a wasm target. For integration jobs, run `stellar/quickstart` as a service container and deploy with the same CLI.
 
 ## Checklist
 

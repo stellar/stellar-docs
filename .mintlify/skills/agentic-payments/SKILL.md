@@ -249,13 +249,15 @@ Drop this in your project and run once. It generates keys, friendbots, and adds 
 // setup.js
 import fs from "fs/promises";
 import {
-  Keypair, Horizon, Networks, TransactionBuilder, Operation, Asset, BASE_FEE,
+  Keypair, Horizon, Networks, TransactionBuilder, Operation, Asset, BASE_FEE, rpc,
 } from "@stellar/stellar-sdk";
 
 const USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const horizon = new Horizon.Server("https://horizon-testnet.stellar.org");
+const rpcServer = new rpc.Server("https://soroban-testnet.stellar.org");
 
-const friendbot = (addr) => fetch(`https://friendbot.stellar.org?addr=${addr}`);
+// fundAddress throws if Friendbot does not fund the account
+const friendbot = (addr) => rpcServer.fundAddress(addr);
 
 async function addTrustline(kp) {
   const acc = await horizon.loadAccount(kp.publicKey());
