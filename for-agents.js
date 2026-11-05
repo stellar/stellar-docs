@@ -5,7 +5,7 @@
   if (window.__forAgentsPanelLoaded) return;
   window.__forAgentsPanelLoaded = true;
 
-  var RAVEN_MCP_URL = "https://raven.stellar.buzz/mcp";
+  var RAVEN_MCP_URL = "https://raven.stellar.org/mcp";
   var DOCS_MCP_URL = "https://developers.stellar.org/mcp";
   var SKILL_REPO_URL = "https://github.com/stellar/stellar-dev-skill";
 
@@ -89,7 +89,7 @@
       description: "Connect your AI agent to Stellar data and tooling.",
       guide: { label: "Full guide", href: "/docs/build/building-with-ai" },
       links: [
-        { label: "Try in chat", href: "https://raven.stellar.buzz/playground" },
+        { label: "Try in chat", href: "https://raven.stellar.org/playground" },
         { label: "View source", href: "https://github.com/stellar-experimental/stellar-raven" }
       ]
     },
