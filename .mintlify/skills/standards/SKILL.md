@@ -3,7 +3,7 @@ name: standards
 description: Stellar standards, ecosystem, and reference. Covers SEPs (Stellar Ecosystem Proposals), CAPs (Core Advancement Proposals), and a quick map for picking the right standard for wallets, anchors, payments, deposits/withdrawals, federation, deep links, and KYC. Also bundles ecosystem references (DeFi protocols, dev tools, wallets, infra, community projects), curated documentation links, and MCP servers (live tools such as Raven). Use when you need to know which SEP applies, or want a starting point for ecosystem integrations, official docs, or live MCP tooling.
 user-invocable: true
 argument-hint: "[standards or ecosystem lookup]"
-source: https://github.com/stellar/stellar-dev-skill/tree/6fe91cc072f7e9b7480c514ef130d0cc2d169323/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/6771a3fde615d9d86300934fea57e6d411be3c5e/skills
 ---
 
 # Standards, Ecosystem, and Resources
@@ -450,6 +450,13 @@ Remote Model Context Protocol (MCP) server for AI agents. Searches Stellar docs 
 - **GitHub**: https://github.com/kalepail/stellar-raven
 - **Connect (Claude Code)**: `claude mcp add --transport http stellar-raven "https://raven.stellar.buzz/mcp"`
 - **Tools**: `search`, `execute`
+
+#### Stellar Docs MCP
+Official MCP server for the Stellar docs site. Searches the docs, reads full pages and OpenAPI specs, and serves these skills as MCP resources. No sign-in. Use it for docs-only answers. Use Raven when you also need live ecosystem data.
+- **Server**: https://developers.stellar.org/mcp
+- **Docs**: https://developers.stellar.org/docs/build/building-with-ai#stellar-docs-mcp-server
+- **Connect (Claude Code)**: `claude mcp add --transport http --scope user stellar-docs "https://developers.stellar.org/mcp"`
+- **Tools**: `search_stellar_developer_docs`, `query_docs_filesystem_stellar_developer_docs` (read pages with `cat`, `rg`, `tree`), `submit_feedback`
 
 ## Oracles
 
