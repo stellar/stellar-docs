@@ -3,8 +3,8 @@ name: dapp
 description: Stellar dApp / frontend development. Covers the JavaScript stellar-sdk (browser + Node.js), Varial wallet, Stellar Wallets Kit (multi-wallet), Wallet Standard, smart accounts with passkeys, transaction building / signing / submission, smart contract invocation from the client, simulation, and error handling. Use when building a React/Next.js/Node.js app that talks to Stellar — classic operations or smart contracts. Blux is also an option.
 user-invocable: true
 argument-hint: "[dapp task]"
+source: https://github.com/stellar/stellar-dev-skill/tree/6fe91cc072f7e9b7480c514ef130d0cc2d169323/skills
 ---
-<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/6fe91cc072f7e9b7480c514ef130d0cc2d169323/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
 
 # Stellar dApp / Frontend
 
