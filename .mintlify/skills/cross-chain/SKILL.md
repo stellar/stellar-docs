@@ -4,7 +4,7 @@ description: Cross-chain interoperability for Stellar. Entry point with a rail-s
 user-invocable: true
 argument-hint: "[cross-chain task]"
 ---
-<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/e8c6c37aa565a1cba21a4b2aff58bee7f2fd1350/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
+<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/6fe91cc072f7e9b7480c514ef130d0cc2d169323/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
 
 # Cross-Chain on Stellar
 
@@ -33,7 +33,7 @@ Rules of thumb: if the asset is USDC and both ends are CCTP chains, CCTP is the 
 
 - Trustlines, SAC deployment, asset anatomy → `/.well-known/agent-skills/assets/skill.md`
 - Writing the Stellar smart contracts that send/receive messages → `/.well-known/agent-skills/smart-contracts/skill.md`
-- Frontend transaction building, Freighter signing, RPC submission → `/.well-known/agent-skills/dapp/skill.md`
+- Frontend transaction building, Varial signing, RPC submission → `/.well-known/agent-skills/dapp/skill.md`
 - Watching for the destination-side mint or contract events → `/.well-known/agent-skills/data/skill.md`
 - Paying AI agents (x402/MPP) rather than bridging → `/.well-known/agent-skills/agentic-payments/skill.md`
 
@@ -279,7 +279,7 @@ Worth studying in the source:
 | Chain/domain/address registry | `src/lib/config.ts` |
 | EVM-side UX ladder: 2-tx approve, 1-tx EIP-2612 permit wrapper, 1-click EIP-5792 `wallet_sendCalls` | `src/lib/evm/cctp.ts`, `contracts/evm/cctp-wrapper/` |
 
-To run it: `pnpm install && pnpm run dev`, Freighter on Stellar Testnet + any injected EVM wallet, testnet USDC from [faucet.circle.com](https://faucet.circle.com), testnet XLM from [Stellar Lab](https://lab.stellar.org/account/fund). It defaults to Arc (Circle's L1) because attestation takes seconds there and gas is paid in USDC — the fastest feedback loop for learning the protocol.
+To run it: `pnpm install && pnpm run dev`, Varial on Stellar Testnet + any injected EVM wallet, testnet USDC from [faucet.circle.com](https://faucet.circle.com), testnet XLM from [Stellar Lab](https://lab.stellar.org/account/fund). It defaults to Arc (Circle's L1) because attestation takes seconds there and gas is paid in USDC — the fastest feedback loop for learning the protocol.
 
 ## Limitations and status notes
 

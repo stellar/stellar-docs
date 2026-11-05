@@ -4,7 +4,7 @@ description: Agentic and machine-to-machine payments on Stellar. Covers x402 (HT
 user-invocable: true
 argument-hint: "[payment task]"
 ---
-<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/e8c6c37aa565a1cba21a4b2aff58bee7f2fd1350/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
+<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/6fe91cc072f7e9b7480c514ef130d0cc2d169323/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
 
 # Agentic Payments: x402 + MPP
 
@@ -434,7 +434,7 @@ console.log(await res.json());
 - `STELLAR_NETWORK` — CAIP-2 network ID; defaults to `stellar:testnet`. Must match the server's network.
 - `STELLAR_SECRET_KEY` — your S... secret key (needs USDC trustline + balance)
 
-**Browser frontends:** this client uses Node `fetch` and `createEd25519Signer`, both of which run in Node. A vanilla browser cannot sign contract auth entries through a typical wallet extension without additional glue. For a browser payer, run the x402 client server-side and expose a thin proxy endpoint to the page, or wire up Wallets-Kit / Freighter with custom auth-entry signing.
+**Browser frontends:** this client uses Node `fetch` and `createEd25519Signer`, both of which run in Node. A vanilla browser cannot sign contract auth entries through a typical wallet extension without additional glue. For a browser payer, run the x402 client server-side and expose a thin proxy endpoint to the page, or wire up Wallets-Kit / Varial with custom auth-entry signing.
 
 ## Testnet runbook
 
@@ -465,13 +465,15 @@ Drop this in your project and run once. It generates keys, friendbots, and adds 
 // setup.js
 import fs from "fs/promises";
 import {
-  Keypair, Horizon, Networks, TransactionBuilder, Operation, Asset, BASE_FEE,
+  Keypair, Horizon, Networks, TransactionBuilder, Operation, Asset, BASE_FEE, rpc,
 } from "@stellar/stellar-sdk";
 
 const USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const horizon = new Horizon.Server("https://horizon-testnet.stellar.org");
+const rpcServer = new rpc.Server("https://soroban-testnet.stellar.org");
 
-const friendbot = (addr) => fetch(`https://friendbot.stellar.org?addr=${addr}`);
+// fundAddress throws if Friendbot does not fund the account
+const friendbot = (addr) => rpcServer.fundAddress(addr);
 
 async function addTrustline(kp) {
   const acc = await horizon.loadAccount(kp.publicKey());
@@ -568,7 +570,7 @@ The checklist above assumes OZ Channels: it is the mainnet facilitator Stellar's
 
 **Trying to sign auth entries from a browser**
 - Symptom: bundling errors, or a browser wallet that has no API to sign contract auth entries
-- Fix: run the x402 client server-side (e.g. an Express route the browser calls), or use Wallets-Kit / Freighter with custom auth-entry signing. `@x402/fetch` + `createEd25519Signer` target Node and assume a raw secret key.
+- Fix: run the x402 client server-side (e.g. an Express route the browser calls), or use Wallets-Kit / Varial with custom auth-entry signing. `@x402/fetch` + `createEd25519Signer` target Node and assume a raw secret key.
 
 **Passing a `Keypair` (or a network passphrase) to `createEd25519Signer`**
 - Symptom: `TypeError: encoded argument must be of type String`, or `Error: Unknown Stellar network: Test SDF Network ; September 2015`

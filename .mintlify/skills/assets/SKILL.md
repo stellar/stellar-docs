@@ -4,7 +4,7 @@ description: Stellar Assets (classic) + trustlines + Stellar Asset Contract (SAC
 user-invocable: true
 argument-hint: "[asset task]"
 ---
-<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/e8c6c37aa565a1cba21a4b2aff58bee7f2fd1350/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
+<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/6fe91cc072f7e9b7480c514ef130d0cc2d169323/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
 
 # Stellar Assets, Trustlines, and SAC
 
@@ -72,14 +72,15 @@ const usdc = new StellarSdk.Asset(
 import * as StellarSdk from "@stellar/stellar-sdk";
 
 const server = new StellarSdk.Horizon.Server("https://horizon-testnet.stellar.org");
+const rpcServer = new StellarSdk.rpc.Server("https://soroban-testnet.stellar.org");
 
 // 1. Create issuing account (should be separate from distribution)
 const issuerKeypair = StellarSdk.Keypair.random();
 const distributorKeypair = StellarSdk.Keypair.random();
 
-// 2. Fund accounts (testnet)
-await fetch(`https://friendbot.stellar.org?addr=${issuerKeypair.publicKey()}`);
-await fetch(`https://friendbot.stellar.org?addr=${distributorKeypair.publicKey()}`);
+// 2. Fund accounts (testnet). fundAddress throws if funding fails.
+await rpcServer.fundAddress(issuerKeypair.publicKey());
+await rpcServer.fundAddress(distributorKeypair.publicKey());
 ```
 
 ### Issue Asset
@@ -129,7 +130,7 @@ await server.submitTransaction(issueTx);
 
 ### Lock Issuing Account
 
-For fixed-supply tokens, lock the issuer:
+For fixed-supply tokens, lock the issuer. Master weight 0 disables only the master key, so first remove any other signers (or confirm their combined weight can never meet the account's thresholds):
 
 ```typescript
 const lockTx = new StellarSdk.TransactionBuilder(issuerAccount, {
@@ -146,7 +147,7 @@ const lockTx = new StellarSdk.TransactionBuilder(issuerAccount, {
 
 lockTx.sign(issuerKeypair);
 await server.submitTransaction(lockTx);
-// Issuer can never issue more tokens
+// With no other signers, the issuer can never issue more tokens
 ```
 
 ## Asset Flags

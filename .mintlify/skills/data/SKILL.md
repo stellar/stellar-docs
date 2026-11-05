@@ -4,7 +4,7 @@ description: Querying Stellar chain data via Stellar RPC (preferred) and Horizon
 user-invocable: true
 argument-hint: "[data task]"
 ---
-<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/e8c6c37aa565a1cba21a4b2aff58bee7f2fd1350/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
+<!-- Generated from https://github.com/stellar/stellar-dev-skill/tree/6fe91cc072f7e9b7480c514ef130d0cc2d169323/skills by the skills-sync lane of stellar/github-triage-bot. Do not edit here: change the skill upstream. -->
 
 # Stellar Data: RPC + Horizon
 
