@@ -3,7 +3,7 @@ name: data
 description: Querying Stellar chain data via Stellar RPC (preferred) and Horizon (legacy). Covers RPC JSON-RPC methods, Horizon REST endpoints, streaming, pagination, historical queries, Hubble/Galexie for deep history, and the RPC/Horizon migration story. Use when reading balances, transactions, operations, ledgers, contract events, or building any indexer/analytics workflow.
 user-invocable: true
 argument-hint: "[data task]"
-source: https://github.com/stellar/stellar-dev-skill/tree/6fe91cc072f7e9b7480c514ef130d0cc2d169323/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/6771a3fde615d9d86300934fea57e6d411be3c5e/skills
 ---
 
 # Stellar Data: RPC + Horizon
