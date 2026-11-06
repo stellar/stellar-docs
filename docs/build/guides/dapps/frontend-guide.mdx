@@ -97,6 +97,8 @@ npm install @stellar/stellar-sdk @stellar/varial-sdk bignumber.js
 - `@stellar/varial-sdk`: A library for integrating with the Varial wallet (a popular Stellar wallet browser extension)
 - `bignumber.js`: A library for arbitrary-precision decimal and non-decimal arithmetic
 
+Before you write your own helper for a common task, such as funding a testnet account or making a read-only contract call, check the [JavaScript SDK helpers](/docs/tools/sdks/js-sdk-helpers) page. The SDK may already do it.
+
 Now that we have our development environment set up, we're ready to start building our Stellar dapp!
 
 ## 3. Building basic interface elements
@@ -544,6 +546,7 @@ import {
   Contract,
   Networks,
   rpc as StellarRpc,
+  scValToNative,
   Transaction,
   TransactionBuilder,
   xdr,
@@ -617,38 +620,37 @@ export default function CounterPage() {
         NETWORK_PASSPHRASE,
       ) as Transaction;
 
-      const txResult = await server.sendTransaction(signedTx);
+      const sendResponse = await server.sendTransaction(signedTx);
 
-      if (txResult.status !== "PENDING") {
-        throw new Error("Something went Wrong");
+      // PENDING and DUPLICATE mean the network has the transaction.
+      // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+      if (sendResponse.status === "TRY_AGAIN_LATER") {
+        throw new Error("The network is busy. Try again in a moment.");
       }
-      const hash = txResult.hash;
-      let getResponse = await server.getTransaction(hash);
-      // Poll `getTransaction` until the status is not "NOT_FOUND"
-
-      while (getResponse.status === "NOT_FOUND") {
-        console.log("Waiting for transaction confirmation...");
-        getResponse = await server.getTransaction(hash);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (sendResponse.status === "ERROR") {
+        throw new Error("The network rejected the transaction.");
       }
 
-      if (getResponse.status === "SUCCESS") {
-        // Make sure the transaction's resultMetaXDR is not empty
-        if (!getResponse.resultMetaXdr) {
-          throw "Empty resultMetaXDR in getTransaction response";
-        }
-      } else {
-        throw `Transaction failed: ${getResponse.resultXdr}`;
+      // Wait until the transaction is in a ledger, for up to 30 attempts
+      const getResponse = await server.pollTransaction(sendResponse.hash, {
+        attempts: 30,
+      });
+
+      // NOT_FOUND after the last attempt means the result is unknown,
+      // not that the transaction failed
+      if (
+        getResponse.status === StellarRpc.Api.GetTransactionStatus.NOT_FOUND
+      ) {
+        throw new Error("Not confirmed yet. Check again before resending.");
       }
 
-      // Extract the new count from the transaction result
-      const returnValue = getResponse.resultMetaXdr
-        .v4()
-        .sorobanMeta()
-        ?.returnValue();
-      if (returnValue) {
-        const newCount = returnValue.u32();
-        setCount(newCount);
+      if (getResponse.status !== StellarRpc.Api.GetTransactionStatus.SUCCESS) {
+        throw new Error(`Transaction did not succeed: ${getResponse.status}`);
+      }
+
+      // The SDK already parsed the contract's return value
+      if (getResponse.returnValue) {
+        setCount(scValToNative(getResponse.returnValue));
       }
     } catch (error) {
       console.error("Error incrementing counter:", error);
@@ -724,9 +726,13 @@ Notice how we used a different operation `contract.call("increment")` to interac
 
 `<ConnectButton>` is a helper button that connects the Varial wallet when clicked like we described earlier.
 
-After calling the transaction to increment successfully, we need to poll and then call another method `server.getTransaction` to get the transaction result. The transaction result contains the new counter value which we extract and display to the user.
+`sendTransaction` only submits the transaction. Before we wait for the result, we check its `status`. `PENDING` and `DUPLICATE` mean the network has the transaction. `TRY_AGAIN_LATER` and `ERROR` mean it did not accept it, so we stop with a readable error.
 
-The value gotten from the transaction result is stored in a form called `scval` due to the limited [number of types](../../../learn/fundamentals/contract-development/types/built-in-types) that exist in soroban today. This value is transmitted about in the form of `xdr` which can be converted to an `scVal` using the sdk. The value is then parsed as `u32` which is a 32-bit unsigned integer. We will learn more about converting these types [in this collection of guides](/docs/build/guides/conversions).
+Then `server.pollTransaction` calls `getTransaction` for us until the transaction is in a ledger or the attempts run out. When the status is `SUCCESS`, the response carries the contract's return value in `returnValue`, which holds the new counter value. If the attempts run out, the status is still `NOT_FOUND`. That means the result is unknown, not that the transaction failed, so check again before you resend it. [Submit a transaction and wait](/docs/build/guides/transactions/submit-transaction-wait-js) shows the full handling.
+
+The return value is an `ScVal`, the type that carries contract values on the network, because of the limited [number of types](/docs/learn/fundamentals/contract-development/types/built-in-types) that exist in soroban today. `scValToNative` converts it to a JavaScript value, here a number for the contract's `u32`. We will learn more about converting these types [in this collection of guides](/docs/build/guides/conversions).
+
+The JavaScript SDK also has a contract client that builds, simulates, signs, sends and waits for you. Read the SDK's [Invoke a Contract guide](https://stellar.github.io/js-stellar-sdk/guides/06-invoke-a-contract/) for that version.
 
 <Tip>
 
@@ -744,7 +750,7 @@ This is made possible by using the `server.getEvents` method which allows you to
 
 We will be editing the `CounterPage` component to read events from the counter smart contract immediately the page loads to get the initial counter value and update instead of using "Unknown". Before we continue, please take a look at the [contract code](https://github.com/stellar/soroban-examples/blob/main/events/src/lib.rs). In the contract code, an event named `increment` is emitted whenever the `increment` function is called. It is published over 2 topics, `increment` and `COUNTER` and we need to listen to these topics to get the events.
 
-The topics are stored in a data type called `symbol` and we will need to convert both `increment` and `COUNTER` to `symbol` before we can use them in the [`server.getEvents`](../../../data/apis/rpc/api-reference/methods/getEvents) method. At maximum, stellar RPCs keep track of events for 7 days and you can query events that happened within the last 7 days, so if you need to store events for longer, you may need to make use of an [indexer](/docs/data/indexers).
+The topics are stored in a data type called `symbol` and we will need to convert both `increment` and `COUNTER` to `symbol` before we can use them in the [`server.getEvents`](../../../data/apis/rpc/api-reference/methods/getEvents) method. An RPC keeps events only for its configured retention window, about 7 days by default, so if you need to store events for longer, you may need to make use of an [indexer](/docs/data/indexers).
 
 To use events,we edit our counter page and add the following code:
 
@@ -778,7 +784,7 @@ const getInitialCount = async () => {
       ],
       limit: 20,
     });
-    setCount(events.events.map((e) => e.value.u32()).pop() || null);
+    setCount(events.events.map((e) => scValToNative(e.value)).pop() || null);
   } catch (error) {
     console.error(error);
   }
@@ -787,7 +793,7 @@ const getInitialCount = async () => {
 
 In the above code, we use an RPC method called `getEvents` to query events from the Stellar network. We pass in the contract ID, topics, and other filters like the ledger to start searching from to 2000 ledgers away to get the events we are interested in. We then extract the counter value from the events and update the state accordingly.
 
-However, we had to convert the topics `COUNTER` and `increment` to `symbol` using the `xdr.ScVal.scvSymbol` and then convert them to XDR before we can use them in the `getEvents` method. This is because the topics are stored in the form of `symbol` and transmitted over XDR format to the network like we discussed earlier. Similarly, the value of the new count is sent over the network as XDR but the SDK helped us convert it to an `scVal` and then we parsed it as a `u32` to get the actual value.
+However, we had to convert the topics `COUNTER` and `increment` to `symbol` using the `xdr.ScVal.scvSymbol` and then convert them to XDR before we can use them in the `getEvents` method. This is because the topics are stored in the form of `symbol` and transmitted over XDR format to the network like we discussed earlier. Similarly, the value of the new count is sent over the network as XDR. The SDK decodes it to an `ScVal`, and `scValToNative` converts that to a number.
 
 Source code for this program is available [here](https://github.com/myestery/stellar-dapp)
 
@@ -795,29 +801,49 @@ Now, when the page loads, it will query the events from the Stellar network and 
 
 ## 6. Using Typescript Bindings
 
-The Stellar CLI comes with support for exporting a contract spec to a typescript library. This library is optimized for importing as an npm based module to your application.
+The JavaScript SDK, `@stellar/stellar-sdk`, comes with a generator that exports a contract spec to a typescript library. This library is optimized for importing as an npm based module to your application.
 
-The library generated contains helper methods for calling each contract and also does automatic type conversion of the types for any contract method.
+The library generated contains helper methods for calling each contract and also does automatic type conversion of the types for any contract method. It depends on the same `@stellar/stellar-sdk` version that generated it (v17 at the time of writing).
+
+<Note>
+
+The Stellar CLI command `stellar contract bindings typescript` is deprecated. Use the SDK's generator instead.
+
+</Note>
 
 ### How to create the bindings library
 
 To achieve this, you need to
 
-- Have the [Stellar CLI](../../../tools/cli/install-cli) installed.
+- Have [Node.js](https://nodejs.org/en/download) installed, so you can run the generator with `npx`.
 - Have either source code or deployed contract ID of the contract.
 - Know the network it was deployed to.
 
 #### Scenario 1: I have the Contract ID but no code
 
-In this scenario, we need to use the command [`stellar contract fetch`](../../../tools/cli/stellar-cli#stellar-contract-fetch) to fetch the wasm code of the contract
+The generator can fetch the contract from the network for you:
+
+```bash
+npx @stellar/stellar-sdk generate \
+  --network testnet \
+  --contract-id CONTRACT_ID \
+  --contract-name my-contract \
+  --output-dir ./my-contract-client
+```
 
 #### Scenario 2: I have the code
 
-The next step here is to build it to a wasm file using the [`stellar contract build`](../../../tools/cli/stellar-cli#stellar-contract-build) command.
+First build it to a wasm file using the [`stellar contract build`](/docs/tools/cli/stellar-cli#stellar-contract-build) command. Then point the generator at the wasm file:
+
+```bash
+npx @stellar/stellar-sdk generate \
+  --wasm ./path/to/my_contract.wasm \
+  --output-dir ./my-contract-client
+```
 
 ### Generating the Library
 
-After getting the wasm, we can now run [`stellar contract bindings typescript`](../../../tools/cli/stellar-cli#stellar-contract-bindings-typescript) to generate the library which is ready to be published to NPM. The library generated is suited for working with complex contracts.
+Either command generates a library which is ready to be published to NPM. The library generated is suited for working with complex contracts. For mainnet, also pass `--rpc-url`, since the generator has no default mainnet RPC URL. See the SDK's [CLI options](https://github.com/stellar/js-stellar-sdk#cli) for the full list.
 
 ## 7. Common Pitfalls
 
@@ -833,7 +859,7 @@ Calculating fees for transactions can be tricky. The Stellar SDK provides a way 
 
 ### SendTransaction and GetTransaction
 
-Results from a smart contract execution or any of the [valid transactions](../../../learn/fundamentals/transactions/list-of-operations#extend-footprint-ttl) on soroban are not immediate. They are kept in a `PENDING` state until they are confirmed. You need to poll the `getTransaction` method to get the final result of the transaction.
+Results from a smart contract execution or any of the [valid transactions](../../../learn/fundamentals/transactions/list-of-operations#extend-footprint-ttl) on soroban are not immediate. They are kept in a `PENDING` state until they are confirmed. Check the `sendTransaction` status first, then use the SDK's `server.pollTransaction` to wait for the final result. It stops after a set number of attempts, so it never waits forever.
 
 ### State Archival
 
