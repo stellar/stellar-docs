@@ -3,7 +3,7 @@ name: cross-chain
 description: Cross-chain interoperability for Stellar. Entry point with a rail-selection decision table and shared pitfalls, routing to three companion files — cctp.md (Circle CCTP V2, native USDC burn-and-mint between Stellar and EVM/Solana chains, domain 27, the CctpForwarder requirement for Stellar recipients), axelar.md (Axelar GMP for Soroban contracts calling contracts on other chains, and the Interchain Token Service for multichain tokens), and layerzero.md (LayerZero V2 OApp messaging with configurable DVN security, OFT omnichain tokens, and USDT0 — native USDT on Stellar). Also covers NEAR Intents (intent-based cross-chain swaps into XLM or Stellar USDC) at the routing level. Use when bridging USDC or USDT to or from Stellar, sending messages between a Stellar contract and another blockchain, making a token exist on multiple chains, or adding cross-chain swaps to an app.
 user-invocable: true
 argument-hint: "[cross-chain task]"
-source: https://github.com/stellar/stellar-dev-skill/tree/6771a3fde615d9d86300934fea57e6d411be3c5e/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/981705739483f0f04eccb309c2460a421eeba6c2/skills
 ---
 
 # Cross-Chain on Stellar
@@ -576,7 +576,7 @@ OFT is LayerZero's token standard, the analogue of Axelar's ITS. The Stellar con
 - `oft` — the deployable contract, with the `pausable`, `oft_fee`, and `rate_limiter` extensions bolted on.
 - `sac-manager` — the piece that makes an **existing classic Stellar asset** work as a MintBurn OFT. It becomes the SAC's admin and forwards `mint`, `clawback`, `set_authorized`, and `set_admin` under role gates (`MINTER_ROLE`, `CLAWBACK_ROLE`, `BLACKLISTER_ROLE`, `ADMIN_MANAGER_ROLE`). This is exactly the USDT0 arrangement.
 
-One hard prerequisite from the SAC-manager design: **the issuer account must be locked** (master key weight `0`). Payments from a classic issuer are minting, so an unlocked issuer can bypass the role model entirely and the trust story collapses. Lock it *after* `set_admin` hands the SAC to the manager, never before: the issuer is the SAC's first admin, and only it can authorize that first handover. USDT0's issuer is locked. Verify that before you trust any contract-administered classic asset — see `/.well-known/agent-skills/assets/skill.md`.
+One hard prerequisite from the SAC-manager design: **the issuer account must be locked** (master key weight `0` and no other signers that can meet its thresholds). Payments from a classic issuer are minting, so an unlocked issuer can bypass the role model entirely and the trust story collapses. Lock it *after* `set_admin` hands the SAC to the manager, never before: the issuer is the SAC's first admin, and only it can authorize that first handover. USDT0's issuer is locked. Verify that before you trust any contract-administered classic asset — see `/.well-known/agent-skills/assets/skill.md`.
 
 ## Choosing between Axelar GMP and LayerZero OApp
 

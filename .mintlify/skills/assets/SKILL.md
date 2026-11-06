@@ -3,7 +3,7 @@ name: assets
 description: Stellar Assets (classic) + trustlines + Stellar Asset Contract (SAC) bridge to smart contracts. Covers asset issuance, distribution, authorization flags, clawback, regulated assets, trustline management, and the SAC interop layer that exposes classic assets as SEP-41 contract tokens. Use when tokenizing real-world assets, issuing stablecoins, managing trustlines, or bridging classic assets to smart contracts.
 user-invocable: true
 argument-hint: "[asset task]"
-source: https://github.com/stellar/stellar-dev-skill/tree/6771a3fde615d9d86300934fea57e6d411be3c5e/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/981705739483f0f04eccb309c2460a421eeba6c2/skills
 ---
 
 # Stellar Assets, Trustlines, and SAC
@@ -417,14 +417,20 @@ SAC implements the standard SEP-41 token interface:
 > [setting a custom SAC admin](https://developers.stellar.org/docs/build/guides/tokens/custom-sac-admin)
 > for the pattern and `/.well-known/agent-skills/cross-chain/skill.md#layerzero-v2-on-stellar--omnichain-messaging-oft-and-usdt0` for that deployment.
 >
-> One hard prerequisite: **lock the issuer** (master key weight `0`).
-> Payments from a classic issuer are minting, so an unlocked issuer can mint
-> outside the contract and bypass the role model entirely.
+> One hard prerequisite: **lock the issuer account completely.** Payments
+> from a classic issuer are minting, so an unlocked issuer can mint outside
+> the contract and bypass the role model entirely. Master key weight `0`
+> disables only the master key: any other signers whose combined weight
+> meets the medium threshold can still issue, and signers meeting the high
+> threshold can restore the master key. So remove every other signer (or
+> confirm their combined weight can never meet the thresholds), as in
+> [Lock Issuing Account](#lock-issuing-account).
 >
 > **Do it in this order: `set_admin` first, then lock the issuer.** A SAC's
 > admin starts as the issuer account, and only the *current* admin can
-> authorize the first `set_admin`. Lock the issuer before that call and the
-> admin stays the locked issuer forever, because nobody can sign the handover
+> authorize the first `set_admin`. Lock the issuer completely before that
+> call and the admin stays the locked issuer forever, because no signer can
+> authorize the handover
 > ([SAC admin guide](https://developers.stellar.org/docs/build/guides/tokens/custom-sac-admin)).
 > After the handover the SAC still mints under the new admin, so lock the
 > issuer then.
@@ -548,8 +554,9 @@ Standard contract interface for NFTs on Stellar. Reference implementations avail
   mean balances can be frozen or clawed back. A contract SAC admin does not
   contain that power on its own: an issuer whose master key still signs can
   mint, freeze and claw back directly, whatever the admin contract allows. So
-  confirm the master key weight is `0`, then identify who holds the admin
-  contract's roles
+  confirm the master key weight is `0` and no other signers remain (or their
+  combined weight can never meet any threshold: freezing needs only the low
+  one), then identify who holds the admin contract's roles
 
 ---
 
