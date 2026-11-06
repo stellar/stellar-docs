@@ -26,12 +26,13 @@ If you're here to add a new method to one of the specfiles, you'll want to:
    More about them [later on](#json-refs).
 3. Once your method is defined the way you want it, run the [build](#building)
    and [validate](#testing) scripts to generate updated "bundled" specfiles.
-4. Get the method's page generated. Method pages are MDX generated from the
-   bundled specfile (between `{/* rpc-method ... */}` and `{/* /rpc-method */}`
-   comments), with any hand-written prose before or after the generated part.
-   The generator isn't in this repo yet, so ask a maintainer to generate or
-   regenerate the page. New pages also need an entry in `docs.json` navigation.
-   Method pages live in:
+4. Run `pnpm rpcspec:docs` to generate the method's page. Method pages are MDX
+   generated from the bundled specfile (between `{/* rpc-method ... */}` and
+   `{/* /rpc-method */}` comments), with any hand-written prose before or after
+   the generated part. The script rewrites only the generated part, and creates
+   a page for a new method. A new page also needs an entry in `docs.json`
+   navigation and a card on the methods index page; the script prints a
+   reminder. Method pages live in:
 
    - For stellar-rpc: `/docs/data/apis/rpc/api-reference/methods`
    - For anchor-platform:
@@ -96,6 +97,19 @@ specification file.
 pnpm rpcspec:validate
 # OpenRPC spec validated successfully.
 ```
+
+### Generating method pages
+
+`openrpc/scripts/docs.mjs` renders each method in the built specfiles into its
+page, replacing only the part between the `rpc-method` comments.
+
+```bash
+pnpm rpcspec:docs           # regenerate the method pages
+pnpm rpcspec:docs --check   # list out-of-date pages, without writing them
+```
+
+CI runs `pnpm rpcspec:check`, which rebuilds the specfiles and fails if the
+committed specfiles or method pages differ from what the sources produce.
 
 ### JSON `$ref`s
 
