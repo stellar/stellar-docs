@@ -3,7 +3,7 @@ name: standards
 description: Stellar standards, ecosystem, and reference. Covers SEPs (Stellar Ecosystem Proposals), CAPs (Core Advancement Proposals), and a quick map for picking the right standard for wallets, anchors, payments, deposits/withdrawals, federation, deep links, and KYC. Also bundles ecosystem references (DeFi protocols, dev tools, wallets, infra, community projects), curated documentation links, and MCP servers (live tools such as Raven). Use when you need to know which SEP applies, or want a starting point for ecosystem integrations, official docs, or live MCP tooling.
 user-invocable: true
 argument-hint: "[standards or ecosystem lookup]"
-source: https://github.com/stellar/stellar-dev-skill/tree/981705739483f0f04eccb309c2460a421eeba6c2/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/248c4caeeb8d8c149ed0a8ae05e5725aa0cd9d29/skills
 ---
 
 # Standards, Ecosystem, and Resources
@@ -445,10 +445,10 @@ Rust SDK for smart contract development.
 
 #### Raven
 Remote Model Context Protocol (MCP) server for AI agents. Searches Stellar docs and live ecosystem data, cross-referenced into single answers. Its catalog also serves these skills.
-- **Server**: https://raven.stellar.buzz (MCP endpoint: https://raven.stellar.buzz/mcp)
-- **Playground**: https://raven.stellar.buzz/playground (hosted chat UI for humans; sign-in required)
-- **GitHub**: https://github.com/kalepail/stellar-raven
-- **Connect (Claude Code)**: `claude mcp add --transport http stellar-raven "https://raven.stellar.buzz/mcp"`
+- **Server**: https://raven.stellar.org (MCP endpoint: https://raven.stellar.org/mcp)
+- **Playground**: https://raven.stellar.org/playground (hosted chat UI for humans; sign-in required)
+- **GitHub**: https://github.com/stellar-experimental/stellar-raven
+- **Connect (Claude Code)**: `claude mcp add --transport http stellar-raven "https://raven.stellar.org/mcp"`
 - **Tools**: `search`, `execute`
 
 #### Stellar Docs MCP
