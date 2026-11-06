@@ -95,9 +95,10 @@ directly.
 4. The method pages under
    `docs/platforms/anchor-platform/api-reference/platform/rpc/methods/` are
    generated from the specification. Don't hand-edit the generated part of a
-   page (between the `rpc-method` comments). The generator isn't in the repo
-   yet, so ask a maintainer to regenerate the pages, including adding or
-   removing a method's page and its `docs.json` entry.
+   page (between the `rpc-method` comments). Run `pnpm rpcspec:docs` to
+   regenerate them, and commit the pages with the spec. For a new method, also
+   add its page to `docs.json` and the methods index; for a removed one, delete
+   its page and those entries. The script prints a reminder in both cases.
 
 See [`openrpc/README.md`](../../../openrpc/README.md) for the OpenRPC object
 structure and `$ref` conventions.
