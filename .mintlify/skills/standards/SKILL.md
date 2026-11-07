@@ -3,7 +3,7 @@ name: standards
 description: Stellar standards, ecosystem, and reference. Covers SEPs (Stellar Ecosystem Proposals), CAPs (Core Advancement Proposals), and a quick map for picking the right standard for wallets, anchors, payments, deposits/withdrawals, federation, deep links, and KYC. Also bundles ecosystem references (DeFi protocols, dev tools, wallets, infra, community projects), curated documentation links, and MCP servers (live tools such as Raven). Use when you need to know which SEP applies, or want a starting point for ecosystem integrations, official docs, or live MCP tooling.
 user-invocable: true
 argument-hint: "[standards or ecosystem lookup]"
-source: https://github.com/stellar/stellar-dev-skill/tree/248c4caeeb8d8c149ed0a8ae05e5725aa0cd9d29/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/fb63412da70102edb527baf4cf3068f25713cd14/skills
 ---
 
 # Standards, Ecosystem, and Resources
