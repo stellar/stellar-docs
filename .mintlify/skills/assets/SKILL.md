@@ -3,7 +3,7 @@ name: assets
 description: Stellar Assets (classic) + trustlines + Stellar Asset Contract (SAC) bridge to smart contracts. Covers asset issuance, distribution, authorization flags, clawback, regulated assets, trustline management, and the SAC interop layer that exposes classic assets as SEP-41 contract tokens. Use when tokenizing real-world assets, issuing stablecoins, managing trustlines, or bridging classic assets to smart contracts.
 user-invocable: true
 argument-hint: "[asset task]"
-source: https://github.com/stellar/stellar-dev-skill/tree/248c4caeeb8d8c149ed0a8ae05e5725aa0cd9d29/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/fb63412da70102edb527baf4cf3068f25713cd14/skills
 ---
 
 # Stellar Assets, Trustlines, and SAC
@@ -378,12 +378,17 @@ pub fn transfer_asset(
 
 SAC implements the standard SEP-41 token interface:
 - `balance(id: Address) -> i128`
-- `transfer(from: Address, to: Address, amount: i128)`
-- `approve(from: Address, spender: Address, amount: i128, expiration_ledger: u32)`
+- `transfer(from: Address, to: MuxedAddress, amount: i128)`
+- `transfer_from(spender: Address, from: Address, to: Address, amount: i128)`
+- `approve(from: Address, spender: Address, amount: i128, live_until_ledger: u32)`
 - `allowance(from: Address, spender: Address) -> i128`
 - `decimals() -> u32`
 - `name() -> String`
-- `symbol() -> Symbol`
+- `symbol() -> String`
+
+Only `transfer` takes a `MuxedAddress` destination. The generated
+`TokenClient` accepts `impl Into<MuxedAddress>` there, so pass an `&Address`
+as `&to` (as above), never `&to.into()`, which fails to compile (E0283).
 
 ## When to Use What
 
