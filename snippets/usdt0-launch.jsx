@@ -775,7 +775,7 @@ html.dark .usdt0{
               </details>
               <details className="faq">
                 <summary><span className="fq">How long does a transfer to Stellar take?</span></summary>
-                <div className="fa"><p className="ncopy">It depends on the chain you send from, not on Stellar. Stellar finalises in 5–7 seconds; the wait
+                <div className="fa"><p className="ncopy">It depends on the chain you send from, not on Stellar. Stellar finalises in about 5 seconds; the wait
                   is the source chain confirming and LayerZero verifying the message. From Polygon it is about a minute.
                   From Ethereum, Arbitrum, Tron and Solana — the routes carrying most volume — expect roughly
                   18–21 minutes. A few low-traffic routes take hours. The{" "}
@@ -833,7 +833,7 @@ html.dark .usdt0{
           <div><dt>Transfer</dt><dd><a href="https://usdt0.to/transfer" target="_blank" rel="noopener noreferrer">usdt0.to</a></dd></div>
           <div><dt>Networks</dt><dd><a href="https://analytics.usdt0.to/" target="_blank" rel="noopener noreferrer">26+</a></dd></div>
           <div><dt>USDT in circulation</dt><dd><a href="https://coinmarketcap.com/currencies/tether/" target="_blank" rel="noopener noreferrer">$180B+</a></dd></div>
-          <div><dt>Stellar settlement</dt><dd><a href="/docs/learn/fundamentals/stellar-stack">5–7s</a></dd></div>
+          <div><dt>Stellar settlement</dt><dd><a href="/docs/learn/fundamentals/stellar-stack">~5s</a></dd></div>
           <div><dt>Stellar fee</dt><dd><a href="/docs/learn/fundamentals/fees-resource-limits-metering">100 stroops min</a></dd></div>
           <div><dt>Transfer to Stellar</dt><dd><a href="https://usdt0.to/transfer" target="_blank" rel="noopener noreferrer">~20min typical</a></dd></div>
         </dl>
