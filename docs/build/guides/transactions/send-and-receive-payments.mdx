@@ -1,37 +1,34 @@
 ---
 title: "Send and receive payments"
 description: "Learn to send payments and watch for received payments on the Stellar network."
-sidebar_position: 7
 ---
-
-import Details from "@theme/Details";
 
 ## Payments Overview
 
-A payment constitutes the transfer of a token from one account to another. On Stellar network a token can be either a Stellar asset or a custom contract token which follows the [SEP-41 token standard](../../../tokens/stellar-asset-contract.mdx#overview).
+A payment constitutes the transfer of a token from one account to another. On Stellar network a token can be either a Stellar asset or a custom contract token which follows the [SEP-41 token standard](../../../tokens/stellar-asset-contract#overview).
 
 There are two primary ways payments are transacted on Stellar:
 
-- Using Stellar's payment-related [operations](../../../learn/fundamentals/transactions/list-of-operations.mdx)
-- [Invoking a function](../../../learn/fundamentals/contract-development/contract-interactions/overview.mdx) on a token contract.
+- Using Stellar's payment-related [operations](../../../learn/fundamentals/transactions/list-of-operations)
+- [Invoking a function](../../../learn/fundamentals/contract-development/contract-interactions/overview) on a token contract.
 
 The approach you should take depends on the use case:
 
-- If you want to make a payment of a Stellar asset between two Stellar accounts, use the payment operations. Transaction fees are cheaper when using them compared to the fees for invoking the asset's token contract directly which is referred to as the [Stellar Asset Contract](../../../tokens/stellar-asset-contract.mdx#overview).
+- If you want to make a payment of a Stellar asset between two Stellar accounts, use the payment operations. Transaction fees are cheaper when using them compared to the fees for invoking the asset's token contract directly which is referred to as the [Stellar Asset Contract](../../../tokens/stellar-asset-contract#overview).
 - If you want to make a payment of a Stellar asset between a Stellar account and a contract address, or between two contract addresses, then the asset's contract must be used. Stellar's payment-related operations cannot have contract addresses as their source or destination.
-- If you want to make a payment of a custom contract token which is not a Stellar asset but follows the [SEP-41 token standard](../../../tokens/stellar-asset-contract.mdx#overview), you must use the token's contract. Stellar's payment operations can only be used to transfer Stellar assets.
+- If you want to make a payment of a custom contract token which is not a Stellar asset but follows the [SEP-41 token standard](../../../tokens/stellar-asset-contract#overview), you must use the token's contract. Stellar's payment operations can only be used to transfer Stellar assets.
 
-To learn more about the differences between Stellar assets and contract tokens, see the [Tokens](../../../tokens/README.mdx) overview.
+To learn more about the differences between Stellar assets and contract tokens, see the [Tokens](/docs/tokens) overview.
 
-:::info
+<Info>
 
 In the following code samples, proper error checking is omitted for brevity. However, you should _always_ validate your results, as there are many ways that requests can fail.
 
-:::
+</Info>
 
 ## Using Payments Example
 
-This example highlights the approach mentioned for transacting payments using operations and assets and using the [Stellar RPC](../../../data/apis/rpc/README.mdx) with [Stellar Client SDKs](../../../tools/sdks/client-sdks.mdx#overview) to perform all actions needed.
+This example highlights the approach mentioned for transacting payments using operations and assets and using the [Stellar RPC](/docs/data/apis/rpc) with [Stellar Client SDKs](/docs/tools/sdks/client-sdks) to perform all actions needed.
 
 ### Send a Payment
 
@@ -41,13 +38,13 @@ Lets demonstrate a payment of an asset on Stellar. We will build a transaction w
 - When submitting transactions to the RPC server it's possible that you will not receive a response from the server due to network conditions.
   - In such a situation it's impossible to determine the status of your transaction.
   - Highlights a recommendation to always save a transaction (or transaction encoded in XDR format) in a variable or a database and resubmit it if you don't know its status.
-  - The transaction in serialized XDR format is idempotent meaning if the transaction has already been successfully applied to the ledger, RPC will simply return the saved result and not attempt to submit the transaction again.
-  - Only in cases where a transaction's status is unknown (and thus will have a chance of being included into a ledger) will a resubmission to the network occur.
+  - Sending the same signed transaction again is safe, because it can go into a ledger only once.
+  - To learn its result, call `getTransaction` with the transaction hash. If the transaction is already in a ledger, sending it again returns `TRY_AGAIN_LATER` for about 10 ledgers, then `ERROR` (`txBAD_SEQ`).
 
-<Details summary="Click to view payment sending code">
-<CodeExample>
+<Accordion title="Click to view payment sending code">
+<CodeGroup>
 
-```js
+```js JavaScript
 // send_payment.js
 // follow the https://github.com/stellar/js-stellar-sdk?tab=readme-ov-file#installation
 
@@ -130,32 +127,70 @@ async function sendPayment(sender, senderAccount, recipient) {
   transaction.sign(sender);
 
   // Now we can send the transaction to the network.
-  // The sendTransaction method immediately returns a reply with the transaction hash
-  // and the status "PENDING". This means the transaction was received and is being processed.
-  const sendTransactionResponse = await rpcServer.sendTransaction(transaction);
+  // sendTransaction returns right away with one of four statuses:
+  // PENDING, DUPLICATE, TRY_AGAIN_LATER or ERROR.
+  let sendTransactionResponse = await rpcServer.sendTransaction(transaction);
 
-  // Here we check the status of the transaction as there are
-  // a possible outcomes after sending a transaction that would have
-  // to be handled accordingly, such as "DUPLICATE" or "TRY_AGAIN_LATER".
-  if (sendTransactionResponse.status !== "PENDING") {
-    throw new Error(
-      `Failed to send transaction, status: ${sendTransactionResponse.status}`,
+  // The transaction can go into a ledger only until its time bound (maxTime).
+  const maxTime = Number(transaction.timeBounds.maxTime);
+
+  // TRY_AGAIN_LATER means the network did not accept the transaction this
+  // time, for example because an earlier transaction from this account still
+  // waits for a ledger. Wait, then send the same signed transaction again.
+  while (
+    sendTransactionResponse.status === "TRY_AGAIN_LATER" &&
+    Number(sendTransactionResponse.latestLedgerCloseTime) <= maxTime
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    sendTransactionResponse = await rpcServer.sendTransaction(transaction);
+  }
+
+  // The loop stopped because a ledger closed after maxTime. The network never
+  // accepted the transaction, and now it can never go into a ledger.
+  if (sendTransactionResponse.status === "TRY_AGAIN_LATER") {
+    throw new Error("Transaction expired before the network accepted it");
+  }
+
+  // ERROR means the network rejected the transaction. But a transaction that
+  // is already in a ledger also returns ERROR (txBAD_SEQ) when you send it
+  // again, so look it up before you throw.
+  if (sendTransactionResponse.status === "ERROR") {
+    const known = await rpcServer.getTransaction(sendTransactionResponse.hash);
+    if (known.status === StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND) {
+      throw new Error(
+        `Failed to send transaction, status: ${sendTransactionResponse.status}`,
+      );
+    }
+  }
+
+  // PENDING means the network accepted the transaction. DUPLICATE means the
+  // network already has this transaction from an earlier send. In both cases,
+  // wait for the result.
+  if (
+    sendTransactionResponse.status === "PENDING" ||
+    sendTransactionResponse.status === "DUPLICATE"
+  ) {
+    console.log(
+      "Payment Transaction submitted, hash:",
+      sendTransactionResponse.hash,
     );
   }
 
-  console.log(
-    "Payment Transaction submitted, hash:",
+  // getTransaction returns NOT_FOUND until the transaction is in a ledger.
+  // NOT_FOUND does not mean that the transaction failed, so keep polling
+  // until a ledger closes after maxTime. RPC sends latestLedgerCloseTime as a
+  // string, so convert it with Number().
+  let finalStatus = await rpcServer.getTransaction(
     sendTransactionResponse.hash,
   );
+  while (
+    finalStatus.status === StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND &&
+    Number(finalStatus.latestLedgerCloseTime) <= maxTime
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    finalStatus = await rpcServer.getTransaction(sendTransactionResponse.hash);
+  }
 
-  // Here we poll the transaction status to await for its final result.
-  // We can use the transaction hash to poll the transaction status later.
-  const finalStatus = await rpcServer.pollTransaction(
-    sendTransactionResponse.hash,
-  );
-
-  // The pollTransaction method will return the final status of the transaction
-  // after the specified number of attempts or when the transaction is finalized.
   // We then check the final status of the transaction and handle it accordingly.
   switch (finalStatus.status) {
     case StellarSdk.rpc.Api.GetTransactionStatus.FAILED:
@@ -169,7 +204,9 @@ async function sendPayment(sender, senderAccount, recipient) {
 
       throw new Error(`Transaction failed with status: ${finalStatus.status}`);
     case StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND:
-      throw new Error(`Transaction failed with status: ${finalStatus.status}`);
+      // A ledger closed after maxTime, so the transaction can never go into
+      // a ledger. Only now is it safe to send a new payment.
+      throw new Error("Transaction expired without going into a ledger");
     case StellarSdk.rpc.Api.GetTransactionStatus.SUCCESS:
       console.log("Success! Committed on Ledger:", finalStatus.ledger);
       break;
@@ -182,7 +219,7 @@ sendPayments().catch((error) => {
 });
 ```
 
-```java
+```java Java
 // SendPaymentExample.java
 // Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
 
@@ -296,7 +333,7 @@ public class SendPaymentJavaExample {
 
 ```
 
-```go
+```go Go
 // sender.go
 package main
 
@@ -485,8 +522,8 @@ func main() {
 }
 ```
 
-</CodeExample>
-</Details>
+</CodeGroup>
+</Accordion>
 
 ### Monitoring Payments as event stream
 
@@ -501,10 +538,10 @@ The RPC approach offers several advantages:
 
 Demonstrate near real-time monitoring of transactions from the Stellar network by establishing an asynchronous listener to consume events from RPC and filter them by topic for just our example payments generated by our previous payments script.
 
-<Details summary="Click to view payment monitoring code">
-<CodeExample>
+<Accordion title="Click to view payment monitoring code">
+<CodeGroup>
 
-```js
+```js JavaScript
 // monitor_payment.js
 // follow the https://github.com/stellar/js-stellar-sdk?tab=readme-ov-file#installation
 
@@ -610,7 +647,7 @@ monitorPayments().catch((error) => {
 });
 ```
 
-```java
+```java Java
 // MonitorPaymentExample.java
 // Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
 
@@ -723,7 +760,7 @@ public class MonitorPaymentsJavaExample {
 }
 ```
 
-```go
+```go Go
 // monitor.go
 package main
 
@@ -1055,17 +1092,17 @@ func decodeAssetFromXDR(base64XDR string) (string, error) {
 }
 ```
 
-</CodeExample>
-</Details>
+</CodeGroup>
+</Accordion>
 
 ### Running Your Payment Pipeline with RPC
 
 1. **Run the payment submission script** in one terminal. Leave it running, it will submit a payment once every 30 seconds.
 
-<Details summary="Click for command to run the payments">
-<CodeExample>
+<Accordion title="Click for command to run the payments">
+<CodeGroup>
 
-```bash
+```bash bash
 # js
 node send_payment.js
 
@@ -1090,15 +1127,15 @@ go build -o sender sender/sender.go
 ./sender
 ```
 
-</CodeExample>
-</Details>
+</CodeGroup>
+</Accordion>
 
 2. **Run the payment monitor script** in a separate terminal.
 
-<Details summary="Click for command to run the payments monitor">
-<CodeExample>
+<Accordion title="Click for command to run the payments monitor">
+<CodeGroup>
 
-```bash
+```bash bash
 # js
 node monitor_payments.js
 
@@ -1113,8 +1150,8 @@ go build -o monitor monitor/monitor.go
 ./monitor
 ```
 
-</CodeExample>
-</Details>
+</CodeGroup>
+</Accordion>
 
 3. **Observe the payment events** as they're detected and displayed on console.
 
