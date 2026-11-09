@@ -1,13 +1,22 @@
 ---
 name: standards
-description: Stellar standards, ecosystem, and reference. Covers SEPs (Stellar Ecosystem Proposals), CAPs (Core Advancement Proposals), and a quick map for picking the right standard for wallets, anchors, payments, deposits/withdrawals, federation, deep links, and KYC. Also bundles ecosystem references (DeFi protocols, dev tools, wallets, infra, community projects) and curated documentation links. Use when you need to know which SEP applies, or want a starting point for ecosystem integrations and official docs.
+description: Stellar standards, ecosystem, and reference. Covers SEPs (Stellar Ecosystem Proposals), CAPs (Core Advancement Proposals), and a quick map for picking the right standard for wallets, anchors, payments, deposits/withdrawals, federation, deep links, and KYC. Also bundles ecosystem references (DeFi protocols, dev tools, wallets, infra, community projects), curated documentation links, and MCP servers (live tools such as Raven). Use when you need to know which SEP applies, or want a starting point for ecosystem integrations, official docs, or live MCP tooling.
 user-invocable: true
 argument-hint: "[standards or ecosystem lookup]"
+source: https://github.com/stellar/stellar-dev-skill/tree/fb63412da70102edb527baf4cf3068f25713cd14/skills
 ---
 
 # Standards, Ecosystem, and Resources
 
 Three things bundled because they're all reference material you reach for in the same moment: "which standard handles X?", "is there an existing project doing Y?", and "where's the canonical doc for Z?".
+
+This file carries the SEP/CAP standards routing map. The other two live alongside it — **read the file that matches the task**:
+
+| Task | Section |
+|------|------|
+| Pick the right SEP/CAP, check standard status, map a use case to standards docs | this file |
+| Find DeFi protocols, wallets, dev tools, indexers, oracles, bridges, builder teams, funding programs | [Stellar Ecosystem](#stellar-ecosystem) |
+| Locate official docs, SDKs, CLI tools, testing guides, RPC providers, learning resources, community links | [Curated Resources](#curated-resources) |
 
 ## When to use this skill
 - Picking the right SEP for an integration (anchors, deposits, federation, deep links, KYC, paths)
@@ -20,10 +29,11 @@ Three things bundled because they're all reference material you reach for in the
 - Frontend SEP-7 / SEP-10 flows → `/.well-known/agent-skills/dapp/skill.md`
 - CAPs for cryptography (BLS, BN254, Poseidon) → `/.well-known/agent-skills/zk-proofs/skill.md`
 - x402/MPP protocol context → `/.well-known/agent-skills/agentic-payments/skill.md`
+- SEP-55 verified builds for mainnet contracts → `/.well-known/agent-skills/smart-contracts/skill.md`
 
 ---
 
-# Part 1: SEP / CAP Standards Reference
+# SEP / CAP Standards Reference
 
 
 ## When to use this guide
@@ -51,6 +61,7 @@ Treat this file as a routing map, not a source of final governance/status truth.
 - [SEP-0055](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0055.md): Contract build verification
 - [SEP-0056](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0056.md): Vault-style tokenized products
 - [SEP-0057](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0057.md): Regulated token patterns (T-REX)
+- [SEP-0008](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0008.md): Regulated classic assets (per-transaction issuer approval server)
 
 ### Auth, identity, and metadata
 - [SEP-0010](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md): Web authentication
@@ -77,9 +88,10 @@ Treat this file as a routing map, not a source of final governance/status truth.
 - [CAP-0067](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md): protocol/runtime improvements including asset/event model changes
 
 ### Newer and draft crypto/features
-- [CAP-0074](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0074.md): BN254 host functions proposal
-- [CAP-0075](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0075.md): Poseidon/Poseidon2 proposal
+- [CAP-0074](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0074.md): BN254 host functions (G1 add/mul, pairing check) — Final, Protocol 25+
+- [CAP-0075](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0075.md): Poseidon/Poseidon2 permutation primitives — Final, Protocol 25+
 - [CAP-0079](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0079.md): muxed-address strkey conversion proposal
+- [CAP-0080](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0080.md): BN254 G1 MSM, Fr arithmetic, on-curve checks — Implemented, Protocol 26+
 
 Use the CAP preamble status fields as the source of truth for implementation readiness.
 
@@ -88,7 +100,7 @@ Use the CAP preamble status fields as the source of truth for implementation rea
 ### I am building a fungible token
 1. Start with SEP-0041 interface expectations.
 2. Prefer Stellar Assets + SAC interop unless custom logic is required.
-3. If regulated, review SEP-0057 patterns.
+3. If regulated: a classic asset that needs issuer approval per transaction uses SEP-0008 (approval server); a contract token uses SEP-0057 (T-REX, Draft) patterns.
 
 ### I need upgrade-safe contracts
 1. Read SEP-0049 guidance for upgrade process design.
@@ -121,10 +133,12 @@ Use the CAP preamble status fields as the source of truth for implementation rea
 
 ---
 
-# Part 2: Stellar Ecosystem
+# Stellar Ecosystem
 
 
 This guide catalogs the major projects, protocols, and tools in the Stellar ecosystem. Use this as a reference when building on Stellar to find relevant integrations, examples, and community projects.
+
+Companion to [SKILL.md](#standards-ecosystem-and-resources) (SEP/CAP standards routing); curated docs/SDK/learning links live in [Curated Resources](#curated-resources).
 
 > **Canonical directories** — For the most up-to-date project lists, check:
 > - [Stellar Ecosystem](https://stellar.org/ecosystem) — Official directory (searchable by country, asset, category)
@@ -144,11 +158,71 @@ Universal liquidity protocol enabling permissionless lending pools.
 - **GitHub (v2)**: https://github.com/blend-capital/blend-contracts-v2
 - **Integrations**: Meru, Airtm, Lobstr, DeFindex, Beans
 
+#### K2
+Money market on Stellar with a modular router architecture (Aave V3-inspired). Live on mainnet.
+- **Use Case**: Supply to earn variable interest, borrow against collateral, collateral swaps, flash loans
+- **Website**: https://k2lend.com
+- **Docs**: https://docs.k2lend.com — agent-friendly: every page has a `.md` twin, plus [llms.txt](https://docs.k2lend.com/llms.txt) and a full corpus export at [llms-full.txt](https://docs.k2lend.com/llms-full.txt)
+- **Position model**: per reserve, an **aToken** (interest-bearing supply receipt) and a **debt ledger** token; balances are `scaled balance x current index`, so they accrue without user action. Separate liquidity index (linear approximation per interval) and borrow index (full compound). The index updates on the first interaction with a reserve in a ledger.
+- **Rates**: variable only, two-slope curve with a kink at optimal utilization (typically 80%). `Supply Rate = Borrow Rate x Utilization x (1 - Reserve Factor)`. Up to 64 reserves.
+- **Risk**: liquidation threshold 65–85% by asset (85% stables, 65% volatile); health factor < 1.0 is liquidatable with no grace period; partial liquidation by default, 100% when HF < 0.5 or the debt/collateral leg is under $2,000. Liquidation bonus 10% for XLM/SolvBTC/wBTC.
+- **Fees**: reserve factor typically 10–20%; flash loan premium 9 bps default; liquidation protocol fee 0.3% default. No deposit/withdraw/repay fees.
+- **Oracle**: RedStone primary, Reflector fallback. Staleness rejection (1h default, per-asset override), 20% circuit breaker that keeps the last good price, zero-price rejection, and a global oracle pause.
+- **Flash loans**: enabled per reserve plus a global kill switch; repay principal + premium in the same transaction or the whole thing reverts.
+- **DEX integration**: Soroswap and Aquarius adapters power collateral swaps and flash liquidations. **Direct pairs only — no multi-hop routing**, so a swap fails if no direct pair exists.
+- **Liquidation access**: whitelisted liquidators during the launch period, opening to permissionless over time — check current state before building a liquidation bot.
+- **Audits**: Halborn, WatchPug, and a Code4rena contest; Hypernative for runtime monitoring.
+
+**Mainnet contracts.** `kinetic_router` is the entry point you call; the rest are the modules it routes to.
+
+| Contract | Address |
+|----------|---------|
+| `kinetic_router` | `CCTUJZLYFAW7ZNQD2SXMUZIHBUUJJICYRKWLZJ6SK6TGNAWNXOJIV6J7` |
+| `configurator` | `CAYS7DTBBBG6TDT326KYTE72L6Q7NSEI2U2CA7TKCQIWPXB2GNJWU7M4` |
+| `price_oracle` | `CCHRZE2K5TCERZLDO5IXDUWUKLRPVE72DI3TDF2RP6EQKEW6BNOMQRMU` |
+| `interest_rate` | `CATBSCEN73MFGD4LCCC6SFJHGNEHC2QLSSXFZXFCW3NK45BBPGEYDXOC` |
+| `treasury` | `CCQ4J5VLQHM2ORP4K7GBVAJJPK5SGG23DH4RD7QEHAZDHTN7JNESNXKZ` |
+| `incentives` | `CAAMA46SQXQKHZDWAS2CNZVAX67TOMGBVH3DVSZSMDKKVP25VGTDQIRX` |
+| `flash_liquidation` | `CACGHPQB2QOKNAPH3PVGKXXSULNGMNZYWVZQVPTHMWHFRXAGASSRNQ7H` |
+| `reward_token` | `CA4V5C3KWDXBJEPIIKZT2PQWQZB4SY3G3G3S4PYPD5XXGXF5RKQUBE2N` |
+| `soroswap_swap_adapter` | `CDL35ZAOYVDBMSTIKOF4HJKXA7MWHF5ZJNZKES6EAZAOOHLXURSGSYAJ` |
+| `aquarius_swap_adapter` | `CBJBQMSBXYBOSRK6WLBAEVGF2GXQVPTYVVMVDGZF7ZBJHHFT2IGJNDMN` |
+| `aquarius_multihop_swap_handler` | `CB3EHO42TDWT5EG6X62QTMPQPWIETVFLM7Q7DT62Z6MT5J4HP33XKXWE` |
+| `solvbtc_composite_oracle` | `CABOR5KOCMIC226J5B63W5MV75VH5ZPAFEXZFET2JDD2H6IGJY5UPWP4` |
+
+**Reserve tokens.** Read a user's supply balance from the aToken and their debt from the debt ledger. The `underlying` column is the asset's SAC, not a K2 contract.
+
+| Market | Underlying (SAC) | aToken | Debt ledger |
+|--------|------------------|--------|-------------|
+| USDC | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` | `CDHRPTO3NLGQ2CV75LFV6NF6ZMXIPGPID5GTAZTEICBYLMLKJICOMFZK` | `CBN4GDHRJN7AIARTSTUD3OK7IOCU5V6HTSOTVARFUA5KVE7XSNBZUQG6` |
+| XLM | `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA` | `CDTHJR27QWKAPCFTZWKP7GTX3RZO7HACVAC2KLCW2RENCMOCI35ORU5K` | `CC3OKG4VDLGFBS7V6UTSJVP3YL3A4OLV63EMTNUU3MQ2AOAU4M65H7QG` |
+| PYUSD | `CCCRWH6Q3FNP3I2I57BDLM5AFAT7O6OF6GKQOC6SSJNDAVRZ57SPHGU2` | `CA7ELGRS4FNCYJPRZSNLF7NDD6VVOFZKFKMY56VVSG3RMNYTFQNNFUTD` | `CAVFE34MWBIXT4AOFXPTI7U7JTLPHKG4YWDDMRXVJOIZKG6HFJW3IHXV` |
+| SolvBTC | `CBIJBDNZNF4X35BJ4FFZWCDBSCKOP5NB4PLG4SNENRMLAPYG4P5FM6VN` | `CDDTJ7OZU2WZAEZNTUZWIRAE4EMP5CF63M3INFQWTLX4ENMYUFK6RCTX` | `CADGKVZKBNLPKFIWDWTRSQAPBWH77H2OPJIF3WGVL7VADVLCXDZ5CSNH` |
+
+wBTC appears in K2's risk-parameter and liquidation tables as a supported asset but has no published reserve token set — treat only the four markets above as live.
+
+**External contracts K2 reads or routes through** (not K2-owned): Reflector Stellar mainnet DEX oracle `CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M`, Reflector external CEX/DEX oracle `CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN`, RedStone batch adapter `CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG`.
+
+> Every address above was resolved on pubnet (2026-07-31). Legacy manual reserve tokens and published-but-uninstantiated WASM hashes are omitted; [docs.k2lend.com/contracts](https://docs.k2lend.com/contracts) is the source of truth — re-check it before hard-coding, since reserves and adapters can be added or rotated.
+
 #### Slender
 First non-custodial lending protocol on Stellar with flash loan support.
 - **Use Case**: Lending, borrowing, flash loans
 - **Features**: Pool-based strategy, sTokens, dTokens, utilization caps
 - **Oracle**: SEP-40 compatible (Reflector)
+
+#### XOXNO Lending
+Money market on Stellar with a hub-and-spoke architecture: one central liquidity pool and a controller that orchestrates everything. An NFT is the position (collateral and debt together) and can be transferred between wallets. Health factor is per NFT; one user can hold an unlimited number of NFTs. Live on mainnet and testnet.
+
+**Load the skill** when the task names XOXNO Lending or a distinctive identifier: `rs-lending-xlm`, hub/spoke, `HubAssetKey`, position NFT, `flash_position` (vs `flash_loan`), `@xoxno/sdk-js` `stellar-lending`, `xoxno-contract-sdk`, `api.xoxno.com/stellar-lending`, or `stellar-swap.xoxno.com`. Fetch [skills/xoxno-lending/SKILL.md](https://raw.githubusercontent.com/XOXNO/rs-lending-xlm/main/skills/xoxno-lending/SKILL.md) and follow its routing table.
+
+- **Use Case**: Supply, borrow, leverage, collateral and debt swaps, flash loans, liquidations
+- **GitHub**: https://github.com/XOXNO/rs-lending-xlm
+- **Docs**: [overview](https://xoxno.com/docs/stellar-lending/overview), [llms.txt](https://xoxno.com/llms.txt). Developer guides: [App integration](https://xoxno.com/docs/stellar-lending/dev/wallet-integration) (`@xoxno/sdk-js`), [Integrator API](https://xoxno.com/docs/stellar-lending/dev/integrator-api) (v1 REST routes, no API key), [Contract SDK](https://xoxno.com/docs/stellar-lending/dev/contract-sdk) (`xoxno-contract-sdk`)
+- **Types / API spec**: `@xoxno/sdk-js` (`stellar-lending`) is fully typed TypeScript. Lending REST: Swagger UI at [api.xoxno.com](https://api.xoxno.com/) (`GET /swagger.json`); the testnet root is `https://testnet-api.xoxno.com` (no Swagger UI). Swap quotes and XDR: Swagger UI at [stellar-swap.xoxno.com](https://stellar-swap.xoxno.com/) (`GET /api-docs/openapi.json`)
+- **Rust SDK**: `xoxno-contract-sdk` ([crates.io](https://crates.io/crates/xoxno-contract-sdk)) calls the protocol from a Soroban contract. Its `testutils` feature adds `LendingFixture`, which deploys the lending contracts and mock oracles in a test `Env`.
+- **License / audit**: `xoxno-contract-sdk` is [MIT](https://github.com/XOXNO/xoxno-contract-sdk/blob/main/LICENSE). The protocol contract source (`rs-lending-xlm`) uses [PolyForm Noncommercial 1.0.0](https://github.com/XOXNO/rs-lending-xlm/blob/main/LICENSE); commercial use of that source needs a written agreement with XOXNO. No audit report is listed.
+- **Entry point (mainnet)**: lending — `controller` `CAUCMIN5KSXEVZ7NMXR3LZATGD5EFIEUI5XWTFLYRO2R5OTXI22WE5JX` (not the pool). Swaps — aggregator router `CCVENFSVCBYDHVOACFZXMNNYVOZ3LKXPZYU5LUI4N7KTXOKRVYD7F3TR`. Testnet IDs differ; resolve the testnet controller and router, plus hubs, spokes, listed markets, and every other address on either network, from [addresses.md](https://github.com/XOXNO/rs-lending-xlm/blob/main/skills/xoxno-lending/addresses.md), generated from `configs/networks.json` — re-check before hard-coding.
 
 ### DEXs & AMMs
 
@@ -183,6 +257,16 @@ Yield aggregation and vault infrastructure by PaltaLabs.
 - **Use Case**: Tokenized vaults, yield strategies, DeFi abstraction
 - **Docs**: https://docs.defindex.io
 - **Features**: Automated rebalancing, vault management, Blend integration
+
+#### Spectra Finance
+Fixed-rate yield markets: splits a yield-bearing asset into a Principal Token (PT) and a Yield Token (YT). Live on Stellar mainnet; Stellar markets accept XLM and USDC and swap them into the market asset first.
+- **Use Case**: Lock a fixed rate (buy PT), trade future yield (YT)
+- **App**: https://app.spectra.finance/fixed-rate?network=stellar
+- **Docs**: https://docs.spectra.finance/docs/stellar
+- **Developer docs**: https://dev.spectra.finance/docs/stellar (Core v2 integration, router and limit orders, IBT wrappers, PT bridge, oracle)
+- **Mainnet contracts**: https://dev.spectra.finance/docs/technical-reference/deployed-contracts#stellar-mainnet (Registry, PT Factory, Router, Limit Order Engine, PT Bridge, PT Oracle Factory)
+- **Features**: Core v2 on Soroban, PT/YT limit orders, Blend wrapper (Blend positions as vault shares), PT bridge to EVM, deterministic zero-coupon-bond PT oracle
+- **Caveat**: PT market deployment is permissionless. Registry membership is discovery data, not an allowlist.
 
 ### Stablecoins & CDPs
 
@@ -247,9 +331,10 @@ SDK for integrating multiple Stellar wallets.
 
 ### Smart Account & Authentication
 
-#### Smart Account Kit (Recommended)
+#### Smart Account Kit
 Comprehensive TypeScript SDK for OpenZeppelin Smart Accounts on Stellar.
-- **GitHub**: https://github.com/kalepail/smart-account-kit
+- **GitHub**: https://github.com/stellar/smart-account-kit
+- **Authorization model**: OpenZeppelin context rules + an auth digest
 - **Use Case**: Production smart wallets with passkeys
 - **Built On**: [OpenZeppelin stellar-contracts](https://github.com/OpenZeppelin/stellar-contracts)
 - **Features**:
@@ -260,11 +345,11 @@ Comprehensive TypeScript SDK for OpenZeppelin Smart Accounts on Stellar.
   - Built-in indexer for contract discovery
   - Multiple signer types (passkeys, Ed25519, policies)
 
-#### Passkey Kit (Legacy)
-Original TypeScript SDK for passkey-based smart wallets.
-- **GitHub**: https://github.com/kalepail/passkey-kit
-- **Status**: Legacy - use Smart Account Kit for new projects
-- **Use Case**: Simple passkey wallet integration
+#### Passkey Kit
+TypeScript SDK for passkey-based smart wallets. Sibling to Smart Account Kit, with a different authorization model — the two are not drop-in compatible.
+- **GitHub**: https://github.com/stellar/passkey-kit
+- **Authorization model**: A flat multi-signer `Signatures` map
+- **Use Case**: Passkey wallet integration where the flat signer model is enough
 - **Integration**: OpenZeppelin Relayer (gasless tx), Mercury (indexing)
 - **Demo**: [passkey-kit-demo.pages.dev](https://passkey-kit-demo.pages.dev)
 - **Example**: [Super Peach](https://github.com/kalepail/superpeach)
@@ -303,6 +388,13 @@ Cloud execution environment for blockchain data processing.
 - **Use Case**: Indexing, monitoring, automation
 - **Features**: Self-hostable, ledger-close execution
 
+#### Stellar Prices API
+REST API with USD and XLM prices for assets traded on SDEX and Soroban AMMs, by Rumble Fish.
+- **Website**: https://sorobanscan.rumblefish.dev/prices-api/
+- **Docs**: https://sorobanscan.rumblefish.dev/prices-api/docs
+- **Use Case**: Current prices, OHLCV candles, batch price lookups
+- **Features**: 24h cross-venue VWAP (SDEX, Soroswap, Aquarius, Phoenix, SushiSwap), Reflector oracle readings, free API key via Discord
+
 ### Contract Libraries
 
 #### OpenZeppelin Stellar Contracts
@@ -315,41 +407,13 @@ Audited smart contract library for Stellar (track latest release tags before pin
 
 ### Security Tools
 
-#### Scout Soroban (CoinFabrik)
-Open-source vulnerability detector with 23 detectors for Stellar smart contracts.
-- **GitHub**: https://github.com/CoinFabrik/scout-soroban
-- **Install**: `cargo install cargo-scout-audit`
-- **Features**: CLI tool, VSCode extension, SARIF output for CI/CD
-- **Examples**: https://github.com/CoinFabrik/scout-soroban-examples
+Usage details, detector lists, and workflow guidance live in [the smart contract security guide](/.well-known/agent-skills/smart-contracts/skill.md#tooling). Catalog:
 
-#### OpenZeppelin Security Detectors SDK
-Framework for building custom security detectors for Stellar contracts.
-- **GitHub**: https://github.com/OpenZeppelin/soroban-security-detectors-sdk
-- **Detectors**: `auth_missing`, `unchecked_ft_transfer`, improper TTL, contract panics
-- **Extensible**: Load external detector libraries, CI/CD ready
-
-#### Certora Sunbeam Prover
-Formal verification for Stellar smart contracts — first WASM platform supported by Certora.
-- **Docs**: https://docs.certora.com/en/latest/docs/sunbeam/index.html
-- **Spec Language**: CVLR (Rust macros) — https://github.com/Certora/cvlr
-- **Reports**: [Blend V1 verification](https://www.certora.com/reports/blend-smart-contract-verification-report)
-- **Verifies at**: WASM bytecode level, eliminating compiler trust assumptions
-
-#### Runtime Verification — Komet
-Formal verification and testing tool designed for Stellar smart contracts (SCF-funded).
-- **Docs**: https://docs.runtimeverification.com/komet
-- **Repo**: https://github.com/runtimeverification/komet
-- **Spec Language**: Rust — property-based tests written in the same language as the contracts
-- **Operates at**: WASM bytecode level via [KWasm semantics](https://github.com/runtimeverification/wasm-semantics) (eliminates compiler trust assumptions)
-- **Features**: Fuzzing, testing, formal verification
-- **Reports**: https://github.com/runtimeverification/publications
-- **Example**: [TokenOps audit and verification report](https://github.com/runtimeverification/publications/blob/main/reports/smart-contracts/TokenOps.pdf)
-- **Blog**: [Introducing Komet](https://runtimeverification.com/blog/introducing-komet-smart-contract-testing-and-verification-tool-for-soroban-created-by-runtime-verification)
-
-#### Soroban Security Portal (Inferara)
-Community security knowledge base (SCF-funded).
-- **Website**: https://sorobansecurity.com
-- **Features**: Searchable audit reports, vulnerability database, best practices
+- [Scout Soroban](https://github.com/CoinFabrik/scout-soroban) (CoinFabrik) - static analysis, 20+ detectors, VSCode extension, SARIF output ([examples](https://github.com/CoinFabrik/scout-soroban-examples))
+- [Security Detectors SDK](https://github.com/OpenZeppelin/soroban-security-detectors-sdk) (OpenZeppelin) - pre-built detectors plus a framework for custom ones
+- [Certora Sunbeam Prover](https://docs.certora.com/en/latest/docs/sunbeam/index.html) - formal verification at WASM level, CVLR spec language ([Blend V1 report](https://www.certora.com/reports/blend-smart-contract-verification-report))
+- [Komet](https://docs.runtimeverification.com/komet) (Runtime Verification) - property testing and formal verification via KWasm semantics ([reports](https://github.com/runtimeverification/publications))
+- [Soroban Security Portal](https://sorobansecurity.com) (Inferara) - searchable audit reports and vulnerability database
 
 ### CLI & SDKs
 
@@ -357,6 +421,15 @@ Community security knowledge base (SCF-funded).
 Official command-line interface for Stellar.
 - **Docs**: https://developers.stellar.org/docs/tools/stellar-cli
 - **Features**: Contract build, deploy, invoke, bindings generation
+
+#### Stellar Registry
+On-chain registry of named, versioned Soroban contracts and Wasms, with a `stellar registry` CLI plugin and Rust import macros.
+- **Website**: https://rgstry.xyz
+- **GitHub**: https://github.com/stellar-registry
+- **CLI**: `cargo install --locked stellar-registry-cli` (adds `stellar registry`)
+- **Crate**: `stellar-registry` (`import_contract!`, `import_contract_client!`, `import_asset!`)
+- **Agent Skill**: https://github.com/stellar-registry/cli/tree/main/skills/stellar-registry
+- **Use Case**: Share and reuse contracts by name instead of hardcoded addresses; cross-contract calls resolved at build time
 
 #### Stellar SDK (JavaScript)
 Official JavaScript/TypeScript SDK.
@@ -367,6 +440,23 @@ Official JavaScript/TypeScript SDK.
 Rust SDK for smart contract development.
 - **GitHub**: https://github.com/stellar/rs-soroban-sdk
 - **Crate**: `soroban-sdk`
+
+### AI & MCP Tools
+
+#### Raven
+Remote Model Context Protocol (MCP) server for AI agents. Searches Stellar docs and live ecosystem data, cross-referenced into single answers. Its catalog also serves these skills.
+- **Server**: https://raven.stellar.org (MCP endpoint: https://raven.stellar.org/mcp)
+- **Playground**: https://raven.stellar.org/playground (hosted chat UI for humans; sign-in required)
+- **GitHub**: https://github.com/stellar-experimental/stellar-raven
+- **Connect (Claude Code)**: `claude mcp add --transport http stellar-raven "https://raven.stellar.org/mcp"`
+- **Tools**: `search`, `execute`
+
+#### Stellar Docs MCP
+Official MCP server for the Stellar docs site. Searches the docs, reads full pages and OpenAPI specs, and serves these skills as MCP resources. No sign-in. Use it for docs-only answers. Use Raven when you also need live ecosystem data.
+- **Server**: https://developers.stellar.org/mcp
+- **Docs**: https://developers.stellar.org/docs/build/building-with-ai#stellar-docs-mcp-server
+- **Connect (Claude Code)**: `claude mcp add --transport http --scope user stellar-docs "https://developers.stellar.org/mcp"`
+- **Tools**: `search_stellar_developer_docs`, `query_docs_filesystem_stellar_developer_docs` (read pages with `cat`, `rg`, `tree`), `submit_feedback`
 
 ## Oracles
 
@@ -382,6 +472,16 @@ Cross-chain oracle with 20,000+ asset support.
 - **Website**: https://diadata.org
 - **Blog**: https://www.diadata.org/blog/post/soroban-stellar-oracle-dia/
 - **Features**: VWAPIR methodology, custom feeds
+
+#### Chainlink
+Data Feeds and Data Streams live on Stellar (October 2026).
+- **Docs**: https://docs.chain.link/data-feeds/stellar
+- **Feed IDs**: https://docs.chain.link/data-feeds/price-feeds/addresses?network=stellar (select Stellar)
+- **Proxy (mainnet)**: `CDQBHEUGLDHMSUHG4IH33RJBUTMNCZOT4JIAQR4WZFRDZW6DR6S32ZLZ`
+- **Proxy (testnet)**: `CBUF6IADAWPWIDWRTHJNINKXHG2UTIQ6TU2F2HRAXWAI7OT3KJPKK6O4`
+- **Interface**: not SEP-40. One proxy serves every feed; select a feed by its 32-byte `data_id`. `latest_round(data_id, decimals)` and `get_round(data_id, round_id, decimals)` return `Round { round_id, answer: I256, timestamp }`. Answers are stored at 18 decimals; pass `18` unless Chainlink approved a lower precision. Interface source: https://github.com/smartcontractkit/chainlink-stellar
+- **Example**: BTC/USD `data_id` `01a0b4d920000332000000000000000000000000000000000000000000000000` (same on testnet and mainnet)
+- **Data Streams**: pull model; verify signed reports on-chain with the Chainlink Verifier contract. Needs an allowlisted account. Guide: https://docs.chain.link/data-streams/tutorials/stellar-onchain-report-verification
 
 #### Band Protocol
 Cross-chain data oracle on BandChain.
@@ -432,6 +532,17 @@ Bulk payment infrastructure for enterprises.
 - **Docs**: https://developers.stellar.org/docs/category/use-the-stellar-disbursement-platform
 - **GitHub**: https://github.com/stellar/stellar-disbursement-platform
 - **Use Case**: Mass payments, aid distribution, payroll
+
+### Escrow
+
+#### Trustless Work
+Escrow-as-a-Service platform for non-custodial stablecoin escrows.
+- **Use Case**: Milestone-based payments, marketplace escrows, freelance platforms, grant disbursements
+- **Website**: https://www.trustlesswork.com
+- **Docs**: https://docs.trustlesswork.com
+- **GitHub**: https://github.com/Trustless-Work
+- **Agent Skill**: https://github.com/Trustless-Work/trustlesswork-skill
+- **Features**: Single-release and multi-release escrows, role-based permissions, dispute resolution, REST API, React SDK, pre-built Blocks UI
 
 ## Example Repositories
 
@@ -494,7 +605,7 @@ Notable teams shipping production-level code on Stellar. For a broader directory
 |------|---------|--------|-----------|-----------------|
 | **Lightsail Network** | [lightsail.network](https://lightsail.network) | [lightsail-network](https://github.com/lightsail-network) | [@overcat_me](https://x.com/overcat_me) | Quasar RPC, Java/Python SDKs, Ledger app, validators |
 | **PaltaLabs** | [paltalabs.io](https://paltalabs.io) | [paltalabs](https://github.com/paltalabs) | [@PaltaLabs](https://x.com/PaltaLabs) | Soroswap, DeFindex |
-| **Aha Labs** | [ahalabs.dev](https://ahalabs.dev) | [AhaLabs](https://github.com/AhaLabs) | [@AhaLabsDev](https://x.com/AhaLabsDev) | Scaffold Stellar, Soroban CLI contributions |
+| **The Aha Company** | [theaha.co](https://theaha.co) | [theahaco](https://github.com/theahaco) | [@theahaco](https://x.com/theahaco) | Stellar Scaffold, Stellar Registry, Soroban CLI contributions |
 | **OpenZeppelin** | [openzeppelin.com](https://www.openzeppelin.com/networks/stellar) | [OpenZeppelin](https://github.com/OpenZeppelin/stellar-contracts) | [@OpenZeppelin](https://x.com/OpenZeppelin) | Contracts library, Relayer, Monitor, Security Detectors SDK |
 | **Cheesecake Labs** | [cheesecakelabs.com](https://cheesecakelabs.com) | [CheesecakeLabs](https://github.com/CheesecakeLabs) | [@CheesecakeLabs](https://x.com/CheesecakeLabs) | Stellar Plus library |
 | **Script3 / Blend Capital** | [script3.io](https://script3.io) | [script3](https://github.com/script3), [blend-capital](https://github.com/blend-capital) | [@script3official](https://x.com/script3official) | Blend Protocol |
@@ -502,6 +613,7 @@ Notable teams shipping production-level code on Stellar. For a broader directory
 | **CoinFabrik** | [coinfabrik.com](https://www.coinfabrik.com) | [CoinFabrik](https://github.com/CoinFabrik) | [@coinfabrik](https://x.com/coinfabrik) | Scout Soroban (static analysis) |
 | **Creit Tech** | [creit.tech](https://creit.tech) | [Creit-Tech](https://github.com/Creit-Tech) | [@CreitTech_](https://x.com/CreitTech_) | Stellar Wallets Kit, xBull, SorobanHub |
 | **Ultra Stellar** | [ultrastellar.com](https://ultrastellar.com) | [lobstrco](https://github.com/lobstrco) | [@Lobstrco](https://x.com/Lobstrco) | LOBSTR wallet, StellarExpert |
+| **Trustless Work** | [trustlesswork.com](https://www.trustlesswork.com) | [Trustless-Work](https://github.com/Trustless-Work) | [@TrustlessWork](https://x.com/TrustlessWork) | Escrow-as-a-Service platform |
 
 ## Project Directories
 
@@ -555,7 +667,9 @@ Major companies building on Stellar:
 
 ---
 
-# Part 3: Curated Resources
+# Curated Resources
+
+Curated documentation, SDK, tooling, and learning links. Companion to [SKILL.md](#standards-ecosystem-and-resources) (SEP/CAP standards routing); project/protocol catalog lives in [Stellar Ecosystem](#stellar-ecosystem).
 
 
 ## Official Documentation
@@ -612,8 +726,8 @@ Major companies building on Stellar:
 - [Contract Wizard](https://wizard.openzeppelin.com/stellar) - Generate contracts
 
 ### Smart Account SDKs
-- [Smart Account Kit](https://github.com/kalepail/smart-account-kit) - Production smart wallet SDK (recommended)
-- [Passkey Kit](https://github.com/kalepail/passkey-kit) - Legacy passkey wallet SDK
+- [Smart Account Kit](https://github.com/stellar/smart-account-kit) - Smart wallet SDK using OpenZeppelin context rules + auth digest
+- [Passkey Kit](https://github.com/stellar/passkey-kit) - Sibling smart wallet SDK using a flat multi-signer `Signatures` map
 - [Super Peach](https://github.com/kalepail/superpeach) - Smart wallet implementation example
 
 ### Developer Tools
@@ -622,61 +736,34 @@ Major companies building on Stellar:
 
 ## Example Repositories
 
-### Official Examples
-- [Soroban Examples](https://github.com/stellar/soroban-examples) - Core contract patterns
-- [Soroban Example dApp](https://github.com/stellar/soroban-example-dapp) - Crowdfunding Next.js app
-- [Stellar Repositories](https://github.com/orgs/stellar/repositories)
-
-### Community Examples
-- [Scout Soroban Examples](https://github.com/CoinFabrik/scout-soroban-examples) - Security-audited examples
-- [Soroban Guide (Xycloo)](https://github.com/xycloo/soroban-guide) - Learning resources
-- [Soroban Contracts (icolomina)](https://github.com/icolomina/soroban-contracts) - Governance examples
-- [Oracle Example](https://github.com/FredericRezeau/soroban-oracle-example) - Pub-sub oracle pattern
-- [OZ Stellar NFT](https://github.com/jamesbachini/OZ-Stellar-NFT) - Simple NFT with OpenZeppelin
+Official and community example repos are cataloged in [ecosystem.md](#example-repositories). See also [Stellar Repositories](https://github.com/orgs/stellar/repositories) for everything under the stellar org.
 
 ## Ecosystem Projects
 
-For DeFi protocols, wallets, oracles, gaming/NFTs, cross-chain bridges, and builder teams, see Part 2: Stellar Ecosystem below.
+For DeFi protocols, wallets, oracles, gaming/NFTs, cross-chain bridges, and builder teams, see [Stellar Ecosystem](#stellar-ecosystem).
 
 ## Security
 
-For vulnerability patterns, checklists, and detailed tooling guides, see [the smart contract security guide](/.well-known/agent-skills/smart-contracts/skill.md#security).
+Vulnerability patterns, checklists, tooling (static analysis, formal verification, monitoring), the Audit Bank, and the Immunefi bounty programs are covered in [the smart contract security guide](/.well-known/agent-skills/smart-contracts/skill.md#security). The [Security Tools catalog in ecosystem.md](#security-tools) lists the tool links.
 
-### Bug Bounty Programs
-- [Stellar Bug Bounty (Immunefi)](https://immunefi.com/bug-bounty/stellar/) - Up to $250K, covers core + smart contract stack
-- [OpenZeppelin Stellar Bounty (Immunefi)](https://immunefi.com/bug-bounty/openzeppelin-stellar/) - Up to $25K
+Additional resources not covered there:
 - [HackerOne VDP](https://stellar.org/grants-and-funding/bug-bounty) - Web application vulnerabilities
-
-### Audit Bank & Audit Firms
-- [Soroban Audit Bank](https://stellar.org/grants-and-funding/soroban-audit-bank) - $3M+ deployed, 43+ audits
 - [Audited Projects List](https://stellar.org/audit-bank/projects) - Public audit registry
-- Partners: OtterSec, Veridise, Runtime Verification, CoinFabrik, QuarksLab, Coinspect, Certora, Halborn, Zellic, Code4rena
-
-### Static Analysis
-- [Scout Soroban](https://github.com/CoinFabrik/scout-soroban) - 23 vulnerability detectors, VSCode extension
-- [OZ Security Detectors SDK](https://github.com/OpenZeppelin/soroban-security-detectors-sdk) - Custom detector framework
-
-### Formal Verification
-- [Certora Sunbeam Prover](https://docs.certora.com/en/latest/docs/sunbeam/index.html) - WASM-level formal verification
-- [CVLR Spec Language](https://github.com/Certora/cvlr) - Certora Verification Language for Rust
-- [Runtime Verification Komet](https://runtimeverification.com/blog/introducing-komet-smart-contract-testing-and-verification-tool-for-soroban-created-by-runtime-verification) - contract verification tool
-
-### Security Resources
 - [Veridise Security Checklist](https://veridise.com/blog/audit-insights/building-on-stellar-soroban-grab-this-security-checklist-to-avoid-vulnerabilities/) - smart-contract security checklist
-- [Soroban Security Portal](https://sorobansecurity.com) - Community vulnerability database
 - [CoinFabrik Audit Reports](https://www.coinfabrik.com/smart-contract-audit-reports/)
 - [Certora Security Reports](https://github.com/Certora/SecurityReports) - Includes Stellar verifications
 
 ## Zero-Knowledge Proofs (Status-Sensitive)
 
-For comprehensive ZK development guidance, see [zk-proofs.md](/.well-known/agent-skills/zk-proofs/skill.md).
+For comprehensive ZK development guidance, see the [zk-proofs skill](/.well-known/agent-skills/zk-proofs/skill.md).
 
 Always verify CAP status and network support before treating any ZK primitive as production-available.
 
 ### Protocol & Specifications
 - [Protocol upgrades](https://stellar.org/protocol-upgrades) - Upgrade timeline and network context
-- [CAP-0074](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0074.md) - BN254 host functions proposal
-- [CAP-0075](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0075.md) - Poseidon/Poseidon2 host functions proposal
+- [CAP-0074](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0074.md) - BN254 host functions (G1 add/mul, pairing check) — Final, Protocol 25+
+- [CAP-0075](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0075.md) - Poseidon/Poseidon2 permutation primitives — Final, Protocol 25+
+- [CAP-0080](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0080.md) - BN254 G1 MSM, Fr arithmetic, on-curve checks — Implemented, Protocol 26+
 
 ### SDK Documentation
 - [Soroban SDK BN254 module](https://docs.rs/soroban-sdk/latest/soroban_sdk/crypto/bn254/) - Verify availability in your pinned SDK version
@@ -721,10 +808,8 @@ Always verify CAP status and network support before treating any ZK primitive as
 - [StellarChain](https://stellarchain.io) - Alternative explorer
 
 ### Data Indexers
-- [Mercury](https://mercurydata.app) - Stellar-native indexer with Retroshades + GraphQL ([docs](https://docs.mercurydata.app))
-- [SubQuery](https://subquery.network) - Multi-chain indexer with Stellar support ([quick start](https://subquery.network/doc/indexer/quickstart/quickstart_chains/stellar.html))
-- [Goldsky](https://goldsky.com) - Real-time data replication pipelines + subgraphs ([Stellar docs](https://docs.goldsky.com/chains/stellar))
-- [Zephyr VM](https://github.com/xycloo/zephyr-vm) - Serverless Rust execution at ledger close
+
+Mercury, SubQuery, Goldsky, and Zephyr VM are cataloged with docs links in [ecosystem.md](#data-indexing). Full directory: [Indexer Directory](https://developers.stellar.org/docs/data/indexers).
 
 ### Historical Data & Analytics
 - [Hubble](https://developers.stellar.org/docs/data/analytics/hubble) - BigQuery dataset (updated every 30 min)
@@ -733,15 +818,7 @@ Always verify CAP status and network support before treating any ZK primitive as
 
 ## Infrastructure
 
-### Anchors & On/Off Ramps
-- [Anchor Platform](https://github.com/stellar/java-stellar-anchor-sdk)
-- [Anchor Docs](https://developers.stellar.org/docs/category/anchor-platform)
-- [Anchor Fundamentals](https://developers.stellar.org/docs/learn/fundamentals/anchors)
-- [Stellar Ramps](https://stellar.org/use-cases/ramps)
-
-### Disbursements
-- [Stellar Disbursement Platform](https://github.com/stellar/stellar-disbursement-platform)
-- [SDP Documentation](https://developers.stellar.org/docs/category/use-the-stellar-disbursement-platform)
+Anchors, on/off ramps, and the Stellar Disbursement Platform are cataloged in [ecosystem.md](#infrastructure). See also the [Anchor Platform docs](https://developers.stellar.org/docs/category/anchor-platform).
 
 ### RPC Providers
 - [RPC Provider Directory](https://developers.stellar.org/docs/data/apis/rpc/providers) - Full list of providers
@@ -762,6 +839,7 @@ Always verify CAP status and network support before treating any ZK primitive as
 
 ### Key SEP Standards
 - [SEP-0001](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md) - stellar.toml
+- [SEP-0008](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0008.md) - Regulated Assets (approval server)
 - [SEP-0010](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md) - Web Authentication
 - [SEP-0024](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0024.md) - Hosted Deposit/Withdrawal
 - [SEP-0030](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0030.md) - Account Recovery
@@ -779,14 +857,7 @@ Always verify CAP status and network support before treating any ZK primitive as
 
 ## Project Directories & Funding
 
-### Ecosystem Discovery
-- [Stellar Ecosystem](https://stellar.org/ecosystem) - Official project directory
-- [Stellar Community Fund Projects](https://communityfund.stellar.org/projects)
-
-### Funding Programs
-- [Stellar Community Fund](https://communityfund.stellar.org) - Grants up to $150K
-- [Soroban Audit Bank](https://stellar.org/grants-and-funding/soroban-audit-bank)
-- [$100M Soroban Adoption Fund](https://stellar.org/soroban)
+Directories (Stellar Ecosystem, SCF Project Tracker) and funding programs (SCF, Audit Bank) are cataloged in [ecosystem.md](#project-directories). See also the [$100M Soroban Adoption Fund](https://stellar.org/soroban).
 
 ## Learning Resources
 
@@ -829,7 +900,7 @@ Always verify CAP status and network support before treating any ZK primitive as
 ## Community
 
 ### Developer Resources
-- [Stellar Developers Discord](https://discord.gg/stellar)
+- [Stellar Developers Discord](https://discord.gg/stellardev)
 - [Stellar Stack Exchange](https://stellar.stackexchange.com)
 - [GitHub Discussions](https://github.com/stellar/stellar-protocol/discussions)
 
@@ -856,7 +927,7 @@ Builders and contributors actively shaping the Stellar ecosystem:
 | Willem Wyndham | [willemneal](https://github.com/willemneal) | [@willemneal](https://x.com/willemneal) | Aha Labs co-founder, Scaffold Stellar, JS contract client |
 
 ### Builder Teams & Companies
-See Part 2: Stellar Ecosystem above for a table of teams shipping production code on Stellar, with GitHub orgs, websites, and Twitter handles.
+See the [Builder Teams table in ecosystem.md](#builder-teams--companies) for teams shipping production code on Stellar, with GitHub orgs, websites, and Twitter handles.
 
 ### Foundation
 - [Stellar Development Foundation](https://stellar.org/foundation)
