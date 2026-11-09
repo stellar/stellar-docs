@@ -664,7 +664,7 @@ html.dark .usdt0{
               </div>
               <div className="venue">
                 <h3>Wallets</h3>
-                <ul><li>Freighter</li><li>Lobstr</li><li>Meru</li><li>Bitget Wallet</li><li>Exodus</li></ul>
+                <ul><li>Varial</li><li>Lobstr</li><li>Meru</li><li>Bitget Wallet</li><li>Exodus</li></ul>
                 <p>Hold and send USDT0 on Stellar.</p>
               </div>
               <div className="venue">
