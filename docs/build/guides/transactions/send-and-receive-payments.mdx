@@ -38,8 +38,8 @@ Lets demonstrate a payment of an asset on Stellar. We will build a transaction w
 - When submitting transactions to the RPC server it's possible that you will not receive a response from the server due to network conditions.
   - In such a situation it's impossible to determine the status of your transaction.
   - Highlights a recommendation to always save a transaction (or transaction encoded in XDR format) in a variable or a database and resubmit it if you don't know its status.
-  - The transaction in serialized XDR format is idempotent meaning if the transaction has already been successfully applied to the ledger, RPC will simply return the saved result and not attempt to submit the transaction again.
-  - Only in cases where a transaction's status is unknown (and thus will have a chance of being included into a ledger) will a resubmission to the network occur.
+  - Sending the same signed transaction again is safe, because it can go into a ledger only once.
+  - To learn its result, call `getTransaction` with the transaction hash. If the transaction is already in a ledger, sending it again returns `TRY_AGAIN_LATER` for about 10 ledgers, then `ERROR` (`txBAD_SEQ`).
 
 <Accordion title="Click to view payment sending code">
 <CodeGroup>
@@ -145,20 +145,36 @@ async function sendPayment(sender, senderAccount, recipient) {
     sendTransactionResponse = await rpcServer.sendTransaction(transaction);
   }
 
-  // ERROR means the network rejected the transaction.
+  // The loop stopped because a ledger closed after maxTime. The network never
+  // accepted the transaction, and now it can never go into a ledger.
+  if (sendTransactionResponse.status === "TRY_AGAIN_LATER") {
+    throw new Error("Transaction expired before the network accepted it");
+  }
+
+  // ERROR means the network rejected the transaction. But a transaction that
+  // is already in a ledger also returns ERROR (txBAD_SEQ) when you send it
+  // again, so look it up before you throw.
   if (sendTransactionResponse.status === "ERROR") {
-    throw new Error(
-      `Failed to send transaction, status: ${sendTransactionResponse.status}`,
-    );
+    const known = await rpcServer.getTransaction(sendTransactionResponse.hash);
+    if (known.status === StellarSdk.rpc.Api.GetTransactionStatus.NOT_FOUND) {
+      throw new Error(
+        `Failed to send transaction, status: ${sendTransactionResponse.status}`,
+      );
+    }
   }
 
   // PENDING means the network accepted the transaction. DUPLICATE means the
   // network already has this transaction from an earlier send. In both cases,
   // wait for the result.
-  console.log(
-    "Payment Transaction submitted, hash:",
-    sendTransactionResponse.hash,
-  );
+  if (
+    sendTransactionResponse.status === "PENDING" ||
+    sendTransactionResponse.status === "DUPLICATE"
+  ) {
+    console.log(
+      "Payment Transaction submitted, hash:",
+      sendTransactionResponse.hash,
+    );
+  }
 
   // getTransaction returns NOT_FOUND until the transaction is in a ledger.
   // NOT_FOUND does not mean that the transaction failed, so keep polling
