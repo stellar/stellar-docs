@@ -415,7 +415,7 @@ To fetch an account, all you need is its public key:
 import { Keypair, xdr } from "@stellar/stellar-sdk";
 
 const publicKey = "GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO";
-const accountLedgerKey = xdr.LedgerKey.ledgerKeyAccount(
+const accountLedgerKey = xdr.LedgerKey.account(
   new xdr.LedgerKeyAccount({
     accountId: Keypair.fromPublicKey(publicKey).xdrAccountId(),
   }),
@@ -443,9 +443,10 @@ This will give you the full account details.
 <CodeGroup>
 
 ```typescript TypeScript
-const accountEntryData = (
-  await s.getLedgerEntries(accountLedgerKey)
-).entries[0].account();
+const accountEntryData = xdr.expectUnionVariant(
+  (await s.getLedgerEntries(accountLedgerKey)).entries[0].val,
+  "account",
+).account;
 ```
 
 ```python Python
@@ -462,11 +463,7 @@ If you just want to take a look at the structure, you can pass the raw base64 va
 
 ```typescript TypeScript
 console.log(
-  `Account ${publicKey} has ${accountEntryData
-    .balance()
-    .toString()} stroops of XLM and is on sequence number ${accountEntryData
-    .seqNum()
-    .toString()}`,
+  `Account ${publicKey} has ${accountEntryData.balance} stroops of XLM and is on sequence number ${accountEntryData.seqNum}`,
 );
 ```
 
@@ -485,7 +482,7 @@ A trustline is a balance entry for any non-native asset (such as [Circle's USDC]
 <CodeGroup>
 
 ```typescript TypeScript
-const trustlineLedgerKey = xdr.LedgerKey.ledgerKeyTrustLine(
+const trustlineLedgerKey = xdr.LedgerKey.trustline(
   new xdr.LedgerKeyTrustLine({
     accountId: Keypair.fromPublicKey(publicKey).xdrAccountId(),
     asset: new Asset(
@@ -494,6 +491,11 @@ const trustlineLedgerKey = xdr.LedgerKey.ledgerKeyTrustLine(
     ).toTrustLineXDRObject(),
   }),
 );
+
+const trustlineEntryData = xdr.expectUnionVariant(
+  (await s.getLedgerEntries(trustlineLedgerKey)).entries[0].val,
+  "trustline",
+).trustLine;
 ```
 
 ```python Python
@@ -520,32 +522,31 @@ Much like an [account](#accounts), the resulting entry has a balance, but it als
 
 ```typescript TypeScript
 let asset: string;
-let rawAsset = trustlineEntryData.asset();
+let rawAsset = trustlineEntryData.asset;
 
-switch (rawAsset.switch().value) {
-  case AssetType.assetTypeCreditAlphanum4().value:
+switch (rawAsset.type) {
+  case "assetTypeCreditAlphanum4":
     asset = Asset.fromOperation(
-      xdr.Asset.assetTypeCreditAlphanum4(rawAsset.alphaNum4()),
+      xdr.Asset.assetTypeCreditAlphanum4(rawAsset.alphaNum4),
     ).toString();
     break;
 
-  case AssetType.assetTypeCreditAlphanum12().value:
+  case "assetTypeCreditAlphanum12":
     asset = Asset.fromOperation(
-      xdr.Asset.assetTypeCreditAlphanum12(rawAsset.alphaNum12()),
+      xdr.Asset.assetTypeCreditAlphanum12(rawAsset.alphaNum12),
     ).toString();
     break;
 
-  case AssetType.assetTypePoolShare().value:
-    asset = rawAsset.liquidityPoolId().toXDR("hex");
+  case "assetTypePoolShare":
+    asset = rawAsset.liquidityPoolId.toXdr("hex");
     break;
+
+  default:
+    throw new Error(`Unexpected asset type: ${rawAsset.type}`);
 }
 
 console.log(
-  `Account ${publicKey} has ${trustlineEntryData
-    .balance()
-    .toString()} stroops of ${asset} with a limit of ${trustlineEntryData
-    .limit()
-    .toString()}`,
+  `Account ${publicKey} has ${trustlineEntryData.balance} stroops of ${asset} with a limit of ${trustlineEntryData.limit}`,
 );
 ```
 
@@ -691,7 +692,15 @@ import { xdr } from "@stellar/stellar-sdk";
 function getLedgerKeyWasmId(
   contractData: xdr.ContractDataEntry,
 ): xdr.LedgerKey {
-  const wasmHash = contractData.val().instance().executable().wasmHash();
+  // Narrow each union to the arm we expect; this throws a TypeError otherwise
+  const { instance } = xdr.expectUnionVariant(
+    contractData.val,
+    "scvContractInstance",
+  );
+  const { wasmHash } = xdr.expectUnionVariant(
+    instance.executable,
+    "contractExecutableWasm",
+  );
 
   return xdr.LedgerKey.contractCode(
     new xdr.LedgerKeyContractCode({
@@ -728,13 +737,15 @@ Now, finally we have a `LedgerKey` that correspond to the Wasm byte-code that ha
 <CodeGroup>
 
 ```typescript TypeScript
-const theHashData: xdr.ContractDataEntry = await getLedgerEntries(
-  getLedgerKeyContractCode("C..."),
-).entries[0].contractData();
+const theHashData: xdr.ContractDataEntry = xdr.expectUnionVariant(
+  (await s.getLedgerEntries(getLedgerKeyContractCode("C..."))).entries[0].val,
+  "contractData",
+).contractData;
 
-const theCode: Buffer = await getLedgerEntries(getLedgerKeyWasmId(theHashData))
-  .entries[0].contractCode()
-  .code();
+const theCode: Uint8Array = xdr.expectUnionVariant(
+  (await s.getLedgerEntries(getLedgerKeyWasmId(theHashData))).entries[0].val,
+  "contractCode",
+).contractCode.code;
 ```
 
 ```python Python
@@ -751,7 +762,7 @@ the_code = xdr.LedgerEntryData.from_xdr(
 
 ## Actually fetching the ledger entry data
 
-Once we've learned to _build_ and _parse_ these (which we've done above at length), the process for actually fetching them is always identical. If you know the type of key you fetched, you apply the accessor method accordingly once you've received them from the `getLedgerEntries` method:
+Once we've learned to _build_ and _parse_ these (which we've done above at length), the process for actually fetching them is always identical. If you know the type of key you fetched, you read the matching arm of each entry once you've received them from the `getLedgerEntries` method:
 
 <CodeGroup>
 
@@ -760,10 +771,11 @@ const s = new Server("https://soroban-testnet.stellar.org");
 
 // assume key1 is an account, key2 is a trustline, and key3 is contract data
 const response = await s.getLedgerEntries(key1, key2, key3);
+const [e1, e2, e3] = response.entries.map((entry) => entry.val);
 
-const account = response.entries[0].account();
-const trustline = response.entries[1].trustline();
-const contractData = response.entries[2].contractData();
+const account = xdr.expectUnionVariant(e1, "account").account;
+const trustline = xdr.expectUnionVariant(e2, "trustline").trustLine;
+const contractData = xdr.expectUnionVariant(e3, "contractData").contractData;
 ```
 
 ```python Python
@@ -788,14 +800,14 @@ Now, finally we have a `LedgerKey` that correspond to the Wasm byte-code that ha
   "params": {
     "keys": [
       "AAAAB+QzbW3JDhlUbDVW/C+1/5SIQDstqORuhpCyl73O1vH6",
-      "AAAABgAAAAGfjJVEBc55drW3U87N1Py0Rw0/nlqUA6tQ6r28khEl4gAAABQAAAAB"
+      "AAAABgAAAAGfjJVEBc55drW3U87N1Py0Rw0/nlqUA6tQ6r28khEl4gAAABQAAAAB",
       "AAAABgAAAAAAAAABn4yVRAXOeXa1t1POzdT8tEcNP55alAOrUOq9vJIRJeIAAAAUAAAAAQAAABMAAAAA5DNtbckOGVRsNVb8L7X/lIhAOy2o5G6GkLKXvc7W8foAAAAA"
     ]
   }
 }
 ```
 
-Then you can inspect them accordingly. Each of the above entries follows the XDR for that `LedgerEntryData` structure precisely. For example, the `AccountEntry` is in [`Stellar-ledger-entries.x#L190`](https://github.com/stellar/stellar-xdr/blob/v25.0/Stellar-ledger-entries.x#L190) and you can use `.seqNum()` to access its current sequence number, as we've shown. In JavaScript, you can see the appropriate methods in the [type definition](https://github.com/stellar/js-stellar-base/blob/6930a70d7fbde675514b5933baff605d97453ba7/types/curr.d.ts#L3034).
+Then you can inspect them accordingly. Each of the above entries follows the XDR for that `LedgerEntryData` structure precisely. For example, the `AccountEntry` is in [`Stellar-ledger-entries.x#L190`](https://github.com/stellar/stellar-xdr/blob/v25.0/Stellar-ledger-entries.x#L190) and you can read its `seqNum` field to get its current sequence number, as we've shown. In JavaScript, XDR fields are plain properties and unions expose `.type` and `.value`; the [v17 XDR migration guide](https://stellar.github.io/js-stellar-sdk/migration/xdr-migration/) shows these shapes.
 
 ## Viewing and understanding XDR
 
