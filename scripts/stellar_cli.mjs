@@ -51,7 +51,7 @@ const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
 const fullHelpDocsContent = fs.readFileSync(fullHelpDocsPath, "utf8");
 
 const modifiedContent = `---
-sidebar_position: 10
+sidebar_position: 12
 description: This document contains the help content for the Stellar command-line program.
 ---
 
