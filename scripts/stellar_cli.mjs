@@ -23,28 +23,41 @@ if (fs.existsSync(localRepoPath)) {
   fs.removeSync(localRepoPath);
 }
 
-// Clone the repository
-console.log("Cloning repository...");
-execFileSync("git", ["clone", repoUrl, localRepoPath]);
-execFileSync("git", ["fetch", "--all"], { cwd: localRepoPath });
-execFileSync(
-  "git",
-  ["fetch", "origin", "+refs/pull/*/merge:refs/remotes/origin/pr/*/merge"],
-  { cwd: localRepoPath },
-);
-const tag = execFileSync("git", ["tag"], { cwd: localRepoPath })
+// Find the latest release tag without cloning.
+const tag = execFileSync("git", [
+  "ls-remote",
+  "--tags",
+  "--refs",
+  "--sort=-v:refname",
+  repoUrl,
+])
   .toString()
-  .trimEnd()
   .split(/\r?\n/)
-  .filter((tag) => !tag.match(/rc|preview/))
-  .pop();
-const latestVersion = tag.toString().substring(1).trim();
-const cliRef = argv.cliRef || `v${latestVersion}`;
+  .map((line) => line.split("\t")[1]?.replace("refs/tags/", ""))
+  .find((tag) => tag && !tag.match(/rc|preview/));
+const latestVersion = tag.substring(1).trim();
 
-console.log("the latest version is", latestVersion.toString());
-console.log("using cli ref to fetch cli docs: ", cliRef.toString());
+// A tag, branch, commit SHA, or PR merge ref. `pr/<n>/merge` and
+// `origin/pr/<n>/merge` are accepted for compatibility with older callers.
+const cliRef = (argv.cliRef || `v${latestVersion}`)
+  .replace(/^origin\//, "")
+  .replace(/^pr\/(\d+)\/merge$/, "refs/pull/$1/merge");
+if (cliRef.startsWith("-")) {
+  throw new Error(`Invalid cli ref: ${cliRef}`);
+}
 
-execFileSync("git", ["checkout", "--quiet", cliRef], { cwd: localRepoPath });
+console.log("the latest version is", latestVersion);
+console.log("using cli ref to fetch cli docs: ", cliRef);
+
+// Fetch only that commit, and check out only the files this script uses.
+console.log("Fetching cookbook and help docs...");
+const git = (...args) => execFileSync("git", args, { cwd: localRepoPath });
+fs.mkdirSync(localRepoPath);
+git("init", "--quiet");
+git("remote", "add", "origin", repoUrl);
+git("sparse-checkout", "set", "--no-cone", "/cookbook/", "/FULL_HELP_DOCS.md");
+git("fetch", "--quiet", "--depth=1", "--filter=blob:none", "origin", cliRef);
+git("checkout", "--quiet", "FETCH_HEAD");
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
