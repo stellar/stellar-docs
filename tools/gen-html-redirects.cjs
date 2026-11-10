@@ -5,8 +5,8 @@
  * Generates a redirect map that strips a trailing `.html` from every page URL
  * (e.g. /docs/learn/glossary.html -> /docs/learn/glossary), merges it with any
  * redirects already defined in docs.json, and writes the combined list to a
- * standalone `redirects.json`. It then rewrites docs.json's `redirects` key to
- * a single `{ "$ref": "redirects.json" }` so the large list lives outside
+ * standalone `config/redirects.json`. It then rewrites docs.json's `redirects`
+ * key to a single `{ "$ref": "config/redirects.json" }` so the large list lives outside
  * docs.json. Mintlify's prebuild resolves the $ref at build time.
  *
  * Re-runnable: it reads the current page list from docs.json's navigation each
@@ -14,7 +14,7 @@
  * redirects (by source) always win over generated ones.
  *
  * Usage:
- *   node tools/gen-html-redirects.cjs          # apply (writes redirects.json + docs.json)
+ *   node tools/gen-html-redirects.cjs          # apply (writes config/redirects.json + docs.json)
  *   node tools/gen-html-redirects.cjs --dry     # print summary only, write nothing
  */
 'use strict';
@@ -24,8 +24,8 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const DOCS_JSON = path.join(ROOT, 'docs.json');
-const REDIRECTS_JSON = path.join(ROOT, 'redirects.json');
-const REF_VALUE = 'redirects.json';
+const REDIRECTS_JSON = path.join(ROOT, 'config', 'redirects.json');
+const REF_VALUE = 'config/redirects.json';
 const DRY = process.argv.includes('--dry');
 
 const text = fs.readFileSync(DOCS_JSON, 'utf8');
@@ -97,7 +97,7 @@ if (DRY) {
   process.exit(0);
 }
 
-// --- 4. Write redirects.json.
+// --- 4. Write config/redirects.json.
 fs.writeFileSync(REDIRECTS_JSON, JSON.stringify(combined, null, 2) + '\n');
 
 // --- 5. Surgically replace docs.json's `redirects` value with a $ref, leaving
@@ -153,4 +153,4 @@ if (!reparsed.redirects || reparsed.redirects.$ref !== REF_VALUE) {
 fs.writeFileSync(DOCS_JSON, newText);
 
 console.log(`\nWrote ${REDIRECTS_JSON} (${combined.length} entries).`);
-console.log('Rewrote docs.json "redirects" -> { "$ref": "redirects.json" }.');
+console.log('Rewrote docs.json "redirects" -> { "$ref": "config/redirects.json" }.');
