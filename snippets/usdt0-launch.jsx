@@ -35,6 +35,10 @@ html.dark .usdt0{color-scheme:dark;--sds-clr-gray-01: #161616;--sds-clr-gray-02:
 /* the launch page carries its own header, so the Mintlify navbar is hidden.
    This stylesheet only exists while the component is mounted, so other pages keep theirs. */
 #navbar{display:none !important}
+/* that navbar is fixed, so Mintlify reserves room for it with pt-28 below the
+   lg breakpoint. With the navbar hidden that padding is just 112px of empty
+   page above the header on phones and tablets. */
+#content-area{padding-top:0 !important}
 .usdt0,.usdt0 *{box-sizing:border-box}
 .usdt0{
   background:var(--paper); color:var(--ink);
@@ -433,6 +437,17 @@ html.dark .usdt0{color-scheme:dark;--sds-clr-gray-01: #161616;--sds-clr-gray-02:
   text-transform:uppercase;color:var(--ink-3);
   display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
 }
+.usdt0 .foot-r{display:inline-flex;align-items:center;gap:16px}
+.usdt0 .themetog{
+  appearance:none;background:none;border:0;padding:0;margin:0;
+  display:inline-flex;align-items:center;cursor:pointer;color:var(--ink-3);
+}
+.usdt0 .themetog:hover{color:var(--link)}
+.usdt0 .themetog:focus-visible{outline:2px solid var(--link);outline-offset:3px}
+.usdt0 .themetog svg{width:13px;height:13px;display:block}
+.usdt0 .themetog .sun{display:none}
+html.dark .usdt0 .themetog .sun{display:block}
+html.dark .usdt0 .themetog .moon{display:none}
 .usdt0 .xlink{display:inline-flex;align-items:center;color:var(--ink-3)}
 .usdt0 .xlink:hover{color:var(--link)}
 .usdt0 .xlink:focus-visible{outline:2px solid var(--link);outline-offset:3px}
@@ -441,6 +456,23 @@ html.dark .usdt0{color-scheme:dark;--sds-clr-gray-01: #161616;--sds-clr-gray-02:
   .usdt0 .pkt,.usdt0 .lit{animation:none;opacity:0}
 }
 `;
+  // Mintlify's own theme control sits in the navbar this page hides, so the
+  // page carries its own. It writes the same key Mintlify's pre-paint script
+  // reads ("isDarkMode": "light" | "dark" | "system"), so the choice follows
+  // you into the rest of the docs instead of fighting it.
+  const toggleTheme = () => {
+    const root = document.documentElement;
+    const next = root.classList.contains("dark") ? "light" : "dark";
+    root.classList.remove("light", "dark");
+    root.classList.add(next);
+    try {
+      localStorage.setItem("isDarkMode", next);
+    } catch (e) {
+      // private mode and blocked storage: the page still flips, it just
+      // will not be remembered.
+    }
+  };
+
   const SECTIONS = [
     ["arrival", "Arrival"], ["access", "Access"], ["dayone", "Day one"], ["deploy", "Deploy"],
     ["build", "Before you build"], ["faq", "FAQ"],
@@ -859,11 +891,23 @@ html.dark .usdt0{color-scheme:dark;--sds-clr-gray-01: #161616;--sds-clr-gray-02:
         </div>
         <div className="foot">
           <span>Stellar Development Foundation</span>
+          <span className="foot-r">
+          <button type="button" className="themetog" onClick={toggleTheme}
+                  aria-label="Switch between light and dark" title="Switch between light and dark">
+            <svg className="moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M21.64 13a1 1 0 0 0-1.05-.14 8.05 8.05 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.6 8.6 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05" />
+            </svg>
+            <svg className="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          </button>
           <a className="xlink" href="https://x.com/BuildOnStellar" target="_blank" rel="noopener noreferrer" aria-label="Build on Stellar on X" title="Build on Stellar on X">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
             </svg>
           </a>
+          </span>
         </div>
       </div>
     </div>
