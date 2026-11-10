@@ -48,20 +48,18 @@ execFileSync("git", ["checkout", "--quiet", cliRef], { cwd: localRepoPath });
 
 // Copy FULL_HELP_DOCS.md
 const fullHelpDocsPath = path.join(localRepoPath, "FULL_HELP_DOCS.md");
-const fullHelpDocsContent = fs.readFileSync(fullHelpDocsPath, "utf8");
+// Drop the leading H1; the page title comes from the front matter.
+const fullHelpDocsContent = fs
+  .readFileSync(fullHelpDocsPath, "utf8")
+  .replace(/^# .*\n+/, "");
 
 const modifiedContent = `---
-sidebar_position: 12
+title: Stellar CLI Manual
 description: This document contains the help content for the Stellar command-line program.
 ---
 
 ${fullHelpDocsContent}
 `;
-
-fs.writeFileSync(
-  "src/helpers/stellarCli.ts",
-  `export const latestVersion = "${latestVersion}";`,
-);
 
 fs.writeFileSync("docs/tools/cli/stellar-cli.mdx", modifiedContent);
 
