@@ -11,14 +11,79 @@ Let's get started!
 
 Continuing right where we left in the [ingest guide], we will use the ORM models to add a few more events.
 
+Remember that events published by Soroban are XDR encoded. We can use the Stellar SDK to convert back and forth between values and XDR representation.
+
+In the following, we will use a topic called `transfer` and we will need some values and addresses. We can generate some test data:
+
+<Tabs>
+<Tab title="JavaScript">
+
+```javascript
+import { Address, nativeToScVal } from "@stellar/stellar-sdk";
+
+nativeToScVal("transfer", { type: "symbol" }).toXdr("base64");
+// 'AAAADwAAAAh0cmFuc2Zlcg=='
+nativeToScVal(10_000, { type: "i32" }).toXdr("base64");
+// 'AAAABAAAJxA='
+nativeToScVal(5_000, { type: "i32" }).toXdr("base64");
+// 'AAAABAAAE4g='
+nativeToScVal(1_000, { type: "i32" }).toXdr("base64");
+// 'AAAABAAAA+g='
+new Address("GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH")
+  .toScVal()
+  .toXdr("base64");
+// 'AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc='
+new Address("GAFYGBHKVFP36EOIRGG74V42F3ORAA2ZWBXNULMNDXAMMXQH5MCIGXXI")
+  .toScVal()
+  .toXdr("base64");
+// 'AAAAEgAAAAAAAAAAC4ME6qlfvxHIiY3+V5ou3RADWbBu2i2NHcDGXgfrBIM='
+```
+
+Now we can make some events with the Prisma `StellarEvent` model from the [ingest guide] and send them to the database. The model needs an `id` and a `type` for each event:
+
+```javascript
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
+const contractId = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+await prisma.$transaction([
+  prisma.stellarEvent.create({
+    data: {
+      id: "example-1",
+      type: "contract",
+      ledger: 1,
+      contract_id: contractId,
+      // transfer
+      topic_1: "AAAADwAAAAh0cmFuc2Zlcg==",
+      // GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH
+      topic_2: "AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc=",
+      value: "AAAABAAAJxA=",
+    },
+  }),
+  prisma.stellarEvent.create({
+    data: {
+      id: "example-2",
+      type: "contract",
+      ledger: 1,
+      contract_id: contractId,
+      // transfer
+      topic_1: "AAAADwAAAAh0cmFuc2Zlcg==",
+      // GAFYGBHKVFP36EOIRGG74V42F3ORAA2ZWBXNULMNDXAMMXQH5MCIGXXI
+      topic_2: "AAAAEgAAAAAAAAAAC4ME6qlfvxHIiY3+V5ou3RADWbBu2i2NHcDGXgfrBIM=",
+      value: "AAAABAAAE4g=",
+    },
+  }),
+]);
+```
+
+</Tab>
+<Tab title="Python">
+
 ```python
 from sqlalchemy import create_engine
 engine = create_engine("sqlite://", echo=True)
 ```
-
-Remember that events published by Soroban are XDR encoded. We can use [stellar-sdk] to convert back and forth between values and XDR representation.
-
-In the following, we will use a topic called `transfer` and we will need some values and addresses. We can generate some test data:
 
 ```python
 import stellar_sdk
@@ -79,6 +144,9 @@ INFO sqlalchemy.engine.Engine [...] ('CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2
 INFO sqlalchemy.engine.Engine COMMIT
 ```
 
+</Tab>
+</Tabs>
+
 <Info>
 
 Here, we are storing XDR encoded values. We could have instead decided to store decoded values in the database. XDR being a compressed format, choosing when to decode the value is a tradeoff between CPU usage and memory consumption.
@@ -88,6 +156,30 @@ Here, we are storing XDR encoded values. We could have instead decided to store 
 ## Consuming events
 
 Using the same model we used to ingest events into the database, we can query the database to iterate over all events present in the table.
+
+<Tabs>
+<Tab title="JavaScript">
+
+```javascript
+const events = await prisma.stellarEvent.findMany();
+for (const event of events) {
+  console.log(event.topic_1, event.topic_2, event.value);
+}
+```
+
+We can also filter on specific fields. For example, to get only the events from ledger 1:
+
+```javascript
+const ledgerEvents = await prisma.stellarEvent.findMany({
+  where: { ledger: 1 },
+});
+for (const event of ledgerEvents) {
+  console.log(event.topic_1, event.topic_2, event.value);
+}
+```
+
+</Tab>
+<Tab title="Python">
 
 ```python
 import sqlalchemy
@@ -138,11 +230,73 @@ INFO sqlalchemy.engine.Engine [...] (1,)
 INFO sqlalchemy.engine.Engine ROLLBACK
 ```
 
+</Tab>
+</Tabs>
+
 ## Streaming events
 
 Depending on our application, we might want to consume events periodically by calling the database to see if there is anything new. Or fetch data as needed by our application. There is another possibility: event listeners!
 
-While we are at it, we can make the results more readable or usable in Python by using the conversion helper provided by [stellar-sdk].
+While we are at it, we can make the results more readable or usable by using the conversion helpers provided by the Stellar SDK.
+
+<Tabs>
+<Tab title="JavaScript">
+
+Prisma has no database event listeners. A [client extension](https://www.prisma.io/docs/orm/prisma-client/client-extensions/query) can run code after every `create` sent through that client. Writes from other clients do not trigger it.
+
+```javascript
+import { scValToNative, xdr } from "@stellar/stellar-sdk";
+
+const decode = (value) => scValToNative(xdr.ScVal.fromXdr(value, "base64"));
+
+const listeningPrisma = prisma.$extends({
+  query: {
+    stellarEvent: {
+      async create({ args, query }) {
+        const event = await query(args);
+        const topics = [
+          event.topic_1,
+          event.topic_2,
+          event.topic_3,
+          event.topic_4,
+        ]
+          .filter(Boolean)
+          .map(decode);
+        console.log("Event listener:", topics, decode(event.value));
+        return event;
+      },
+    },
+  },
+});
+```
+
+Next time a record gets inserted through `listeningPrisma`, this code will run. Let's try this:
+
+```javascript
+await listeningPrisma.stellarEvent.create({
+  data: {
+    id: "example-3",
+    type: "contract",
+    ledger: 2,
+    contract_id: contractId,
+    // transfer
+    topic_1: "AAAADwAAAAh0cmFuc2Zlcg==",
+    // GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH
+    topic_2: "AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc=",
+    value: "AAAABAAAJxA=",
+  },
+});
+```
+
+```text
+Event listener: [
+  'transfer',
+  'GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH'
+] 10000
+```
+
+</Tab>
+<Tab title="Python">
 
 ```python
 @sqlalchemy.event.listens_for(Event, "after_insert")
@@ -182,6 +336,9 @@ Event listener: {'topic_1': 'transfer', 'topic_2': <Address [type=ACCOUNT, addre
 INFO sqlalchemy.engine.Engine COMMIT
 ```
 
+</Tab>
+</Tabs>
+
 Congratulations, you are ready to consume events from Stellar RPC!
 
 ## Going further
@@ -207,4 +364,3 @@ There is a large body of technical literature around this topic and there is no 
 While researching this topic, you could search for _message brokers_ like RabbitMQ of Kafka---to cite widely used solutions.
 
 [ingest guide]: ingest
-[stellar-sdk]: https://stellar-sdk.readthedocs.io/
