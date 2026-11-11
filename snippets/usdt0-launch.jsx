@@ -1,32 +1,48 @@
 
 export const Usdt0Launch = () => {
   const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400..600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;500&family=Inter:wght@400;500;600&display=swap');
 /* Every rule is scoped under .usdt0 so nothing leaks into the Mintlify chrome.
    Dark mode follows Mintlify's html.dark class. --usdt0-top is where the sticky
    section bar parks; 0 because the Mintlify navbar is hidden on this page. */
+/* Stellar Design System token layer, scoped to this page.
+   Only the tokens are inlined, not SDS's element styling: the page needs the
+   palette, and importing the rest would set p/ul/li/code sizes the page then
+   has to fight. Dark values ride Mintlify's own html.dark, so the two themes
+   stay in step with the surrounding docs. */
+.usdt0{--sds-fs-primary: 16px;--sds-fs-secondary: 14px;--sds-fw-light: 300;--sds-fw-regular: 400;--sds-fw-medium: 500;--sds-fw-semi-bold: 600;--sds-fw-bold: 700;--sds-ff-heading: "Inter", sans-serif;--sds-ff-base: "Inter", sans-serif;--sds-ff-monospace: "Inconsolata", monospace;--sds-z-index-tooltip: 20;--sds-z-index-modal: 30;--sds-opacity-disabled-button: 0.6;--sds-window-width-min: 360px;--sds-window-width-max: 1296px;--sds-window-height-min: 100vh;--sds-anim-transition-default: cubic-bezier(0.65, 0.05, 0.36, 1) 100ms;--sds-input-color-border-default: var(--sds-clr-gray-06);--sds-input-color-border-default-hover: var(--sds-clr-gray-06);--sds-input-color-border-default-focus: var(--sds-clr-gray-06);--sds-input-color-border-error: var(--sds-clr-red-06);--sds-input-color-border-error-hover: var(--sds-clr-red-06);--sds-input-color-border-error-focus: var(--sds-clr-red-06);--sds-input-color-border-disabled: var(--sds-clr-gray-07);--sds-input-color-border-disabled-hover: var(--sds-clr-gray-07);--sds-input-color-border-disabled-focus: var(--sds-clr-gray-07);--sds-input-color-background-default: var(--sds-clr-gray-01);--sds-input-color-background-error: var(--sds-clr-gray-01);--sds-input-color-background-disabled: var(--sds-clr-gray-03);--sds-input-color-text-default: var(--sds-clr-gray-12);--sds-input-color-text-placeholder: var(--sds-clr-gray-11);--sds-input-color-text-disabled: var(--sds-clr-gray-11);--sds-input-color-icon: var(--sds-clr-gray-11);--sds-input-box-shadow-color-default: var(--sds-clr-gray-04);--sds-input-box-shadow-color-error: var(--sds-clr-red-04);color-scheme:light;--sds-clr-gray-01: #fcfcfc;--sds-clr-gray-02: #f8f8f8;--sds-clr-gray-03: #f3f3f3;--sds-clr-gray-04: #ededed;--sds-clr-gray-05: #e8e8e8;--sds-clr-gray-06: #e2e2e2;--sds-clr-gray-07: #dbdbdb;--sds-clr-gray-08: #c7c7c7;--sds-clr-gray-09: #8f8f8f;--sds-clr-gray-10: #858585;--sds-clr-gray-11: #6f6f6f;--sds-clr-gray-12: #171717;--sds-clr-lilac-01: #fdfcfe;--sds-clr-lilac-02: #fbfaff;--sds-clr-lilac-03: #f5f2ff;--sds-clr-lilac-04: #ede9fe;--sds-clr-lilac-05: #e4defc;--sds-clr-lilac-06: #d7cff9;--sds-clr-lilac-07: #c4b8f3;--sds-clr-lilac-08: #aa99ec;--sds-clr-lilac-09: #6e56cf;--sds-clr-lilac-10: #644fc1;--sds-clr-lilac-11: #5746af;--sds-clr-lilac-12: #20134b;--sds-clr-base-00: #ffffff;--sds-clr-base-01: #000000;--sds-overlay-01: rgba(0, 0, 0, 0.1);--sds-overlay-02: rgba(0, 0, 0, 0.2);--sds-overlay-03: rgba(0, 0, 0, 0.3);--sds-overlay-04: rgba(0, 0, 0, 0.4);--sds-overlay-05: rgba(0, 0, 0, 0.5);--sds-overlay-06: rgba(0, 0, 0, 0.6);--sds-overlay-07: rgba(0, 0, 0, 0.7);--sds-overlay-08: rgba(0, 0, 0, 0.8);--sds-overlay-09: rgba(0, 0, 0, 0.9);--sds-overlay-10: rgba(0, 0, 0, 1);--sds-clr-green-01: #fbfefc;--sds-clr-green-02: #f2fcf5;--sds-clr-green-03: #e9f9ee;--sds-clr-green-04: #ddf3e4;--sds-clr-green-05: #ccebd7;--sds-clr-green-06: #b4dfc4;--sds-clr-green-07: #92ceac;--sds-clr-green-08: #5bb98c;--sds-clr-green-09: #30a46c;--sds-clr-green-10: #299764;--sds-clr-green-11: #18794e;--sds-clr-green-12: #153226;--sds-clr-amber-01: #fefdfb;--sds-clr-amber-02: #fff9ed;--sds-clr-amber-03: #fff4d5;--sds-clr-amber-04: #ffecbc;--sds-clr-amber-05: #ffe3a2;--sds-clr-amber-06: #ffd386;--sds-clr-amber-07: #f3ba63;--sds-clr-amber-08: #ee9d2b;--sds-clr-amber-09: #ffb224;--sds-clr-amber-10: #ffa01c;--sds-clr-amber-11: #ad5700;--sds-clr-amber-12: #4e2009;--sds-clr-red-01: #fffcfc;--sds-clr-red-02: #fff8f8;--sds-clr-red-03: #ffefef;--sds-clr-red-04: #ffe5e5;--sds-clr-red-05: #fdd8d8;--sds-clr-red-06: #f9c6c6;--sds-clr-red-07: #f3aeaf;--sds-clr-red-08: #eb9091;--sds-clr-red-09: #e5484d;--sds-clr-red-10: #dc3d43;--sds-clr-red-11: #cd2b31;--sds-clr-red-12: #381316;--sds-clr-white: #ffffff;--sds-clr-gold-01: #fdfdf9;--sds-clr-gold-02: #fffce8;--sds-clr-gold-03: #fffbd1;--sds-clr-gold-04: #fff8bb;--sds-clr-gold-05: #fef2a4;--sds-clr-gold-06: #f9e68c;--sds-clr-gold-07: #efd36c;--sds-clr-gold-08: #ebbc00;--sds-clr-gold-09: #fdda24;--sds-clr-gold-10: #f7ce00;--sds-clr-gold-11: #946800;--sds-clr-gold-12: #35290f;--sds-clr-navy-01: #fdfdfe;--sds-clr-navy-02: #f8faff;--sds-clr-navy-03: #f0f4ff;--sds-clr-navy-04: #e6edfe;--sds-clr-navy-05: #d9e2fc;--sds-clr-navy-06: #c6d4f9;--sds-clr-navy-07: #aec0f5;--sds-clr-navy-08: #8da4ef;--sds-clr-navy-09: #3e63dd;--sds-clr-navy-10: #3a5ccc;--sds-clr-navy-11: #3451b2;--sds-clr-navy-12: #101d46;--sds-clr-teal-01: #fafdfe;--sds-clr-teal-02: #f2fcfd;--sds-clr-teal-03: #e7f9fb;--sds-clr-teal-04: #d8f3f6;--sds-clr-teal-05: #c4eaef;--sds-clr-teal-06: #aadee6;--sds-clr-teal-07: #84cdda;--sds-clr-teal-08: #3db9cf;--sds-clr-teal-09: #05a2c2;--sds-clr-teal-10: #0894b3;--sds-clr-teal-11: #0c7792;--sds-clr-teal-12: #04313c;--sds-clr-mint-01: #f9fefd;--sds-clr-mint-02: #effefa;--sds-clr-mint-03: #e1fbf4;--sds-clr-mint-04: #d2f7ed;--sds-clr-mint-05: #c0efe3;--sds-clr-mint-06: #a5e4d4;--sds-clr-mint-07: #7dd4c0;--sds-clr-mint-08: #40c4aa;--sds-clr-mint-09: #70e1c8;--sds-clr-mint-10: #69d9c1;--sds-clr-mint-11: #147d6f;--sds-clr-mint-12: #09342e;--sds-clr-lime-01: #fcfdfa;--sds-clr-lime-02: #f7fcf0;--sds-clr-lime-03: #eefadc;--sds-clr-lime-04: #e4f7c7;--sds-clr-lime-05: #d7f2b0;--sds-clr-lime-06: #c9e894;--sds-clr-lime-07: #b1d16a;--sds-clr-lime-08: #94ba2c;--sds-clr-lime-09: #99d52a;--sds-clr-lime-10: #93c926;--sds-clr-lime-11: #5d770d;--sds-clr-lime-12: #263209;--sds-clr-pink-01: #fffcfe;--sds-clr-pink-02: #fff7fc;--sds-clr-pink-03: #feeef8;--sds-clr-pink-04: #fce5f3;--sds-clr-pink-05: #f9d8ec;--sds-clr-pink-06: #f3c6e2;--sds-clr-pink-07: #ecadd4;--sds-clr-pink-08: #e38ec3;--sds-clr-pink-09: #d6409f;--sds-clr-pink-10: #d23197;--sds-clr-pink-11: #cd1d8d;--sds-clr-pink-12: #3b0a2a;--sds-clr-tooltip-background: #ededed;--sds-clr-tooltip-title: #161616;--sds-clr-tooltip-text: #505050;--sds-clr-tooltip-contrast-background: #171717;--sds-clr-tooltip-contrast-title: #fcfcfc;--sds-clr-tooltip-contrast-text: #c7c7c7}
+html.dark .usdt0{color-scheme:dark;--sds-clr-gray-01: #161616;--sds-clr-gray-02: #1c1c1c;--sds-clr-gray-03: #232323;--sds-clr-gray-04: #282828;--sds-clr-gray-05: #2e2e2e;--sds-clr-gray-06: #343434;--sds-clr-gray-07: #3e3e3e;--sds-clr-gray-08: #505050;--sds-clr-gray-09: #707070;--sds-clr-gray-10: #7e7e7e;--sds-clr-gray-11: #a0a0a0;--sds-clr-gray-12: #ededed;--sds-clr-lilac-01: #17151f;--sds-clr-lilac-02: #1c172b;--sds-clr-lilac-03: #251e40;--sds-clr-lilac-04: #2c2250;--sds-clr-lilac-05: #32275f;--sds-clr-lilac-06: #392c72;--sds-clr-lilac-07: #443592;--sds-clr-lilac-08: #5842c3;--sds-clr-lilac-09: #6e56cf;--sds-clr-lilac-10: #7c66dc;--sds-clr-lilac-11: #9e8cfc;--sds-clr-lilac-12: #f1eefe;--sds-clr-base-00: #000000;--sds-clr-base-01: #ffffff;--sds-overlay-01: rgba(255, 255, 255, 0.1);--sds-overlay-02: rgba(255, 255, 255, 0.2);--sds-overlay-03: rgba(255, 255, 255, 0.3);--sds-overlay-04: rgba(255, 255, 255, 0.4);--sds-overlay-05: rgba(255, 255, 255, 0.5);--sds-overlay-06: rgba(255, 255, 255, 0.6);--sds-overlay-07: rgba(255, 255, 255, 0.7);--sds-overlay-08: rgba(255, 255, 255, 0.8);--sds-overlay-09: rgba(255, 255, 255, 0.9);--sds-overlay-10: rgba(255, 255, 255, 1);--sds-clr-green-01: #0d1912;--sds-clr-green-02: #0c1f17;--sds-clr-green-03: #0f291e;--sds-clr-green-04: #113123;--sds-clr-green-05: #133929;--sds-clr-green-06: #164430;--sds-clr-green-07: #1b543a;--sds-clr-green-08: #236e4a;--sds-clr-green-09: #30a46c;--sds-clr-green-10: #3cb179;--sds-clr-green-11: #4cc38a;--sds-clr-green-12: #e5fbeb;--sds-clr-amber-01: #1f1300;--sds-clr-amber-02: #271700;--sds-clr-amber-03: #341c00;--sds-clr-amber-04: #3f2200;--sds-clr-amber-05: #4a2900;--sds-clr-amber-06: #573300;--sds-clr-amber-07: #693f05;--sds-clr-amber-08: #824e00;--sds-clr-amber-09: #ffb224;--sds-clr-amber-10: #ffcb47;--sds-clr-amber-11: #f1a10d;--sds-clr-amber-12: #fef3dd;--sds-clr-red-01: #1f1315;--sds-clr-red-02: #291415;--sds-clr-red-03: #3c181a;--sds-clr-red-04: #481a1d;--sds-clr-red-05: #541b1f;--sds-clr-red-06: #671e22;--sds-clr-red-07: #822025;--sds-clr-red-08: #aa2429;--sds-clr-red-09: #e5484d;--sds-clr-red-10: #f2555a;--sds-clr-red-11: #ff6369;--sds-clr-red-12: #feecee;--sds-clr-white: #ffffff;--sds-clr-gold-01: #1c1500;--sds-clr-gold-02: #221a00;--sds-clr-gold-03: #2c2100;--sds-clr-gold-04: #352800;--sds-clr-gold-05: #3e3000;--sds-clr-gold-06: #493c00;--sds-clr-gold-07: #594a05;--sds-clr-gold-08: #705e00;--sds-clr-gold-09: #fdda24;--sds-clr-gold-10: #ffef5c;--sds-clr-gold-11: #f0c000;--sds-clr-gold-12: #fffad1;--sds-clr-navy-01: #131620;--sds-clr-navy-02: #15192d;--sds-clr-navy-03: #192140;--sds-clr-navy-04: #1c274f;--sds-clr-navy-05: #1f2c5c;--sds-clr-navy-06: #22346e;--sds-clr-navy-07: #273e89;--sds-clr-navy-08: #2f4eb2;--sds-clr-navy-09: #3e63dd;--sds-clr-navy-10: #5373e7;--sds-clr-navy-11: #849dff;--sds-clr-navy-12: #eef1fd;--sds-clr-teal-01: #07191d;--sds-clr-teal-02: #061e24;--sds-clr-teal-03: #072830;--sds-clr-teal-04: #07303b;--sds-clr-teal-05: #073844;--sds-clr-teal-06: #064150;--sds-clr-teal-07: #045063;--sds-clr-teal-08: #00647d;--sds-clr-teal-09: #05a2c2;--sds-clr-teal-10: #00b1cc;--sds-clr-teal-11: #00c2d7;--sds-clr-teal-12: #e1f8fa;--sds-clr-mint-01: #081917;--sds-clr-mint-02: #05201e;--sds-clr-mint-03: #052926;--sds-clr-mint-04: #04312c;--sds-clr-mint-05: #033a34;--sds-clr-mint-06: #01453d;--sds-clr-mint-07: #00564a;--sds-clr-mint-08: #006d5b;--sds-clr-mint-09: #70e1c8;--sds-clr-mint-10: #95f3d9;--sds-clr-mint-11: #25d0ab;--sds-clr-mint-12: #e7fcf7;--sds-clr-lime-01: #141807;--sds-clr-lime-02: #181d08;--sds-clr-lime-03: #1e260d;--sds-clr-lime-04: #252e0f;--sds-clr-lime-05: #2b3711;--sds-clr-lime-06: #344213;--sds-clr-lime-07: #415215;--sds-clr-lime-08: #536716;--sds-clr-lime-09: #99d52a;--sds-clr-lime-10: #c4f042;--sds-clr-lime-11: #87be22;--sds-clr-lime-12: #effbdd;--sds-clr-pink-01: #1f121b;--sds-clr-pink-02: #271421;--sds-clr-pink-03: #3a182f;--sds-clr-pink-04: #451a37;--sds-clr-pink-05: #501b3f;--sds-clr-pink-06: #601d48;--sds-clr-pink-07: #7a1d5a;--sds-clr-pink-08: #a71873;--sds-clr-pink-09: #d6409f;--sds-clr-pink-10: #e34ba9;--sds-clr-pink-11: #f65cb6;--sds-clr-pink-12: #feebf7;--sds-clr-tooltip-background: #171717;--sds-clr-tooltip-title: #fcfcfc;--sds-clr-tooltip-text: #c7c7c7;--sds-clr-tooltip-contrast-background: #ededed;--sds-clr-tooltip-contrast-title: #161616;--sds-clr-tooltip-contrast-text: #505050}
+/* The page's own names map onto Stellar Design System tokens, so the palette
+   is SDS's rather than a hand-picked one. Lilac is SDS's interactive color;
+   --link is kept separate from --accent-ink so an accent surface and an
+   interactive state can diverge without one dragging the other with it. */
 .usdt0{
-  --paper:#FFFFFF; --paper-2:#F9F9F9; --paper-3:#F2F2F2;
-  --ink:#0F0F0F; --ink-2:#4A4A4A; --ink-3:#6B6B6B;
-  --rule:#D8D8D8; --rule-2:#E6E6E6;
-  --accent:#FDDA24; --accent-soft:#FDDA2440;
-  --accent-ink:#7A5C00; --on-accent:#0F0F0F;
+  --paper:var(--sds-clr-gray-01); --paper-2:var(--sds-clr-gray-02); --paper-3:var(--sds-clr-gray-03);
+  --ink:var(--sds-clr-gray-12); --ink-2:var(--sds-clr-gray-11);
+  /* gray-09 and gray-10 are SDS's border and placeholder steps: on gray-01..03
+     they reach 3.0:1 and 3.6:1, short of the 4.5:1 small text needs, and every
+     --ink-3 run here is a 9.5-10.5px uppercase label. gray-11 is the lightest
+     readable foreground in the scale, so the label tier stops there and is told
+     apart by size and tracking instead. --hairline keeps gray-09 for the two
+     places it is a drawn line rather than words. */
+  --ink-3:var(--sds-clr-gray-11); --hairline:var(--sds-clr-gray-09);
+  --rule:var(--sds-clr-gray-06); --rule-2:var(--sds-clr-gray-05);
+  --accent:var(--sds-clr-lilac-09); --accent-soft:var(--sds-clr-lilac-03);
+  --accent-ink:var(--sds-clr-lilac-11); --on-accent:var(--sds-clr-gray-01);
+  --link:var(--sds-clr-lilac-11);
   --usdt0-top:0px;
 }
 /* the launch page carries its own header, so the Mintlify navbar is hidden.
    This stylesheet only exists while the component is mounted, so other pages keep theirs. */
 #navbar{display:none !important}
-html.dark .usdt0{
-  --paper:#0F0F0F; --paper-2:#191919; --paper-3:#080808;
-  --ink:#F5F5F0; --ink-2:#B8B8B0; --ink-3:#8E8E86;
-  --rule:#474747; --rule-2:#333333;
-  --accent:#FDDA24; --accent-soft:#FDDA2422;
-  --accent-ink:#FDDA24; --on-accent:#0F0F0F;
-}
+/* that navbar is fixed, so Mintlify reserves room for it with pt-28 below the
+   lg breakpoint. With the navbar hidden that padding is just 112px of empty
+   page above the header on phones and tablets. */
+#content-area{padding-top:0 !important}
 .usdt0,.usdt0 *{box-sizing:border-box}
 .usdt0{
   background:var(--paper); color:var(--ink);
-  font-family:"Inter","Helvetica Neue",Arial,sans-serif;
+  font-family:var(--sds-ff-base);
   font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased;
 }
 .usdt0 a{color:inherit;text-decoration:none;font-weight:inherit}
@@ -37,7 +53,7 @@ html.dark .usdt0{
 .usdt0 .top{
   position:sticky;top:var(--usdt0-top);z-index:20;background:var(--paper);
   display:flex;align-items:center;justify-content:space-between;gap:20px;
-  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-family:var(--sds-ff-monospace);
   font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);
   border-bottom:1px solid var(--rule);padding:12px 0 10px;
 }
@@ -45,17 +61,17 @@ html.dark .usdt0{
 .usdt0 .top-r{display:flex;align-items:center;gap:18px}
 .usdt0 .toplink{color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--rule);
          letter-spacing:inherit;white-space:nowrap}
-.usdt0 .toplink:hover{color:var(--accent-ink);border-bottom-color:var(--accent-ink)}
-.usdt0 .toplink:focus-visible{outline:2px solid var(--accent-ink);outline-offset:3px}
+.usdt0 .toplink:hover{color:var(--link);border-bottom-color:var(--link)}
+.usdt0 .toplink:focus-visible{outline:2px solid var(--link);outline-offset:3px}
 @media (max-width:560px){ .usdt0 .toplink{display:none} }
 .usdt0 .tick{
   width:11px;height:11px;border:1px solid var(--ink-2);
   background:transparent;display:block;
   transition:background .15s ease,border-color .15s ease;
 }
-.usdt0 .tick:hover{border-color:var(--accent-ink);background:var(--accent-soft)}
-.usdt0 .tick[aria-current="true"]{background:var(--accent);border-color:var(--accent-ink)}
-.usdt0 .tick:focus-visible{outline:2px solid var(--accent-ink);outline-offset:3px}
+.usdt0 .tick:hover{border-color:var(--link);background:var(--accent-soft)}
+.usdt0 .tick[aria-current="true"]{background:var(--accent);border-color:var(--link)}
+.usdt0 .tick:focus-visible{outline:2px solid var(--link);outline-offset:3px}
 /* the tick stays 11px to look at and gets an invisible target around it. The
    horizontal reach is tied to the gap so neighbours never overlap: 15px wide
    on a mouse, and on touch the gap opens up so the target clears the 24x24
@@ -76,7 +92,7 @@ html.dark .usdt0{
    descenders. The accent is a block so the color change lands on the line
    break instead of stranding a word at the end of line one. */
 .usdt0 h1{
-  font-family:"Inter","Helvetica Neue",Arial,sans-serif;color:var(--ink);
+  font-family:var(--sds-ff-base);color:var(--ink);
   font-weight:600;font-size:clamp(34px,5.4vw,58px);line-height:1.06;
   letter-spacing:-.03em;margin:26px 0 10px;max-width:24ch;text-wrap:balance;
 }
@@ -88,7 +104,7 @@ html.dark .usdt0{
 .usdt0 .fig-head{
   display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
   border-bottom:1px solid var(--rule);padding:9px 14px;
-  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;
+  font-family:var(--sds-ff-monospace);font-size:10.5px;
   letter-spacing:.13em;text-transform:uppercase;color:var(--ink-2);
 }
 .usdt0 .fig-body{padding:16px 14px;overflow-x:auto}
@@ -101,11 +117,11 @@ html.dark .usdt0{
 .usdt0 .n-box{fill:var(--paper-2);stroke:currentColor;stroke-width:1}
 .usdt0 .n-box.alt{fill:var(--paper-3)}
 .usdt0 .n-box.hot{stroke:var(--accent-ink);stroke-width:1.6;fill:var(--accent-soft)}
-.usdt0 .n-t{font-family:"Inter","Helvetica Neue",Arial,sans-serif;font-weight:600;font-size:14px;fill:currentColor}
+.usdt0 .n-t{font-family:var(--sds-ff-base);font-weight:600;font-size:14px;fill:currentColor}
 .usdt0 .n-t.hot{fill:var(--accent-ink)}
-.usdt0 .n-s{font-family:"IBM Plex Mono",monospace;font-size:10px;fill:var(--ink);letter-spacing:.04em}
+.usdt0 .n-s{font-family:var(--sds-ff-monospace);font-size:10px;fill:var(--ink);letter-spacing:.04em}
 .usdt0 .edge{stroke:currentColor;stroke-width:1;fill:none}
-.usdt0 .edge.dash{stroke-dasharray:5 4;stroke:var(--ink-3)}
+.usdt0 .edge.dash{stroke-dasharray:5 4;stroke:var(--hairline)}
 /* One 12.5s cycle tells the whole story once: a packet leaves Ethereum, splits
    at the fork, both halves land together, the far-chain half climbs into the
    Stellar OFT, and one packet carries on. Every leg runs at the same ~55px/s —
@@ -145,11 +161,11 @@ html.dark .usdt0{
 .usdt0 .folder-fig{display:flex;gap:34px;align-items:flex-start;justify-content:center;padding:26px 40px 30px}
 .usdt0 .desc{flex:1 1 0;min-width:0;max-width:620px;display:flex;flex-direction:column;gap:12px}
 .usdt0 .d-eyebrow{
-  font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.16em;
+  font-family:var(--sds-ff-monospace);font-size:10px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--accent-ink);
 }
 .usdt0 .d-head{
-  font-family:"Inter","Helvetica Neue",Arial,sans-serif;font-weight:600;
+  font-family:var(--sds-ff-base);font-weight:600;
   font-size:clamp(24px,2.6vw,36px);line-height:1.1;margin:0;
   letter-spacing:-.022em;text-wrap:balance;color:var(--ink);
 }
@@ -157,12 +173,12 @@ html.dark .usdt0{
 .usdt0 dl{margin:2px 0 0;display:flex;flex-direction:column;gap:12px;
    border-top:1px solid var(--rule);padding-top:14px}
 .usdt0 dt{
-  font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.14em;
+  font-family:var(--sds-ff-monospace);font-size:9.5px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--ink-2);margin-bottom:3px;font-weight:400;
 }
 .usdt0 dd{margin:0;font-size:14.5px;color:var(--ink-2);max-width:64ch}
 .usdt0 dd code{
-  font-family:"IBM Plex Mono",monospace;font-size:12.5px;
+  font-family:var(--sds-ff-monospace);font-size:12.5px;
   background:var(--paper-3);border:1px solid var(--rule-2);padding:.5px 4px;color:var(--ink);
 }
 /* source links: quiet by default, accent on hover — a claim you can check */
@@ -172,23 +188,23 @@ html.dark .usdt0{
 }
 .usdt0 dd a:hover,.usdt0 .id-note a:hover,.usdt0 .dep-note a:hover,.usdt0 .ncopy a:hover,
 .usdt0 figcaption a:hover{
-  color:var(--accent-ink);border-bottom-color:var(--accent-ink);
+  color:var(--link);border-bottom-color:var(--link);
 }
 .usdt0 dd a:focus-visible,.usdt0 .id-note a:focus-visible,
 .usdt0 .dep-note a:focus-visible,.usdt0 .ncopy a:focus-visible,.usdt0 figcaption a:focus-visible{
-  outline:2px solid var(--accent-ink);outline-offset:2px;border-bottom-color:transparent;
+  outline:2px solid var(--link);outline-offset:2px;border-bottom-color:transparent;
 }
 .usdt0 dd a code,.usdt0 .dep-note a code,.usdt0 .ncopy a code{border-bottom:0}
 .usdt0 .sources{
   margin-top:26px;border-top:1px solid var(--rule);padding-top:10px;
   display:flex;gap:18px;align-items:baseline;flex-wrap:wrap;
-  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.13em;
+  font-family:var(--sds-ff-monospace);font-size:10.5px;letter-spacing:.13em;
   text-transform:uppercase;color:var(--ink-3);
 }
 .usdt0 .sources b{font-weight:400;color:var(--ink-3);margin-right:4px}
 .usdt0 .sources a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--rule)}
-.usdt0 .sources a:hover{color:var(--accent-ink);border-bottom-color:var(--accent-ink)}
-.usdt0 .sources a:focus-visible{outline:2px solid var(--accent-ink);outline-offset:3px}
+.usdt0 .sources a:hover{color:var(--link);border-bottom-color:var(--link)}
+.usdt0 .sources a:focus-visible{outline:2px solid var(--link);outline-offset:3px}
 /* ---- questions: collapsed by default, but the answers stay in the DOM ---- */
 .usdt0 .faq{border-bottom:1px solid var(--rule)}
 .usdt0 .faq:last-child{border-bottom:0}
@@ -200,11 +216,11 @@ html.dark .usdt0{
 .usdt0 .faq summary::-webkit-details-marker{display:none}
 .usdt0 .faq summary::after{
   content:"+";position:absolute;right:8px;top:10px;line-height:1;
-  font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--ink-3);
+  font-family:var(--sds-ff-monospace);font-size:13px;color:var(--ink-3);
 }
 .usdt0 .faq[open] summary::after{content:"\\2212"}
-.usdt0 .faq summary:hover .fq{color:var(--accent-ink)}
-.usdt0 .faq summary:focus-visible{outline:2px solid var(--accent-ink);outline-offset:-2px}
+.usdt0 .faq summary:hover .fq{color:var(--link)}
+.usdt0 .faq summary:focus-visible{outline:2px solid var(--link);outline-offset:-2px}
 .usdt0 .fq{font-weight:500}
 .usdt0 .fq code,.usdt0 .fa code{font-size:.92em}
 .usdt0 .fa{padding:0 28px 16px 0;max-width:78ch}
@@ -237,13 +253,13 @@ html.dark .usdt0{
 .usdt0 .fname{
   position:absolute;left:0;top:0;width:40.97%;height:12.63%;
   padding:0 5% 0 5.5%;display:flex;align-items:center;
-  font-family:"IBM Plex Mono",monospace;
+  font-family:var(--sds-ff-monospace);
   font-size:clamp(6.5px,2.37cqw,11px);letter-spacing:.05em;color:var(--ink-2);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   transition:color .16s ease;
 }
-.usdt0 .file:hover .fo-edge{stroke:var(--accent-ink)}
-.usdt0 .file:hover .fname{color:var(--accent-ink)}
+.usdt0 .file:hover .fo-edge{stroke:var(--link)}
+.usdt0 .file:hover .fname{color:var(--link)}
 /* the cover: the folder these sit in */
 .usdt0 .cover .fo-body{fill:var(--paper)}
 .usdt0 .cover .fo-edge{stroke:var(--accent-ink);stroke-width:2}
@@ -251,12 +267,12 @@ html.dark .usdt0{
 .usdt0 .cover .fname{color:var(--accent-ink)}
 .usdt0 .cover-body{position:absolute;left:5.5%;right:8%;top:24%}
 .usdt0 .cover-name{
-  display:block;font-family:"Inter","Helvetica Neue",Arial,sans-serif;font-weight:600;
+  display:block;font-family:var(--sds-ff-base);font-weight:600;
   font-size:clamp(15px,6.1cqw,29px);line-height:1.1;color:var(--accent-ink);
   letter-spacing:-.01em;
 }
 .usdt0 .cover-sub{
-  display:block;margin-top:7%;font-family:"IBM Plex Mono",monospace;
+  display:block;margin-top:7%;font-family:var(--sds-ff-monospace);
   font-size:clamp(7px,2.46cqw,12px);line-height:1.7;color:var(--ink-2);
 }
 /* ---- narrow: stack above, description below ---- */
@@ -276,11 +292,11 @@ html.dark .usdt0{
 .usdt0 .fcol:last-child{border-right:0}
 .usdt0 .fcol:first-child{padding-left:0}
 .usdt0 .ftag{
-  font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.14em;
+  font-family:var(--sds-ff-monospace); font-size:9.5px; letter-spacing:.14em;
   text-transform:uppercase; color:var(--accent-ink); margin-bottom:7px;
 }
 .usdt0 .fhead{
-  font-family:"Inter","Helvetica Neue",Arial,sans-serif; font-weight:600;
+  font-family:var(--sds-ff-base); font-weight:600;
   font-size:19px; line-height:1.12; letter-spacing:-.01em; color:var(--ink); margin:0 0 9px;
 }
 .usdt0 .fcopy{margin:0 0 14px; font-size:13.5px; line-height:1.5; color:var(--ink-2)}
@@ -302,7 +318,7 @@ html.dark .usdt0{
   font-size:13.5px; line-height:1.55; color:var(--ink-2);
 }
 .usdt0 .dep-note code{
-  font-family:"IBM Plex Mono",monospace;font-size:12.5px;
+  font-family:var(--sds-ff-monospace);font-size:12.5px;
   background:var(--paper-3);border:1px solid var(--rule-2);padding:.5px 4px;color:var(--ink);
 }
 .usdt0 .notes-sec{margin:34px 0 0;border:1px solid var(--rule);background:var(--paper-2)}
@@ -310,13 +326,13 @@ html.dark .usdt0{
 .usdt0 .notes{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px 40px}
 .usdt0 .note{display:flex; gap:12px}
 .usdt0 .ntag{
-  flex:0 0 82px; font-family:"IBM Plex Mono",monospace; font-size:9.5px;
+  flex:0 0 82px; font-family:var(--sds-ff-monospace); font-size:9.5px;
   letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); padding-top:3px;
 }
 .usdt0 .ncopy{margin:0; font-size:13px; line-height:1.55; color:var(--ink-2)}
 .usdt0 .ncopy b{color:var(--ink);font-weight:500}
 .usdt0 .ncopy code{
-  font-family:"IBM Plex Mono",monospace;font-size:12px;
+  font-family:var(--sds-ff-monospace);font-size:12px;
   background:var(--paper-3);border:1px solid var(--rule-2);padding:.5px 4px;color:var(--ink);
 }
 @media (max-width:820px){ .usdt0 .notes{grid-template-columns:minmax(0,1fr)} }
@@ -339,12 +355,12 @@ html.dark .usdt0{
   .usdt0 .venue:last-child{border-bottom:0}
 }
 .usdt0 .venue h3{
-  margin:0 0 10px;font-family:"IBM Plex Mono",monospace;font-size:9.5px;line-height:1.6;
+  margin:0 0 10px;font-family:var(--sds-ff-monospace);font-size:9.5px;line-height:1.6;
   letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:400;
 }
 .usdt0 .venue ul{margin:0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:6px}
 .usdt0 .venue li{
-  margin:0;font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink);
+  margin:0;font-family:var(--sds-ff-monospace);font-size:11.5px;color:var(--ink);
   border:1px solid var(--rule);background:var(--paper-2);padding:4px 8px;
 }
 .usdt0 .venue li::marker{content:none}
@@ -355,7 +371,7 @@ html.dark .usdt0{
 .usdt0 .dep-head{
   display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:center;
   border-bottom:1px solid var(--rule);padding:9px 14px;
-  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;
+  font-family:var(--sds-ff-monospace);font-size:10.5px;
   letter-spacing:.13em;text-transform:uppercase;color:var(--ink-2);
 }
 .usdt0 .live{
@@ -369,12 +385,12 @@ html.dark .usdt0{
 .usdt0 .dep-lead{margin:0;font-size:15.5px;color:var(--ink);max-width:62ch}
 .usdt0 .dep-lead strong{font-weight:500}
 .usdt0 .dep-link{
-  align-self:flex-start;font-family:"IBM Plex Mono",monospace;font-size:11px;
-  letter-spacing:.06em;color:var(--accent-ink);text-decoration:none;
-  border-bottom:1px solid var(--accent-ink);padding-bottom:1px;
+  align-self:flex-start;font-family:var(--sds-ff-monospace);font-size:11px;
+  letter-spacing:.06em;color:var(--link);text-decoration:none;
+  border-bottom:1px solid var(--link);padding-bottom:1px;
 }
 .usdt0 .dep-link:hover{color:var(--ink)}
-.usdt0 .dep-link:focus-visible{outline:2px solid var(--accent-ink);outline-offset:3px}
+.usdt0 .dep-link:focus-visible{outline:2px solid var(--link);outline-offset:3px}
 .usdt0 .ids{display:flex;flex-direction:column;gap:0;border:1px solid var(--rule);background:var(--paper)}
 .usdt0 .id-row{
   display:grid;grid-template-columns:minmax(0,240px) minmax(0,1fr);
@@ -383,20 +399,20 @@ html.dark .usdt0{
 .usdt0 .id-row:last-child{border-bottom:0}
 @media (max-width:720px){.usdt0 .id-row{grid-template-columns:1fr}}
 .usdt0 .id-label{
-  font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.14em;
+  font-family:var(--sds-ff-monospace);font-size:9.5px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--ink-3);
 }
 .usdt0 .id-note{font-size:13px;color:var(--ink-2);margin:4px 0 0;max-width:44ch}
 .usdt0 .id-val{display:flex;align-items:flex-start;gap:10px}
 .usdt0 .id-val code{
   flex:1 1 auto;min-width:0;
-  font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.55;
+  font-family:var(--sds-ff-monospace);font-size:12.5px;line-height:1.55;
   color:var(--ink);background:var(--paper-3);border:1px solid var(--rule-2);border-radius:0;
   padding:6px 8px;overflow-wrap:anywhere;user-select:all;
 }
 .usdt0 .copy{
   flex:0 0 auto;appearance:none;background:var(--paper-2);border:1px solid var(--rule);
-  color:var(--ink-2);font-family:"IBM Plex Mono",monospace;font-size:9.5px;
+  color:var(--ink-2);font-family:var(--sds-ff-monospace);font-size:9.5px;
   letter-spacing:.1em;text-transform:uppercase;padding:6px 9px;cursor:pointer;
 }
 .usdt0 .copy:hover{border-color:var(--accent-ink);color:var(--accent-ink)}
@@ -410,25 +426,53 @@ html.dark .usdt0{
 .usdt0 .spec div:last-child{border-right:0}
 .usdt0 .spec dt{margin-bottom:4px}
 .usdt0 .spec dd{
-  font-family:"IBM Plex Mono",monospace;font-size:14px;color:var(--ink);
+  font-family:var(--sds-ff-monospace);font-size:14px;color:var(--ink);
   font-variant-numeric:tabular-nums;
 }
 .usdt0 .spec dd a{color:inherit;text-decoration:none;border-bottom:1px solid var(--rule)}
-.usdt0 .spec dd a:hover{color:var(--accent-ink);border-bottom-color:var(--accent-ink)}
+.usdt0 .spec dd a:hover{color:var(--link);border-bottom-color:var(--link)}
 .usdt0 .foot{
   margin-top:26px;border-top:1px solid var(--rule);padding-top:10px;
-  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.13em;
+  font-family:var(--sds-ff-monospace);font-size:10.5px;letter-spacing:.13em;
   text-transform:uppercase;color:var(--ink-3);
   display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
 }
+.usdt0 .foot-r{display:inline-flex;align-items:center;gap:16px}
+.usdt0 .themetog{
+  appearance:none;background:none;border:0;padding:0;margin:0;
+  display:inline-flex;align-items:center;cursor:pointer;color:var(--ink-3);
+}
+.usdt0 .themetog:hover{color:var(--link)}
+.usdt0 .themetog:focus-visible{outline:2px solid var(--link);outline-offset:3px}
+.usdt0 .themetog svg{width:13px;height:13px;display:block}
+.usdt0 .themetog .sun{display:none}
+html.dark .usdt0 .themetog .sun{display:block}
+html.dark .usdt0 .themetog .moon{display:none}
 .usdt0 .xlink{display:inline-flex;align-items:center;color:var(--ink-3)}
-.usdt0 .xlink:hover{color:var(--accent-ink)}
-.usdt0 .xlink:focus-visible{outline:2px solid var(--accent-ink);outline-offset:3px}
+.usdt0 .xlink:hover{color:var(--link)}
+.usdt0 .xlink:focus-visible{outline:2px solid var(--link);outline-offset:3px}
 .usdt0 .xlink svg{width:13px;height:13px;display:block}
 @media (prefers-reduced-motion: reduce){
   .usdt0 .pkt,.usdt0 .lit{animation:none;opacity:0}
 }
 `;
+  // Mintlify's own theme control sits in the navbar this page hides, so the
+  // page carries its own. It writes the same key Mintlify's pre-paint script
+  // reads ("isDarkMode": "light" | "dark" | "system"), so the choice follows
+  // you into the rest of the docs instead of fighting it.
+  const toggleTheme = () => {
+    const root = document.documentElement;
+    const next = root.classList.contains("dark") ? "light" : "dark";
+    root.classList.remove("light", "dark");
+    root.classList.add(next);
+    try {
+      localStorage.setItem("isDarkMode", next);
+    } catch (e) {
+      // private mode and blocked storage: the page still flips, it just
+      // will not be remembered.
+    }
+  };
+
   const SECTIONS = [
     ["arrival", "Arrival"], ["access", "Access"], ["dayone", "Day one"], ["deploy", "Deploy"],
     ["build", "Before you build"], ["faq", "FAQ"],
@@ -538,7 +582,7 @@ html.dark .usdt0{
                   <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
                 </marker>
                 <marker id="usdt0-ar-s" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
-                  <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)" />
+                  <path d="M0 0 L10 5 L0 10 z" fill="var(--hairline)" />
                 </marker>
               </defs>
               <path className="edge dash" d="M 620 247 V 392 H 102 V 245" markerEnd="url(#usdt0-ar-s)" />
@@ -847,11 +891,23 @@ html.dark .usdt0{
         </div>
         <div className="foot">
           <span>Stellar Development Foundation</span>
+          <span className="foot-r">
+          <button type="button" className="themetog" onClick={toggleTheme}
+                  aria-label="Switch between light and dark" title="Switch between light and dark">
+            <svg className="moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M21.64 13a1 1 0 0 0-1.05-.14 8.05 8.05 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.6 8.6 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05" />
+            </svg>
+            <svg className="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+          </button>
           <a className="xlink" href="https://x.com/BuildOnStellar" target="_blank" rel="noopener noreferrer" aria-label="Build on Stellar on X" title="Build on Stellar on X">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
             </svg>
           </a>
+          </span>
         </div>
       </div>
     </div>
