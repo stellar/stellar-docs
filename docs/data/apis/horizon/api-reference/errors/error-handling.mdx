@@ -110,6 +110,59 @@ server
   });
 ```
 
+```python Python
+import time
+
+from stellar_sdk import Keypair, Network, Server, SorobanServer, TransactionBuilder
+from stellar_sdk.exceptions import NotFoundError
+
+server = Server("https://horizon-testnet.stellar.org")
+# A contract call must be simulated before it is sent, so this example also
+# uses Stellar RPC to prepare the transaction.
+rpc = SorobanServer("https://soroban-testnet.stellar.org")
+contract_id = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE"
+
+source_secret_key = "S..."  # replace with your secret key
+source_keypair = Keypair.from_secret(source_secret_key)
+account = server.load_account(source_keypair.public_key)
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+# The minimum base fee gets outbid when the network is busy.
+fee_charged = server.fee_stats().call()["fee_charged"]
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(int(fee_charged["p90"]), MAX_FEE)
+
+transaction = (
+    TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=fee)
+    .set_timeout(30)  # valid for the next 30s
+    # Add an operation to call increment() on the contract
+    .append_invoke_contract_function_op(contract_id, "increment")
+    .build()
+)
+# Simulate the call, then add its footprint and resource fee.
+transaction = rpc.prepare_transaction(transaction)
+
+# Sign this transaction with the secret key
+# NOTE: signing is transaction is network specific. Test network transactions
+# won't work in the public network. To switch networks, use the Network object
+# as explained above (look for stellar_sdk.Network).
+transaction.sign(source_keypair)
+
+result = server.submit_transaction_async(transaction)
+print("hash:", result["hash"])
+print("status:", result["tx_status"])
+print("errorResultXdr:", result.get("error_result_xdr"))
+
+# Add a small sleep duration before polling the transaction.
+time.sleep(5)
+try:
+    tx_result = server.transactions().transaction(result["hash"]).call()
+    print("Transaction status:", tx_result)
+except NotFoundError:
+    # Horizon returns 404 until the transaction is in a ledger.
+    print("Transaction not found yet. Poll again later.")
+```
+
 </CodeGroup>
 
 #### Synchronous Transaction Submission
@@ -168,6 +221,39 @@ function submitTransaction(tx, timeout) {
 }
 ```
 
+```python Python
+import time
+
+from stellar_sdk import Server
+from stellar_sdk.exceptions import BaseRequestError
+
+server = Server("https://horizon-testnet.stellar.org")
+
+
+def submit_transaction(tx, timeout=None):
+    preconditions = tx.transaction.preconditions
+    time_bounds = preconditions.time_bounds if preconditions else None
+    if time_bounds is None or time_bounds.max_time == 0:
+        raise ValueError("Always set a reasonable timebound!")
+    expiration = time_bounds.max_time  # Unix time in seconds
+
+    while True:
+        try:
+            return server.submit_transaction(tx)
+        except BaseRequestError as error:
+            if is_non_retry_error_case(error):
+                # ...do other error handling...
+                return None
+
+            # the tx no longer has a chance of making it into a ledger
+            if time.time() >= expiration:
+                raise RuntimeError("The transaction timed out.") from error
+
+            timeout = timeout or 1  # start the (linear) back-off process
+            time.sleep(timeout)
+            timeout += 5
+```
+
 </CodeGroup>
 
 We assume the existence of a sleep implementation similar to the one [here](https://stackoverflow.com/a/39914235). Be sure to integrate backoff into your retry mechanism. In our example error-handling code above, we implement a simple linear backoff, but there are [plenty of recommendations](https://backoff-utils.readthedocs.io/en/latest/strategies.html#why-are-backoff-strategies-useful) for various other strategies. Backoff is important both for maintaining performance and avoiding rate-limiting issues.
@@ -192,6 +278,22 @@ server.submitTransaction(tx).catch(function (error) {
   }
   // ...other error conditions...
 })
+```
+
+```python Python
+from stellar_sdk.exceptions import BadRequestError
+
+# suppose `account` is an outdated `Account` object
+tx = TransactionBuilder(account, ...).build()  # etc
+try:
+    server.submit_transaction(tx)
+except BadRequestError as error:
+    result_codes = (error.extras or {}).get("result_codes", {})
+    if result_codes.get("transaction") != "tx_bad_seq":
+        raise  # ...other error conditions...
+    account = server.load_account(account.account.account_id)
+    tx = TransactionBuilder(account, ...).build()  # etc
+    server.submit_transaction(tx)
 ```
 
 </CodeGroup>

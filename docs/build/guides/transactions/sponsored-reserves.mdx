@@ -133,6 +133,53 @@ async function main() {
   // ...
 ```
 
+```python Python
+import requests
+from stellar_sdk import (
+    Asset,
+    BeginSponsoringFutureReserves,
+    ChangeTrust,
+    EndSponsoringFutureReserves,
+    Keypair,
+    Network,
+    RevokeSponsorship,
+    SorobanServer,
+    TransactionBuilder,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+
+server = SorobanServer("https://soroban-testnet.stellar.org")
+
+# The send_transaction() helper is defined in the Footnote at the end of this page.
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+# Create & fund the new accounts.
+keypairs = [Keypair.random(), Keypair.random(), Keypair.random()]
+
+friendbot_url = server.get_network().friendbot_url
+for keypair in keypairs:
+    print(f"Funding:\n {keypair.secret}\n {keypair.public_key}")
+    try:
+        requests.get(
+            friendbot_url, params={"addr": keypair.public_key}, timeout=30
+        ).raise_for_status()
+    except requests.RequestException as err:
+        print("  failed:", err)
+
+# Arbitrary assets to sponsor trustlines for. Let's assume they make sense.
+S1, A, S2 = keypairs
+assets = [
+    Asset("ABCD", S1.public_key),
+    Asset("EFGH", S1.public_key),
+    Asset("IJKL", S2.public_key),
+]
+
+# ...
+```
+
 ```go Go
 package main
 
@@ -231,6 +278,39 @@ if (!txResponse) {
 console.log("Sponsored a trustline of", A.publicKey());
 ```
 
+```python Python
+#
+# 1. S1 will sponsor a trustline for Account A.
+#
+s1_account = server.load_account(S1.public_key)
+tx = (
+    TransactionBuilder(
+        source_account=s1_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_operation(BeginSponsoringFutureReserves(sponsored_id=A.public_key))
+    .append_operation(
+        ChangeTrust(
+            source=A.public_key,
+            asset=assets[0],
+            limit="1000",  # This limit can vary according with your application;
+            # if left empty, it defaults to the max limit.
+        )
+    )
+    .append_operation(EndSponsoringFutureReserves(source=A.public_key))
+    .set_timeout(180)
+    .build()
+)
+
+# Note that while either can submit this transaction, both must sign it.
+tx.sign(S1)
+tx.sign(A)
+send_transaction(tx)
+
+print("Sponsored a trustline of", A.public_key)
+```
+
 ```go Go
   //
   // 1. S1 will sponsor a trustline for Account A.
@@ -302,6 +382,40 @@ if (!txResponse) {
 }
 
 console.log("Sponsored two trustlines of", A.publicKey());
+```
+
+```python Python
+#
+# 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
+#
+a_account = server.load_account(A.public_key)
+tx = (
+    TransactionBuilder(
+        source_account=a_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_operation(
+        BeginSponsoringFutureReserves(source=S1.public_key, sponsored_id=A.public_key)
+    )
+    .append_operation(ChangeTrust(asset=assets[1], limit="5000"))
+    .append_operation(EndSponsoringFutureReserves())
+    .append_operation(
+        BeginSponsoringFutureReserves(source=S2.public_key, sponsored_id=A.public_key)
+    )
+    .append_operation(ChangeTrust(asset=assets[2], limit="2500"))
+    .append_operation(EndSponsoringFutureReserves())
+    .set_timeout(180)
+    .build()
+)
+
+# Note that all 3 accounts must approve/sign this transaction.
+tx.sign(S1)
+tx.sign(S2)
+tx.sign(A)
+send_transaction(tx)
+
+print("Sponsored two trustlines of", A.public_key)
 ```
 
 ```go Go
@@ -380,6 +494,38 @@ if (!txResponse) {
 console.log("Transferred sponsorship for", A.publicKey());
 ```
 
+```python Python
+#
+# 3. Transfer sponsorship of B's second trustline from S1 to S2.
+#
+tx = (
+    TransactionBuilder(
+        source_account=s1_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_operation(
+        BeginSponsoringFutureReserves(source=S2.public_key, sponsored_id=S1.public_key)
+    )
+    .append_operation(
+        RevokeSponsorship.revoke_trustline_sponsorship(
+            account_id=A.public_key, asset=assets[1]
+        )
+    )
+    .append_operation(EndSponsoringFutureReserves())
+    .set_timeout(180)
+    .build()
+)
+
+# Notice that while the old sponsor *sends* the transaction, both sponsors
+# must *approve* the transfer.
+tx.sign(S1)
+tx.sign(S2)
+send_transaction(tx)
+
+print("Transferred sponsorship for", A.public_key)
+```
+
 ```go Go
   //
   // 3. Transfer sponsorship of B's second trustline from S1 to S2.
@@ -446,6 +592,37 @@ Finally, we can demonstrate complete revocation of sponsorships. Below, Signer 2
 
   console.log("Revoked sponsorship for", A.publicKey());
 } // ends main()
+```
+
+```python Python
+#
+# 4. S2 revokes sponsorship of B's trustlines entirely.
+#
+s2_account = server.load_account(S2.public_key)
+tx = (
+    TransactionBuilder(
+        source_account=s2_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_operation(
+        RevokeSponsorship.revoke_trustline_sponsorship(
+            account_id=A.public_key, asset=assets[1]
+        )
+    )
+    .append_operation(
+        RevokeSponsorship.revoke_trustline_sponsorship(
+            account_id=A.public_key, asset=assets[2]
+        )
+    )
+    .set_timeout(180)
+    .build()
+)
+
+tx.sign(S2)
+send_transaction(tx)
+
+print("Revoked sponsorship for", A.public_key)
 ```
 
 ```go Go
@@ -536,6 +713,19 @@ async function sendTransaction(tx) {
 function accountFail(err) {
   console.error(" Failed to load account:", err);
 }
+```
+
+```python Python
+def send_transaction(tx):
+    send_resp = server.send_transaction(tx)
+    if send_resp.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(f"Send failed: {send_resp}")
+
+    get_resp = server.poll_transaction(send_resp.hash)
+    if get_resp.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"Transaction failed: {get_resp}")
+
+    return get_resp
 ```
 
 ```go Go

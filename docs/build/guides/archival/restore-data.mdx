@@ -22,15 +22,17 @@ The restoration process we'll use involves three discrete steps:
 2. If the simulation indicated it, we perform restoration with a `RestoreFootprintOp` operation using the hints we got from the simulation.
 3. We retry running our initial transaction.
 
-Here's a function called `submitOrRestoreAndRetry()` that will take care of all those steps for us:
+Here's a function called `submitOrRestoreAndRetry()` (`submit_or_restore_and_retry()` in Python) that will take care of all those steps for us:
 
 <Info>
 
-This guide makes use of the (aptly named) `submitTx` function we created in [another guide](/docs/build/guides/transactions/submit-transaction-wait).
+This guide makes use of the (aptly named) `submitTx` function (`submit_tx` in Python) we created in [another guide](/docs/build/guides/transactions/submit-transaction-wait).
 
 </Info>
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import {
   Networks,
   Keypair,
@@ -106,3 +108,69 @@ async function submitOrRestoreAndRetry(
   return submitTx(retryTx);
 }
 ```
+
+```python Python
+from stellar_sdk import Keypair, Network, TransactionBuilder, TransactionEnvelope
+from stellar_sdk.soroban_rpc import GetTransactionResponse, GetTransactionStatus
+
+# assume that `server` is the SorobanServer() instance from submit_tx
+
+
+def submit_or_restore_and_retry(
+    signer: Keypair, tx: TransactionEnvelope
+) -> GetTransactionResponse:
+    # We simulate first, instead of letting `prepare_transaction` do it,
+    # because we want to do restoration if necessary.
+    sim = server.simulate_transaction(tx)
+
+    # Other failures are out of scope of this tutorial.
+    if sim.error:
+        raise RuntimeError(f"Simulation failed: {sim.error}")
+
+    # No restore_preamble (the usual case since Protocol 23): just send it.
+    # The invocation restores any archived entries in its restore list.
+    if sim.restore_preamble is None:
+        prep_tx = server.prepare_transaction(tx, sim)
+        prep_tx.sign(signer)
+        return submit_tx(prep_tx)
+
+    # Build the restoration operation using the RPC server's hints.
+    account = server.load_account(signer.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend,
+    # then add the resource fee from the restore preamble.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+    fee += sim.restore_preamble.min_resource_fee
+
+    restore_tx = (
+        TransactionBuilder(
+            source_account=account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .set_soroban_data(sim.restore_preamble.transaction_data)
+        .append_restore_footprint_op()
+        .set_timeout(30)
+        .build()
+    )
+
+    restore_tx.sign(signer)
+
+    resp = submit_tx(restore_tx)
+    if resp.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"Restoration failed: {resp.status}")
+
+    # now that we've restored the necessary data, we can retry our tx using
+    # the initial data from the simulation (which, hopefully, is still
+    # up-to-date)
+    retry_tx = server.prepare_transaction(tx, sim)
+    # because we consumed a sequence number when restoring, we need to make sure
+    # we set the correct value on this copy
+    retry_tx.transaction.sequence += 1
+    retry_tx.sign(signer)
+
+    return submit_tx(retry_tx)
+```
+
+</CodeGroup>

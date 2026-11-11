@@ -12,17 +12,19 @@ flowchart LR
 
 We need **both** to be live for our contract calls to work.
 
-Let's work through how these can be recovered. The recovery process is slightly different for a convenient reason: we don't need simulation to figure out the footprints. Instead, we can leverage [`Contract.getFootprint()`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#contractgetfootprint) to get the ledger key of the contract instance. That key doesn't cover the backing WASM code, so we read the instance entry once to find its WASM hash and build the code's ledger key from it.
+Let's work through how these can be recovered. The recovery process is slightly different for a convenient reason: we don't need simulation to figure out the footprints. Instead, we can leverage [`Contract.getFootprint()`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#contractgetfootprint) to get the ledger key of the contract instance (in Python, we build the same key from the contract address). That key doesn't cover the backing WASM code, so we read the instance entry once to find its WASM hash and build the code's ledger key from it.
 
 Unfortunately, we still need simulation to figure out the _fees_ for our restoration. This, however, can be easily covered by the SDK's [`Server.prepareTransaction()`](https://stellar.github.io/js-stellar-sdk/reference/network-rpc/#serverpreparetransactiontx-useupgradedauth) helper, which will do simulation and assembly for us.
 
 <Info>
 
-This guide makes use of the (aptly named) `submitTx` function we created in [another guide](/docs/build/guides/transactions/submit-transaction-wait).
+This guide makes use of the (aptly named) `submitTx` function (`submit_tx` in Python) we created in [another guide](/docs/build/guides/transactions/submit-transaction-wait).
 
 </Info>
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import {
   Contract,
   Keypair,
@@ -90,3 +92,86 @@ function getWasmLedgerKey(data: xdr.LedgerEntryData): xdr.LedgerKey {
   );
 }
 ```
+
+```python Python
+from stellar_sdk import (
+    Address,
+    Keypair,
+    Network,
+    SorobanDataBuilder,
+    SorobanServer,
+    TransactionBuilder,
+    xdr,
+)
+from stellar_sdk.soroban_rpc import GetTransactionResponse
+
+server = SorobanServer("https://soroban-testnet.stellar.org")
+
+
+def restore_contract(signer: Keypair, contract_id: str) -> GetTransactionResponse:
+    instance = get_instance_ledger_key(contract_id)
+
+    account = server.load_account(signer.public_key)
+    entries = server.get_ledger_entries([instance]).entries
+    if not entries:
+        raise ValueError(f"No instance entry found for {contract_id}")
+    wasm_entry = get_wasm_ledger_key(entries[0].xdr)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    restore_tx = (
+        TransactionBuilder(
+            source_account=account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .set_soroban_data(
+            # Set the restoration footprint (remember, it should be in the
+            # read-write part!)
+            SorobanDataBuilder().set_read_write([instance, wasm_entry]).build()
+        )
+        .append_restore_footprint_op()
+        .set_timeout(30)
+        .build()
+    )
+
+    prepped_tx = server.prepare_transaction(restore_tx)
+    prepped_tx.sign(signer)
+    return submit_tx(prepped_tx)
+
+
+# The ledger key of the contract instance (what Contract.getFootprint()
+# returns in JavaScript)
+def get_instance_ledger_key(contract_id: str) -> xdr.LedgerKey:
+    return xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_DATA,
+        contract_data=xdr.LedgerKeyContractData(
+            contract=Address(contract_id).to_xdr_sc_address(),
+            key=xdr.SCVal(xdr.SCValType.SCV_LEDGER_KEY_CONTRACT_INSTANCE),
+            durability=xdr.ContractDataDurability.PERSISTENT,
+        ),
+    )
+
+
+# Read the Wasm hash out of the contract instance entry
+def get_wasm_ledger_key(entry_xdr: str) -> xdr.LedgerKey:
+    data = xdr.LedgerEntryData.from_xdr(entry_xdr)
+    if data.contract_data is None:
+        raise TypeError("Expected a contract data entry")
+    instance = data.contract_data.val.instance
+    if instance is None:
+        raise TypeError("Expected a contract instance")
+    executable = instance.executable
+    if executable.type != xdr.ContractExecutableType.CONTRACT_EXECUTABLE_WASM:
+        raise TypeError("Expected a Wasm executable")
+
+    return xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_CODE,
+        contract_code=xdr.LedgerKeyContractCode(hash=executable.wasm_hash),
+    )
+```
+
+</CodeGroup>

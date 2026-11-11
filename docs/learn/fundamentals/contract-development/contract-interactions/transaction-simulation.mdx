@@ -107,6 +107,48 @@ async function main() {
 main().catch((e) => console.error(e));
 ```
 
+```python Python
+from stellar_sdk import Asset, Keypair, Network, SorobanServer, TransactionBuilder, scval
+
+s = SorobanServer("https://soroban-testnet.stellar.org")
+
+# Pretend this is a real, funded account.
+signer = Keypair.random()
+xlm_contract = Asset.native().contract_id(Network.TESTNET_NETWORK_PASSPHRASE)
+
+
+def main():
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(s.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    tx = (
+        TransactionBuilder(
+            s.load_account(signer.public_key),
+            Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_invoke_contract_function_op(
+            contract_id=xlm_contract,
+            function_name="balance",
+            parameters=[scval.to_address(signer.public_key)],
+        )
+        .set_timeout(30)
+        .build()
+    )
+
+    prepped_tx = s.prepare_transaction(tx)
+    prepped_tx.sign(signer)
+
+    send_tx = s.send_transaction(prepped_tx)
+    return s.poll_transaction(send_tx.hash)
+
+
+if __name__ == "__main__":
+    print(main())
+```
+
 </CodeGroup>
 
 Notice that, in contrast to the following example, we didn't need to do simulation separately. This is because we can sign the transaction as-is rather than needing to inspect its authorization entries.
@@ -216,6 +258,102 @@ async function main() {
 main().catch((e) => console.error(e));
 ```
 
+```python Python
+from stellar_sdk import (
+    Address,
+    Asset,
+    Keypair,
+    Network,
+    SorobanServer,
+    TransactionBuilder,
+    scval,
+)
+from stellar_sdk.auth import authorize_entry
+from stellar_sdk.xdr import SorobanAuthorizationEntry, SorobanCredentialsType
+
+s = SorobanServer("https://soroban-testnet.stellar.org")
+
+# Pretend these are real, funded accounts.
+signers = [Keypair.random(), Keypair.random()]
+xlm_contract = Asset.native().contract_id(Network.TESTNET_NETWORK_PASSPHRASE)
+
+
+def main():
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(s.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    # Notice that the source account is the first keypair, but the transfer
+    # occurs *from* the second keypair, which means the second keypair will
+    # need to sign for an authorization entry to approve the transfer.
+    tx = (
+        TransactionBuilder(
+            s.load_account(signers[0].public_key),
+            Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_invoke_contract_function_op(
+            contract_id=xlm_contract,
+            function_name="transfer",
+            parameters=[
+                scval.to_address(signers[1].public_key),  # from
+                scval.to_address(signers[0].public_key),  # to
+                scval.to_int128(1000),  # amount
+            ],
+        )
+        .set_timeout(30)
+        .build()
+    )
+
+    sim_result = s.simulate_transaction(tx)
+    if sim_result.error or not sim_result.results:
+        raise RuntimeError(f"Simulation failed: {sim_result.error}")
+
+    # For every auth entry that needs signing, sign it with the correct keypair.
+    signed_auth = []
+    for entry_xdr in sim_result.results[0].auth or []:
+        entry = SorobanAuthorizationEntry.from_xdr(entry_xdr)
+        credentials = entry.credentials
+        # Ignore source account entries, which the transaction signature covers.
+        # Simulation returns address entries as V2 (or legacy) credentials.
+        if credentials.type == SorobanCredentialsType.SOROBAN_CREDENTIALS_ADDRESS_V2:
+            address_credentials = credentials.address_v2
+        elif credentials.type == SorobanCredentialsType.SOROBAN_CREDENTIALS_ADDRESS:
+            address_credentials = credentials.address
+        else:
+            signed_auth.append(entry)
+            continue
+
+        # Find the keypair that matches the entry's address.
+        address = Address.from_xdr_sc_address(address_credentials.address).address
+        signer = next((kp for kp in signers if kp.public_key == address), None)
+        if signer is None:
+            raise RuntimeError(f"No keypair for {address}")
+
+        signed_auth.append(
+            authorize_entry(
+                entry,
+                signer,
+                sim_result.latest_ledger + 12,  # signature is valid for ~1m
+                Network.TESTNET_NETWORK_PASSPHRASE,
+            )
+        )
+
+    # Put the signed entries on the operation. prepare_transaction keeps an
+    # operation's own auth entries instead of the unsigned ones from simulation.
+    tx.transaction.operations[0].auth = signed_auth
+    prepped_tx = s.prepare_transaction(tx, sim_result)
+    prepped_tx.sign(signers[0])
+
+    send_tx = s.send_transaction(prepped_tx)
+    return s.poll_transaction(send_tx.hash)
+
+
+if __name__ == "__main__":
+    print(main())
+```
+
 </CodeGroup>
 
 Alternatively, we could go a step lower in the stack and build the authorization entries ourselves using [`authorizeInvocation`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#authorizeinvocation), giving us full control over the actual "call stack" that is being invoked. This can be useful if you want to authorize specific invocations, build the invocations yourself, or lower the network bandwidth you use when sharing entries for other parties to sign.
@@ -226,7 +364,9 @@ In this example, we'll leverage transaction [simulation][sim-tx]'s auth ["enforc
 
 To keep things really simple, we won't do much coding. Instead, we'll just show the difference from the previous example: all we need to do is run simulation once more.
 
-```diff
+<CodeGroup>
+
+```diff JavaScript
 -  preppedTx.sign(signers[0]);
 -
 -  const sendTx = await s.sendTransaction(preppedTx);
@@ -234,6 +374,17 @@ To keep things really simple, we won't do much coding. Instead, we'll just show 
 +  resimTx.sign(signers[0]);
 +  const sendTx = await s.sendTransaction(resimTx);
 ```
+
+```diff Python
+-    prepped_tx.sign(signers[0])
+-
+-    send_tx = s.send_transaction(prepped_tx)
++    resim_tx = s.prepare_transaction(prepped_tx)
++    resim_tx.sign(signers[0])
++    send_tx = s.send_transaction(resim_tx)
+```
+
+</CodeGroup>
 
 [auth-data]: stellar-transaction#authorization-data
 [auth-invoke]: https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-transaction.x#L558

@@ -93,7 +93,7 @@ The account balance decreases only by the transaction fee. You may want to detec
 
 ## Code Implementation
 
-_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` or execute individual examples using their respective functions._
+_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` (`run_all_muxed_examples()` in Python) or execute individual examples using their respective functions._
 
 <CodeGroup>
 
@@ -358,6 +358,275 @@ async function makePayment(source, dest, description = "Payment") {
 
 // Run the main function
 runAllMuxedExamples();
+```
+
+```python Python
+import requests
+from stellar_sdk import (
+    Asset,
+    Keypair,
+    MuxedAccount,
+    Network,
+    Payment,
+    SorobanServer,
+    StrKey,
+    TransactionBuilder,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import (
+    LedgerEntryData,
+    LedgerEntryType,
+    LedgerKey,
+    LedgerKeyAccount,
+)
+
+server = SorobanServer("https://soroban-testnet.stellar.org")
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+custodian = Keypair.random()
+outsider = Keypair.random()
+
+custodian_acc = outsider_acc = None
+customers = []
+
+
+# Setup function to fund accounts and create muxed customers
+def preamble():
+    global custodian_acc, outsider_acc, customers
+    print("=== FUNDING ACCOUNTS WITH XLM ===")
+    friendbot_url = server.get_network().friendbot_url
+    for keypair in (custodian, outsider):
+        response = requests.get(
+            friendbot_url, params={"addr": keypair.public_key}, timeout=30
+        )
+        response.raise_for_status()
+    print("All accounts funded with XLM via airdrop")
+
+    custodian_acc = server.load_account(custodian.public_key)
+    outsider_acc = server.load_account(outsider.public_key)
+
+    customers = [
+        MuxedAccount(custodian.public_key, int(customer_id))
+        for customer_id in ["1", "22", "333", "4444"]
+    ]
+
+    print("\n=== ACCOUNT SETUP ===")
+    print("Custodian:\n       ", custodian.public_key)
+    print("Outsider:\n       ", outsider.public_key)
+    print("Customers:")
+    for customer in customers:
+        print(f" {customer.account_muxed_id:>4}:", customer.universal_account_id)
+
+
+# Example 1: Basic payment between two G accounts
+def run_unmuxed_example():
+    print("=== BASIC PAYMENT EXAMPLE (G → G) ===")
+
+    print("=== INITIAL BALANCES ===")
+    show_balance(custodian_acc)
+    show_balance(outsider_acc)
+
+    make_payment(custodian_acc, outsider_acc, "Basic Payment from G to G address")
+
+    print("\n=== FINAL BALANCES ===")
+    show_balance(server.load_account(custodian.public_key))
+    show_balance(server.load_account(outsider.public_key))
+
+    print("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===")
+
+
+# Example 2: Payment from M account to G account
+def run_muxed_to_unmuxed_example():
+    print("=== MUXED TO UNMUXED PAYMENT EXAMPLE (M → G) ===")
+
+    print("=== INITIAL BALANCES ===")
+    show_balance(custodian_acc)
+    show_balance(outsider_acc)
+    src = customers[0]
+    print(
+        f"Sending 10 XLM from Customer {src.account_muxed_id} to "
+        f"{format_account(outsider_acc.universal_account_id)}."
+    )
+
+    make_payment(src, outsider_acc, "Payment from M to G address")
+
+    print("\n=== FINAL BALANCES ===")
+    show_balance(server.load_account(custodian.public_key))
+    show_balance(server.load_account(outsider.public_key))
+
+    print("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===")
+
+
+# Example 3: Payment between two M accounts
+def run_muxed_to_muxed_example():
+    print("=== MUXED TO MUXED PAYMENT EXAMPLE (M → M) ===")
+
+    print("=== INITIAL BALANCES ===")
+    show_balance(custodian_acc)
+
+    src = customers[1]  # Customer 22
+    dest = customers[2]  # Customer 333
+
+    print(
+        f"Sending 10 XLM from Customer {src.account_muxed_id} "
+        f"to Customer {dest.account_muxed_id}."
+    )
+
+    make_payment(src, dest, "Payment from M to M address")
+
+    print("\n=== FINAL BALANCES ===")
+    show_balance(server.load_account(custodian.public_key))
+
+    print("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===")
+
+
+# Main function that runs preamble once and then all three examples
+def run_all_muxed_examples():
+    try:
+        # Run setup/funding only once
+        preamble()
+
+        # Show initial state
+        print("=== OVERALL INITIAL BALANCES ===")
+        show_balance(custodian_acc)
+        show_balance(outsider_acc)
+        print("\n" + "=" * 60 + "\n")
+
+        # Run all three examples sequentially
+        run_unmuxed_example()
+        print("\n" + "=" * 60 + "\n")
+
+        run_muxed_to_unmuxed_example()
+        print("\n" + "=" * 60 + "\n")
+
+        run_muxed_to_muxed_example()
+
+        print("\n=== ALL MUXED ACCOUNT EXAMPLES COMPLETED ===")
+    except Exception as error:
+        print("Error in examples:", error)
+
+
+# Helper function to format account ID with label
+def format_account(account_id):
+    short_id = account_id[:8]
+    if account_id == custodian.public_key:
+        return f"{short_id} (Custodian)"
+    elif account_id == outsider.public_key:
+        return f"{short_id} (Outsider)"
+
+    # Check if it's a muxed account by finding the matching customer
+    for customer in customers:
+        if customer.universal_account_id == account_id:
+            return (
+                f"{account_id[:8]}...{account_id[-6:]} "
+                f"(Customer {customer.account_muxed_id})"
+            )
+    return short_id
+
+
+def scale_asset(x):
+    return x / 10_000_000  # Preserves decimal precision
+
+
+# Helper function to get XLM balance using RPC
+def get_xlm_balance(account_id):
+    key = LedgerKey(
+        LedgerEntryType.ACCOUNT,
+        account=LedgerKeyAccount(
+            account_id=Keypair.from_public_key(account_id).xdr_account_id()
+        ),
+    )
+    response = server.get_ledger_entries([key])
+    if not response.entries:
+        return "0"
+    account_entry = LedgerEntryData.from_xdr(response.entries[0].xdr).account
+    return f"{scale_asset(account_entry.balance.int64):.7f}"
+
+
+# Helper function to submit transaction and poll for completion using RPC
+def submit_and_poll_transaction(transaction, description="Transaction"):
+    submit_response = server.send_transaction(transaction)
+    if submit_response.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(
+            f"Transaction submission failed: {submit_response.status.value}"
+        )
+
+    print(f"{description} submitted: {submit_response.hash}")
+
+    final_response = server.poll_transaction(submit_response.hash)
+    if final_response.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"{description} failed: {final_response.status.value}")
+
+    print(f"{description} completed successfully")
+    return {
+        "hash": submit_response.hash,
+        "status": final_response.status,
+        "result_xdr": final_response.result_xdr,
+    }
+
+
+def build_tx(source, signer, ops):
+    builder = TransactionBuilder(
+        source_account=source,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    for op in ops:
+        builder.append_operation(op)
+    tx = builder.set_timeout(30).build()
+    tx.sign(signer)
+    return tx
+
+
+# Helper function to load account, handling muxed accounts
+def load_account(account):
+    address = account.universal_account_id
+    if StrKey.is_valid_med25519_public_key(address):
+        # Muxed accounts do not exist on the ledger: load the base G account
+        return server.load_account(MuxedAccount.from_account(address).account_id)
+    return server.load_account(address)
+
+
+# Helper function to display balance of an account
+def show_balance(acc):
+    address = acc.universal_account_id
+    print(f"{format_account(address)}: {get_xlm_balance(address)} XLM")
+
+
+# Function to make a payment from source to destination account
+def make_payment(source, dest, description="Payment"):
+    source_address = source.universal_account_id
+    dest_address = dest.universal_account_id
+    print(
+        f"\nPayment: {format_account(source_address)} → "
+        f"{format_account(dest_address)} (10 XLM)"
+    )
+
+    account_before_payment = load_account(source)
+    print("Before payment:")
+    show_balance(account_before_payment)
+
+    payment = Payment(
+        source=source_address,
+        destination=dest_address,
+        asset=Asset.native(),
+        amount="10",
+    )
+
+    tx = build_tx(account_before_payment, custodian, [payment])
+
+    submit_and_poll_transaction(tx, description)
+
+    account_after_payment = load_account(source)
+    print("After payment:")
+    show_balance(account_after_payment)
+
+
+# Run the main function
+run_all_muxed_examples()
 ```
 
 </CodeGroup>

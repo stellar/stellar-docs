@@ -36,7 +36,9 @@ When the transaction source account is the same as the address being authorized,
 
 ### Code example
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import {
   Keypair,
   nativeToScVal,
@@ -93,6 +95,60 @@ async function invokeWithFullSigning(
   return response;
 }
 ```
+
+```python Python
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
+from stellar_sdk.soroban_rpc import SendTransactionResponse
+
+rpc_url = "https://soroban-testnet.stellar.org"
+server = SorobanServer(rpc_url)
+
+source_keypair = Keypair.from_secret("S...")
+
+
+def invoke_with_full_signing(
+    contract_id: str,
+    recipient_address: str,
+    amount: int,
+) -> SendTransactionResponse:
+    source_account = server.load_account(source_keypair.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    transaction = (
+        TransactionBuilder(
+            source_account=source_account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_invoke_contract_function_op(
+            contract_id=contract_id,
+            function_name="transfer",
+            parameters=[
+                scval.to_address(source_keypair.public_key),
+                scval.to_address(recipient_address),
+                scval.to_int128(amount),
+            ],
+        )
+        .set_timeout(30)
+        .build()
+    )
+
+    # prepare_transaction simulates and assembles in one step
+    prepared_tx = server.prepare_transaction(transaction)
+
+    # Sign the transaction envelope
+    prepared_tx.sign(source_keypair)
+
+    # Submit to network
+    response = server.send_transaction(prepared_tx)
+    return response
+```
+
+</CodeGroup>
 
 <Note>
 
@@ -191,7 +247,9 @@ This example shows a token transfer where the sender (client) uses `AssembledTra
 
 #### Step 1: Client builds and signs auth entries
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import { Keypair, Networks, nativeToScVal } from "@stellar/stellar-sdk";
 import {
   AssembledTransaction,
@@ -259,11 +317,68 @@ async function buildSignedAuthEntries(
 }
 ```
 
+```python Python
+from stellar_sdk import Keypair, Network, scval
+from stellar_sdk.contract import ContractClient
+
+rpc_url = "https://soroban-testnet.stellar.org"
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+
+# Client's keypair (authorizes the transfer)
+sender_keypair = Keypair.from_secret("S...")
+
+
+def build_signed_auth_entries(
+    token_contract_id: str,
+    recipient_address: str,
+    amount: int,
+) -> str:
+    # Build and simulate the transaction (Recording Mode).
+    # invoke() raises SimulationFailedError if the simulation fails.
+    client = ContractClient(token_contract_id, rpc_url, network_passphrase)
+    tx = client.invoke(
+        "transfer",
+        [
+            scval.to_address(sender_keypair.public_key),
+            scval.to_address(recipient_address),
+            scval.to_int128(amount),
+        ],
+    )
+
+    # Check who needs to sign
+    missing_signers = tx.needs_non_invoker_signing_by()
+    if sender_keypair.public_key not in missing_signers:
+        raise RuntimeError("Sender not in required signers")
+
+    # Sign auth entries with the sender's keypair
+    tx.sign_auth_entries(
+        sender_keypair,
+        valid_until_ledger_sequence=tx.simulation.latest_ledger + 60,  # ~5 minutes
+    )
+
+    # Re-simulate the signed transaction to validate signatures (📌 Enforcing Mode).
+    # prepare() raises SimulationFailedError if the simulation fails.
+    tx.prepare()
+
+    # Verify all signatures collected
+    if tx.needs_non_invoker_signing_by():
+        raise RuntimeError("Missing signatures")
+
+    # Return transaction XDR for fee-payer
+    return tx.to_xdr()
+```
+
+</CodeGroup>
+
+In Python, re-simulate with `prepare()`, not `simulate()`. `simulate()` builds the transaction again from scratch, without the signed auth entries.
+
 #### Step 2: Fee-payer rebuilds and submits
 
 This code is tested with `@stellar/stellar-sdk` v17. For the v17 XDR changes, see the [XDR migration guide](https://stellar.github.io/js-stellar-sdk/migration/xdr-migration/).
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import {
   Keypair,
   Networks,
@@ -332,6 +447,82 @@ async function submitWithSignedAuth(
 }
 ```
 
+```python Python
+from stellar_sdk import (
+    Keypair,
+    Network,
+    SorobanServer,
+    TransactionBuilder,
+    TransactionEnvelope,
+    xdr,
+)
+from stellar_sdk.operation import InvokeHostFunction
+from stellar_sdk.soroban_rpc import SendTransactionResponse
+
+rpc_url = "https://soroban-testnet.stellar.org"
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+
+server = SorobanServer(rpc_url)
+fee_payer_keypair = Keypair.from_secret("S...")
+
+
+def submit_with_signed_auth(transaction_xdr: str) -> SendTransactionResponse:
+    # Parse client's transaction to extract operation and Soroban data
+    tx_envelope = xdr.TransactionEnvelope.from_xdr(transaction_xdr)
+    if tx_envelope.type != xdr.EnvelopeType.ENVELOPE_TYPE_TX:
+        raise ValueError("Expected a v1 transaction envelope")
+
+    client_tx = TransactionEnvelope.from_xdr_object(
+        tx_envelope, network_passphrase
+    ).transaction
+    soroban_data = client_tx.soroban_data
+    if soroban_data is None:
+        raise ValueError("Missing Soroban data")
+
+    invoke_op = client_tx.operations[0]
+    if not isinstance(invoke_op, InvokeHostFunction):
+        raise ValueError("Expected an InvokeHostFunction operation")
+
+    # 🚨 SECURITY: Verify the transaction/operation source is not the fee-payer's
+    # account, and that the auth entries do not reference the fee-payer's account
+
+    # Rebuild transaction with fee-payer as source
+    fee_payer_account = server.load_account(fee_payer_keypair.public_key)
+
+    rebuilt_tx = (
+        TransactionBuilder(
+            source_account=fee_payer_account,
+            network_passphrase=network_passphrase,
+            base_fee=client_tx.fee,
+        )
+        .set_soroban_data(soroban_data)
+        .set_timeout(30)
+        .append_operation(
+            InvokeHostFunction(
+                host_function=invoke_op.host_function,
+                auth=invoke_op.auth or [],
+                source=invoke_op.source,
+            )
+        )
+        .build()
+    )
+
+    # 📌 Simulate before submitting to catch errors without paying fees
+    # (Enforcing Mode)
+    sim_result = server.simulate_transaction(rebuilt_tx)
+    if sim_result.error:
+        raise RuntimeError(f"Fee-payer simulation failed: {sim_result.error}")
+
+    # Apply the simulation's footprint and resource fee
+    assembled_tx = server.prepare_transaction(rebuilt_tx, sim_result)
+
+    # Fee-payer signs and submits
+    assembled_tx.sign(fee_payer_keypair)
+    return server.send_transaction(assembled_tx)
+```
+
+</CodeGroup>
+
 ### Key characteristics {#key-characteristics-1}
 
 - **Sequence number**: Consumed from the fee-payer account
@@ -354,9 +545,11 @@ For C-accounts:
 
 **Using `basicNodeSigner` for G-accounts (Node.js/backend)**
 
-The `basicNodeSigner` utility creates signing functions from a keypair, providing both `signAuthEntry` and `signTransaction` methods. This is useful for backend services or testing.
+The `basicNodeSigner` utility creates signing functions from a keypair, providing both `signAuthEntry` and `signTransaction` methods. This is useful for backend services or testing. In Python, `authorize_entry` signs an auth entry and the transaction envelope's `sign` method signs the transaction.
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import { Keypair } from "@stellar/stellar-sdk";
 import { basicNodeSigner } from "@stellar/stellar-sdk/contract";
 
@@ -372,6 +565,25 @@ const signedAuthEntry = await signer.signAuthEntry(authEntry);
 // Sign a transaction envelope
 const signedTransaction = await signer.signTransaction(transactionXDR);
 ```
+
+```python Python
+from stellar_sdk import Keypair, TransactionEnvelope
+from stellar_sdk.auth import authorize_entry
+
+keypair = Keypair.from_secret("S...")
+network_passphrase = "Test SDF Network ; September 2015"
+
+# Sign an auth entry, valid until and including the ledger you choose
+signed_auth_entry = authorize_entry(
+    auth_entry, keypair, signature_expiration_ledger, network_passphrase
+)
+
+# Sign a transaction envelope
+signed_transaction = TransactionEnvelope.from_xdr(transaction_xdr, network_passphrase)
+signed_transaction.sign(keypair)
+```
+
+</CodeGroup>
 
 **Using Varial for C-accounts (browser/wallet)**
 
