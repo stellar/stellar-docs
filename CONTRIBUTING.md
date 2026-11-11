@@ -136,7 +136,7 @@ Automatic regeneration of the cookbook and manual is paused while the scripts ar
 
 ### URLs are forever
 
-To the extent possible, anything that changes a page's URL needs a redirect. Redirects are entries in `redirects.json` (`{ "source": "/old/path", "destination": "/new/path" }`; wildcards use `:slug*`). If your PR moves or renames pages, add the redirects and call it out in the description. `pnpm check:links` checks that redirect destinations exist.
+To the extent possible, anything that changes a page's URL needs a redirect. Redirects are entries in `config/redirects.json` (`{ "source": "/old/path", "destination": "/new/path" }`; wildcards use `:slug*`). If your PR moves or renames pages, add the redirects and call it out in the description. `pnpm check:links` checks that redirect destinations exist.
 
 ### Custom code is a last resort
 

@@ -114,7 +114,7 @@ link. For PRs from forks, a maintainer approves the preview first.
 - `docs.json` is the site configuration: theme, navigation (the sidebar and
   tabs), SEO, integrations, and so on. **Every page needs an entry in
   `navigation`** to appear in the sidebar.
-- `redirects.json` holds the redirect rules (referenced from `docs.json`). If you
+- `config/redirects.json` holds the redirect rules (referenced from `docs.json`). If you
   find a broken link out in the wilds of the internet, and there's no way for it
   to be changed, a redirect could be a useful tool. (Note our aim isn't to
   _completely_ avoid 404 pages for a user. That would be impossible and

@@ -253,7 +253,7 @@ Here are all the snippets stacked together in a single file for convenience:
 #![no_std]
 use soroban_sdk::{
     auth::{Context, CustomAccountInterface}, contract, contracterror, contractimpl, contracttype, symbol_short, Address,
-    BytesN, Env, Hash, Symbol, Vec,
+    crypto::Hash, BytesN, Env, Symbol, Vec,
 };
 #[contract]
 struct AccountContract;
@@ -425,7 +425,14 @@ fn verify_authorization_policy(
 mod test;
 ```
 
-These are the test cases:
+These are the test cases. Put them in `src/test.rs`, which the `mod test;` line at the end of the contract loads. They need these dev-dependencies in the contract's `Cargo.toml`:
+
+```toml
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+ed25519-dalek = "1.0.1"
+rand = "0.7.3"
+```
 
 ```rust
 #![cfg(test)]
@@ -440,11 +447,11 @@ use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::AuthorizedFunction;
 use soroban_sdk::testutils::AuthorizedInvocation;
 use soroban_sdk::Val;
+use soroban_sdk::Vec;
 use soroban_sdk::{
     auth::Context, testutils::BytesN as _, vec, Address, BytesN, Env, IntoVal, Symbol,
 };
 use soroban_sdk::testutils::Ledger;
-use soroban_sdk::testutils::LedgerInfo;
 use crate::AccError;
 use crate::{AccountContract, AccountContractClient, Signature};
 
@@ -456,7 +463,7 @@ fn signer_public_key(e: &Env, signer: &Keypair) -> BytesN<32> {
     signer.public.to_bytes().into_val(e)
 }
 
-fn create_account_contract(e: &Env, signers: Vec<BytesN<32>>) -> AccountContractClient {
+fn create_account_contract(e: &Env, signers: Vec<BytesN<32>>) -> AccountContractClient<'_> {
     AccountContractClient::new(e, &e.register(AccountContract {}, (signers,)))
 }
 
@@ -540,41 +547,26 @@ fn test_token_auth() {
     );
 
     // Attempting a transfer within the time limit should fail.
-    env.ledger().set(LedgerInfo {
-        timestamp: 0,
-        protocol_version: 1,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 16,
-        min_persistent_entry_ttl: 16,
-        max_entry_ttl: 100_000,
-    });
+    env.ledger().set_timestamp(0);
 
-    env.try_invoke_contract_check_auth::<AccError>(
-        &account_contract.address,
-        &payload,
-        vec![&env, sign(&env, &signers[0], &payload)].into(),
-        &vec![
-            &env,
-            token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1001)
-        ],
-    )
-    .err()
-    .unwrap()
-    .unwrap() == AccError::TimeLimitExceeded;
+    assert_eq!(
+        env.try_invoke_contract_check_auth::<AccError>(
+            &account_contract.address,
+            &payload,
+            vec![&env, sign(&env, &signers[0], &payload)].into(),
+            &vec![
+                &env,
+                token_auth_context(&env, &token, Symbol::new(&env, "transfer"), 1001)
+            ],
+        )
+        .err()
+        .unwrap()
+        .unwrap(),
+        AccError::TimeLimitExceeded
+    );
 
     // Simulate passing of time to allow the next transfer.
-    env.ledger().set(LedgerInfo {
-        timestamp: 1000,
-        protocol_version: 1,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 16,
-        min_persistent_entry_ttl: 16,
-        max_entry_ttl: 100_000,
-    });
+    env.ledger().set_timestamp(1000);
 
     env.try_invoke_contract_check_auth::<AccError>(
         &account_contract.address,
@@ -722,7 +714,7 @@ A `SignerRemoved` event has the topics `sw_v1`, `remove` and the signer id, with
 
 #### Core contract functions
 
-These functions handle adding and removing signers, updating the contract, and managing admin counts. The constructor sets the first admin signer when the contract is deployed, so the wallet never exists without an owner. After that, `add` always requires the wallet's own authorization.
+These functions handle adding and removing signers, updating the contract, and managing admin counts. The constructor sets the first admin signer when the contract is deployed, so the wallet never exists without an owner. After that, `add` always requires the wallet's own authorization. The admin signer count goes up only when an ID becomes an admin, so `remove` refuses to delete the last admin.
 
 ```rust
 // Implementing the Contract struct with various methods
@@ -757,8 +749,11 @@ impl Contract {
                 env.storage().temporary().remove(&id);
             }
 
-            // Update the admin signer count by incrementing it
-            Self::update_admin_signer_count(env, true);
+            // Increment the admin signer count only when the ID is not an admin yet,
+            // so re-adding or replacing an admin does not count it twice
+            if !env.storage().persistent().has(&id) {
+                Self::update_admin_signer_count(env, true);
+            }
 
             // Store the public key in persistent storage with the given ID
             env.storage().persistent().set(&id, &pk);
@@ -1094,7 +1089,7 @@ The WebAuthn wallet contract manages user credentials and authentication. It all
 
 #### Test cases
 
-These are test cases to ensure our WebAuthn wallet is functioning correctly. We'll use the Soroban SDK's testing utilities to create and run these tests.
+These are test cases to ensure our WebAuthn wallet is functioning correctly. We'll use the Soroban SDK's testing utilities to create and run these tests. The second test re-adds the only admin and checks that the wallet still refuses to remove it.
 
 ```rust
 #[cfg(test)]
@@ -1110,7 +1105,7 @@ mod test {
         IntoVal,
     };
 
-    use crate::{Contract, Error, Signature};
+    use crate::{Contract, ContractClient, Error, Signature};
 
     #[test]
     fn test() {
@@ -1175,6 +1170,25 @@ mod test {
         println!("{:?}", result);
         assert!(result.is_ok());
 
+    }
+
+    #[test]
+    fn test_readd_admin_keeps_last_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let id = Bytes::from_array(&env, &[1; 20]);
+        let pk = BytesN::from_array(&env, &[4; 65]);
+
+        // Deploy the wallet with one admin signer
+        let address = env.register(Contract, (id.clone(), pk.clone()));
+        let client = ContractClient::new(&env, &address);
+
+        // Re-adding the same admin must not count it twice
+        client.add(&id, &pk, &true);
+
+        // The wallet must still refuse to remove its only admin
+        assert_eq!(client.try_remove(&id), Err(Ok(Error::NotPermitted)));
     }
 }
 ```
@@ -1297,8 +1311,11 @@ impl Contract {
                 env.storage().temporary().remove(&id);
             }
 
-            // Update the admin signer count by incrementing it
-            Self::update_admin_signer_count(env, true);
+            // Increment the admin signer count only when the ID is not an admin yet,
+            // so re-adding or replacing an admin does not count it twice
+            if !env.storage().persistent().has(&id) {
+                Self::update_admin_signer_count(env, true);
+            }
 
             // Store the public key in persistent storage with the given ID
             env.storage().persistent().set(&id, &pk);
@@ -1597,7 +1614,7 @@ mod test {
         IntoVal,
     };
 
-    use crate::{Contract, Error, Signature};
+    use crate::{Contract, ContractClient, Error, Signature};
 
     #[test]
     fn test() {
@@ -1662,6 +1679,25 @@ mod test {
         println!("{:?}", result);
         assert!(result.is_ok());
 
+    }
+
+    #[test]
+    fn test_readd_admin_keeps_last_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let id = Bytes::from_array(&env, &[1; 20]);
+        let pk = BytesN::from_array(&env, &[4; 65]);
+
+        // Deploy the wallet with one admin signer
+        let address = env.register(Contract, (id.clone(), pk.clone()));
+        let client = ContractClient::new(&env, &address);
+
+        // Re-adding the same admin must not count it twice
+        client.add(&id, &pk, &true);
+
+        // The wallet must still refuse to remove its only admin
+        assert_eq!(client.try_remove(&id), Err(Ok(Error::NotPermitted)));
     }
 }
 ```
