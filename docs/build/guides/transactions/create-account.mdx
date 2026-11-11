@@ -496,20 +496,34 @@ func check(err error) {
 ```java Java
 // File: main.java
 // Dependencies (Maven coordinates):
-//   network.lightsail:stellar-sdk:3.1.0
-//   com.fasterxml.jackson.core:jackson-databind:2.17.2
+//   network.lightsail:stellar-sdk:6.0.0
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.*;
 import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Collections;
 
-import org.stellar.sdk.*;
-import org.stellar.sdk.operations.*;
-import org.stellar.sdk.requests.sorobanrpc.*;
-import org.stellar.sdk.xdr.*;
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.TrustLineAsset;
+import org.stellar.sdk.operations.CreateAccountOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetNetworkResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.xdr.LedgerEntry;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+import org.stellar.sdk.xdr.TrustLineEntry;
 
 public final class main {
   private static final String RPC_URL = "https://soroban-testnet.stellar.org";
@@ -550,7 +564,7 @@ public final class main {
 
     Transaction transaction = new TransactionBuilder(parentAccount, Network.TESTNET)
       .setBaseFee(fee)
-      .setTimeout(TransactionBuilder.TIMEOUT_INFINITE)
+      .setTimeout(180)
       .addOperation(CreateAccountOperation.builder().destination(child.getAccountId()).startingBalance(new BigDecimal("5")).build())
       .build();
     transaction.sign(parent);
@@ -583,33 +597,33 @@ public final class main {
     check(response.statusCode() / 100 == 2, "Friendbot returned " + response.statusCode() + ": " + response.body());
     return response.body();
   }
-  private static long loadNativeBalance(String accountId) throws IOException {
+  private static long loadNativeBalance(String accountId) {
     LedgerKey key = new LedgerKey();
     key.setDiscriminant(LedgerEntryType.ACCOUNT);
-    LedgerKeyAccount accountKey = new LedgerKeyAccount();
+    LedgerKey.LedgerKeyAccount accountKey = new LedgerKey.LedgerKeyAccount();
     accountKey.setAccountID(KeyPair.fromAccountId(accountId).getXdrAccountId());
     key.setAccount(accountKey);
 
     GetLedgerEntriesResponse response = SERVER.getLedgerEntries(Collections.singletonList(key));
     check(!response.getEntries().isEmpty(), "Account " + accountId + " not found");
-    LedgerEntryData data = LedgerEntryData.fromXdr(response.getEntries().get(0).getXdr());
+    LedgerEntry.LedgerEntryData data = response.getEntries().get(0).parseXdr();
     check(data.getAccount() != null, "Ledger entry missing account data");
     return data.getAccount().getBalance().getInt64();
   }
 
-  private static long getTrustlineBalance(String accountId, org.stellar.sdk.Asset asset) throws IOException {
+  private static long getTrustlineBalance(String accountId, Asset asset) {
     LedgerKey key = new LedgerKey();
     key.setDiscriminant(LedgerEntryType.TRUSTLINE);
-    LedgerKeyTrustLine trustLineKey = new LedgerKeyTrustLine();
+    LedgerKey.LedgerKeyTrustLine trustLineKey = new LedgerKey.LedgerKeyTrustLine();
     trustLineKey.setAccountID(KeyPair.fromAccountId(accountId).getXdrAccountId());
-    trustLineKey.setAsset(asset.toXdr());
+    trustLineKey.setAsset(new TrustLineAsset(asset).toXdr());
     key.setTrustLine(trustLineKey);
 
     GetLedgerEntriesResponse response = SERVER.getLedgerEntries(Collections.singletonList(key));
     if (response.getEntries().isEmpty()) {
       return 0L;
     }
-    LedgerEntryData data = LedgerEntryData.fromXdr(response.getEntries().get(0).getXdr());
+    LedgerEntry.LedgerEntryData data = response.getEntries().get(0).parseXdr();
     TrustLineEntry trustLine = data.getTrustLine();
     if (trustLine == null) {
       return 0L;
@@ -617,13 +631,16 @@ public final class main {
     return trustLine.getBalance().getInt64();
   }
 
-  private static long submitAndConfirm(Transaction transaction) throws IOException, InterruptedException {
+  private static long submitAndConfirm(Transaction transaction) throws InterruptedException {
     SendTransactionResponse sendResp = SERVER.sendTransaction(transaction);
-    check(sendResp.getStatus() == SendTransactionStatus.PENDING,
+    check(sendResp.getStatus() == SendTransactionResponse.SendTransactionStatus.PENDING,
         "Transaction submission failed: " + sendResp.getStatus());
 
     GetTransactionResponse txResp = SERVER.pollTransaction(sendResp.getHash());
-    check(txResp.getStatus() == GetTransactionResponse.Status.SUCCESS,
+    // NOT_FOUND after polling means the status is unknown, not that the transaction failed.
+    check(txResp.getStatus() != GetTransactionResponse.GetTransactionStatus.NOT_FOUND,
+        "Transaction status unknown, look up " + sendResp.getHash() + " again later");
+    check(txResp.getStatus() == GetTransactionResponse.GetTransactionStatus.SUCCESS,
         "Transaction failed: " + txResp.getStatus());
     Long ledger = txResp.getLedger() != null ? txResp.getLedger() : txResp.getLatestLedger();
     check(ledger != null, "Transaction completed but ledger sequence unavailable");
