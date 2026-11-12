@@ -5,14 +5,14 @@ og:description: "This guide will walk you through the process of installing and 
 description: Install and deploy a smart contract with code.
 ---
 
-This guide will walk you through the process of installing and deploying a smart contract using [js-stellar-sdk](https://github.com/stellar/js-stellar-sdk) or the [Python SDK](https://github.com/StellarCN/py-stellar-base). We will cover the setup of a sample Rust contract, creating a Node.js project to manage the deployment, and finally, installing the Wasm of the contract and deploying it to the network
+This guide will walk you through the process of installing and deploying a smart contract using [js-stellar-sdk](https://github.com/stellar/js-stellar-sdk), the [Python SDK](https://github.com/StellarCN/py-stellar-base) or the [Go SDK](https://github.com/stellar/go-stellar-sdk). We will cover the setup of a sample Rust contract, creating a Node.js project to manage the deployment, and finally, installing the Wasm of the contract and deploying it to the network
 
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
 
 1. [Rust](https://www.rust-lang.org) and Cargo (for compiling smart contracts)
-2. [Node.js](https://nodejs.org/en) and npm (for running JavaScript deployment scripts), or [Python](https://www.python.org) 3.10 or later (for running Python deployment scripts)
+2. [Node.js](https://nodejs.org/en) and npm (for running JavaScript deployment scripts), [Python](https://www.python.org) 3.10 or later (for running Python deployment scripts), or [Go](https://go.dev/doc/install) 1.25 or later (for running Go deployment scripts)
 3. [Stellar CLI](../../smart-contracts/getting-started/setup#install-the-stellar-cli)
 
 ## Initialize a sample Rust Contract
@@ -47,11 +47,18 @@ For Python, skip the Node.js project and install the SDK instead:
 pip install stellar-sdk
 ```
 
+For Go, create a Go module in the same directory and add the SDK:
+
+```bash
+go mod init deploy-contract
+go get github.com/stellar/go-stellar-sdk
+```
+
 ## Set Up Deployment Scripts
 
 ### Imports
 
-Import necessary modules in your script. In JavaScript, save the file as `deploy.mjs` to enable ES module imports:
+Import necessary modules in your script. In JavaScript, save the file as `deploy.mjs` to enable ES module imports. In Go, save it as `main.go`:
 
 <CodeGroup>
 
@@ -64,6 +71,29 @@ import fs from "fs";
 from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
 from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 from stellar_sdk.xdr import TransactionMeta
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "crypto/rand"
+  "errors"
+  "fmt"
+  "log"
+  "os"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
 ```
 
 </CodeGroup>
@@ -91,6 +121,27 @@ def upload_wasm(file_path):
     return build_and_send_transaction(
         account, lambda builder: builder.append_upload_contract_wasm_op(bytecode)
     )
+```
+
+```go Go
+func uploadWasm(ctx context.Context, filePath string) (protocol.GetTransactionResponse, error) {
+  bytecode, err := os.ReadFile(filePath)
+  if err != nil {
+    return protocol.GetTransactionResponse{}, err
+  }
+  account, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return protocol.GetTransactionResponse{}, err
+  }
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeUploadContractWasm,
+      Wasm: &bytecode,
+    },
+    SourceAccount: sourceKeypair.Address(),
+  }
+  return buildAndSendTransaction(ctx, account, operation)
+}
 ```
 
 </CodeGroup>
@@ -130,9 +181,72 @@ def deploy_contract(response):
     print(contract_address.address)
 ```
 
+```go Go
+func deployContract(ctx context.Context, response protocol.GetTransactionResponse) error {
+  account, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return err
+  }
+  returnValue, err := getReturnValue(response)
+  if err != nil {
+    return err
+  }
+  wasmHashBytes, ok := returnValue.GetBytes()
+  if !ok || len(wasmHashBytes) != 32 {
+    return errors.New("upload did not return a Wasm hash")
+  }
+  var wasmHash xdr.Hash
+  copy(wasmHash[:], wasmHashBytes)
+
+  // A random salt, as createCustomContract uses in JavaScript
+  var salt xdr.Uint256
+  if _, err := rand.Read(salt[:]); err != nil {
+    return err
+  }
+
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeCreateContractV2,
+      CreateContractV2: &xdr.CreateContractArgsV2{
+        ContractIdPreimage: xdr.ContractIdPreimage{
+          Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
+          FromAddress: &xdr.ContractIdPreimageFromAddress{
+            Address: xdr.ScAddress{
+              Type:      xdr.ScAddressTypeScAddressTypeAccount,
+              AccountId: xdr.MustAddressPtr(sourceKeypair.Address()),
+            },
+            Salt: salt,
+          },
+        },
+        Executable: xdr.ContractExecutable{
+          Type:     xdr.ContractExecutableTypeContractExecutableWasm,
+          WasmHash: &wasmHash,
+        },
+        ConstructorArgs: []xdr.ScVal{},
+      },
+    },
+    SourceAccount: sourceKeypair.Address(),
+  }
+  responseDeploy, err := buildAndSendTransaction(ctx, account, operation)
+  if err != nil {
+    return err
+  }
+  contractValue, err := getReturnValue(responseDeploy)
+  if err != nil {
+    return err
+  }
+  contractAddress, ok := contractValue.GetAddress()
+  if !ok || contractAddress.ContractId == nil {
+    return errors.New("deploy did not return a contract address")
+  }
+  fmt.Println(strkey.MustEncode(strkey.VersionByteContract, (*contractAddress.ContractId)[:]))
+  return nil
+}
+```
+
 </CodeGroup>
 
-This function uses the Wasm hash to deploy the contract using the `createCustomContract` stellar operation, which when wrapped in a transaction is sent to the network, generating a contract address. `scValToNative` converts each return value to a JavaScript value: the Wasm hash bytes after the upload, and the contract address string after the deploy. In Python, `append_create_contract_op` adds the same operation, and `scval.to_native` converts the return values: the Wasm hash to `bytes`, and the contract address to an `Address`.
+This function uses the Wasm hash to deploy the contract using the `createCustomContract` stellar operation, which when wrapped in a transaction is sent to the network, generating a contract address. `scValToNative` converts each return value to a JavaScript value: the Wasm hash bytes after the upload, and the contract address string after the deploy. In Python, `append_create_contract_op` adds the same operation, and `scval.to_native` converts the return values: the Wasm hash to `bytes`, and the contract address to an `Address`. In Go, the code builds the same `CreateContractV2` host function by hand, reads the Wasm hash with `GetBytes`, and encodes the contract ID as a `C...` address with `strkey`.
 
 ### Building, Signing and Sending the Transaction
 
@@ -247,11 +361,148 @@ def get_return_value(response):
     return meta_body.soroban_meta.return_value
 ```
 
+```go Go
+func buildAndSendTransaction(
+  ctx context.Context,
+  account txnbuild.Account,
+  operation *txnbuild.InvokeHostFunction,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  tx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  if err != nil {
+    return none, err
+  }
+  tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  if err != nil {
+    return none, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+
+  fmt.Println("Submitting transaction...")
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+  fmt.Printf("Transaction hash: %s\n", sendResponse.Hash)
+
+  // PENDING and DUPLICATE mean the network has the transaction.
+  // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+  if sendResponse.Status == "TRY_AGAIN_LATER" || sendResponse.Status == "ERROR" {
+    return none, fmt.Errorf("transaction not accepted: %s", sendResponse.Status)
+  }
+
+  fmt.Println("Awaiting confirmation...")
+  // Poll getTransaction once a second, for up to 30 attempts
+  var response protocol.GetTransactionResponse
+  for range 30 {
+    response, err = server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: sendResponse.Hash})
+    if err != nil {
+      return none, err
+    }
+    if response.Status != protocol.TransactionStatusNotFound {
+      break
+    }
+    time.Sleep(time.Second)
+  }
+
+  // NOT_FOUND after the last attempt means the result is unknown,
+  // not that the transaction failed
+  if response.Status == protocol.TransactionStatusNotFound {
+    return none, errors.New("not confirmed yet, check again before resending")
+  }
+
+  if response.Status == protocol.TransactionStatusSuccess {
+    fmt.Println("Transaction successful.")
+    return response, nil
+  }
+  fmt.Println("Transaction failed.")
+  return response, fmt.Errorf("transaction did not succeed: %s", response.Status)
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources, resource fee and authorization entries.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+func getReturnValue(response protocol.GetTransactionResponse) (xdr.ScVal, error) {
+  // The contract's return value is in the transaction meta.
+  var meta xdr.TransactionMeta
+  if err := xdr.SafeUnmarshalBase64(response.ResultMetaXDR, &meta); err != nil {
+    return xdr.ScVal{}, err
+  }
+  switch {
+  case meta.V4 != nil && meta.V4.SorobanMeta != nil && meta.V4.SorobanMeta.ReturnValue != nil:
+    return *meta.V4.SorobanMeta.ReturnValue, nil
+  case meta.V3 != nil && meta.V3.SorobanMeta != nil:
+    return meta.V3.SorobanMeta.ReturnValue, nil
+  }
+  return xdr.ScVal{}, errors.New("no return value in the transaction meta")
+}
+```
+
 </CodeGroup>
 
 This function constructs a transaction, signs it, and submits it to the network. It checks the `sendTransaction` status first: `TRY_AGAIN_LATER` and `ERROR` mean the network did not accept the transaction, so the function stops with an error. Then `server.pollTransaction` waits for the result and stops after 30 attempts, so the script never hangs. If the attempts run out, the status is still `NOT_FOUND`. That means the result is unknown, not that the transaction failed, so check again before you resend it. [Submit a transaction and wait](/docs/build/guides/transactions/submit-transaction-wait) shows the full handling. For the SDK's own flow, read its [Invoke a Contract guide](https://stellar.github.io/js-stellar-sdk/guides/06-invoke-a-contract/).
 
-The Python version also defines `get_return_value`. The Python SDK's response has no return value field, so the helper reads it from the transaction meta in `result_meta_xdr`.
+The Python version also defines `get_return_value`. The Python SDK's response has no return value field, so the helper reads it from the transaction meta in `result_meta_xdr`. The Go version does the same with `getReturnValue` and `ResultMetaXDR`. The Go SDK has no `prepareTransaction`, so the Go version defines one: it simulates the transaction, then adds the simulated resources, resource fee and authorization entries.
 
 ## Running the Script
 
@@ -288,11 +539,30 @@ except Exception as error:
     print(error)
 ```
 
+```go Go
+var server = client.NewClient("https://soroban-testnet.stellar.org:443", nil)
+var sourceKeypair = keypair.MustParseFull("Your_Secret_Key")
+
+// Adjust this path as necessary
+const wasmFilePath = "../hello-world/target/wasm32v1-none/release/hello_world.wasm"
+
+func main() {
+  ctx := context.Background()
+  uploadResponse, err := uploadWasm(ctx, wasmFilePath)
+  if err != nil {
+    log.Fatal(err)
+  }
+  if err := deployContract(ctx, uploadResponse); err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
 </CodeGroup>
 
 Replace "Your_Secret_Key" with your actual secret key. This script initiates the upload of the Wasm file and deploys the contract, resulting in a contract address where the contract is deployed.
 
-This is just demo code, so ensure that you handle secrets and private keys securely in production environments and never expose them in your code repositories. This guide should provide you with a clear path to installing and deploying your smart contracts using JavaScript or Python code.
+This is just demo code, so ensure that you handle secrets and private keys securely in production environments and never expose them in your code repositories. This guide should provide you with a clear path to installing and deploying your smart contracts using JavaScript, Python or Go code. Run the Go version with `go run main.go`.
 
 ## Complete Script
 
@@ -476,6 +746,261 @@ try:
     deploy_contract(upload_response)
 except Exception as error:
     print(error)
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "crypto/rand"
+  "errors"
+  "fmt"
+  "log"
+  "os"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+func uploadWasm(ctx context.Context, filePath string) (protocol.GetTransactionResponse, error) {
+  bytecode, err := os.ReadFile(filePath)
+  if err != nil {
+    return protocol.GetTransactionResponse{}, err
+  }
+  account, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return protocol.GetTransactionResponse{}, err
+  }
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeUploadContractWasm,
+      Wasm: &bytecode,
+    },
+    SourceAccount: sourceKeypair.Address(),
+  }
+  return buildAndSendTransaction(ctx, account, operation)
+}
+
+func deployContract(ctx context.Context, response protocol.GetTransactionResponse) error {
+  account, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return err
+  }
+  returnValue, err := getReturnValue(response)
+  if err != nil {
+    return err
+  }
+  wasmHashBytes, ok := returnValue.GetBytes()
+  if !ok || len(wasmHashBytes) != 32 {
+    return errors.New("upload did not return a Wasm hash")
+  }
+  var wasmHash xdr.Hash
+  copy(wasmHash[:], wasmHashBytes)
+
+  // A random salt, as createCustomContract uses in JavaScript
+  var salt xdr.Uint256
+  if _, err := rand.Read(salt[:]); err != nil {
+    return err
+  }
+
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeCreateContractV2,
+      CreateContractV2: &xdr.CreateContractArgsV2{
+        ContractIdPreimage: xdr.ContractIdPreimage{
+          Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
+          FromAddress: &xdr.ContractIdPreimageFromAddress{
+            Address: xdr.ScAddress{
+              Type:      xdr.ScAddressTypeScAddressTypeAccount,
+              AccountId: xdr.MustAddressPtr(sourceKeypair.Address()),
+            },
+            Salt: salt,
+          },
+        },
+        Executable: xdr.ContractExecutable{
+          Type:     xdr.ContractExecutableTypeContractExecutableWasm,
+          WasmHash: &wasmHash,
+        },
+        ConstructorArgs: []xdr.ScVal{},
+      },
+    },
+    SourceAccount: sourceKeypair.Address(),
+  }
+  responseDeploy, err := buildAndSendTransaction(ctx, account, operation)
+  if err != nil {
+    return err
+  }
+  contractValue, err := getReturnValue(responseDeploy)
+  if err != nil {
+    return err
+  }
+  contractAddress, ok := contractValue.GetAddress()
+  if !ok || contractAddress.ContractId == nil {
+    return errors.New("deploy did not return a contract address")
+  }
+  fmt.Println(strkey.MustEncode(strkey.VersionByteContract, (*contractAddress.ContractId)[:]))
+  return nil
+}
+
+func buildAndSendTransaction(
+  ctx context.Context,
+  account txnbuild.Account,
+  operation *txnbuild.InvokeHostFunction,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  tx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  if err != nil {
+    return none, err
+  }
+  tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  if err != nil {
+    return none, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+
+  fmt.Println("Submitting transaction...")
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+  fmt.Printf("Transaction hash: %s\n", sendResponse.Hash)
+
+  // PENDING and DUPLICATE mean the network has the transaction.
+  // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+  if sendResponse.Status == "TRY_AGAIN_LATER" || sendResponse.Status == "ERROR" {
+    return none, fmt.Errorf("transaction not accepted: %s", sendResponse.Status)
+  }
+
+  fmt.Println("Awaiting confirmation...")
+  // Poll getTransaction once a second, for up to 30 attempts
+  var response protocol.GetTransactionResponse
+  for range 30 {
+    response, err = server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: sendResponse.Hash})
+    if err != nil {
+      return none, err
+    }
+    if response.Status != protocol.TransactionStatusNotFound {
+      break
+    }
+    time.Sleep(time.Second)
+  }
+
+  // NOT_FOUND after the last attempt means the result is unknown,
+  // not that the transaction failed
+  if response.Status == protocol.TransactionStatusNotFound {
+    return none, errors.New("not confirmed yet, check again before resending")
+  }
+
+  if response.Status == protocol.TransactionStatusSuccess {
+    fmt.Println("Transaction successful.")
+    return response, nil
+  }
+  fmt.Println("Transaction failed.")
+  return response, fmt.Errorf("transaction did not succeed: %s", response.Status)
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources, resource fee and authorization entries.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+func getReturnValue(response protocol.GetTransactionResponse) (xdr.ScVal, error) {
+  // The contract's return value is in the transaction meta.
+  var meta xdr.TransactionMeta
+  if err := xdr.SafeUnmarshalBase64(response.ResultMetaXDR, &meta); err != nil {
+    return xdr.ScVal{}, err
+  }
+  switch {
+  case meta.V4 != nil && meta.V4.SorobanMeta != nil && meta.V4.SorobanMeta.ReturnValue != nil:
+    return *meta.V4.SorobanMeta.ReturnValue, nil
+  case meta.V3 != nil && meta.V3.SorobanMeta != nil:
+    return meta.V3.SorobanMeta.ReturnValue, nil
+  }
+  return xdr.ScVal{}, errors.New("no return value in the transaction meta")
+}
+
+var server = client.NewClient("https://soroban-testnet.stellar.org:443", nil)
+var sourceKeypair = keypair.MustParseFull("Your_Secret_Key")
+
+// Adjust this path as necessary
+const wasmFilePath = "../hello-world/target/wasm32v1-none/release/hello_world.wasm"
+
+func main() {
+  ctx := context.Background()
+  uploadResponse, err := uploadWasm(ctx, wasmFilePath)
+  if err != nil {
+    log.Fatal(err)
+  }
+  if err := deployContract(ctx, uploadResponse); err != nil {
+    log.Fatal(err)
+  }
+}
 ```
 
 </CodeGroup>

@@ -20,7 +20,7 @@ Unlike Horizon, [Stellar RPC does not return an account's trustlines alongside t
 - `getAssetBalance` is the quick path. One call tells you whether the trustline exists at all, whether it is authorized, and how much of the asset the account currently holds.
 - `getLedgerEntries` gives you the raw trustline entry, which you need when you also care about the trustline's **limit** — the maximum balance the account is willing to hold.
 
-Most applications only need the first. Reach for the second when a large payment could push the receiver past its limit. The Python SDK has no `getAssetBalance` helper, so both Python examples read the trustline entry with `get_ledger_entries`.
+Most applications only need the first. Reach for the second when a large payment could push the receiver past its limit. The Python and Go SDKs have no `getAssetBalance` helper, so their examples read the trustline entry with `get_ledger_entries` and `GetLedgerEntries`.
 
 ### Existence and authorization
 
@@ -155,6 +155,85 @@ print(
 )
 
 # Proceed with sending the payment...
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+func main() {
+  ctx := context.Background()
+
+  // Initialize Stellar RPC client for testnet
+  rpc := client.NewClient("https://soroban-testnet.stellar.org", nil)
+  defer rpc.Close()
+
+  // The account you're about to pay. Replace this with your real destination.
+  receiver := "G..."
+
+  // First, check to make sure that the destination account exists.
+  if _, err := rpc.LoadAccount(ctx, receiver); err != nil {
+    log.Fatalf("Destination account %s does not exist: %v", receiver, err)
+  }
+
+  // Now we define which asset we want to check the trustline for.
+  // In this case, we are checking for USDC issued on testnet.
+  USDC := txnbuild.CreditAsset{Code: "USDC", Issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"}
+
+  // The Go SDK has no `getAssetBalance` helper, so we look up the trustline
+  // ledger entry directly. If the account has no trustline for the asset,
+  // `Entries` comes back empty. A network or RPC error returns an error instead.
+  trustLineAsset, err := USDC.MustToTrustLineAsset().ToXDR()
+  if err != nil {
+    log.Fatal(err)
+  }
+  key, err := xdr.MarshalBase64(xdr.LedgerKey{
+    Type: xdr.LedgerEntryTypeTrustline,
+    TrustLine: &xdr.LedgerKeyTrustLine{
+      AccountId: xdr.MustAddress(receiver),
+      Asset:     trustLineAsset,
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+  response, err := rpc.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{key}})
+  if err != nil {
+    log.Fatal(err)
+  }
+  if len(response.Entries) == 0 {
+    log.Fatalf("Trustline for asset %s issued by %s not found for account %s.", USDC.Code, USDC.Issuer, receiver)
+  }
+
+  var entry xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(response.Entries[0].DataXDR, &entry); err != nil {
+    log.Fatal(err)
+  }
+  trustLine := entry.MustTrustLine()
+
+  // The trustline exists, but the issuer may not have authorized it yet. An
+  // unauthorized trustline cannot receive payments, so sending would fail.
+  if xdr.TrustLineFlags(trustLine.Flags)&xdr.TrustLineFlagsAuthorizedFlag == 0 {
+    log.Fatalf("Trustline for asset %s issued by %s is not authorized for account %s.", USDC.Code, USDC.Issuer, receiver)
+  }
+
+  // `Balance` is the account's current balance of the asset, as an int64 of
+  // stroops (1 unit = 10,000,000 stroops).
+  log.Printf("Trustline for asset %s issued by %s is valid for account %s (%d stroops).",
+    USDC.Code, USDC.Issuer, receiver, trustLine.Balance)
+
+  // Proceed with sending the payment...
+}
 ```
 
 </CodeGroup>
@@ -347,6 +426,96 @@ print(
 # Proceed with sending the payment...
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/stellar/go-stellar-sdk/amount"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+func main() {
+  ctx := context.Background()
+  rpc := client.NewClient("https://soroban-testnet.stellar.org", nil)
+  defer rpc.Close()
+
+  // The account you're about to pay, and the asset and amount you want to send.
+  receiver := "G..."
+  USDC := txnbuild.CreditAsset{Code: "USDC", Issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"}
+
+  // Amounts live on the ledger as int64 stroops. Convert the amount you want
+  // to send into stroops with amount.ParseInt64, which parses the decimal
+  // string exactly, and compare there.
+  sendingAmount, err := amount.ParseInt64("1")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // A ledger key uniquely identifies an entry on the ledger. For a trustline, it
+  // is the combination of the account that holds it and the asset it is for.
+  trustLineAsset, err := USDC.MustToTrustLineAsset().ToXDR()
+  if err != nil {
+    log.Fatal(err)
+  }
+  key, err := xdr.MarshalBase64(xdr.LedgerKey{
+    Type: xdr.LedgerEntryTypeTrustline,
+    TrustLine: &xdr.LedgerKeyTrustLine{
+      AccountId: xdr.MustAddress(receiver),
+      Asset:     trustLineAsset,
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // Query the ledger for that entry. If the account has no trustline for the
+  // asset, `Entries` comes back empty rather than returning an error.
+  response, err := rpc.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{key}})
+  if err != nil {
+    log.Fatal(err)
+  }
+  if len(response.Entries) == 0 {
+    log.Fatalf("Trustline for asset %s issued by %s not found for account %s.", USDC.Code, USDC.Issuer, receiver)
+  }
+
+  // Decode the ledger entry data. Its `TrustLine` arm holds the trustline fields.
+  var entry xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(response.Entries[0].DataXDR, &entry); err != nil {
+    log.Fatal(err)
+  }
+  trustlineData := entry.MustTrustLine()
+
+  // Trustline flags are a bitfield, so check the individual bit rather than
+  // comparing the whole value. An authorized, clawback-enabled trustline has
+  // flags of 5, so `Flags == 1` would wrongly reject it.
+  if xdr.TrustLineFlags(trustlineData.Flags)&xdr.TrustLineFlagsAuthorizedFlag == 0 {
+    log.Fatalf("Trustline for asset %s issued by %s is not authorized for account %s.", USDC.Code, USDC.Issuer, receiver)
+  }
+
+  // The limit and balance are int64 stroops.
+  limit := int64(trustlineData.Limit)
+  balance := int64(trustlineData.Balance)
+
+  // Finally, we check if the trustline has enough limit to receive the payment.
+  // If the limit minus the current balance is less than the amount we want to
+  // send, the payment would fail, so we stop with an error.
+  if limit-balance < sendingAmount {
+    log.Fatalf("Insufficient limit for asset %s issued by %s in account %s.", USDC.Code, USDC.Issuer, receiver)
+  }
+
+  log.Printf("Trustline for asset %s issued by %s is valid for account %s.", USDC.Code, USDC.Issuer, receiver)
+
+  // Proceed with sending the payment...
+}
+```
+
 </CodeGroup>
 
 ## Checking a Trustline through the Stellar Asset Contract (SAC)
@@ -514,6 +683,118 @@ print(
 )
 
 # If the trustline is authorized, we can proceed with sending the payment...
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+func main() {
+  ctx := context.Background()
+
+  // Initialize Stellar RPC client for testnet
+  rpc := client.NewClient("https://soroban-testnet.stellar.org", nil)
+  defer rpc.Close()
+
+  // The account you're about to pay. Replace this with your real destination.
+  receiver := "G..."
+
+  // First, check to make sure that the destination account exists.
+  account, err := rpc.LoadAccount(ctx, receiver)
+  if err != nil {
+    log.Fatalf("Destination account %s does not exist: %v", receiver, err)
+  }
+
+  // Now we define which asset we want to check the trustline for.
+  // In this case, we are checking for USDC issued on testnet.
+  USDC := txnbuild.CreditAsset{Code: "USDC", Issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"}
+  usdcXDR, err := USDC.ToXDR()
+  if err != nil {
+    log.Fatal(err)
+  }
+  contractID, err := usdcXDR.ContractID(network.TestNetworkPassphrase)
+  if err != nil {
+    log.Fatal(err)
+  }
+  sacID := xdr.ContractId(contractID)
+
+  // The Go SDK simulates the call directly, so it needs no generated
+  // bindings. We build a transaction that invokes the `authorized` function of
+  // the USDC asset contract. We only simulate it, so we never sign or send it.
+  id := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: xdr.MustAddressPtr(receiver)}
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              txnbuild.MinBaseFee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.InvokeHostFunction{
+        HostFunction: xdr.HostFunction{
+          Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+          InvokeContract: &xdr.InvokeContractArgs{
+            ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &sacID},
+            FunctionName:    "authorized",
+            Args:            []xdr.ScVal{{Type: xdr.ScValTypeScvAddress, Address: &id}},
+          },
+        },
+      },
+    },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    log.Fatal(err)
+  }
+  sim, err := rpc.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // A missing trustline surfaces here rather than as a `false` result: the
+  // simulation fails with `Error(Contract, #13)`.
+  if sim.Error != "" {
+    log.Fatal("Error simulating the transaction: ", sim.Error)
+  }
+
+  // The simulation result holds the return value of the contract function.
+  // If the trustline is authorized, it is true; otherwise, it is false.
+  if len(sim.Results) == 0 || sim.Results[0].ReturnValueXDR == nil {
+    log.Fatal("The simulation returned no result")
+  }
+  var result xdr.ScVal
+  if err := xdr.SafeUnmarshalBase64(*sim.Results[0].ReturnValueXDR, &result); err != nil {
+    log.Fatal(err)
+  }
+  authorized, ok := result.GetB()
+  if !ok {
+    log.Fatalf("Unexpected return value type: %s", result.Type)
+  }
+
+  // A `false` result means the trustline exists but the issuer has not
+  // authorized it, so any attempt to send USDC to this account will fail.
+  if !authorized {
+    log.Fatalf("Trustline for asset %s issued by %s not authorized for account %s.", USDC.Code, USDC.Issuer, receiver)
+  }
+
+  // If the trustline is authorized, we log a success message.
+  // This means that the account is allowed to receive payments in USDC.
+  log.Printf("Trustline for asset %s issued by %s is authorized for account %s.", USDC.Code, USDC.Issuer, receiver)
+
+  // If the trustline is authorized, we can proceed with sending the payment...
+}
 ```
 
 </CodeGroup>

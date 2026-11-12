@@ -37,6 +37,7 @@ We can use one of the [client SDKs](../../../tools/sdks/client-sdks), install ne
 
 - JavaScript SDK: [Node.js](https://nodejs.org/en) and npm
 - Python SDK: [pip](https://pip.pypa.io/en/stable/installation)
+- Go SDK: [Go](https://go.dev/doc/install)
 
 Create a new directory for your project and navigate into it:
 
@@ -257,6 +258,198 @@ async def main():
 
 # Run the main function
 asyncio.run(main())
+```
+
+</Tab>
+<Tab title="Go">
+
+This guide will walk you through installing the Wasm of the contract using the Go SDK: [go-stellar-sdk](https://github.com/stellar/go-stellar-sdk).
+
+Create a new Go module, and install the necessary dependencies:
+
+```bash
+go mod init install-wasm
+go get github.com/stellar/go-stellar-sdk
+```
+
+Copy the code below into `main.go` then run it with `go run main.go`, it reads the Wasm file, gets account details, and uploads the contract in a transaction:
+
+```go
+package main
+
+import (
+  "context"
+  "crypto/sha256"
+  "encoding/hex"
+  "errors"
+  "fmt"
+  "log"
+  "os"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+// Upload contract to the testnet
+var server = client.NewClient("https://soroban-testnet.stellar.org:443", nil)
+
+// Replace `Your_Secret_Key`
+var sourceKeypair = keypair.MustParseFull("Your_Secret_Key")
+
+// Adjust this path as necessary
+const wasmFilePath = "../target/wasm32v1-none/release/hello_world.wasm"
+
+func main() {
+  if err := uploadWasm(context.Background(), wasmFilePath); err != nil {
+    log.Fatal(err)
+  }
+}
+
+func uploadWasm(ctx context.Context, filePath string) error {
+  // reads the compiled Wasm file
+  bytecode, err := os.ReadFile(filePath)
+  if err != nil {
+    return err
+  }
+
+  // retrieves account details from the network
+  account, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return err
+  }
+
+  // installs the bytecode with an `UploadContractWasm` host function wrapped in a transaction sent to the network
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeUploadContractWasm,
+      Wasm: &bytecode,
+    },
+    SourceAccount: sourceKeypair.Address(),
+  }
+  if _, err := buildAndSendTransaction(ctx, account, operation); err != nil {
+    return err
+  }
+
+  // The Wasm hash is the SHA-256 hash of the bytecode
+  wasmHash := sha256.Sum256(bytecode)
+  fmt.Printf("Wasm hash: %s\n", hex.EncodeToString(wasmHash[:]))
+  return nil
+}
+
+// constructs a transaction, signs it, and submits it to the network, handling any necessary retries for transaction confirmation.
+func buildAndSendTransaction(
+  ctx context.Context,
+  account txnbuild.Account,
+  operation *txnbuild.InvokeHostFunction,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  tx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  if err != nil {
+    return none, err
+  }
+  tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  if err != nil {
+    return none, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+
+  fmt.Println("Submitting transaction...")
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+  hash := sendResponse.Hash
+  fmt.Printf("Transaction hash: %s\n", hash)
+  fmt.Println("Awaiting confirmation...")
+
+  var response protocol.GetTransactionResponse
+  for {
+    response, err = server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
+    if err != nil {
+      return none, err
+    }
+    if response.Status != protocol.TransactionStatusNotFound {
+      break
+    }
+    time.Sleep(time.Second)
+  }
+
+  if response.Status == protocol.TransactionStatusSuccess {
+    fmt.Println("Transaction successful.")
+    return response, nil
+  }
+  fmt.Println("Transaction failed.")
+  return response, errors.New("transaction failed")
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources, resource fee and authorization entries.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
 ```
 
 </Tab>
