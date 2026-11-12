@@ -3,7 +3,7 @@ name: standards
 description: Stellar standards, ecosystem, and reference. Covers SEPs (Stellar Ecosystem Proposals), CAPs (Core Advancement Proposals), and a quick map for picking the right standard for wallets, anchors, payments, deposits/withdrawals, federation, deep links, and KYC. Also bundles ecosystem references (DeFi protocols, dev tools, wallets, infra, community projects), curated documentation links, and MCP servers (live tools such as Raven). Use when you need to know which SEP applies, or want a starting point for ecosystem integrations, official docs, or live MCP tooling.
 user-invocable: true
 argument-hint: "[standards or ecosystem lookup]"
-source: https://github.com/stellar/stellar-dev-skill/tree/fb63412da70102edb527baf4cf3068f25713cd14/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/b1785b7b74deef345b16b9ee7022afc334e24ea4/skills
 ---
 
 # Standards, Ecosystem, and Resources
@@ -460,12 +460,29 @@ Official MCP server for the Stellar docs site. Searches the docs, reads full pag
 
 ## Oracles
 
+### Choosing an oracle
+
+Each oracle below returns a timestamp and leaves the freshness check to your contract. Pick by price model, then write that oracle's staleness rule.
+
+| Oracle | Model and cost | Pick it for | Reject the price when |
+|---|---|---|---|
+| Reflector Pulse | Push, free to read, SEP-40, new price every 5 minutes (`resolution()` is 300 s) | Stellar-native assets, DEX prices, SEP-40 compatibility | `now - timestamp > 2 * resolution()` |
+| Chainlink Data Feeds | Push, free to read, one proxy per network, 18 decimals, updates on a deviation threshold (0.5 percent on most feeds) or a 24-hour heartbeat | A shared reference rate (majors, stablecoins, gold, NAV feeds), or a protocol that already uses Chainlink elsewhere | `now - timestamp > heartbeat`; on a quiet day a valid price can be hours old |
+| Pyth Pro | Pull, Pyth Pro API key, sub-second updates with bid and ask; your caller brings the signed update | Perps, liquidations, anything that needs the price at execution time | The feed's `feed_update_timestamp` is too old, or the feed was carried forward with no new price |
+| Chainlink Data Streams | Pull, paid subscription (no free tier) | Same cases as Pyth Pro | `expiresAt` has passed or `observationsTimestamp` is too old |
+
+`now` is `env.ledger().timestamp()`, in seconds. Pyth Pro timestamps are in microseconds.
+
+**Two sources for funds.** A contract that liquidates or mints against a price should read two independent oracles and refuse when they diverge past a set bound. Oracle input validation is covered in [the smart contract security guide](/.well-known/agent-skills/smart-contracts/skill.md#security).
+
 #### Reflector Network
 Community-powered price oracle for Stellar.
 - **Website**: https://reflector.network
 - **Docs**: https://developers.stellar.org/docs/data/oracles/oracle-providers
+- **Interface**: SEP-40 plus extensions: https://reflector.network/docs/interface. Read `decimals()` and `resolution()` from the contract; do not hard-code them.
 - **Features**: SEP-40 compatible, on-chain/off-chain prices, webhooks
 - **Integrations**: Blend, OrbitCDP, DeFindex, EquitX, Slender
+- **Examples**: staleness rules for Reflector, Chainlink Data Feeds and Pyth Pro side by side: https://github.com/kaankacar/stellar-chainlink-demo/blob/main/docs/field-note/oracle-comparison.md
 
 #### DIA Oracle
 Cross-chain oracle with 20,000+ asset support.
@@ -479,9 +496,25 @@ Data Feeds and Data Streams live on Stellar (October 2026).
 - **Feed IDs**: https://docs.chain.link/data-feeds/price-feeds/addresses?network=stellar (select Stellar)
 - **Proxy (mainnet)**: `CDQBHEUGLDHMSUHG4IH33RJBUTMNCZOT4JIAQR4WZFRDZW6DR6S32ZLZ`
 - **Proxy (testnet)**: `CBUF6IADAWPWIDWRTHJNINKXHG2UTIQ6TU2F2HRAXWAI7OT3KJPKK6O4`
-- **Interface**: not SEP-40. One proxy serves every feed; select a feed by its 32-byte `data_id`. `latest_round(data_id, decimals)` and `get_round(data_id, round_id, decimals)` return `Round { round_id, answer: I256, timestamp }`. Answers are stored at 18 decimals; pass `18` unless Chainlink approved a lower precision. Interface source: https://github.com/smartcontractkit/chainlink-stellar
+- **Interface**: not SEP-40. One proxy serves every feed; select a feed by its 32-byte `data_id`. `latest_round(data_id, decimals)` and `get_round(data_id, round_id, decimals)` return `Round { round_id, answer: I256, timestamp }`. Answers are stored at 18 decimals. `decimals` must be between `get_min_decimals(data_id)` and 18, so pass `18` or read the minimum first. Interface source: https://github.com/smartcontractkit/chainlink-stellar
+- **Frozen feeds**: reads of a frozen feed panic with `Error(Contract, #109)` (`FeedFrozen`). Check `timestamp` against the feed's heartbeat too, since the proxy returns the last round however old it is.
 - **Example**: BTC/USD `data_id` `01a0b4d920000332000000000000000000000000000000000000000000000000` (same on testnet and mainnet)
-- **Data Streams**: pull model; verify signed reports on-chain with the Chainlink Verifier contract. Needs an allowlisted account. Guide: https://docs.chain.link/data-streams/tutorials/stellar-onchain-report-verification
+- **Data Streams**: pull model. Fetch a signed report from the Data Streams API, then verify it on chain with `verify(signed_report, sender)` on the Verifier contract. The on-chain Verifier has no allowlist; it only requires `sender` to authorize the call. API access needs a paid subscription; there is no free tier (https://docs.chain.link/data-streams/sign-up). Guide: https://docs.chain.link/data-streams/tutorials/stellar-onchain-report-verification
+- **Data Streams Verifier (mainnet)**: `CAKA3NBYPC6OBEUEGNIYGNYG3ES2GPQK736B5SR7ASGUXRDAKXI2JCQI`
+- **Data Streams Verifier (testnet)**: `CA7GVHWH4GRHE6GI7MHEKQZAOYO4GE7KRGSU3EOS3HYJRVLX3XEA4ONQ`
+- **Examples**: Data Feeds and Data Streams read from a Soroban contract on testnet, with tests and scripts: https://github.com/kaankacar/stellar-chainlink-demo
+
+#### Pyth Pro
+Pull oracle (formerly Pyth Lazer) with sub-second prices, live on Stellar mainnet and testnet.
+- **Guide**: https://docs.pyth.network/pro/use-prices-on-blockchain/stellar
+- **Verifier (mainnet)**: `CACZ3GBAKUPIAFRILUFO27J5RUH5GJ2VSJ46LP6GJYSKGDRTQ5MS3HCH`
+- **Verifier (testnet)**: `CAYFT5JE3UQTKT4Q6ZOZK4FXVYVT6RE3MFC7STA4UB6WAEGBT65MRU52`
+- **Contract IDs and source**: https://github.com/pyth-network/pyth-lazer-public/tree/main/contracts/stellar
+- **Flow**: fetch a signed update in the `leEcdsa` format from the Pyth Pro API, pass the bytes to your contract, and call `verify_update(Bytes)` on the verifier from inside your contract. Never trust a parsed update from the off-chain caller.
+- **Rust crate**: `pyth-lazer-stellar-sdk` 0.4.0 (requires `soroban-sdk ^26.1`). `PythLazerClient::verify_update` verifies and parses in one call. `parse_payload` alone checks no signatures.
+- **Freshness**: the verifier checks only that a currently trusted signer signed the update. It does not check price age or block replay. Request the `feedUpdateTimestamp` property and reject old or carried-forward feeds in your contract.
+- **Access**: needs a Pyth Pro API key from a Pyth Terminal account: https://docs.pyth.network/pro/acquire-api-key. Check that your plan covers the feeds you need, such as XLM/USD.
+- **Examples**: Pyth Pro prices verified and stored in a Soroban contract on testnet, with tests and scripts: https://github.com/kaankacar/stellar-pyth-pro-demo
 
 #### Band Protocol
 Cross-chain data oracle on BandChain.
