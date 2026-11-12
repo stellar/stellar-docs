@@ -92,7 +92,7 @@ Before you open a PR, fix formatting and run the checks CI runs:
 
 ```bash
 pnpm format:mdx   # fix formatting (and the blank lines around component tags)
-pnpm check        # formatting, component padding, and `mint validate`
+pnpm check        # formatting, component padding, `mint validate`, and links
 pnpm check:links  # broken links, anchors, redirects, and snippets
 ```
 

@@ -55,11 +55,11 @@ We use [pnpm](https://pnpm.io/). See the [README](README.md#quick-start) for ful
 pnpm install        # install dependencies
 pnpm start          # Mintlify dev server (mint dev) at http://localhost:3000
 pnpm format:mdx     # format all md/mdx content
-pnpm check          # formatting, component padding, and mint validate
+pnpm check          # formatting, component padding, mint validate, and links
 pnpm check:links    # broken links, anchors, redirects, and snippets
 ```
 
-A husky pre-commit hook runs the formatting and padding checks; if it fails, run `pnpm format:mdx` and re-commit. CI runs the same checks plus `mint validate`. Mintlify builds a preview deployment for PRs to `main` and comments with the link; for PRs from forks, a maintainer approves the preview first.
+A husky pre-commit hook runs the formatting and padding checks; if it fails, run `pnpm format:mdx` and re-commit. CI runs the same checks plus `mint validate` and the link check. Mintlify builds a preview deployment for PRs to `main` and comments with the link; for PRs from forks, a maintainer approves the preview first.
 
 ## Content Conventions
 
@@ -69,7 +69,7 @@ We follow [Mintlify's conventions](https://www.mintlify.com/docs) wherever we ca
 
 - **Internal links are root-relative URL paths with no file extension**: `[fees](/docs/learn/fundamentals/fees-resource-limits-metering#inclusion-fee)`. This is a change from what we asked for under Docusaurus. Use a path from the site root rather than a relative one (`../`), and leave off the `.mdx` or `.md` extension.
 - A section's landing page is its URL: link to `/docs/build`, not to `index.mdx` or `README.mdx`.
-- Run `pnpm check:links` before opening a PR. It catches broken links and anchors; nothing else does, because a broken link doesn't fail the build (for now).
+- Run `pnpm check:links` before opening a PR. It catches broken links and anchors, which `mint validate` doesn't, and CI fails on them. It checks site pages with `mint broken-links` and the agent skills in `.mintlify/skills/` with `scripts/check-skill-links.mjs`, since Mintlify serves those as raw Markdown, not pages.
 - Older pages still contain relative links. Converting them is welcome when you're already editing that area; please don't add new ones.
 - External links to other Stellar properties use `https://stellar.org/...` (no `www`).
 - Links inside the specs in `openapi/` and `openrpc/` use full `https://developers.stellar.org/...` URLs, so external consumers of those specs can resolve them.
@@ -156,7 +156,7 @@ Don't commit editor configuration (`.vscode/`, etc.) or machine-specific build s
 ## Review Process
 
 - You can expect a first response from a docs maintainer **within one week** (usually faster).
-- PRs need maintainer approval to merge. CI must pass: formatting, component padding, and `mint validate`. A maintainer checks the Mintlify preview (for PRs from forks, after approving it). The link check runs too; it doesn't fail the build yet, but please don't add to it.
+- PRs need maintainer approval to merge. CI must pass: formatting, component padding, `mint validate`, and the link check. A maintainer checks the Mintlify preview (for PRs from forks, after approving it).
 - If we ask for changes and the conversation goes quiet for a long stretch, we may close the PR to keep the queue honest. Closed is not rejected, and you're welcome to reopen when you're ready to continue.
 - We close PRs that don't fit the conventions above, and we try to always say why and what a mergeable version would look like. Policy closes are about the change, never about you.
 
