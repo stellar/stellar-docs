@@ -56,6 +56,7 @@ function exportMDX(data) {
 ${sanitizeText(item.description)}
 
 [${url}](${url})
+
 `;
 
     return buffer + plugin;
@@ -68,7 +69,7 @@ description: See a list of published Stellar CLI plugin
 
 This is a list of all plugins made available by the community, so please review with care before using them.
 
-${pluginsContent}
+${pluginsContent.trimEnd()}
 `;
 
   fs.writeFileSync("docs/tools/cli/plugins-list.mdx", modifiedContent);
