@@ -4,7 +4,10 @@ import { fileURLToPath } from "url";
 
 // In case there are plugins to exclude from the list, add them here.
 // E.g. "user/repo"
-const excludePlugins = ["haqnawaz03329-debug/haqnawaz"];
+const excludePlugins = [
+  "haqnawaz03329-debug/haqnawaz",
+  "duraznito16/stellar-memory",
+];
 
 // The plugin list is built from GitHub repos that anyone can opt into by adding
 // the `stellar-cli-plugin` topic, so every field below (name, description, URL)
