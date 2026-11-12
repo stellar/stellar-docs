@@ -1,20 +1,9 @@
 ---
 title: Install and deploy a smart contract with code
+og:title: "Install and deploy a smart contract with code"
+og:description: "This guide will walk you through the process of installing and deploying a smart contract using js-stellar-sdk. We will cover the setup of a sample Rust contract, creating a Node.js project to manage the deployment, and finally, installing the Wasm of the contract and deploying it to the network"
 description: Install and deploy a smart contract with code.
 ---
-
-<head>
-  <title>Install and deploy a smart contract with code</title>
-  <meta charSet="utf-8" />
-  <meta
-    property="og:title"
-    content="Install and deploy a smart contract with code"
-  />
-  <meta
-    property="og:description"
-    content="This guide will walk you through the process of installing and deploying a smart contract using js-stellar-sdk. We will cover the setup of a sample Rust contract, creating a Node.js project to manage the deployment, and finally, installing the Wasm of the contract and deploying it to the network"
-  />
-</head>
 
 This guide will walk you through the process of installing and deploying a smart contract using [js-stellar-sdk](https://github.com/stellar/js-stellar-sdk). We will cover the setup of a sample Rust contract, creating a Node.js project to manage the deployment, and finally, installing the Wasm of the contract and deploying it to the network
 
@@ -24,7 +13,7 @@ Before you begin, ensure you have the following installed:
 
 1. [Rust](https://www.rust-lang.org) and Cargo (for compiling smart contracts)
 2. [Node.js](https://nodejs.org/en) and npm (for running JavaScript deployment scripts)
-3. [Stellar CLI](../../smart-contracts/getting-started/setup.mdx#install-the-stellar-cli)
+3. [Stellar CLI](../../smart-contracts/getting-started/setup#install-the-stellar-cli)
 
 ## Initialize a sample Rust Contract
 
@@ -86,21 +75,16 @@ Deploy the contract by referencing the Wasm hash:
 async function deployContract(response) {
   const account = await server.getAccount(sourceKeypair.publicKey());
   const operation = StellarSDK.Operation.createCustomContract({
-    wasmHash: response.returnValue.bytes(),
+    wasmHash: StellarSDK.scValToNative(response.returnValue),
     address: StellarSDK.Address.fromString(sourceKeypair.publicKey()),
-    salt: response.hash,
   });
   const responseDeploy = await buildAndSendTransaction(account, operation);
-  const contractAddress = StellarSDK.StrKey.encodeContract(
-    StellarSDK.Address.fromScAddress(
-      responseDeploy.returnValue.address(),
-    ).toBuffer(),
-  );
+  const contractAddress = StellarSDK.scValToNative(responseDeploy.returnValue);
   console.log(contractAddress);
 }
 ```
 
-This function uses the Wasm hash to deploy the contract using the `createCustomContract` stellar operation, which when wrapped in a transaction is sent to the network, generating a contract address.
+This function uses the Wasm hash to deploy the contract using the `createCustomContract` stellar operation, which when wrapped in a transaction is sent to the network, generating a contract address. `scValToNative` converts each return value to a JavaScript value: the Wasm hash bytes after the upload, and the contract address string after the deploy.
 
 ### Building, Signing and Sending the Transaction
 
@@ -108,8 +92,14 @@ Handle the building, signing, and sending of transactions:
 
 ```javascript
 async function buildAndSendTransaction(account, operations) {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  const { sorobanInclusionFee } = await server.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = String(Math.min(Number(sorobanInclusionFee.p90), MAX_FEE));
+
   const transaction = new StellarSDK.TransactionBuilder(account, {
-    fee: StellarSDK.BASE_FEE,
+    fee,
     networkPassphrase: StellarSDK.Networks.TESTNET,
   })
     .addOperation(operations)
@@ -120,17 +110,28 @@ async function buildAndSendTransaction(account, operations) {
   tx.sign(sourceKeypair);
 
   console.log("Submitting transaction...");
-  let response = await server.sendTransaction(tx);
-  const hash = response.hash;
-  console.log(`Transaction hash: ${hash}`);
-  console.log("Awaiting confirmation...");
+  const sendResponse = await server.sendTransaction(tx);
+  console.log(`Transaction hash: ${sendResponse.hash}`);
 
-  while (true) {
-    response = await server.getTransaction(hash);
-    if (response.status !== "NOT_FOUND") {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+  // PENDING and DUPLICATE mean the network has the transaction.
+  // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+  if (
+    sendResponse.status === "TRY_AGAIN_LATER" ||
+    sendResponse.status === "ERROR"
+  ) {
+    throw new Error(`Transaction not accepted: ${sendResponse.status}`);
+  }
+
+  console.log("Awaiting confirmation...");
+  // Poll getTransaction once a second, for up to 30 attempts
+  const response = await server.pollTransaction(sendResponse.hash, {
+    attempts: 30,
+  });
+
+  // NOT_FOUND after the last attempt means the result is unknown,
+  // not that the transaction failed
+  if (response.status === "NOT_FOUND") {
+    throw new Error("Not confirmed yet. Check again before resending.");
   }
 
   if (response.status === "SUCCESS") {
@@ -138,12 +139,12 @@ async function buildAndSendTransaction(account, operations) {
     return response;
   } else {
     console.log("Transaction failed.");
-    throw new Error("Transaction failed");
+    throw new Error(`Transaction did not succeed: ${response.status}`);
   }
 }
 ```
 
-This function constructs a transaction, signs it, and submits it to the network, handling any necessary retries for transaction confirmation.
+This function constructs a transaction, signs it, and submits it to the network. It checks the `sendTransaction` status first: `TRY_AGAIN_LATER` and `ERROR` mean the network did not accept the transaction, so the function stops with an error. Then `server.pollTransaction` waits for the result and stops after 30 attempts, so the script never hangs. If the attempts run out, the status is still `NOT_FOUND`. That means the result is unknown, not that the transaction failed, so check again before you resend it. [Submit a transaction and wait](/docs/build/guides/transactions/submit-transaction-wait-js) shows the full handling. For the SDK's own flow, read its [Invoke a Contract guide](https://stellar.github.io/js-stellar-sdk/guides/06-invoke-a-contract/).
 
 ## Running the Script
 
@@ -185,21 +186,22 @@ async function uploadWasm(filePath) {
 async function deployContract(response) {
   const account = await server.getAccount(sourceKeypair.publicKey());
   const operation = StellarSDK.Operation.createCustomContract({
-    wasmHash: response.returnValue.bytes(),
+    wasmHash: StellarSDK.scValToNative(response.returnValue),
     address: StellarSDK.Address.fromString(sourceKeypair.publicKey()),
-    salt: response.hash,
   });
   const responseDeploy = await buildAndSendTransaction(account, operation);
-  const contractAddress = StellarSDK.StrKey.encodeContract(
-    StellarSDK.Address.fromScAddress(
-      responseDeploy.returnValue.address(),
-    ).toBuffer(),
-  );
+  const contractAddress = StellarSDK.scValToNative(responseDeploy.returnValue);
   console.log(contractAddress);
 }
 async function buildAndSendTransaction(account, operations) {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  const { sorobanInclusionFee } = await server.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = String(Math.min(Number(sorobanInclusionFee.p90), MAX_FEE));
+
   const transaction = new StellarSDK.TransactionBuilder(account, {
-    fee: StellarSDK.BASE_FEE,
+    fee,
     networkPassphrase: StellarSDK.Networks.TESTNET,
   })
     .addOperation(operations)
@@ -210,17 +212,28 @@ async function buildAndSendTransaction(account, operations) {
   tx.sign(sourceKeypair);
 
   console.log("Submitting transaction...");
-  let response = await server.sendTransaction(tx);
-  const hash = response.hash;
-  console.log(`Transaction hash: ${hash}`);
-  console.log("Awaiting confirmation...");
+  const sendResponse = await server.sendTransaction(tx);
+  console.log(`Transaction hash: ${sendResponse.hash}`);
 
-  while (true) {
-    response = await server.getTransaction(hash);
-    if (response.status !== "NOT_FOUND") {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+  // PENDING and DUPLICATE mean the network has the transaction.
+  // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+  if (
+    sendResponse.status === "TRY_AGAIN_LATER" ||
+    sendResponse.status === "ERROR"
+  ) {
+    throw new Error(`Transaction not accepted: ${sendResponse.status}`);
+  }
+
+  console.log("Awaiting confirmation...");
+  // Poll getTransaction once a second, for up to 30 attempts
+  const response = await server.pollTransaction(sendResponse.hash, {
+    attempts: 30,
+  });
+
+  // NOT_FOUND after the last attempt means the result is unknown,
+  // not that the transaction failed
+  if (response.status === "NOT_FOUND") {
+    throw new Error("Not confirmed yet. Check again before resending.");
   }
 
   if (response.status === "SUCCESS") {
@@ -228,7 +241,7 @@ async function buildAndSendTransaction(account, operations) {
     return response;
   } else {
     console.log("Transaction failed.");
-    throw new Error("Transaction failed");
+    throw new Error(`Transaction did not succeed: ${response.status}`);
   }
 }
 

@@ -64,7 +64,6 @@ ${sanitizeText(item.description)}
   const modifiedContent = `---
 title: Plugins List
 description: See a list of published Stellar CLI plugin
-sidebar_position: 30
 ---
 
 This is a list of all plugins made available by the community, so please review with care before using them.
