@@ -7,7 +7,7 @@ Stellar RPC provides a [`getEvents` method] which allows you to query events fro
 
 There are many strategies you can use to ingest and keep the events published by a smart contract. Among the simplest might be using a community-developed tool such as [Mercury](https://mercurydata.app) which will take all the infrastructure work off your plate for a low subscription fee. Or, [indexers](/docs/data/indexers) can provide ingested event data for affordable prices.
 
-Another approach we'll explore here is using a cron job to query Stellar RPC periodically and store the relevant events in a locally stored SQLite database. We are going to use an Object Relational Mapper (ORM), allowing us to write database query directly in Python or JavaScript.
+Another approach we'll explore here is using a cron job to query Stellar RPC periodically and store the relevant events in a locally stored SQLite database. We are going to use an Object Relational Mapper (ORM), allowing us to write database query directly in JavaScript, Python or Go.
 
 ## Setup
 
@@ -21,11 +21,42 @@ pip install sqlalchemy stellar-sdk
 ```
 
 </Tab>
+<Tab title="Go">
+
+Create a Go module (Go 1.25 or later) and install the dependencies:
+
+```sh
+go mod init ingest-events
+go get github.com/stellar/go-stellar-sdk gorm.io/gorm gorm.io/driver/sqlite
+```
+
+The `gorm.io/driver/sqlite` driver uses cgo, so it needs a C compiler such as `gcc`.
+
+</Tab>
 </Tabs>
 
 ## Setup the Database Client
 
 <Tabs>
+<Tab title="JavaScript">
+
+The finer details of choosing a Prisma configuration are beyond the scope of this document. You can get a lot more information in the [Prisma quickstart](https://www.prisma.io/docs/getting-started/quickstart). Here is our Prisma schema's model:
+
+```text
+model StellarEvent {
+  id          String @id
+  type        String
+  ledger      Int
+  contract_id String
+  topic_1     String?
+  topic_2     String?
+  topic_3     String?
+  topic_4     String?
+  value       String
+}
+```
+
+</Tab>
 <Tab title="Python">
 
 To access the database, we will use [SQLAlchemy](https://www.sqlalchemy.org), which is a frequently used Python library to query database.
@@ -89,23 +120,51 @@ COMMIT
 ```
 
 </Tab>
-<Tab title="JavaScript">
+<Tab title="Go">
 
-The finer details of choosing a Prisma configuration are beyond the scope of this document. You can get a lot more information in the [Prisma quickstart](https://www.prisma.io/docs/getting-started/quickstart). Here is our Prisma schema's model:
+To access the database, we will use [GORM](https://gorm.io), a frequently used Go ORM. Our model is a struct with the same fields as the Prisma model. A topic field is empty when the event has fewer topics.
 
-```text
-model StellarEvent {
-  id          String @id
-  type        String
-  ledger      Int
-  contract_id String
-  topic_1     String?
-  topic_2     String?
-  topic_3     String?
-  topic_4     String?
-  value       String
+The Go snippets on this page are parts of one `main` package. Merge their imports into one block.
+
+```go
+package main
+
+import (
+  "gorm.io/driver/sqlite"
+  "gorm.io/gorm"
+  "gorm.io/gorm/logger"
+)
+
+type StellarEvent struct {
+  ID         string `gorm:"primaryKey"`
+  Type       string
+  Ledger     int32
+  ContractID string
+  Topic1     string
+  Topic2     string
+  Topic3     string
+  Topic4     string
+  Value      string
+}
+
+func openDB() (*gorm.DB, error) {
+  // An in-memory-only SQLite database. logger.Info prints every SQL statement.
+  db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+    Logger: logger.Default.LogMode(logger.Info),
+  })
+  if err != nil {
+    return nil, err
+  }
+
+  // the following creates the table in the DB
+  if err := db.AutoMigrate(&StellarEvent{}); err != nil {
+    return nil, err
+  }
+  return db, nil
 }
 ```
+
+As with SQLAlchemy, another supported database only needs a different driver and connection string.
 
 </Tab>
 </Tabs>
@@ -128,6 +187,38 @@ We are making some assumptions here. We'll assume that your contract sees enough
 
 </Note>
 <Tabs>
+<Tab title="JavaScript">
+
+We use the `@stellar/stellar-sdk` library:
+
+```javascript
+import { Server } from "@stellar/stellar-sdk/rpc";
+import { PrismaClient } from "@prisma/client";
+
+const server = new Server("https://soroban-testnet.stellar.org");
+const prisma = new PrismaClient();
+
+let latestEventIngested = await prisma.stellarEvent.findFirst({
+  orderBy: [
+    {
+      ledger: "desc",
+    },
+  ],
+});
+
+let { events } = await server.getEvents({
+  startLedger: latestEventIngested.ledger,
+  filters: [
+    {
+      type: "contract",
+      contractIds: ["CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"],
+      topics: [["AAAADwAAAAh0cmFuc2Zlcg==", "*", "*", "*"]],
+    },
+  ],
+});
+```
+
+</Tab>
 <Tab title="Python">
 
 If we start from scratch, there is no known ledger, so we start near the oldest ledger the RPC still keeps. `get_health()` returns it. The window moves forward with every new ledger, and `getEvents` rejects a start ledger outside it, so we add a small margin.
@@ -173,35 +264,67 @@ events = res.events
 ```
 
 </Tab>
-<Tab title="JavaScript">
+<Tab title="Go">
 
-We use the `@stellar/stellar-sdk` library:
+We start from the latest ingested ledger. If the database is empty, we start near the oldest ledger the RPC still keeps, which `GetHealth` returns. The window moves forward with every new ledger, and `getEvents` rejects a start ledger outside it, so we add a small margin.
 
-```javascript
-import { Server } from "@stellar/stellar-sdk/rpc";
-import { PrismaClient } from "@prisma/client";
+The topic filter takes the same base64 strings as the other examples, so we decode it from JSON.
 
-const server = new Server("https://soroban-testnet.stellar.org");
-const prisma = new PrismaClient();
+```go
+import (
+  "context"
+  "encoding/json"
+  "errors"
 
-let latestEventIngested = await prisma.stellarEvent.findFirst({
-  orderBy: [
-    {
-      ledger: "desc",
+  "gorm.io/gorm"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+
+func fetchEvents(ctx context.Context, db *gorm.DB) ([]protocol.EventInfo, error) {
+  server := client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+  var ledger uint32
+  var latestEventIngested StellarEvent
+  err := db.Where("contract_id = ?", contractID).Order("ledger desc").First(&latestEventIngested).Error
+  switch {
+  case err == nil:
+    ledger = uint32(latestEventIngested.Ledger)
+  case errors.Is(err, gorm.ErrRecordNotFound):
+    health, err := server.GetHealth(ctx)
+    if err != nil {
+      return nil, err
+    }
+    ledger = health.OldestLedger + 10
+  default:
+    return nil, err
+  }
+
+  // `transfer`, then any three topics
+  var topics protocol.TopicFilter
+  err = json.Unmarshal([]byte(`["AAAADwAAAAh0cmFuc2Zlcg==", "*", "*", "*"]`), &topics)
+  if err != nil {
+    return nil, err
+  }
+
+  response, err := server.GetEvents(ctx, protocol.GetEventsRequest{
+    StartLedger: ledger,
+    Filters: []protocol.EventFilter{
+      {
+        EventType:   protocol.EventTypeSet{protocol.EventTypeContract: nil},
+        ContractIDs: []string{contractID},
+        Topics:      []protocol.TopicFilter{topics},
+      },
     },
-  ],
-});
-
-let { events } = await server.getEvents({
-  startLedger: latestEventIngested.ledger,
-  filters: [
-    {
-      type: "contract",
-      contractIds: ["CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"],
-      topics: [["AAAADwAAAAh0cmFuc2Zlcg==", "*", "*", "*"]],
-    },
-  ],
-});
+  })
+  if err != nil {
+    return nil, err
+  }
+  return response.Events, nil
+}
 ```
 
 </Tab>
@@ -212,6 +335,29 @@ let { events } = await server.getEvents({
 Now, we'll check if the `events` object contains any new events we should store, and we do exactly that. We're storing the event's topics and values as base64-encoded strings here, but you could decode the necessary topics and values into the appropriate data types for your use-case.
 
 <Tabs>
+<Tab title="JavaScript">
+
+```javascript
+if (events?.length) {
+  events.forEach(async (event) => {
+    await prisma.stellarEvent.create({
+      data: {
+        id: event.id,
+        type: event.type,
+        ledger: event.ledger,
+        contract_id: event.contractId!.toString(),
+        topic_1: event.topic[0]?.toXDR('base64') || null,
+        topic_2: event.topic[1]?.toXDR('base64') || null,
+        topic_3: event.topic[2]?.toXDR('base64') || null,
+        topic_4: event.topic[3]?.toXDR('base64') || null,
+        value: event.value.toXDR('base64')
+      },
+    });
+  });
+}
+```
+
+</Tab>
 <Tab title="Python">
 
 <Tip>
@@ -246,25 +392,69 @@ COMMIT
 ```
 
 </Tab>
-<Tab title="JavaScript">
+<Tab title="Go">
 
-```javascript
-if (events?.length) {
-  events.forEach(async (event) => {
-    await prisma.stellarEvent.create({
-      data: {
-        id: event.id,
-        type: event.type,
-        ledger: event.ledger,
-        contract_id: event.contractId!.toString(),
-        topic_1: event.topic[0]?.toXDR('base64') || null,
-        topic_2: event.topic[1]?.toXDR('base64') || null,
-        topic_3: event.topic[2]?.toXDR('base64') || null,
-        topic_4: event.topic[3]?.toXDR('base64') || null,
-        value: event.value.toXDR('base64')
-      },
-    });
-  });
+GORM writes a slice of records in one transaction. Each run starts again at the latest ingested ledger, so we skip events that are already stored.
+
+```go
+import (
+  "gorm.io/gorm"
+  "gorm.io/gorm/clause"
+
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+func storeEvents(db *gorm.DB, events []protocol.EventInfo) error {
+  if len(events) == 0 {
+    return nil
+  }
+
+  records := make([]StellarEvent, 0, len(events))
+  for _, event := range events {
+    topic := func(i int) string {
+      if i < len(event.TopicXDR) {
+        return event.TopicXDR[i]
+      }
+      return ""
+    }
+    records = append(records, StellarEvent{
+      ID:         event.ID,
+      Type:       event.EventType,
+      Ledger:     event.Ledger,
+      ContractID: event.ContractID,
+      Topic1:     topic(0),
+      Topic2:     topic(1),
+      Topic3:     topic(2),
+      Topic4:     topic(3),
+      Value:      event.ValueXDR,
+    })
+  }
+
+  return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&records).Error
+}
+```
+
+Then `main` puts the steps together:
+
+```go
+import (
+  "context"
+  "log"
+)
+
+func main() {
+  ctx := context.Background()
+  db, err := openDB()
+  if err != nil {
+    log.Fatal(err)
+  }
+  events, err := fetchEvents(ctx, db)
+  if err != nil {
+    log.Fatal(err)
+  }
+  if err := storeEvents(db, events); err != nil {
+    log.Fatal(err)
+  }
 }
 ```
 
@@ -276,6 +466,13 @@ if (events?.length) {
 A cron entry is an excellent way to automate this script to gather and ingest events every so often. You could configure this script to run as (in)frequently as you want or need. This example would run the script every 24 hours at 1:14 pm:
 
 <Tabs>
+<Tab title="JavaScript">
+
+```sh
+14 13 * * * node /absolute/path/to/script.js
+```
+
+</Tab>
 <Tab title="Python">
 
 ```sh
@@ -283,10 +480,12 @@ A cron entry is an excellent way to automate this script to gather and ingest ev
 ```
 
 </Tab>
-<Tab title="JavaScript">
+<Tab title="Go">
+
+Build the program once with `go build -o ingest-events`, then run the binary:
 
 ```sh
-14 13 * * * node /absolute/path/to/script.js
+14 13 * * * /absolute/path/to/ingest-events
 ```
 
 </Tab>
@@ -295,6 +494,13 @@ A cron entry is an excellent way to automate this script to gather and ingest ev
 Here's another example that will run the script every 30 minutes:
 
 <Tabs>
+<Tab title="JavaScript">
+
+```sh
+30 * * * * node /absolute/path/to/script.js
+```
+
+</Tab>
 <Tab title="Python">
 
 ```sh
@@ -302,10 +508,10 @@ Here's another example that will run the script every 30 minutes:
 ```
 
 </Tab>
-<Tab title="JavaScript">
+<Tab title="Go">
 
 ```sh
-30 * * * * node /absolute/path/to/script.js
+30 * * * * /absolute/path/to/ingest-events
 ```
 
 </Tab>

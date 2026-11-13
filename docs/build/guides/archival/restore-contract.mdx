@@ -12,9 +12,9 @@ flowchart LR
 
 We need **both** to be live for our contract calls to work.
 
-Let's work through how these can be recovered. The recovery process is slightly different for a convenient reason: we don't need simulation to figure out the footprints. Instead, we can leverage [`Contract.getFootprint()`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#contractgetfootprint) to get the ledger key of the contract instance (in Python, we build the same key from the contract address). That key doesn't cover the backing WASM code, so we read the instance entry once to find its WASM hash and build the code's ledger key from it.
+Let's work through how these can be recovered. The recovery process is slightly different for a convenient reason: we don't need simulation to figure out the footprints. Instead, we can leverage [`Contract.getFootprint()`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#contractgetfootprint) to get the ledger key of the contract instance (in Python and Go, we build the same key from the contract address). That key doesn't cover the backing WASM code, so we read the instance entry once to find its WASM hash and build the code's ledger key from it.
 
-Unfortunately, we still need simulation to figure out the _fees_ for our restoration. This, however, can be easily covered by the SDK's [`Server.prepareTransaction()`](https://stellar.github.io/js-stellar-sdk/reference/network-rpc/#serverpreparetransactiontx-useupgradedauth) helper, which will do simulation and assembly for us.
+Unfortunately, we still need simulation to figure out the _fees_ for our restoration. This, however, can be easily covered by the SDK's [`Server.prepareTransaction()`](https://stellar.github.io/js-stellar-sdk/reference/network-rpc/#serverpreparetransactiontx-useupgradedauth) helper, which will do simulation and assembly for us. The Go SDK has no such helper, so the Go tab defines a small `prepareTransaction`.
 
 <Info>
 
@@ -172,6 +172,164 @@ def get_wasm_ledger_key(entry_xdr: str) -> xdr.LedgerKey:
         xdr.LedgerEntryType.CONTRACT_CODE,
         contract_code=xdr.LedgerKeyContractCode(hash=executable.wasm_hash),
     )
+```
+
+```go Go
+// Add these imports to the ones from submitTx:
+//
+//   "github.com/stellar/go-stellar-sdk/keypair"
+//   "github.com/stellar/go-stellar-sdk/network"
+//   "github.com/stellar/go-stellar-sdk/strkey"
+//   "github.com/stellar/go-stellar-sdk/xdr"
+//
+// assume that `server` is the client from submitTx
+
+func restoreContract(
+  ctx context.Context,
+  signer *keypair.Full,
+  contractID string,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+  instance, err := getInstanceLedgerKey(contractID)
+  if err != nil {
+    return none, err
+  }
+
+  account, err := server.LoadAccount(ctx, signer.Address())
+  if err != nil {
+    return none, err
+  }
+  instanceXDR, err := xdr.MarshalBase64(instance)
+  if err != nil {
+    return none, err
+  }
+  response, err := server.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{
+    Keys: []string{instanceXDR},
+  })
+  if err != nil {
+    return none, err
+  }
+  if len(response.Entries) == 0 {
+    return none, fmt.Errorf("no instance entry found for %s", contractID)
+  }
+  wasmEntry, err := getWasmLedgerKey(response.Entries[0].DataXDR)
+  if err != nil {
+    return none, err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  restoreOp := &txnbuild.RestoreFootprint{
+    Ext: xdr.TransactionExt{
+      V: 1,
+      SorobanData: &xdr.SorobanTransactionData{
+        Resources: xdr.SorobanResources{
+          // Set the restoration footprint (remember, it should be in the
+          // read-write part!)
+          Footprint: xdr.LedgerFootprint{ReadWrite: []xdr.LedgerKey{instance, wasmEntry}},
+        },
+      },
+    },
+  }
+
+  preppedTx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{restoreOp},
+  })
+  if err != nil {
+    return none, err
+  }
+  preppedTx, err = preppedTx.Sign(network.TestNetworkPassphrase, signer)
+  if err != nil {
+    return none, err
+  }
+  return submitTx(ctx, preppedTx.ToGenericTransaction())
+}
+
+// The ledger key of the contract instance (what Contract.getFootprint()
+// returns in JavaScript)
+func getInstanceLedgerKey(contractID string) (xdr.LedgerKey, error) {
+  var key xdr.LedgerKey
+  decoded, err := strkey.Decode(strkey.VersionByteContract, contractID)
+  if err != nil {
+    return key, err
+  }
+  var id xdr.ContractId
+  copy(id[:], decoded)
+  err = key.SetContractData(
+    xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id},
+    xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+    xdr.ContractDataDurabilityPersistent,
+  )
+  return key, err
+}
+
+// Read the Wasm hash out of the contract instance entry
+func getWasmLedgerKey(entryXDR string) (xdr.LedgerKey, error) {
+  var key xdr.LedgerKey
+  var data xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(entryXDR, &data); err != nil {
+    return key, err
+  }
+  contractData, ok := data.GetContractData()
+  if !ok {
+    return key, errors.New("expected a contract data entry")
+  }
+  instance, ok := contractData.Val.GetInstance()
+  if !ok {
+    return key, errors.New("expected a contract instance")
+  }
+  wasmHash, ok := instance.Executable.GetWasmHash()
+  if !ok {
+    return key, errors.New("expected a Wasm executable")
+  }
+
+  err := key.SetContractCode(wasmHash)
+  return key, err
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources and resource fee.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.RestoreFootprint)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
 ```
 
 </CodeGroup>

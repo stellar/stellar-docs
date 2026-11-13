@@ -2,7 +2,7 @@
 title: Deploy a SAC for a Stellar asset using code
 og:title: "Deploy a Stellar Asset Contract (SAC) for a Stellar asset using code"
 og:description: "This is a step-by-step guide to help you deploy a SAC for a Stellar asset using the Stellar SDK."
-description: Deploy a SAC for a Stellar asset using the JavaScript or Python SDK
+description: Deploy a SAC for a Stellar asset using the JavaScript, Python, or Go SDK
 ---
 
 ## Overview
@@ -13,6 +13,7 @@ In this guide, you'll learn how to deploy a [Stellar Asset Contract (SAC)](../..
 
 - For JavaScript: [Node.js ](https://nodejs.org/en) and npm installed, and the Stellar SDK for [JavaScript](https://www.npmjs.com/package/@stellar/stellar-sdk) installed
 - For Python: the Stellar SDK for [Python](https://pypi.org/project/stellar-sdk/) installed
+- For Go: [Go](https://go.dev/doc/install) 1.25 or later, and the Stellar SDK for [Go](https://github.com/stellar/go-stellar-sdk) installed
 - [Knowledge about Issuing an Asset on Stellar](../../../tokens/how-to-issue-an-asset)
 - An understanding of the rudimentary, retry-enabled transaction polling function `submitTx` (`submit_tx` in Python) which we outlined in [another guide](/docs/build/guides/transactions/submit-transaction-wait)
 
@@ -127,6 +128,165 @@ def deploy_stellar_asset_contract():
 deploy_stellar_asset_contract()
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+// Add submitTx() from the submitTx guide to this package. It uses the
+// `server` declared here, so leave out its own `server` declaration.
+
+const networkRPC = "https://soroban-testnet.stellar.org"
+const networkPassphrase = network.TestNetworkPassphrase
+
+var server = client.NewClient(networkRPC, nil)
+
+func deployStellarAssetContract(ctx context.Context) error {
+  sourceSecrets := "SASI6PA4K52GQJF6BC263GLYOADVKFJ4SZ7TFX4QQF2U76T3EJ54DT7Y" // Replace with your Secret Key
+  sourceKeypair := keypair.MustParseFull(sourceSecrets)
+  sourceAccount, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return err
+  }
+
+  assetCode := "JOEBOY"
+  issuerPublicKey := sourceKeypair.Address()
+  customAsset := txnbuild.CreditAsset{Code: assetCode, Issuer: issuerPublicKey}
+  assetXDR, err := customAsset.ToXDR()
+  if err != nil {
+    return err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeCreateContract,
+      CreateContract: &xdr.CreateContractArgs{
+        ContractIdPreimage: xdr.ContractIdPreimage{
+          Type:      xdr.ContractIdPreimageTypeContractIdPreimageFromAsset,
+          FromAsset: &assetXDR,
+        },
+        Executable: xdr.ContractExecutable{
+          Type: xdr.ContractExecutableTypeContractExecutableStellarAsset,
+        },
+      },
+    },
+  }
+
+  uploadTx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        sourceAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  if err != nil {
+    return err
+  }
+  uploadTx, err = uploadTx.Sign(networkPassphrase, sourceKeypair)
+  if err != nil {
+    return err
+  }
+
+  feedback, err := submitTx(ctx, uploadTx.ToGenericTransaction())
+  if err != nil {
+    return err
+  }
+  // The return value sits in the transaction meta (v4 since Protocol 23)
+  var meta xdr.TransactionMeta
+  if err := xdr.SafeUnmarshalBase64(feedback.ResultMetaXDR, &meta); err != nil {
+    return err
+  }
+  var returnValue xdr.ScVal
+  switch {
+  case meta.V4 != nil && meta.V4.SorobanMeta != nil && meta.V4.SorobanMeta.ReturnValue != nil:
+    returnValue = *meta.V4.SorobanMeta.ReturnValue
+  case meta.V3 != nil && meta.V3.SorobanMeta != nil:
+    returnValue = meta.V3.SorobanMeta.ReturnValue
+  }
+  address, ok := returnValue.GetAddress()
+  if !ok {
+    return fmt.Errorf("no contract address in the return value")
+  }
+  contract, err := address.String()
+  if err != nil {
+    return err
+  }
+  fmt.Printf("ContractID of Our %s Asset %s\n", customAsset.Code, contract)
+  return nil
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources, resource fee and authorization entries.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+func main() {
+  if err := deployStellarAssetContract(context.Background()); err != nil {
+    log.Println("An error occurred while Deploying assets:", err)
+  }
+}
+```
+
 </CodeGroup>
 
 ## Code explanation
@@ -150,6 +310,13 @@ from stellar_sdk.xdr import TransactionMeta
 network_rpc = "https://soroban-testnet.stellar.org"
 server = SorobanServer(network_rpc)
 network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+```
+
+```go Go
+const networkRPC = "https://soroban-testnet.stellar.org"
+const networkPassphrase = network.TestNetworkPassphrase
+
+var server = client.NewClient(networkRPC, nil)
 ```
 
 </CodeGroup>
@@ -250,6 +417,91 @@ def deploy_stellar_asset_contract():
         print("An error occurred while Deploying assets:", e)
 ```
 
+```go Go
+func deployStellarAssetContract(ctx context.Context) error {
+  sourceSecrets := "SASI6PA4K52GQJF6BC263GLYOADVKFJ4SZ7TFX4QQF2U76T3EJ54DT7Y" // Replace with your Secret Key
+  sourceKeypair := keypair.MustParseFull(sourceSecrets)
+  sourceAccount, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return err
+  }
+
+  assetCode := "JOEBOY"
+  issuerPublicKey := sourceKeypair.Address()
+  customAsset := txnbuild.CreditAsset{Code: assetCode, Issuer: issuerPublicKey}
+  assetXDR, err := customAsset.ToXDR()
+  if err != nil {
+    return err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeCreateContract,
+      CreateContract: &xdr.CreateContractArgs{
+        ContractIdPreimage: xdr.ContractIdPreimage{
+          Type:      xdr.ContractIdPreimageTypeContractIdPreimageFromAsset,
+          FromAsset: &assetXDR,
+        },
+        Executable: xdr.ContractExecutable{
+          Type: xdr.ContractExecutableTypeContractExecutableStellarAsset,
+        },
+      },
+    },
+  }
+
+  uploadTx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        sourceAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  if err != nil {
+    return err
+  }
+  uploadTx, err = uploadTx.Sign(networkPassphrase, sourceKeypair)
+  if err != nil {
+    return err
+  }
+
+  feedback, err := submitTx(ctx, uploadTx.ToGenericTransaction())
+  if err != nil {
+    return err
+  }
+  // The return value sits in the transaction meta (v4 since Protocol 23)
+  var meta xdr.TransactionMeta
+  if err := xdr.SafeUnmarshalBase64(feedback.ResultMetaXDR, &meta); err != nil {
+    return err
+  }
+  var returnValue xdr.ScVal
+  switch {
+  case meta.V4 != nil && meta.V4.SorobanMeta != nil && meta.V4.SorobanMeta.ReturnValue != nil:
+    returnValue = *meta.V4.SorobanMeta.ReturnValue
+  case meta.V3 != nil && meta.V3.SorobanMeta != nil:
+    returnValue = meta.V3.SorobanMeta.ReturnValue
+  }
+  address, ok := returnValue.GetAddress()
+  if !ok {
+    return fmt.Errorf("no contract address in the return value")
+  }
+  contract, err := address.String()
+  if err != nil {
+    return err
+  }
+  fmt.Printf("ContractID of Our %s Asset %s\n", customAsset.Code, contract)
+  return nil
+}
+```
+
 </CodeGroup>
 
 This function is designed to deploy a Stellar Asset Contract (SAC) on the Soroban testnet.
@@ -258,6 +510,6 @@ This function is designed to deploy a Stellar Asset Contract (SAC) on the Soroba
 - **Keypair and Account**: Generates the keypair from the secret key and fetches the account details from the Soroban server.
 - **Custom Asset**: Defines a custom asset with the code `JOEBOY` and the issuer's public key.
 - **Fee**: Bids the 90th percentile of recent Soroban inclusion fees (from `getFeeStats()`), capped at `MAX_FEE`. Do not bid `BASE_FEE`: it is the network minimum and gets outbid when the network is busy.
-- **Transaction Building**: A transaction is built using the `TransactionBuilder`, which includes the `createStellarAssetContract` operation for the custom asset. The transaction is then prepared and signed.
+- **Transaction Building**: A transaction is built using the `TransactionBuilder`, which includes the `createStellarAssetContract` operation for the custom asset. The transaction is then prepared and signed. The Go SDK has no `prepareTransaction`, so the Go version defines one: it simulates the transaction, then adds the simulated resources, resource fee and authorization entries.
 - **Send Transaction**: The signed transaction is sent to the network using `server.sendTransaction`.
 - **Feedback Handling**: It waits for the transaction feedback using the `submitTx` function to ensure it has succeeded. Then, it extracts the return value and converts it to a contract ID using `StellarSdk.Address`. Finally, it logs the contract ID for the deployed asset.
