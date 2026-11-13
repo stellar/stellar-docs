@@ -296,6 +296,111 @@ def preamble() -> None:
     # ...
 ```
 
+```go Go
+package main
+
+import (
+  "encoding/hex"
+  "fmt"
+  "log"
+  "math/big"
+
+  "github.com/stellar/go-stellar-sdk/amount"
+  "github.com/stellar/go-stellar-sdk/clients/horizonclient"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/price"
+  "github.com/stellar/go-stellar-sdk/protocols/horizon/operations"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+)
+
+var server = horizonclient.DefaultTestNetClient
+
+const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+
+// submitTx builds a transaction from `source`, signs it, and submits it.
+func submitTx(source *keypair.Full, signers []*keypair.Full, ops ...txnbuild.Operation) error {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // The minimum of 100 stroops gets outbid when the network is busy.
+  feeStats, err := server.FeeStats()
+  if err != nil {
+    return err
+  }
+  fee := min(feeStats.FeeCharged.P90, maxFee)
+
+  account, err := server.AccountDetail(horizonclient.AccountRequest{AccountID: source.Address()})
+  if err != nil {
+    return err
+  }
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        &account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           ops,
+  })
+  if err != nil {
+    return err
+  }
+  tx, err = tx.Sign(network.TestNetworkPassphrase, signers...)
+  if err != nil {
+    return err
+  }
+  _, err = server.SubmitTransaction(tx)
+  return err
+}
+
+// orderAssets returns the given asset pair in "protocol order."
+func orderAssets(a, b txnbuild.Asset) (txnbuild.Asset, txnbuild.Asset) {
+  if a.LessThan(b) {
+    return a, b
+  }
+  return b, a
+}
+
+var kps = []*keypair.Full{
+  keypair.MustParseFull("SBGCD73TK2PTW2DQNWUYZSTCTHHVJPL4GZF3GVZMCDL6GYETYNAYOADN"),
+  keypair.MustParseFull("SAAQFHI2FMSIC6OFPWZ3PDIIX3OF64RS3EB52VLYYZBX6GYB54TW3Q4U"),
+  keypair.MustParseFull("SCJWYFTBDMDPAABHVJZE3DRMBRTEH4AIC5YUM54QGW57NUBM2XX6433P"),
+}
+
+// kp0 issues the assets
+var kp0 = kps[0]
+var assetA, assetB = orderAssets(
+  txnbuild.CreditAsset{Code: "A", Issuer: kp0.Address()},
+  txnbuild.CreditAsset{Code: "B", Issuer: kp0.Address()},
+)
+
+// distributeAssets establishes trustlines and funds `recipients` for all `assets`.
+func distributeAssets(issuer *keypair.Full, recipients []*keypair.Full, assets ...txnbuild.Asset) error {
+  ops := []txnbuild.Operation{}
+  signers := []*keypair.Full{issuer}
+  for _, recipient := range recipients {
+    for _, asset := range assets {
+      ops = append(ops,
+        &txnbuild.ChangeTrust{
+          SourceAccount: recipient.Address(),
+          Line:          asset.MustToChangeTrustAsset(),
+          Limit:         "100000",
+        },
+        &txnbuild.Payment{
+          SourceAccount: issuer.Address(),
+          Destination:   recipient.Address(),
+          Amount:        "100000",
+          Asset:         asset,
+        },
+      )
+    }
+    signers = append(signers, recipient)
+  }
+  return submitTx(issuer, signers, ops...)
+}
+
+func preamble() error {
+  return distributeAssets(kp0, []*keypair.Full{kps[1], kps[2]}, assetA, assetB)
+}
+```
+
 </CodeGroup>
 
 Here, we use `distributeAssets()` to establish trustlines and set up initial balances of two custom assets (`A` and `B`, issued by `kp0`) for two accounts (`kp2` and `kp3`). For someone to participate in the pool, they must establish trustlines to each of the asset issuers and to the pool share asset (explained below).
@@ -341,6 +446,23 @@ def establish_pool_trustline(source: Keypair, pool_asset: LiquidityPoolAsset) ->
     )
     tx.sign(source)
     return server.submit_transaction(tx)
+```
+
+```go Go
+var poolShareAsset = txnbuild.LiquidityPoolShareChangeTrustAsset{
+  LiquidityPoolParameters: txnbuild.LiquidityPoolParameters{
+    AssetA: assetA,
+    AssetB: assetB,
+    Fee:    txnbuild.LiquidityPoolFeeV18,
+  },
+}
+
+func establishPoolTrustline(source *keypair.Full, poolAsset txnbuild.ChangeTrustAsset) error {
+  return submitTx(source, []*keypair.Full{source}, &txnbuild.ChangeTrust{
+    Line:  poolAsset,
+    Limit: "100000",
+  })
+}
 ```
 
 </CodeGroup>
@@ -408,6 +530,47 @@ def add_liquidity(
     )
     tx.sign(source)
     return server.submit_transaction(tx)
+```
+
+```go Go
+var poolID = func() txnbuild.LiquidityPoolId {
+  id, err := txnbuild.NewLiquidityPoolId(assetA, assetB)
+  if err != nil {
+    log.Fatal(err)
+  }
+  return id
+}()
+
+// Horizon names the pool by the hex form of its ID.
+var poolIDHex = hex.EncodeToString(poolID[:])
+
+func addLiquidity(source *keypair.Full, maxReserveA, maxReserveB string) error {
+  a, err := amount.ParseInt64(maxReserveA)
+  if err != nil {
+    return err
+  }
+  b, err := amount.ParseInt64(maxReserveB)
+  if err != nil {
+    return err
+  }
+  exactPrice := big.NewRat(a, b)
+  minPrice, err := price.Parse(new(big.Rat).Mul(exactPrice, big.NewRat(9, 10)).FloatString(7))
+  if err != nil {
+    return err
+  }
+  maxPrice, err := price.Parse(new(big.Rat).Mul(exactPrice, big.NewRat(11, 10)).FloatString(7))
+  if err != nil {
+    return err
+  }
+
+  return submitTx(source, []*keypair.Full{source}, &txnbuild.LiquidityPoolDeposit{
+    LiquidityPoolID: poolID,
+    MaxAmountA:      maxReserveA,
+    MaxAmountB:      maxReserveB,
+    MinPrice:        minPrice,
+    MaxPrice:        maxPrice,
+  })
+}
 ```
 
 </CodeGroup>
@@ -481,6 +644,51 @@ def remove_liquidity(
     )
     tx.sign(source)
     return server.submit_transaction(tx)
+```
+
+```go Go
+func removeLiquidity(source *keypair.Full, sharesAmount string) error {
+  pool, err := server.LiquidityPoolDetail(horizonclient.LiquidityPoolRequest{LiquidityPoolID: poolIDHex})
+  if err != nil {
+    return err
+  }
+  shares, err := amount.ParseInt64(sharesAmount)
+  if err != nil {
+    return err
+  }
+  totalShares, err := amount.ParseInt64(pool.TotalShares)
+  if err != nil {
+    return err
+  }
+  minReserveA, err := minReserve(shares, totalShares, pool.Reserves[0].Amount)
+  if err != nil {
+    return err
+  }
+  minReserveB, err := minReserve(shares, totalShares, pool.Reserves[1].Amount)
+  if err != nil {
+    return err
+  }
+
+  return submitTx(source, []*keypair.Full{source}, &txnbuild.LiquidityPoolWithdraw{
+    LiquidityPoolID: poolID,
+    Amount:          sharesAmount,
+    MinAmountA:      minReserveA,
+    MinAmountB:      minReserveB,
+  })
+}
+
+// minReserve returns 95% of the part of `reserve` that `shares` of
+// `totalShares` pool shares redeem. It works in stroops, so no precision is lost.
+func minReserve(shares, totalShares int64, reserve string) (string, error) {
+  r, err := amount.ParseInt64(reserve)
+  if err != nil {
+    return "", err
+  }
+  out := new(big.Int).Mul(big.NewInt(shares), big.NewInt(r))
+  out.Mul(out, big.NewInt(95))
+  out.Quo(out, new(big.Int).Mul(big.NewInt(totalShares), big.NewInt(100)))
+  return amount.StringFromInt64(out.Int64()), nil
+}
 ```
 
 </CodeGroup>
@@ -591,6 +799,69 @@ if __name__ == '__main__':
     main()
 ```
 
+```go Go
+func main() {
+  if err := preamble(); err != nil {
+    log.Fatal(err)
+  }
+
+  for i, kp := range kps[1:] {
+    depositA := fmt.Sprint((i + 1) * 1000)
+    depositB := fmt.Sprint((i + 1) * 3000) // maintain a 1:3 ratio
+    if err := establishPoolTrustline(kp, poolShareAsset); err != nil {
+      log.Fatal(err)
+    }
+    if err := addLiquidity(kp, depositA, depositB); err != nil {
+      log.Fatal(err)
+    }
+    if err := getSpotPrice(); err != nil {
+      log.Fatal(err)
+    }
+  }
+
+  // kp1 takes all his/her shares out
+  account, err := server.AccountDetail(horizonclient.AccountRequest{AccountID: kps[1].Address()})
+  if err != nil {
+    log.Fatal(err)
+  }
+  balance := ""
+  for _, b := range account.Balances {
+    if b.Type == "liquidity_pool_shares" && b.LiquidityPoolId == poolIDHex {
+      balance = b.Balance
+      break
+    }
+  }
+  if balance == "" {
+    log.Fatal("kp1 holds no shares of the pool")
+  }
+  if err := removeLiquidity(kps[1], balance); err != nil {
+    log.Fatal(err)
+  }
+  if err := getSpotPrice(); err != nil {
+    log.Fatal(err)
+  }
+}
+
+func getSpotPrice() error {
+  pool, err := server.LiquidityPoolDetail(horizonclient.LiquidityPoolRequest{LiquidityPoolID: poolIDHex})
+  if err != nil {
+    return err
+  }
+  a, b := pool.Reserves[0].Amount, pool.Reserves[1].Amount
+  reserveA, ok := new(big.Rat).SetString(a)
+  if !ok {
+    return fmt.Errorf("bad reserve amount %q", a)
+  }
+  reserveB, ok := new(big.Rat).SetString(b)
+  if !ok {
+    return fmt.Errorf("bad reserve amount %q", b)
+  }
+  spotPrice := new(big.Rat).Quo(reserveA, reserveB)
+  fmt.Printf("Price: %s/%s = %s\n", a, b, spotPrice.FloatString(7))
+  return nil
+}
+```
+
 </CodeGroup>
 
 #### Watching Liquidity Pool Activity
@@ -631,6 +902,24 @@ def watch_liquidity_pool_activity():
                 print(f"    {r['amount']} of {r['asset']}")
             print(f"    for pool shares: {op['shares_received']}")
         # ...
+```
+
+```go Go
+ops, err := server.Operations(horizonclient.OperationRequest{ForLiquidityPool: poolIDHex})
+if err != nil {
+  log.Fatal(err)
+}
+for _, op := range ops.Embedded.Records {
+  deposit, ok := op.(operations.LiquidityPoolDeposit)
+  if !ok {
+    continue
+  }
+  fmt.Println("Reserves deposited:")
+  for _, r := range deposit.ReservesDeposited {
+    fmt.Printf("    %s of %s\n", r.Amount, r.Asset)
+  }
+  fmt.Println("  for pool shares: ", deposit.SharesReceived)
+}
 ```
 
 </CodeGroup>
