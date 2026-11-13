@@ -230,6 +230,82 @@ if err := db.Create(&events).Error; err != nil {
 ```
 
 </Tab>
+<Tab title="Java">
+
+```java
+import java.io.IOException;
+
+import org.stellar.sdk.Address;
+import org.stellar.sdk.scval.Scv;
+
+static void printTestData() throws IOException {
+  System.out.println(Scv.toSymbol("transfer").toXdrBase64());
+  // AAAADwAAAAh0cmFuc2Zlcg==
+  System.out.println(Scv.toInt32(10_000).toXdrBase64());
+  // AAAABAAAJxA=
+  System.out.println(Scv.toInt32(5_000).toXdrBase64());
+  // AAAABAAAE4g=
+  System.out.println(Scv.toInt32(1_000).toXdrBase64());
+  // AAAABAAAA+g=
+  System.out.println(
+    new Address("GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH").toSCVal().toXdrBase64());
+  // AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc=
+  System.out.println(
+    new Address("GAFYGBHKVFP36EOIRGG74V42F3ORAA2ZWBXNULMNDXAMMXQH5MCIGXXI").toSCVal().toXdrBase64());
+  // AAAAEgAAAAAAAAAAC4ME6qlfvxHIiY3+V5ou3RADWbBu2i2NHcDGXgfrBIM=
+}
+```
+
+Now we can make some events with the `StellarEvent` table, the `openDB` method, and the `contractId` constant from the [ingest guide], and send them to the database in one transaction. The `addEvent` helper adds one event to the batch:
+
+```java
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+
+static final String insertSql = "INSERT INTO StellarEvent "
+  + "(id, type, ledger, contract_id, topic_1, topic_2, value) VALUES (?, ?, ?, ?, ?, ?, ?)";
+
+static void addEvent(
+    PreparedStatement insert, String id, long ledger, String topic1, String topic2, String value)
+    throws SQLException {
+  insert.setString(1, id);
+  insert.setString(2, "contract");
+  insert.setLong(3, ledger);
+  insert.setString(4, contractId);
+  insert.setString(5, topic1);
+  insert.setString(6, topic2);
+  insert.setString(7, value);
+  insert.addBatch();
+}
+
+static void addTestEvents(Connection db) throws SQLException {
+  db.setAutoCommit(false);
+  try (PreparedStatement insert = db.prepareStatement(insertSql)) {
+    addEvent(insert, "example-1", 1,
+      // transfer
+      "AAAADwAAAAh0cmFuc2Zlcg==",
+      // GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH
+      "AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc=",
+      "AAAABAAAJxA=");
+    addEvent(insert, "example-2", 1,
+      // transfer
+      "AAAADwAAAAh0cmFuc2Zlcg==",
+      // GAFYGBHKVFP36EOIRGG74V42F3ORAA2ZWBXNULMNDXAMMXQH5MCIGXXI
+      "AAAAEgAAAAAAAAAAC4ME6qlfvxHIiY3+V5ou3RADWbBu2i2NHcDGXgfrBIM=",
+      "AAAABAAAE4g=");
+    insert.executeBatch();
+    db.commit();
+  } catch (SQLException e) {
+    db.rollback();
+    throw e;
+  } finally {
+    db.setAutoCommit(true);
+  }
+}
+```
+
+</Tab>
 </Tabs>
 
 <Info>
@@ -337,6 +413,40 @@ if err := db.Where("ledger = ?", 1).Find(&ledgerEvents).Error; err != nil {
 }
 for _, event := range ledgerEvents {
   fmt.Println(event.Topic1, event.Topic2, event.Value)
+}
+```
+
+</Tab>
+<Tab title="Java">
+
+```java
+// import java.sql.ResultSet;
+// import java.sql.Statement;
+
+try (Statement query = db.createStatement();
+    ResultSet rows = query.executeQuery("SELECT topic_1, topic_2, value FROM StellarEvent")) {
+  while (rows.next()) {
+    System.out.println(
+      rows.getString("topic_1") + " " + rows.getString("topic_2") + " " + rows.getString("value"));
+  }
+}
+```
+
+We can also filter on specific fields. For example, to get only the events from ledger 1:
+
+```java
+// import java.sql.PreparedStatement;
+// import java.sql.ResultSet;
+
+try (PreparedStatement query = db.prepareStatement(
+    "SELECT topic_1, topic_2, value FROM StellarEvent WHERE ledger = ?")) {
+  query.setLong(1, 1);
+  try (ResultSet rows = query.executeQuery()) {
+    while (rows.next()) {
+      System.out.println(
+        rows.getString("topic_1") + " " + rows.getString("topic_2") + " " + rows.getString("value"));
+    }
+  }
 }
 ```
 
@@ -511,6 +621,73 @@ if err := db.Create(&event).Error; err != nil {
 
 ```text
 Event listener: [transfer GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH] 10000
+```
+
+</Tab>
+<Tab title="Java">
+
+JDBC has no database event listeners. Instead, an `insertEvent` method inserts one event and then runs the listener code. It runs only for inserts that go through `insertEvent`. Writes from other programs, or from other code in this program, do not trigger it.
+
+```java
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.stellar.sdk.Address;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+
+// decode turns a base64 ScVal into readable text. It handles the value types
+// this guide uses (symbol, address, i32) and prints the type name for others.
+static String decode(String encoded) throws IOException {
+  SCVal value = SCVal.fromXdrBase64(encoded);
+  switch (value.getDiscriminant()) {
+    case SCV_SYMBOL:
+      return Scv.fromSymbol(value);
+    case SCV_ADDRESS:
+      return Address.fromSCVal(value).toString();
+    case SCV_I32:
+      return String.valueOf(Scv.fromInt32(value));
+    default:
+      return value.getDiscriminant().name();
+  }
+}
+
+// insertEvent stores one event, then runs the listener code
+static void insertEvent(
+    Connection db, String id, long ledger, String topic1, String topic2, String value)
+    throws SQLException, IOException {
+  try (PreparedStatement insert = db.prepareStatement(insertSql)) {
+    addEvent(insert, id, ledger, topic1, topic2, value);
+    insert.executeBatch();
+  }
+
+  List<String> topics = new ArrayList<>();
+  for (String topic : new String[] {topic1, topic2}) {
+    if (topic != null) {
+      topics.add(decode(topic));
+    }
+  }
+  System.out.println("Event listener: " + topics + " " + decode(value));
+}
+```
+
+Next time a record gets inserted through `insertEvent`, the listener code will run. Let's try this:
+
+```java
+insertEvent(db, "example-3", 2,
+  // transfer
+  "AAAADwAAAAh0cmFuc2Zlcg==",
+  // GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH
+  "AAAAEgAAAAAAAAAAP4aG3RBmnO85da+8tCofnE+D6D0hWzMe1bWQm1I2auc=",
+  "AAAABAAAJxA=");
+```
+
+```text
+Event listener: [transfer, GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH] 10000
 ```
 
 </Tab>
