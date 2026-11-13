@@ -250,15 +250,6 @@ AMM protocol on Stellar.
 - **GitHub**: https://github.com/Phoenix-Protocol-Group
 - **Use Case**: Token swaps, liquidity pools
 
-#### XOXNO Swap Aggregator
-DEX aggregator that routes swaps across Soroswap, Aquarius, Phoenix, Sushi, and Comet, and executes each route atomically through one router contract.
-- **Use Case**: Best-price swaps, multi-venue routing, swaps inside lending strategies
-- **Website**: https://xoxno.com
-- **Docs**: https://xoxno.com/docs/stellar-aggregator/overview (append `.md` for Markdown)
-- **Agent skill**: [`xoxno-swap-aggregator/SKILL.md`](https://raw.githubusercontent.com/XOXNO/rs-lending-xlm/main/skills/xoxno-swap-aggregator/SKILL.md)
-- **API**: https://stellar-swap.xoxno.com (quotes and unsigned XDR, [OpenAPI](https://stellar-swap.xoxno.com/api-docs/openapi.json)), no API key
-- **SDK**: TypeScript [`@xoxno/sdk-js`](https://github.com/XOXNO/sdk-js) (`/stellar-swap`)
-
 ### Yield & Vaults
 
 #### DeFindex
@@ -467,14 +458,7 @@ Community-powered price oracle for Stellar.
 - **Website**: https://reflector.network
 - **Docs**: https://developers.stellar.org/docs/data/oracles/oracle-providers
 - **Features**: SEP-40 compatible, on-chain/off-chain prices, webhooks
-- **Integrations**: Blend, OrbitCDP, DeFindex, EquitX, Slender, XOXNO
-
-#### RedStone
-Modular oracle with a Push model on Stellar.
-- **Website**: https://www.redstone.finance
-- **Docs**: https://developers.stellar.org/docs/data/oracles/oracle-providers
-- **Features**: SEP-40 compatible contract and per-asset MultiFeed contracts, Rust SDK
-- **Integrations**: Blend, Templar, XOXNO
+- **Integrations**: Blend, OrbitCDP, DeFindex, EquitX, Slender
 
 #### DIA Oracle
 Cross-chain oracle with 20,000+ asset support.
