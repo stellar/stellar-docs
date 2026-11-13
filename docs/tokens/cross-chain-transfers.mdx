@@ -137,7 +137,7 @@ Circle does not support upfront fees for transfers from Stellar, so the fee come
 
 ## Worked example
 
-This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. The TypeScript example uses `@stellar/stellar-sdk` v16, the Python example uses `stellar-sdk` 17, and the Go example uses `go-stellar-sdk` v0.9.0.
+This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. The TypeScript example uses `@stellar/stellar-sdk` v16, the Python example uses `stellar-sdk` 17, the Go example uses `go-stellar-sdk` v0.9.0, and the Java example uses `network.lightsail:stellar-sdk` 6.0.0.
 
 <CodeGroup>
 
@@ -748,6 +748,195 @@ func main() {
   // 5 USDC in 7-decimal units
   if err := bridgeToBase(context.Background(), 50_000_000, "0xYourBaseSepoliaAddress"); err != nil {
     log.Fatal(err)
+  }
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+//   com.google.code.gson:gson:2.15.0
+
+import java.math.BigInteger;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.HexFormat;
+import java.util.List;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+
+public final class CctpBridge {
+  // Testnet values. For mainnet, use Circle's mainnet contract list,
+  // the mainnet USDC SAC, and https://iris-api.circle.com.
+  private static final String RPC_URL = "https://soroban-testnet.stellar.org";
+  private static final String IRIS_URL = "https://iris-api-sandbox.circle.com";
+  private static final String TOKEN_MESSENGER_MINTER =
+    "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP";
+  private static final String USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+  private static final int STELLAR_DOMAIN = 27;
+  private static final int BASE_DOMAIN = 6;
+
+  // "cctp-forward", hook version 0, no extra data
+  private static final byte[] FORWARD_HOOK =
+    HexFormat.of().parseHex("636374702d666f72776172640000000000000000000000000000000000000000");
+
+  private static final SorobanServer server = new SorobanServer(RPC_URL);
+  private static final KeyPair signer = KeyPair.fromSecretSeed(System.getenv("STELLAR_SECRET_KEY"));
+  private static final HttpClient httpClient =
+    HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
+
+  private static byte[] evmAddressToBytes32(String address) {
+    String hex = address.toLowerCase().replaceFirst("^0x", "");
+    if (!hex.matches("[0-9a-f]{40}")) {
+      throw new IllegalArgumentException("Invalid EVM address: " + address);
+    }
+    return HexFormat.of().parseHex("0".repeat(24) + hex);
+  }
+
+  private static String invoke(String contractId, String method, List<SCVal> args)
+      throws InterruptedException {
+    TransactionBuilderAccount account = server.getAccount(signer.getAccountId());
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    // This Stellar network fee is paid in XLM, apart from Circle's max_fee.
+    long maxInclusionFee = 100_000L; // stroops (0.01 XLM): pick your own cap
+    long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxInclusionFee);
+
+    Transaction tx = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(InvokeHostFunctionOperation
+        .invokeContractFunctionOperationBuilder(contractId, method, args)
+        .build())
+      .setTimeout(60)
+      .build();
+
+    Transaction prepared = server.prepareTransaction(tx);
+    prepared.sign(signer);
+    SendTransactionResponse sent = server.sendTransaction(prepared);
+    if (sent.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("Submit failed: " + sent.getStatus());
+    }
+    // pollTransaction checks up to 30 times, 1 second apart.
+    GetTransactionResponse result = server.pollTransaction(sent.getHash());
+    if (result.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Not in a ledger yet: the outcome is unknown, not failed.
+      throw new IllegalStateException("Transaction " + sent.getHash() + " not found yet");
+    }
+    if (result.getStatus() != GetTransactionStatus.SUCCESS) {
+      throw new IllegalStateException("Transaction failed: " + result.getStatus());
+    }
+    return sent.getHash();
+  }
+
+  private static HttpResponse<String> get(String url) throws Exception {
+    HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+      .timeout(Duration.ofSeconds(30))
+      .GET()
+      .build();
+    return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static long quoteMaxFee(long amount) throws Exception {
+    HttpResponse<String> res = get(String.format(
+      "%s/v2/burn/USDC/fees/%d/%d?forward=true", IRIS_URL, STELLAR_DOMAIN, BASE_DOMAIN));
+    if (res.statusCode() != 200) {
+      throw new IllegalStateException("Fee quote failed: HTTP " + res.statusCode());
+    }
+    for (JsonElement element : JsonParser.parseString(res.body()).getAsJsonArray()) {
+      JsonObject quote = element.getAsJsonObject();
+      if (quote.get("finalityThreshold").getAsInt() != 2000) {
+        continue;
+      }
+      // The live API returns forwardFee.med. Circle's spec names it medium.
+      JsonObject forwardFees = quote.getAsJsonObject("forwardFee");
+      JsonElement forwardFee = forwardFees.has("med") ? forwardFees.get("med") : forwardFees.get("medium");
+      if (forwardFee == null || forwardFee.isJsonNull()) {
+        throw new IllegalStateException("No forwardFee in the fee quote");
+      }
+      // minimumFee is in basis points. forwardFee uses 6 decimals, so
+      // multiply by 10 for Stellar's 7-decimal units.
+      long minimumFee = (long) Math.ceil(quote.get("minimumFee").getAsDouble() * 100);
+      long protocolFee = amount * minimumFee / 1_000_000L;
+      return protocolFee + forwardFee.getAsLong() * 10;
+    }
+    throw new IllegalStateException("No fee quote for finality threshold 2000");
+  }
+
+  private static JsonObject waitForAttestation(String txHash) throws Exception {
+    String url = String.format(
+      "%s/v2/messages/%d?transactionHash=%s", IRIS_URL, STELLAR_DOMAIN, txHash);
+    while (true) {
+      HttpResponse<String> res = get(url);
+      if (res.statusCode() == 200) {
+        JsonArray messages = JsonParser.parseString(res.body()).getAsJsonObject().getAsJsonArray("messages");
+        if (messages != null && !messages.isEmpty()) {
+          JsonObject message = messages.get(0).getAsJsonObject();
+          JsonElement status = message.get("status");
+          if (status != null && !status.isJsonNull() && "complete".equals(status.getAsString())) {
+            return message;
+          }
+        }
+      }
+      Thread.sleep(5_000L);
+    }
+  }
+
+  private static void bridgeToBase(long amount, String evmRecipient) throws Exception {
+    String caller = signer.getAccountId();
+    long maxFee = quoteMaxFee(amount);
+    byte[] mintRecipient = evmAddressToBytes32(evmRecipient);
+
+    // Transaction 1: let the TokenMessengerMinter pull `amount` USDC.
+    long sequence = server.getLatestLedger().getSequence();
+    invoke(USDC_SAC, "approve", List.of(
+      Scv.toAddress(caller),
+      Scv.toAddress(TOKEN_MESSENGER_MINTER),
+      Scv.toInt128(BigInteger.valueOf(amount)),
+      Scv.toUint32(sequence + 100)));
+
+    // Transaction 2: burn with the forwarding hook.
+    String burnHash = invoke(TOKEN_MESSENGER_MINTER, "deposit_for_burn_with_hook", List.of(
+      Scv.toAddress(caller),
+      Scv.toInt128(BigInteger.valueOf(amount)),
+      Scv.toUint32(BASE_DOMAIN),
+      Scv.toBytes(mintRecipient),
+      Scv.toAddress(USDC_SAC),
+      Scv.toBytes(new byte[32]), // any caller
+      Scv.toInt128(BigInteger.valueOf(maxFee)),
+      Scv.toUint32(2000),
+      Scv.toBytes(FORWARD_HOOK)));
+
+    JsonObject message = waitForAttestation(burnHash);
+    // forwardState can be missing until the forward starts.
+    JsonElement forwardState = message.get("forwardState");
+    String state = forwardState == null || forwardState.isJsonNull() ? "" : forwardState.getAsString();
+    System.out.println("Burn: " + burnHash + " Forward state: " + state);
+  }
+
+  public static void main(String[] args) throws Exception {
+    // 5 USDC in 7-decimal units
+    bridgeToBase(50_000_000L, "0xYourBaseSepoliaAddress");
   }
 }
 ```

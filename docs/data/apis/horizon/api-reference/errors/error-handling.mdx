@@ -316,6 +316,102 @@ func check(err error) {
 }
 ```
 
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Server;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.exception.BadRequestException;
+import org.stellar.sdk.exception.BadResponseException;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.SubmitTransactionAsyncResponse;
+import org.stellar.sdk.responses.SubmitTransactionAsyncResponse.TransactionStatus;
+import org.stellar.sdk.responses.TransactionResponse;
+
+public final class AsyncSubmit {
+  private static final String CONTRACT_ID = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE";
+
+  public static void main(String[] args) throws Exception {
+    Server server = new Server("https://horizon-testnet.stellar.org");
+    // A contract call must be simulated before it is sent, so this example also
+    // uses Stellar RPC to prepare the transaction.
+    SorobanServer rpc = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    String sourceSecretKey = "S..."; // replace with your secret key
+    KeyPair sourceKeypair = KeyPair.fromSecretSeed(sourceSecretKey);
+    TransactionBuilderAccount account = server.loadAccount(sourceKeypair.getAccountId());
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // The minimum base fee gets outbid when the network is busy.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.feeStats().execute().getFeeCharged().getP90(), maxFee);
+
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .setTimeout(30) // valid for the next 30s
+      // Add an operation to call increment() on the contract
+      .addOperation(InvokeHostFunctionOperation
+        .invokeContractFunctionOperationBuilder(CONTRACT_ID, "increment", null)
+        .build())
+      .build();
+    // Simulate the call, then add its footprint and resource fee.
+    transaction = rpc.prepareTransaction(transaction);
+
+    // Sign this transaction with the secret key
+    // NOTE: signing a transaction is network specific. Test network transactions
+    // won't work in the public network. To switch networks, build the transaction
+    // with Network.PUBLIC instead.
+    transaction.sign(sourceKeypair);
+
+    // Horizon answers PENDING with HTTP 201. It answers DUPLICATE (409), ERROR (400),
+    // and TRY_AGAIN_LATER (503) with an error status, so the SDK throws and puts
+    // the async response on the exception.
+    SubmitTransactionAsyncResponse result;
+    try {
+      result = server.submitTransactionAsync(transaction);
+    } catch (BadRequestException e) {
+      result = e.getSubmitTransactionAsyncProblem();
+      if (result == null || result.getTxStatus() == null) {
+        throw e; // a malformed request, not a Stellar-Core status
+      }
+    } catch (BadResponseException e) {
+      result = e.getSubmitTransactionAsyncProblem();
+      if (result == null || result.getTxStatus() == null) {
+        throw e; // a Horizon server error, not a Stellar-Core status
+      }
+    }
+    System.out.println("hash: " + result.getHash());
+    System.out.println("status: " + result.getTxStatus());
+    System.out.println("errorResultXdr: " + result.getErrorResultXdr());
+    // After ERROR or TRY_AGAIN_LATER, the transaction is not on its way to a
+    // ledger, so there is nothing to poll for.
+    if (result.getTxStatus() != TransactionStatus.PENDING
+        && result.getTxStatus() != TransactionStatus.DUPLICATE) {
+      throw new IllegalStateException("Submission not accepted: " + result.getTxStatus());
+    }
+
+    // Add a small sleep duration before polling the transaction.
+    Thread.sleep(5_000L);
+    try {
+      TransactionResponse txResult = server.transactions().transaction(result.getHash());
+      System.out.println("Transaction status: " + txResult);
+    } catch (BadRequestException e) {
+      if (e.getCode() != 404) {
+        throw e;
+      }
+      // Horizon returns 404 until the transaction is in a ledger.
+      System.out.println("Transaction not found yet. Poll again later.");
+    }
+  }
+}
+```
+
 </CodeGroup>
 
 #### Synchronous Transaction Submission
@@ -449,6 +545,50 @@ func submitTransaction(tx *txnbuild.Transaction) (*hProtocol.Transaction, error)
 }
 ```
 
+```java Java
+import java.time.Instant;
+
+import org.stellar.sdk.Server;
+import org.stellar.sdk.TimeBounds;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionPreconditions;
+import org.stellar.sdk.exception.NetworkException;
+import org.stellar.sdk.responses.TransactionResponse;
+
+public final class TimeBoundsExample {
+  private static final Server server = new Server("https://horizon-testnet.stellar.org");
+
+  static TransactionResponse submitTransaction(Transaction tx) throws InterruptedException {
+    TimeBounds timeBounds = tx.getTimeBounds();
+    if (timeBounds == null || timeBounds.getMaxTime().equals(TransactionPreconditions.TIMEOUT_INFINITE)) {
+      throw new IllegalArgumentException("Always set a reasonable timebound!");
+    }
+    long expiration = timeBounds.getMaxTime().longValueExact(); // Unix time in seconds
+
+    long timeout = 1; // seconds: start the (linear) back-off process
+    while (true) {
+      try {
+        return server.submitTransaction(tx);
+      } catch (NetworkException error) {
+        // isNonRetryErrorCase is your own check for errors that a retry can't fix.
+        if (isNonRetryErrorCase(error)) {
+          // ...do other error handling...
+          throw error;
+        }
+
+        // the tx no longer has a chance of making it into a ledger
+        if (Instant.now().getEpochSecond() >= expiration) {
+          throw new IllegalStateException("The transaction timed out.", error);
+        }
+
+        Thread.sleep(timeout * 1_000L);
+        timeout += 5;
+      }
+    }
+  }
+}
+```
+
 </CodeGroup>
 
 We assume the existence of a sleep implementation similar to the one [here](https://stackoverflow.com/a/39914235). Be sure to integrate backoff into your retry mechanism. In our example error-handling code above, we implement a simple linear backoff, but there are [plenty of recommendations](https://backoff-utils.readthedocs.io/en/latest/strategies.html#why-are-backoff-strategies-useful) for various other strategies. Backoff is important both for maintaining performance and avoiding rate-limiting issues.
@@ -515,6 +655,26 @@ if hErr := horizonclient.GetError(err); hErr != nil {
   // ...other error conditions...
 }
 return err
+```
+
+```java Java
+// suppose `account` is an outdated `TransactionBuilderAccount`
+Transaction tx = new TransactionBuilder(account, Network.TESTNET)/* etc */.build();
+try {
+  server.submitTransaction(tx);
+} catch (BadRequestException error) {
+  Problem problem = error.getProblem();
+  boolean badSeq = problem != null
+    && problem.getExtras() != null
+    && problem.getExtras().getResultCodes() != null
+    && "tx_bad_seq".equals(problem.getExtras().getResultCodes().getTransactionResultCode());
+  if (!badSeq) {
+    throw error; // ...other error conditions...
+  }
+  account = server.loadAccount(account.getAccountId());
+  tx = new TransactionBuilder(account, Network.TESTNET)/* etc */.build();
+  server.submitTransaction(tx);
+}
 ```
 
 </CodeGroup>
