@@ -93,7 +93,7 @@ The account balance decreases only by the transaction fee. You may want to detec
 
 ## Code Implementation
 
-_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` (`run_all_muxed_examples()` in Python; the same name in Go) or execute individual examples using their respective functions._
+_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` (`run_all_muxed_examples()` in Python; the same name in Go and Java) or execute individual examples using their respective functions._
 
 <CodeGroup>
 
@@ -954,6 +954,277 @@ func makePayment(source, dest, description string) error {
 func main() {
   if err := runAllMuxedExamples(); err != nil {
     log.Println("Error in examples:", err)
+  }
+}
+```
+
+```java Java
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.MuxedAccount;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.StrKey;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.Operation;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.xdr.LedgerEntry;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+
+public final class MuxedAccounts {
+  private static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  private static final KeyPair custodian = KeyPair.random();
+  private static final KeyPair outsider = KeyPair.random();
+
+  // A muxed customer: an M... address over the custodian's G... account
+  record Customer(long id, String address) {}
+
+  private static final List<Customer> customers = new ArrayList<>();
+  private static long fee;
+
+  // Setup function to fund accounts and create muxed customers
+  private static void preamble() throws Exception {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    fee = Math.min(server.getFeeStats().getInclusionFee().getP90(), maxFee);
+
+    System.out.println("=== FUNDING ACCOUNTS WITH XLM ===");
+    String friendbotUrl = server.getNetwork().getFriendbotUrl();
+    HttpClient http = HttpClient.newHttpClient();
+    for (KeyPair kp : List.of(custodian, outsider)) {
+      HttpRequest request = HttpRequest.newBuilder(
+          URI.create(friendbotUrl + "?addr=" + URLEncoder.encode(kp.getAccountId(), StandardCharsets.UTF_8)))
+        .GET()
+        .build();
+      HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200) {
+        throw new IllegalStateException("friendbot returned " + response.statusCode());
+      }
+    }
+    System.out.println("All accounts funded with XLM via airdrop");
+
+    for (long id : new long[] {1, 22, 333, 4444}) {
+      MuxedAccount muxed = new MuxedAccount(custodian.getAccountId(), BigInteger.valueOf(id));
+      customers.add(new Customer(id, muxed.getAddress()));
+    }
+
+    System.out.println("\n=== ACCOUNT SETUP ===");
+    System.out.println("Custodian:\n        " + custodian.getAccountId());
+    System.out.println("Outsider:\n        " + outsider.getAccountId());
+    System.out.println("Customers:");
+    for (Customer c : customers) {
+      System.out.printf(" %4d: %s%n", c.id(), c.address());
+    }
+  }
+
+  // Example 1: Basic payment between two G accounts
+  static void runUnmuxedExample() throws InterruptedException {
+    System.out.println("=== BASIC PAYMENT EXAMPLE (G → G) ===");
+
+    System.out.println("=== INITIAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+
+    makePayment(custodian.getAccountId(), outsider.getAccountId(), "Basic Payment from G to G address");
+
+    System.out.println("\n=== FINAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+
+    System.out.println("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===");
+  }
+
+  // Example 2: Payment from M account to G account
+  static void runMuxedToUnmuxedExample() throws InterruptedException {
+    System.out.println("=== MUXED TO UNMUXED PAYMENT EXAMPLE (M → G) ===");
+
+    System.out.println("=== INITIAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+    Customer src = customers.get(0);
+    System.out.printf("Sending 10 XLM from Customer %d to %s.%n", src.id(), formatAccount(outsider.getAccountId()));
+
+    makePayment(src.address(), outsider.getAccountId(), "Payment from M to G address");
+
+    System.out.println("\n=== FINAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+
+    System.out.println("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===");
+  }
+
+  // Example 3: Payment between two M accounts
+  static void runMuxedToMuxedExample() throws InterruptedException {
+    System.out.println("=== MUXED TO MUXED PAYMENT EXAMPLE (M → M) ===");
+
+    System.out.println("=== INITIAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+
+    Customer src = customers.get(1); // Customer 22
+    Customer dest = customers.get(2); // Customer 333
+
+    System.out.printf("Sending 10 XLM from Customer %d to Customer %d.%n", src.id(), dest.id());
+
+    makePayment(src.address(), dest.address(), "Payment from M to M address");
+
+    System.out.println("\n=== FINAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+
+    System.out.println("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===");
+  }
+
+  // Main function that runs preamble once and then all three examples
+  static void runAllMuxedExamples() throws Exception {
+    // Run setup/funding only once
+    preamble();
+
+    // Show initial state
+    System.out.println("=== OVERALL INITIAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+    System.out.println("\n" + "=".repeat(60) + "\n");
+
+    // Run all three examples sequentially
+    runUnmuxedExample();
+    System.out.println("\n" + "=".repeat(60) + "\n");
+
+    runMuxedToUnmuxedExample();
+    System.out.println("\n" + "=".repeat(60) + "\n");
+
+    runMuxedToMuxedExample();
+
+    System.out.println("\n=== ALL MUXED ACCOUNT EXAMPLES COMPLETED ===");
+  }
+
+  // Helper function to format account ID with label
+  private static String formatAccount(String accountId) {
+    String shortId = accountId.substring(0, 8);
+    if (accountId.equals(custodian.getAccountId())) return shortId + " (Custodian)";
+    if (accountId.equals(outsider.getAccountId())) return shortId + " (Outsider)";
+
+    // Check if it's a muxed account by finding the matching customer
+    for (Customer c : customers) {
+      if (c.address().equals(accountId)) {
+        return String.format("%s...%s (Customer %d)",
+          accountId.substring(0, 8), accountId.substring(accountId.length() - 6), c.id());
+      }
+    }
+    return shortId;
+  }
+
+  // Helper function to get XLM balance using RPC
+  private static String getXLMBalance(String accountId) {
+    LedgerKey key = LedgerKey.builder()
+      .discriminant(LedgerEntryType.ACCOUNT)
+      .account(LedgerKey.LedgerKeyAccount.builder()
+        .accountID(KeyPair.fromAccountId(accountId).getXdrAccountId())
+        .build())
+      .build();
+    GetLedgerEntriesResponse response = server.getLedgerEntries(List.of(key));
+    if (response.getEntries() == null || response.getEntries().isEmpty()) {
+      return "0";
+    }
+    LedgerEntry.LedgerEntryData entry = response.getEntries().get(0).parseXdr();
+    if (entry.getAccount() == null) {
+      return "0";
+    }
+    return Operation.fromXdrAmount(entry.getAccount().getBalance().getInt64()).toPlainString();
+  }
+
+  // Helper function to submit transaction and poll for completion using RPC
+  private static void submitAndPollTransaction(Transaction tx, String description) throws InterruptedException {
+    SendTransactionResponse submitResponse = server.sendTransaction(tx);
+    if (submitResponse.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("transaction submission failed: " + submitResponse.getStatus());
+    }
+
+    System.out.printf("%s submitted: %s%n", description, submitResponse.getHash());
+
+    GetTransactionResponse finalResponse = server.pollTransaction(submitResponse.getHash());
+    if (finalResponse.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Not in a ledger yet: the outcome is unknown, not failed.
+      throw new IllegalStateException(description + " not found yet: " + submitResponse.getHash());
+    }
+    if (finalResponse.getStatus() != GetTransactionStatus.SUCCESS) {
+      throw new IllegalStateException(description + " failed: " + finalResponse.getStatus());
+    }
+
+    System.out.printf("%s completed successfully%n", description);
+  }
+
+  private static Transaction buildTx(TransactionBuilderAccount source, KeyPair signer, Operation op) {
+    Transaction tx = new TransactionBuilder(source, Network.TESTNET)
+      .setBaseFee(fee)
+      .setTimeout(30)
+      .addOperation(op)
+      .build();
+    tx.sign(signer);
+    return tx;
+  }
+
+  // Helper function to resolve muxed accounts to their base G account
+  private static String baseAccount(String address) {
+    if (StrKey.isValidMed25519PublicKey(address)) {
+      // Muxed accounts do not exist on the ledger: use the base G account
+      return new MuxedAccount(address).getAccountId();
+    }
+    return address;
+  }
+
+  // Helper function to display balance of an account
+  private static void showBalance(String address) {
+    System.out.printf("%s: %s XLM%n", formatAccount(address), getXLMBalance(baseAccount(address)));
+  }
+
+  // Function to make a payment from source to destination account
+  private static void makePayment(String source, String dest, String description) throws InterruptedException {
+    System.out.printf("%nPayment: %s → %s (10 XLM)%n", formatAccount(source), formatAccount(dest));
+
+    TransactionBuilderAccount accountBeforePayment = server.getAccount(baseAccount(source));
+    System.out.println("Before payment:");
+    showBalance(baseAccount(source));
+
+    PaymentOperation payment = PaymentOperation.builder()
+      .sourceAccount(source)
+      .destination(dest)
+      .asset(new AssetTypeNative())
+      .amount(new BigDecimal("10"))
+      .build();
+
+    Transaction tx = buildTx(accountBeforePayment, custodian, payment);
+    submitAndPollTransaction(tx, description);
+
+    System.out.println("After payment:");
+    showBalance(baseAccount(source));
+  }
+
+  // Run the main function
+  public static void main(String[] args) {
+    try {
+      runAllMuxedExamples();
+    } catch (Exception error) {
+      System.out.println("Error in examples: " + error);
+    }
   }
 }
 ```
