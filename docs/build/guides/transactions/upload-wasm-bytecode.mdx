@@ -172,10 +172,9 @@ Run the script with `python3 install.py`, it reads the Wasm file, gets account d
 
 ```py
 import asyncio
-import time
 from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, xdr as stellar_xdr
 from stellar_sdk.exceptions import PrepareTransactionException
-from stellar_sdk.soroban_rpc import GetTransactionStatus
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 import hashlib
 
 
@@ -236,23 +235,32 @@ async def build_and_send_transaction(account, bytes):
     tx.sign(source_keypair)
 
     print("Submitting transaction...")
-    response = server.send_transaction(tx)
-    hash = response.hash
-    print(f"Transaction hash: {hash}")
-    print("Awaiting confirmation...")
+    send_response = server.send_transaction(tx)
+    print(f"Transaction hash: {send_response.hash}")
 
-    while True:
-        response = server.get_transaction(hash)
-        if response.status != GetTransactionStatus.NOT_FOUND:
-            break
-        time.sleep(1)
+    # PENDING and DUPLICATE mean the network has the transaction.
+    # TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+    if send_response.status in (
+        SendTransactionStatus.TRY_AGAIN_LATER,
+        SendTransactionStatus.ERROR,
+    ):
+        raise Exception(f"Transaction not accepted: {send_response.status.value}")
+
+    print("Awaiting confirmation...")
+    # Poll get_transaction once a second, for up to 30 attempts
+    response = server.poll_transaction(send_response.hash, max_attempts=30)
+
+    # NOT_FOUND after the last attempt means the result is unknown,
+    # not that the transaction failed
+    if response.status == GetTransactionStatus.NOT_FOUND:
+        raise Exception("Not confirmed yet. Check again before resending.")
 
     if response.status == GetTransactionStatus.SUCCESS:
         print("Transaction successful.")
         return response
     else:
         print("Transaction failed.")
-        raise Exception("Transaction failed")
+        raise Exception(f"Transaction did not succeed: {response.status.value}")
 
 # Upload contract to the testnet
 server = SorobanServer("https://soroban-testnet.stellar.org:443")
@@ -491,7 +499,7 @@ Create a new Maven project, and add the SDK to the `<dependencies>` section of i
 </dependency>
 ```
 
-Copy the code below into `src/main/java/UploadWasm.java` then run its `main` method, it reads the Wasm file, gets account details, and uploads the contract in a transaction:
+Copy the code below into `src/main/java/UploadWasm.java`, then run its `main` method. It reads the Wasm file, gets account details, and uploads the contract in a transaction:
 
 ```java
 import java.nio.file.Files;
@@ -509,6 +517,7 @@ import org.stellar.sdk.operations.InvokeHostFunctionOperation;
 import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
 import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
 import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
 
 public final class UploadWasm {
   // Upload contract to the testnet
@@ -561,17 +570,24 @@ public final class UploadWasm {
 
     System.out.println("Submitting transaction...");
     SendTransactionResponse sendResponse = server.sendTransaction(tx);
-    String hash = sendResponse.getHash();
-    System.out.println("Transaction hash: " + hash);
-    System.out.println("Awaiting confirmation...");
+    System.out.println("Transaction hash: " + sendResponse.getHash());
 
-    GetTransactionResponse response;
-    while (true) {
-      response = server.getTransaction(hash);
-      if (response.getStatus() != GetTransactionStatus.NOT_FOUND) {
-        break;
-      }
-      Thread.sleep(1000);
+    // PENDING and DUPLICATE mean the network has the transaction.
+    // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+    if (sendResponse.getStatus() == SendTransactionStatus.TRY_AGAIN_LATER
+        || sendResponse.getStatus() == SendTransactionStatus.ERROR) {
+      throw new IllegalStateException("Transaction not accepted: " + sendResponse.getStatus());
+    }
+
+    System.out.println("Awaiting confirmation...");
+    // Poll getTransaction once a second, for up to 30 attempts
+    GetTransactionResponse response =
+      server.pollTransaction(sendResponse.getHash(), 30, attempt -> 1_000L);
+
+    // NOT_FOUND after the last attempt means the result is unknown,
+    // not that the transaction failed
+    if (response.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      throw new IllegalStateException("Not confirmed yet. Check again before resending.");
     }
 
     if (response.getStatus() == GetTransactionStatus.SUCCESS) {
@@ -579,7 +595,7 @@ public final class UploadWasm {
       return response;
     }
     System.out.println("Transaction failed.");
-    throw new IllegalStateException("Transaction failed");
+    throw new IllegalStateException("Transaction did not succeed: " + response.getStatus());
   }
 }
 ```
