@@ -137,7 +137,9 @@ Circle does not support upfront fees for transfers from Stellar, so the fee come
 
 ## Worked example
 
-This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. It uses `@stellar/stellar-sdk` v16.
+This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. The TypeScript example uses `@stellar/stellar-sdk` v16, and the Python example uses `stellar-sdk` 17.
+
+<CodeGroup>
 
 ```ts TypeScript
 import {
@@ -279,6 +281,148 @@ async function bridgeToBase(amount: bigint, evmRecipient: string) {
 // 5 USDC in 7-decimal units
 bridgeToBase(50_000_000n, "0xYourBaseSepoliaAddress").catch(console.error);
 ```
+
+```python Python
+import math
+import os
+import time
+
+import requests
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+
+# Testnet values. For mainnet, use Circle's mainnet contract list,
+# the mainnet USDC SAC, and https://iris-api.circle.com.
+RPC_URL = "https://soroban-testnet.stellar.org"
+IRIS_URL = "https://iris-api-sandbox.circle.com"
+TOKEN_MESSENGER_MINTER = "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP"
+USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+STELLAR_DOMAIN = 27
+BASE_DOMAIN = 6
+
+# "cctp-forward", hook version 0, no extra data
+FORWARD_HOOK = bytes.fromhex(
+    "636374702d666f72776172640000000000000000000000000000000000000000"
+)
+
+server = SorobanServer(RPC_URL)
+signer = Keypair.from_secret(os.environ["STELLAR_SECRET_KEY"])
+
+
+def evm_address_to_bytes32(address: str) -> bytes:
+    hex_str = address.lower().removeprefix("0x")
+    if len(hex_str) != 40 or any(c not in "0123456789abcdef" for c in hex_str):
+        raise ValueError(f"Invalid EVM address: {address}")
+    return bytes.fromhex(hex_str.rjust(64, "0"))
+
+
+def invoke(contract_id, method, args):
+    account = server.load_account(signer.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    # This Stellar network fee is paid in XLM, apart from Circle's max_fee.
+    MAX_INCLUSION_FEE = 100_000  # stroops (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_INCLUSION_FEE)
+
+    tx = (
+        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=fee)
+        .append_invoke_contract_function_op(contract_id, method, args)
+        .set_timeout(60)
+        .build()
+    )
+
+    prepared = server.prepare_transaction(tx)
+    prepared.sign(signer)
+    sent = server.send_transaction(prepared)
+    if sent.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(f"Submit failed: {sent.status}")
+    result = server.poll_transaction(sent.hash)
+    if result.status == GetTransactionStatus.NOT_FOUND:
+        # Not in a ledger yet: the outcome is unknown, not failed.
+        raise RuntimeError(f"Transaction {sent.hash} not found yet")
+    if result.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"Transaction failed: {result.status}")
+    return sent.hash
+
+
+def quote_max_fee(amount: int) -> int:
+    res = requests.get(
+        f"{IRIS_URL}/v2/burn/USDC/fees/{STELLAR_DOMAIN}/{BASE_DOMAIN}",
+        params={"forward": "true"},
+        timeout=30,
+    )
+    quote = next((q for q in res.json() if q["finalityThreshold"] == 2000), None)
+    if quote is None:
+        raise RuntimeError("No fee quote for finality threshold 2000")
+    # The live API returns forwardFee.med. Circle's spec names it medium.
+    forward_fee = quote["forwardFee"].get("med")
+    if forward_fee is None:
+        forward_fee = quote["forwardFee"]["medium"]
+    # minimumFee is in basis points. forwardFee uses 6 decimals, so
+    # multiply by 10 for Stellar's 7-decimal units.
+    protocol_fee = amount * math.ceil(quote["minimumFee"] * 100) // 1_000_000
+    return protocol_fee + int(forward_fee) * 10
+
+
+def wait_for_attestation(tx_hash: str):
+    while True:
+        res = requests.get(
+            f"{IRIS_URL}/v2/messages/{STELLAR_DOMAIN}",
+            params={"transactionHash": tx_hash},
+            timeout=30,
+        )
+        if res.ok:
+            messages = res.json().get("messages") or []
+            if messages and messages[0].get("status") == "complete":
+                return messages[0]
+        time.sleep(5)
+
+
+def bridge_to_base(amount: int, evm_recipient: str):
+    caller = signer.public_key
+    max_fee = quote_max_fee(amount)
+
+    # Transaction 1: let the TokenMessengerMinter pull `amount` USDC.
+    sequence = server.get_latest_ledger().sequence
+    invoke(
+        USDC_SAC,
+        "approve",
+        [
+            scval.to_address(caller),
+            scval.to_address(TOKEN_MESSENGER_MINTER),
+            scval.to_int128(amount),
+            scval.to_uint32(sequence + 100),
+        ],
+    )
+
+    # Transaction 2: burn with the forwarding hook.
+    burn_hash = invoke(
+        TOKEN_MESSENGER_MINTER,
+        "deposit_for_burn_with_hook",
+        [
+            scval.to_address(caller),
+            scval.to_int128(amount),
+            scval.to_uint32(BASE_DOMAIN),
+            scval.to_bytes(evm_address_to_bytes32(evm_recipient)),
+            scval.to_address(USDC_SAC),
+            scval.to_bytes(bytes(32)),  # any caller
+            scval.to_int128(max_fee),
+            scval.to_uint32(2000),
+            scval.to_bytes(FORWARD_HOOK),
+        ],
+    )
+
+    message = wait_for_attestation(burn_hash)
+    print("Burn:", burn_hash, "Forward state:", message.get("forwardState"))
+
+
+if __name__ == "__main__":
+    # 5 USDC in 7-decimal units
+    bridge_to_base(50_000_000, "0xYourBaseSepoliaAddress")
+```
+
+</CodeGroup>
 
 `forwardState` can stay empty for a short time after the attestation completes. Check the same endpoint again to see the destination transaction in `forwardTxHash`.
 

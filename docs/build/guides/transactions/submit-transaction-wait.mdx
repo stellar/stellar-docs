@@ -32,7 +32,9 @@ Poll until `getTransaction` returns `SUCCESS` or `FAILED`. If it still returns `
 
 ## The `submitTx` helper
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import { FeeBumpTransaction, Transaction } from "@stellar/stellar-sdk";
 import { Api, Server } from "@stellar/stellar-sdk/rpc";
 
@@ -92,7 +94,69 @@ async function submitTx(
 }
 ```
 
-RPC sends `latestLedgerCloseTime` as a string, so the helper converts it with `Number()` before it compares it with `maxTime`.
+```python Python
+import time
+
+from stellar_sdk import FeeBumpTransactionEnvelope, SorobanServer, TransactionEnvelope
+from stellar_sdk.soroban_rpc import (
+    GetTransactionResponse,
+    GetTransactionStatus,
+    SendTransactionStatus,
+)
+
+RPC_SERVER = "https://soroban-testnet.stellar.org/"
+server = SorobanServer(RPC_SERVER)
+
+
+# Sends a transaction, then waits until it is in a ledger or has expired.
+def submit_tx(
+    tx: TransactionEnvelope | FeeBumpTransactionEnvelope,
+) -> GetTransactionResponse:
+    # A transaction can go into a ledger only until its time bound (max_time).
+    inner = (
+        tx.transaction.inner_transaction_envelope.transaction
+        if isinstance(tx, FeeBumpTransactionEnvelope)
+        else tx.transaction
+    )
+    time_bounds = inner.preconditions.time_bounds if inner.preconditions else None
+    max_time = time_bounds.max_time if time_bounds else 0
+    if max_time == 0:
+        raise ValueError("Set a timeout so that the transaction can expire")
+
+    # TRY_AGAIN_LATER: send the same signed transaction again after a pause.
+    reply = server.send_transaction(tx)
+    while (
+        reply.status == SendTransactionStatus.TRY_AGAIN_LATER
+        and reply.latest_ledger_close_time <= max_time
+    ):
+        time.sleep(2)
+        reply = server.send_transaction(tx)
+
+    # ERROR: a transaction that is already in a ledger also returns ERROR
+    # (txBAD_SEQ) when you send it again, so look it up before you raise.
+    if reply.status == SendTransactionStatus.ERROR:
+        known = server.get_transaction(reply.hash)
+        if known.status == GetTransactionStatus.NOT_FOUND:
+            raise RuntimeError(f"Transaction rejected: {reply.error_result_xdr}")
+
+    # Poll until the transaction is in a ledger or has expired.
+    # NOT_FOUND means "not in a ledger yet", not "failed".
+    while True:
+        result = server.get_transaction(reply.hash)
+        if result.status == GetTransactionStatus.SUCCESS:
+            return result
+        if result.status == GetTransactionStatus.FAILED:
+            raise RuntimeError(f"Transaction failed: {result.result_xdr}")
+        # A ledger closed after max_time, so the transaction can never go
+        # into a ledger. Only now is it safe to build a new transaction.
+        if result.latest_ledger_close_time > max_time:
+            raise RuntimeError(f"Transaction {reply.hash} expired")
+        time.sleep(1)
+```
+
+</CodeGroup>
+
+RPC sends `latestLedgerCloseTime` as a string, so the JavaScript helper converts it with `Number()` before it compares it with `maxTime`. The Python SDK already parses it into an `int`.
 
 <Warning>
 

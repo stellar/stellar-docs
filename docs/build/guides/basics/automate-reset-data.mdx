@@ -32,11 +32,14 @@ Automating blockchain state on Stellar's Testnet and Futurenet can streamline de
 
 - [Node.js](https://nodejs.org/en) and `npm` installed.
 - Stellar SDK for [JavaScript](https://www.npmjs.com/package/@stellar/stellar-sdk) and `fs` installed
+- For the Python example: the [Python SDK](https://pypi.org/project/stellar-sdk/) and `requests` installed. It defines its own `submit_tx` helper.
 - An understanding of the rudimentary, retry-enabled transaction polling function `submitTx` which we outlined in [another guide](/docs/build/guides/transactions/submit-transaction-wait)
 
 ### Code
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 import {
   Networks,
   Keypair,
@@ -277,7 +280,7 @@ async function deployAndInvokeContract(deployer, contractWasmFilePath) {
       networkPassphrase,
     })
       .addOperation(
-        contract.call("hello", nativeToScVal("World", { type: "symbol" })),
+        contract.call("hello", nativeToScVal("World", { type: "string" })),
       )
       .setTimeout(30)
       .build();
@@ -344,6 +347,238 @@ async function automateSetup() {
 
 automateSetup();
 ```
+
+```python Python
+import requests
+from stellar_sdk import (
+    Asset,
+    Keypair,
+    LiquidityPoolAsset,
+    Network,
+    SorobanServer,
+    TransactionBuilder,
+    scval,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import TransactionMeta
+
+# network_rpc = "USE EITHER FUTURENET OR TESTNET RPC"
+network_rpc = "https://soroban-testnet.stellar.org"
+# Example
+# FOR FUTURENET - https://rpc-futurenet.stellar.org
+# FOR TESTNET - https://soroban-testnet.stellar.org
+server = SorobanServer(network_rpc)
+
+# network_url = "USE EITHER FUTURENET OR TESTNET URL"
+network_url = "https://friendbot.stellar.org"
+# Example
+# FOR FUTURENET - https://friendbot-futurenet.stellar.org
+# FOR TESTNET - https://friendbot.stellar.org
+
+# or Network.FUTURENET_NETWORK_PASSPHRASE, Network.PUBLIC_NETWORK_PASSPHRASE
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+
+# Each transaction below bids what recent transactions paid, capped at MAX_FEE.
+# The minimum base fee gets outbid when the network is busy.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+
+
+def submit_tx(tx):
+    """Send a signed transaction and wait for its final status."""
+    send_response = server.send_transaction(tx)
+    if send_response.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(f"Submission failed: {send_response}")
+    response = server.poll_transaction(send_response.hash)
+    if response.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"Transaction status: {response.status}")
+    return response
+
+
+def return_value(response):
+    """Read a contract call's return value from the transaction meta."""
+    meta = TransactionMeta.from_xdr(response.result_meta_xdr)
+    return (meta.v4 or meta.v3).soroban_meta.return_value
+
+
+# Create an Account
+def create_account(network_url, secret_key=None):
+    if not secret_key:
+        # Generate a keypair
+        pair = Keypair.random()
+        # Fund the new account using Friendbot
+        response = requests.get(network_url, params={"addr": pair.public_key})
+        print("Account created:", response.json())
+        return pair
+    pair = Keypair.from_secret(secret_key)
+    print("Account Restored:", pair.public_key)
+    return pair
+
+
+# Issues an Asset
+def issue_asset(issuer_keys, receiving_keys, custom_asset):
+    # Bid what recent transactions paid, capped at MAX_FEE
+    fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+    # First, the receiving account must trust the asset
+    receiver = server.load_account(receiving_keys.public_key)
+    transaction = (
+        TransactionBuilder(receiver, network_passphrase, base_fee=fee)
+        .append_change_trust_op(asset=custom_asset, limit="100000")
+        .set_timeout(100)
+        .build()
+    )
+    transaction.sign(receiving_keys)
+    submit_tx(transaction)
+    print(f"Receiver Trusting {custom_asset.code} Asset......")
+
+    # Second, the issuing account actually sends a payment using the asset
+    issuer = server.load_account(issuer_keys.public_key)
+    transaction = (
+        TransactionBuilder(issuer, network_passphrase, base_fee=fee)
+        .append_payment_op(
+            destination=receiving_keys.public_key,
+            asset=custom_asset,
+            amount="1000",  # change to desired amount you want to pay
+        )
+        .set_timeout(100)
+        .build()
+    )
+    transaction.sign(issuer_keys)
+    submit_tx(transaction)
+    print(
+        f"Issuer Payment using {custom_asset.code} to {receiving_keys.public_key}"
+    )
+
+
+# Create Liquidity Pool
+def create_liquidity_pool(account_keypair, native_asset, custom_asset):
+    account = server.load_account(account_keypair.public_key)
+
+    # Create the liquidity pool
+    pool_asset = LiquidityPoolAsset(native_asset, custom_asset)
+    pool_id = pool_asset.liquidity_pool_id  # To Get the Pool ID
+
+    # Bid what recent transactions paid, capped at MAX_FEE
+    fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+    transaction = (
+        TransactionBuilder(account, network_passphrase, base_fee=fee)
+        .append_change_trust_op(
+            asset=pool_asset, limit="100000"  # Set an appropriate limit
+        )
+        .append_liquidity_pool_deposit_op(
+            liquidity_pool_id=pool_id,
+            max_amount_a="1000",  # Amount of asset A to deposit
+            max_amount_b="500",  # Amount of asset B to deposit
+            min_price="0.5",  # Minimum price ratio
+            max_price="2.0",  # Maximum price ratio
+        )
+        .set_timeout(30)
+        .build()
+    )
+    transaction.sign(account_keypair)
+    submit_tx(transaction)
+    print(
+        f"Creating Liquidity Pool for {native_asset.code} and {custom_asset.code}"
+    )
+
+
+# Deploy and Invoke Contract
+def deploy_and_invoke_contract(deployer, contract_wasm_file_path):
+    # Bid what recent transactions paid, capped at MAX_FEE.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    # Step 1: Upload Wasm
+    account = server.load_account(deployer.public_key)
+    upload_tx = (
+        TransactionBuilder(account, network_passphrase, base_fee=fee)
+        .append_upload_contract_wasm_op(contract=contract_wasm_file_path)
+        .set_timeout(30)
+        .build()
+    )
+    upload_tx = server.prepare_transaction(upload_tx)
+    upload_tx.sign(deployer)
+
+    print("Submitting Wasm upload transaction...")
+    response = submit_tx(upload_tx)
+    wasm_hash = scval.from_bytes(return_value(response))
+
+    # Deploy the Contract
+    create_contract_tx = (
+        TransactionBuilder(account, network_passphrase, base_fee=fee)
+        .append_create_contract_op(wasm_id=wasm_hash, address=deployer.public_key)
+        .set_timeout(30)
+        .build()
+    )
+    create_contract_tx = server.prepare_transaction(create_contract_tx)
+    create_contract_tx.sign(deployer)
+    response = submit_tx(create_contract_tx)
+    print("Contract Deployed...")
+
+    contract_id = scval.from_address(return_value(response)).address
+
+    # Invoke Contract
+    invoke_contract_tx = (
+        TransactionBuilder(account, network_passphrase, base_fee=fee)
+        .append_invoke_contract_function_op(
+            contract_id=contract_id,
+            function_name="hello",
+            parameters=[scval.to_string("World")],
+        )
+        .set_timeout(30)
+        .build()
+    )
+    invoke_contract_tx = server.prepare_transaction(invoke_contract_tx)
+    invoke_contract_tx.sign(deployer)
+    response = submit_tx(invoke_contract_tx)
+    print("Invoke Contract.")
+
+    return_values = [v for v in scval.to_native(return_value(response)) if v]
+    return contract_id, return_values
+
+
+def automate_setup():
+    # Check Network Status
+    print("Checking network health...")
+    health = server.get_health()
+    print("Network health:", health.status)
+
+    # Flexible Account Configuration
+    # This is an example of a user's secret key
+    secret_key = "SBGGNMUPVF2SDN4KZOJQFVFX7VDR4Q4NK3FMEFRQC64D3UBMFELKF5GC"
+
+    account_one = create_account(network_url, secret_key)
+    account_two = create_account(network_url)
+
+    print("Issuing an Asset...")
+    # Issue assets to these accounts
+    custom_asset = Asset("Boya", account_one.public_key)
+    issue_asset(account_one, account_two, custom_asset)
+
+    # Create liquidity pool
+    print("Creating liquidity pool...")
+    native_asset = Asset.native()
+    create_liquidity_pool(account_two, native_asset, custom_asset)
+
+    # Deploy a contract
+    print("Deploying contract...")
+    # Ensure you have the contract Wasm file compiled and saved in the specified path.
+    # Adjust this path as necessary
+    contract_wasm_file_path = "./target/wasm32v1-none/release/hello_world.wasm"
+    contract_id, return_values = deploy_and_invoke_contract(
+        account_one, contract_wasm_file_path
+    )
+
+    print("Contract ID:", contract_id)
+    print("Return Values:", ", ".join(return_values))
+
+
+if __name__ == "__main__":
+    automate_setup()
+```
+
+</CodeGroup>
 
 The code defines several asynchronous functions:
 

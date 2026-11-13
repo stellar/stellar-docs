@@ -398,6 +398,374 @@ function preamble() {
 }
 ```
 
+```python Python
+import time
+
+import requests
+from stellar_sdk import (
+    Asset,
+    AuthorizationFlag,
+    ChangeTrust,
+    Claimant,
+    Clawback,
+    ClawbackClaimableBalance,
+    CreateClaimableBalance,
+    Keypair,
+    Network,
+    Payment,
+    SetOptions,
+    SetTrustLineFlags,
+    SorobanServer,
+    StrKey,
+    TransactionBuilder,
+    TrustLineFlags,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import (
+    ClaimableBalanceID,
+    LedgerEntryData,
+    LedgerEntryType,
+    LedgerKey,
+    LedgerKeyAccount,
+    LedgerKeyClaimableBalance,
+    LedgerKeyTrustLine,
+    TransactionResult,
+)
+
+server = SorobanServer("https://soroban-testnet.stellar.org")
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+A = Keypair.random()
+B = Keypair.random()
+C = Keypair.random()
+
+print("=== ACCOUNT SETUP ===")
+print(f"Account A (Issuer): {A.public_key}")
+print(f"Account B (Trustor): {B.public_key}")
+print(f"Account C (Trustor): {C.public_key}")
+print()
+
+ASSET = Asset("CLAW", A.public_key)
+
+
+# Helper function to format account ID with label
+def format_account(account_id):
+    short_id = account_id[:8]
+    if account_id == A.public_key:
+        return f"{short_id} (Account A)"
+    elif account_id == B.public_key:
+        return f"{short_id} (Account B)"
+    elif account_id == C.public_key:
+        return f"{short_id} (Account C)"
+    return short_id
+
+
+# Helper function to scale int64 asset amounts
+def scale_asset(x):
+    return (x * 10 // 10_000_000) / 10  # one decimal place
+
+
+# Helper function to read one ledger entry with getLedgerEntries
+def get_ledger_entry(key):
+    response = server.get_ledger_entries([key])
+    if not response.entries:
+        return None
+    return LedgerEntryData.from_xdr(response.entries[0].xdr)
+
+
+# Helper function to fetch claimable balance details
+def fetch_claimable_balance(balance_id, description="Claimable Balance"):
+    print(f"\n--- Checking {description} ---")
+    print(f"Looking up balance ID: {balance_id}")
+
+    key = LedgerKey(
+        LedgerEntryType.CLAIMABLE_BALANCE,
+        claimable_balance=LedgerKeyClaimableBalance(
+            balance_id=ClaimableBalanceID.from_xdr_bytes(bytes.fromhex(balance_id))
+        ),
+    )
+    entry = get_ledger_entry(key)
+    if entry is None:
+        print(
+            f"❌ Claimable balance not found (Claimable balance {balance_id} not found)"
+        )
+        return False  # Balance doesn't exist
+
+    claimable_balance = entry.claimable_balance
+    asset = Asset.from_xdr_object(claimable_balance.asset)
+    amount = scale_asset(claimable_balance.amount.int64)
+
+    print("✅ Found claimable balance")
+    print(f"   Amount: {amount:.1f} {asset.code}")
+    print(f"   Number of claimants: {len(claimable_balance.claimants)}")
+
+    # Show claimant details
+    for index, claimant in enumerate(claimable_balance.claimants):
+        destination = claimant.v0.destination.account_id.ed25519.uint256
+        claimant_address = StrKey.encode_ed25519_public_key(destination)
+        print(f"   Claimant {index + 1}: {format_account(claimant_address)}")
+
+    return True  # Balance exists
+
+
+# Fund accounts first
+def fund_accounts():
+    print("=== FUNDING ACCOUNTS WITH XLM ===")
+    friendbot_url = server.get_network().friendbot_url
+    for keypair in (A, B, C):
+        response = requests.get(
+            friendbot_url, params={"addr": keypair.public_key}, timeout=30
+        )
+        response.raise_for_status()
+    print("All accounts funded with XLM via airdrop")
+    # Wait for funding to complete
+    time.sleep(3)
+
+
+# Enables AUTHORIZATION_CLAWBACK_ENABLED on an account.
+def enable_clawback(account, keys):
+    label = format_account(account.account.account_id)
+    print(f"Enabling clawback flags on account {label}")
+    return submit_and_poll_transaction(
+        build_tx(
+            account,
+            keys,
+            [
+                SetOptions(
+                    set_flags=AuthorizationFlag.AUTHORIZATION_CLAWBACK_ENABLED
+                    | AuthorizationFlag.AUTHORIZATION_REVOCABLE
+                )
+            ],
+        ),
+        "Enable Clawback Flags",
+    )
+
+
+# Establishes a trustline for `recipient` for the CLAW Asset
+def establish_trustline(recipient, key):
+    label = format_account(recipient.account.account_id)
+    print(f"{label} establishing trustline for {ASSET.code}")
+    return submit_and_poll_transaction(
+        build_tx(recipient, key, [ChangeTrust(asset=ASSET, limit="5000")]),  # arbitrary
+        f"Establish Trustline ({label})",
+    )
+
+
+# Retrieves latest account info for all accounts.
+def get_accounts():
+    return [server.load_account(kp.public_key) for kp in (A, B, C)]
+
+
+# Show XLM balances (after funding)
+def show_xlm_balances(accounts):
+    print("\n=== XLM BALANCES ===")
+    for acc in accounts:
+        account_id = acc.account.account_id
+        print(f"{format_account(account_id)}: {get_xlm_balance(account_id)} XLM")
+
+
+# Get XLM balance using account ledger entry
+def get_xlm_balance(account_id):
+    key = LedgerKey(
+        LedgerEntryType.ACCOUNT,
+        account=LedgerKeyAccount(
+            account_id=Keypair.from_public_key(account_id).xdr_account_id()
+        ),
+    )
+    entry = get_ledger_entry(key)
+    if entry is None:
+        return "0"
+    return f"{scale_asset(entry.account.balance.int64):.1f}"
+
+
+# Show CLAW balances
+def show_claw_balances(accounts):
+    print("\n=== CLAW BALANCES ===")
+    for acc in accounts:
+        account_id = acc.account.account_id
+        print(f"{format_account(account_id)}: {get_balance(account_id)} CLAW")
+
+
+# Get CLAW balance using the trustline ledger entry
+def get_balance(account_id):
+    key = LedgerKey(
+        LedgerEntryType.TRUSTLINE,
+        trust_line=LedgerKeyTrustLine(
+            account_id=Keypair.from_public_key(account_id).xdr_account_id(),
+            asset=ASSET.to_trust_line_asset_xdr_object(),
+        ),
+    )
+    entry = get_ledger_entry(key)
+    if entry is None:
+        return "0"
+    return f"{scale_asset(entry.trust_line.balance.int64):.1f}"
+
+
+# Helps simplify creating & signing a transaction.
+def build_tx(source, signer, ops):
+    builder = TransactionBuilder(
+        source_account=source,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    for op in ops:
+        builder.append_operation(op)
+    tx = builder.set_timeout(30).build()
+    tx.sign(signer)
+    return tx
+
+
+# Helper function to submit transaction and poll for completion using RPC
+def submit_and_poll_transaction(transaction, description="Transaction"):
+    submit_response = server.send_transaction(transaction)
+    if submit_response.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(
+            f"Transaction submission failed: {submit_response.status.value}"
+        )
+
+    print(f"{description} submitted: {submit_response.hash}")
+
+    final_response = server.poll_transaction(submit_response.hash)
+    if final_response.status == GetTransactionStatus.SUCCESS:
+        print(f"{description} completed successfully")
+    elif final_response.status == GetTransactionStatus.NOT_FOUND:
+        # Not in a ledger yet: the outcome is unknown, not failed.
+        print(f"{description} not found yet: {submit_response.hash}")
+    else:
+        print(f"{description} failed: {final_response.status.value}")
+
+    return {
+        "hash": submit_response.hash,
+        "status": final_response.status,
+        "result_xdr": final_response.result_xdr,
+    }
+
+
+# Makes payment from `from_account` to `to_account` of `amount`
+def make_payment(to_account, from_account, from_key, amount):
+    from_id = from_account.account.account_id
+    to_id = to_account.account.account_id
+    print(
+        f"\nPayment: {format_account(from_id)} → {format_account(to_id)} "
+        f"({amount} CLAW)"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            from_account,
+            from_key,
+            [Payment(destination=to_id, asset=ASSET, amount=amount)],
+        ),
+        f"Payment of {amount} CLAW",
+    )
+
+
+# Creates a claimable balance from `from_account` to `to_account` of `amount`
+def create_claimable(from_account, from_key, to_account, amount):
+    from_id = from_account.account.account_id
+    to_id = to_account.account.account_id
+    print(
+        f"\nCreating claimable balance: {format_account(from_id)} → "
+        f"{format_account(to_id)} ({amount} CLAW)"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            from_account,
+            from_key,
+            [
+                CreateClaimableBalance(
+                    asset=ASSET, amount=amount, claimants=[Claimant(destination=to_id)]
+                )
+            ],
+        ),
+        f"Create Claimable Balance of {amount} CLAW",
+    )
+
+
+# Parse the ClaimableBalanceId from the transaction result XDR
+def get_balance_id(tx_response):
+    tx_result = TransactionResult.from_xdr(tx_response["result_xdr"])
+    operation_result = tx_result.result.results[0]
+
+    creation_result = operation_result.tr.create_claimable_balance_result
+    return creation_result.balance_id.to_xdr_bytes().hex()
+
+
+# Clawback the claimable balance using its ID
+def clawback_claimable(issuer_account, issuer_key, balance_id):
+    print(
+        f"\nClawback claimable balance: "
+        f"{format_account(issuer_account.account.account_id)} "
+        f"clawing back balance {balance_id}"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            issuer_account,
+            issuer_key,
+            [ClawbackClaimableBalance(balance_id=balance_id)],
+        ),
+        "Clawback Claimable Balance",
+    )
+
+
+# Clawback `amount` of CLAW from `from_account` by `by_account`
+def do_clawback(by_account, by_key, from_account, amount):
+    from_id = from_account.account.account_id
+    print(
+        f"\nClawback: {format_account(by_account.account.account_id)} "
+        f"clawing back {amount} CLAW from {format_account(from_id)}"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            by_account,
+            by_key,
+            [Clawback(asset=ASSET, from_=from_id, amount=amount)],
+        ),
+        f"Clawback of {amount} CLAW",
+    )
+
+
+# Disable clawback for a trustline by the issuer
+def disable_clawback(issuer_account, issuer_keys, for_trustor):
+    trustor_id = for_trustor.account.account_id
+    print(
+        f"\nDisabling clawback for {format_account(trustor_id)} "
+        f"on asset {ASSET.code}"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            issuer_account,
+            issuer_keys,
+            [
+                SetTrustLineFlags(
+                    trustor=trustor_id,
+                    asset=ASSET,
+                    clear_flags=TrustLineFlags.TRUSTLINE_CLAWBACK_ENABLED_FLAG,
+                )
+            ],
+        ),
+        "Disable Clawback on Trustline",
+    )
+
+
+# Enables clawback on A, and establishes trustlines for the CLAW asset for
+# accounts B and C.
+def preamble():
+    print("\n=== SETTING UP CLAWBACK AND TRUSTLINES ===")
+    account_a, account_b, account_c = get_accounts()
+
+    enable_clawback(account_a, A)
+    print("Clawback enabled successfully")
+
+    # Get fresh accounts after enabling clawback
+    account_a, account_b, account_c = get_accounts()
+    establish_trustline(account_b, B)
+    establish_trustline(account_c, C)
+    print("All trustlines established successfully")
+```
+
 </CodeGroup>
 
 ### Example 1: Payments
@@ -469,9 +837,44 @@ function runExample1() {
 }
 ```
 
+```python Python
+def example_payment_and_then_clawback():
+    print("\n=== PAYMENT AND CLAWBACK EXAMPLE ===")
+    account_a, account_b, account_c = get_accounts()
+
+    # A issues 1000 CLAW to B
+    make_payment(account_b, account_a, A, "1000")
+    print("\n--- After A → B payment ---")
+    account_a, account_b, account_c = get_accounts()
+    show_claw_balances([account_a, account_b, account_c])
+
+    # B sends 500 CLAW to C
+    make_payment(account_c, account_b, B, "500")
+    print("\n--- After B → C payment ---")
+    account_a, account_b, account_c = get_accounts()
+    show_claw_balances([account_a, account_b, account_c])
+
+    # A claws back 250 CLAW from C
+    do_clawback(account_a, A, account_c, "250")
+    return get_accounts()
+
+
+def run_example1():
+    try:
+        fund_accounts()
+        show_xlm_balances(get_accounts())
+        preamble()
+        final_accounts = example_payment_and_then_clawback()
+        print("\n--- FINAL BALANCES ---")
+        show_claw_balances(final_accounts)
+        print("\n=== CLAWBACK DEMO COMPLETED ===")
+    except Exception as error:
+        print("Error in example:", error)
+```
+
 </CodeGroup>
 
-When you invoke `runExample1()`, you should see output similar to:
+When you invoke `runExample1()` (`run_example1()` in Python), you should see output similar to:
 
 ```text
 === ACCOUNT SETUP ===
@@ -641,9 +1044,56 @@ function runExample2() {
 }
 ```
 
+```python Python
+def example_claimable_balance_clawback():
+    print("\n=== CLAIMABLE BALANCE CLAWBACK EXAMPLE ===")
+    account_a, account_b, account_c = get_accounts()
+
+    print("\n--- Initial CLAW balances ---")
+    show_claw_balances([account_a, account_b, account_c])
+
+    # A pays 1000 CLAW to B
+    make_payment(account_b, account_a, A, "1000")
+    print("\n--- After A → B payment ---")
+    account_a, account_b, account_c = get_accounts()
+    show_claw_balances([account_a, account_b, account_c])
+
+    # B creates claimable balance for C
+    tx_resp = create_claimable(account_b, B, account_c, "300")
+    balance_id = get_balance_id(tx_resp)
+    print(f"Claimable balance created with ID: {balance_id}")
+
+    print("\n--- After claimable balance creation ---")
+    account_a, account_b, account_c = get_accounts()
+    show_claw_balances([account_a, account_b, account_c])
+
+    # Check that the claimable balance exists
+    fetch_claimable_balance(balance_id, "claimable balance after creation")
+
+    # A claws back the claimable balance
+    clawback_claimable(account_a, A, balance_id)
+
+    # Check that the claimable balance no longer exists
+    fetch_claimable_balance(balance_id, "claimable balance after clawback")
+    return get_accounts()
+
+
+def run_example2():
+    try:
+        fund_accounts()
+        show_xlm_balances(get_accounts())
+        preamble()
+        final_accounts = example_claimable_balance_clawback()
+        print("\n--- FINAL BALANCES ---")
+        show_claw_balances(final_accounts)
+        print("\n=== CLAIMABLE BALANCE CLAWBACK DEMO COMPLETED ===")
+    except Exception as error:
+        print("Error in example:", error)
+```
+
 </CodeGroup>
 
-When you invoke `runExample2()`, you should see output similar to:
+When you invoke `runExample2()` (`run_example2()` in Python), you should see output similar to:
 
 ```
 === ACCOUNT SETUP ===
@@ -812,9 +1262,53 @@ function runExample3() {
 }
 ```
 
+```python Python
+def example_selective_clawback_then_disable_clawback():
+    print("\n=== SELECTIVE CLAWBACK EXAMPLE ===")
+    account_a, account_b, _ = get_accounts()
+
+    print("\n--- Initial CLAW balances ---")
+    show_claw_balances([account_a, account_b])
+    try:
+        # A pays 1000 CLAW to B
+        make_payment(account_b, account_a, A, "1000")
+        print("\n--- After A → B payment ---")
+        account_a, account_b, _ = get_accounts()
+        show_claw_balances([account_a, account_b])
+
+        # A claws back 500 CLAW from B (should work)
+        do_clawback(account_a, A, account_b, "500")
+        print("\n--- After first clawback ---")
+        account_a, account_b, _ = get_accounts()
+        show_claw_balances([account_a, account_b])
+
+        # A disables clawback for B's trustline
+        disable_clawback(account_a, A, account_b)
+
+        # Try to clawback again (should fail)
+        do_clawback(account_a, A, account_b, "250")
+    except Exception as err:
+        print("Error:", err)
+    return get_accounts()
+
+
+def run_example3():
+    try:
+        fund_accounts()
+        accounts = get_accounts()
+        show_xlm_balances([accounts[0], accounts[1]])  # Only show A and B
+        preamble()  # This sets up clawback and trustlines for A, B, C
+        final_accounts = example_selective_clawback_then_disable_clawback()
+        print("\n--- FINAL BALANCES ---")
+        show_claw_balances([final_accounts[0], final_accounts[1]])  # Only A and B
+        print("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===")
+    except Exception as error:
+        print("Error in example:", error)
+```
+
 </CodeGroup>
 
-When you invoke `runExample3()`, you should see output similar to:
+When you invoke `runExample3()` (`run_example3()` in Python), you should see output similar to:
 
 ```text
 === ACCOUNT SETUP ===

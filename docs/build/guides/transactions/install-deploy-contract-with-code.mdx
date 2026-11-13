@@ -5,14 +5,14 @@ og:description: "This guide will walk you through the process of installing and 
 description: Install and deploy a smart contract with code.
 ---
 
-This guide will walk you through the process of installing and deploying a smart contract using [js-stellar-sdk](https://github.com/stellar/js-stellar-sdk). We will cover the setup of a sample Rust contract, creating a Node.js project to manage the deployment, and finally, installing the Wasm of the contract and deploying it to the network
+This guide will walk you through the process of installing and deploying a smart contract using [js-stellar-sdk](https://github.com/stellar/js-stellar-sdk) or the [Python SDK](https://github.com/StellarCN/py-stellar-base). We will cover the setup of a sample Rust contract, creating a Node.js project to manage the deployment, and finally, installing the Wasm of the contract and deploying it to the network
 
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
 
 1. [Rust](https://www.rust-lang.org) and Cargo (for compiling smart contracts)
-2. [Node.js](https://nodejs.org/en) and npm (for running JavaScript deployment scripts)
+2. [Node.js](https://nodejs.org/en) and npm (for running JavaScript deployment scripts), or [Python](https://www.python.org) 3.10 or later (for running Python deployment scripts)
 3. [Stellar CLI](../../smart-contracts/getting-started/setup#install-the-stellar-cli)
 
 ## Initialize a sample Rust Contract
@@ -41,22 +41,40 @@ npm init -y
 npm install @stellar/stellar-sdk
 ```
 
+For Python, skip the Node.js project and install the SDK instead:
+
+```bash
+pip install stellar-sdk
+```
+
 ## Set Up Deployment Scripts
 
 ### Imports
 
-Import necessary modules in your JavaScript file (save it as `deploy.mjs` to enable ES module imports):
+Import necessary modules in your script. In JavaScript, save the file as `deploy.mjs` to enable ES module imports:
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 import * as StellarSDK from "@stellar/stellar-sdk";
 import fs from "fs";
 ```
+
+```python Python
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import TransactionMeta
+```
+
+</CodeGroup>
 
 ### Installing the Wasm on the network
 
 Create a function to upload the compiled Wasm file:
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 async function uploadWasm(filePath) {
   const bytecode = fs.readFileSync(filePath);
   const account = await server.getAccount(sourceKeypair.publicKey());
@@ -64,6 +82,18 @@ async function uploadWasm(filePath) {
   return await buildAndSendTransaction(account, operation);
 }
 ```
+
+```python Python
+def upload_wasm(file_path):
+    with open(file_path, "rb") as f:
+        bytecode = f.read()
+    account = server.load_account(source_keypair.public_key)
+    return build_and_send_transaction(
+        account, lambda builder: builder.append_upload_contract_wasm_op(bytecode)
+    )
+```
+
+</CodeGroup>
 
 This function reads the compiled Wasm file, retrieves account details from the network, and installs the bytecode using `uploadContractWasm` Stellar operation, which when wrapped in a transaction is sent to the network.
 
@@ -71,7 +101,9 @@ This function reads the compiled Wasm file, retrieves account details from the n
 
 Deploy the contract by referencing the Wasm hash:
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 async function deployContract(response) {
   const account = await server.getAccount(sourceKeypair.publicKey());
   const operation = StellarSDK.Operation.createCustomContract({
@@ -84,13 +116,31 @@ async function deployContract(response) {
 }
 ```
 
-This function uses the Wasm hash to deploy the contract using the `createCustomContract` stellar operation, which when wrapped in a transaction is sent to the network, generating a contract address. `scValToNative` converts each return value to a JavaScript value: the Wasm hash bytes after the upload, and the contract address string after the deploy.
+```python Python
+def deploy_contract(response):
+    account = server.load_account(source_keypair.public_key)
+    wasm_hash = scval.to_native(get_return_value(response))
+    response_deploy = build_and_send_transaction(
+        account,
+        lambda builder: builder.append_create_contract_op(
+            wasm_id=wasm_hash, address=source_keypair.public_key
+        ),
+    )
+    contract_address = scval.to_native(get_return_value(response_deploy))
+    print(contract_address.address)
+```
+
+</CodeGroup>
+
+This function uses the Wasm hash to deploy the contract using the `createCustomContract` stellar operation, which when wrapped in a transaction is sent to the network, generating a contract address. `scValToNative` converts each return value to a JavaScript value: the Wasm hash bytes after the upload, and the contract address string after the deploy. In Python, `append_create_contract_op` adds the same operation, and `scval.to_native` converts the return values: the Wasm hash to `bytes`, and the contract address to an `Address`.
 
 ### Building, Signing and Sending the Transaction
 
 Handle the building, signing, and sending of transactions:
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 async function buildAndSendTransaction(account, operations) {
   // Bid what recent transactions paid, capped at what you're willing to spend.
   // prepareTransaction adds the resource fee on top of this inclusion fee.
@@ -144,13 +194,72 @@ async function buildAndSendTransaction(account, operations) {
 }
 ```
 
+```python Python
+def build_and_send_transaction(account, add_operation):
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    builder = TransactionBuilder(
+        source_account=account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    add_operation(builder)
+    transaction = builder.set_timeout(30).build()
+
+    tx = server.prepare_transaction(transaction)
+    tx.sign(source_keypair)
+
+    print("Submitting transaction...")
+    send_response = server.send_transaction(tx)
+    print(f"Transaction hash: {send_response.hash}")
+
+    # PENDING and DUPLICATE mean the network has the transaction.
+    # TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+    if send_response.status in (
+        SendTransactionStatus.TRY_AGAIN_LATER,
+        SendTransactionStatus.ERROR,
+    ):
+        raise RuntimeError(f"Transaction not accepted: {send_response.status}")
+
+    print("Awaiting confirmation...")
+    # Poll get_transaction once a second, for up to 30 attempts
+    response = server.poll_transaction(send_response.hash, max_attempts=30)
+
+    # NOT_FOUND after the last attempt means the result is unknown,
+    # not that the transaction failed
+    if response.status == GetTransactionStatus.NOT_FOUND:
+        raise RuntimeError("Not confirmed yet. Check again before resending.")
+
+    if response.status == GetTransactionStatus.SUCCESS:
+        print("Transaction successful.")
+        return response
+    print("Transaction failed.")
+    raise RuntimeError(f"Transaction did not succeed: {response.status}")
+
+
+def get_return_value(response):
+    # The contract's return value is in the transaction meta.
+    meta = TransactionMeta.from_xdr(response.result_meta_xdr)
+    meta_body = meta.v4 or meta.v3
+    return meta_body.soroban_meta.return_value
+```
+
+</CodeGroup>
+
 This function constructs a transaction, signs it, and submits it to the network. It checks the `sendTransaction` status first: `TRY_AGAIN_LATER` and `ERROR` mean the network did not accept the transaction, so the function stops with an error. Then `server.pollTransaction` waits for the result and stops after 30 attempts, so the script never hangs. If the attempts run out, the status is still `NOT_FOUND`. That means the result is unknown, not that the transaction failed, so check again before you resend it. [Submit a transaction and wait](/docs/build/guides/transactions/submit-transaction-wait) shows the full handling. For the SDK's own flow, read its [Invoke a Contract guide](https://stellar.github.io/js-stellar-sdk/guides/06-invoke-a-contract/).
+
+The Python version also defines `get_return_value`. The Python SDK's response has no return value field, so the helper reads it from the transaction meta in `result_meta_xdr`.
 
 ## Running the Script
 
 Execute the deployment script:
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 const server = new StellarSDK.rpc.Server(
   "https://soroban-testnet.stellar.org:443",
 );
@@ -166,15 +275,32 @@ try {
 }
 ```
 
+```python Python
+server = SorobanServer("https://soroban-testnet.stellar.org:443")
+source_keypair = Keypair.from_secret("Your_Secret_Key")
+# Adjust this path as necessary
+wasm_file_path = "../hello-world/target/wasm32v1-none/release/hello_world.wasm"
+
+try:
+    upload_response = upload_wasm(wasm_file_path)
+    deploy_contract(upload_response)
+except Exception as error:
+    print(error)
+```
+
+</CodeGroup>
+
 Replace "Your_Secret_Key" with your actual secret key. This script initiates the upload of the Wasm file and deploys the contract, resulting in a contract address where the contract is deployed.
 
-This is just demo code, so ensure that you handle secrets and private keys securely in production environments and never expose them in your code repositories. This guide should provide you with a clear path to installing and deploying your smart contracts using Javascript code.
+This is just demo code, so ensure that you handle secrets and private keys securely in production environments and never expose them in your code repositories. This guide should provide you with a clear path to installing and deploying your smart contracts using JavaScript or Python code.
 
 ## Complete Script
 
 Here are all the snippets stacked together in a single file for convenience:
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 import * as StellarSDK from "@stellar/stellar-sdk";
 import fs from "fs";
 async function uploadWasm(filePath) {
@@ -259,3 +385,97 @@ try {
   console.error(error);
 }
 ```
+
+```python Python
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import TransactionMeta
+
+
+def upload_wasm(file_path):
+    with open(file_path, "rb") as f:
+        bytecode = f.read()
+    account = server.load_account(source_keypair.public_key)
+    return build_and_send_transaction(
+        account, lambda builder: builder.append_upload_contract_wasm_op(bytecode)
+    )
+
+
+def deploy_contract(response):
+    account = server.load_account(source_keypair.public_key)
+    wasm_hash = scval.to_native(get_return_value(response))
+    response_deploy = build_and_send_transaction(
+        account,
+        lambda builder: builder.append_create_contract_op(
+            wasm_id=wasm_hash, address=source_keypair.public_key
+        ),
+    )
+    contract_address = scval.to_native(get_return_value(response_deploy))
+    print(contract_address.address)
+
+
+def build_and_send_transaction(account, add_operation):
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    builder = TransactionBuilder(
+        source_account=account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    add_operation(builder)
+    transaction = builder.set_timeout(30).build()
+
+    tx = server.prepare_transaction(transaction)
+    tx.sign(source_keypair)
+
+    print("Submitting transaction...")
+    send_response = server.send_transaction(tx)
+    print(f"Transaction hash: {send_response.hash}")
+
+    # PENDING and DUPLICATE mean the network has the transaction.
+    # TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+    if send_response.status in (
+        SendTransactionStatus.TRY_AGAIN_LATER,
+        SendTransactionStatus.ERROR,
+    ):
+        raise RuntimeError(f"Transaction not accepted: {send_response.status}")
+
+    print("Awaiting confirmation...")
+    # Poll get_transaction once a second, for up to 30 attempts
+    response = server.poll_transaction(send_response.hash, max_attempts=30)
+
+    # NOT_FOUND after the last attempt means the result is unknown,
+    # not that the transaction failed
+    if response.status == GetTransactionStatus.NOT_FOUND:
+        raise RuntimeError("Not confirmed yet. Check again before resending.")
+
+    if response.status == GetTransactionStatus.SUCCESS:
+        print("Transaction successful.")
+        return response
+    print("Transaction failed.")
+    raise RuntimeError(f"Transaction did not succeed: {response.status}")
+
+
+def get_return_value(response):
+    # The contract's return value is in the transaction meta.
+    meta = TransactionMeta.from_xdr(response.result_meta_xdr)
+    meta_body = meta.v4 or meta.v3
+    return meta_body.soroban_meta.return_value
+
+
+server = SorobanServer("https://soroban-testnet.stellar.org:443")
+source_keypair = Keypair.from_secret("Your_Secret_Key")
+# Adjust this path as necessary
+wasm_file_path = "../hello-world/target/wasm32v1-none/release/hello_world.wasm"
+
+try:
+    upload_response = upload_wasm(wasm_file_path)
+    deploy_contract(upload_response)
+except Exception as error:
+    print(error)
+```
+
+</CodeGroup>

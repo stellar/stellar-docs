@@ -149,4 +149,73 @@ server
   });
 ```
 
+```python Python
+from stellar_sdk import Asset, Keypair, Network, SorobanServer, TransactionBuilder
+from stellar_sdk.soroban_rpc import LinearSleepStrategy, SendTransactionStatus
+
+# Define the network passphrase (use Network.PUBLIC_NETWORK_PASSPHRASE for production)
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+
+# Create keypairs for the source account and the fee account
+source_keypair = Keypair.from_secret("SECREY_KEY_1")
+fee_keypair = Keypair.from_secret("SECREY_KEY_2")
+
+# Load the source account (this requires network interaction)
+server = SorobanServer("https://soroban-testnet.stellar.org")
+source_account = server.load_account(source_keypair.public_key)
+
+# Construct the inner transaction, just a example tx, to transfer 10 XLM to a
+# destination account. The fee account pays the fee below, so the inner
+# transaction can bid the network minimum.
+inner_transaction = (
+    TransactionBuilder(
+        source_account=source_account,
+        network_passphrase=network_passphrase,
+        base_fee=100,
+    )
+    .append_payment_op(
+        destination="GDWH3P3MNTCMOY42CA7RVEACUUAUPZ73XDYKPYUL3TWOFRF37FD6OVM6",
+        asset=Asset.native(),
+        amount="10",
+    )
+    .set_timeout(30)
+    .build()
+)
+
+# Sign the inner transaction with the source account
+inner_transaction.sign(source_keypair)
+
+# The fee account bids what recent transactions paid, capped at what it's
+# willing to spend. 100 stroops is the network minimum and gets outbid when
+# the network is busy.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+# Build the fee-bump transaction
+fee_bump_transaction = TransactionBuilder.build_fee_bump_transaction(
+    fee_source=fee_keypair,
+    base_fee=fee,
+    inner_transaction_envelope=inner_transaction,
+    network_passphrase=network_passphrase,
+)
+
+# Sign the fee-bump transaction with the fee account
+fee_bump_transaction.sign(fee_keypair)
+
+# Submit the fee-bump transaction to the Stellar network
+try:
+    response = server.send_transaction(fee_bump_transaction)
+    if response.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(f"Submission failed: {response}")
+
+    response = server.poll_transaction(
+        response.hash,
+        max_attempts=5,
+        sleep_strategy=LinearSleepStrategy,
+    )
+    print("transaction response:", response)
+except Exception as error:
+    print("Something went wrong!", error)
+```
+
 </CodeGroup>

@@ -56,7 +56,7 @@ Learn more about clawbacks in our [Clawback Guide](./clawbacks).
 
 ## Example
 
-The below code demonstrates via both the JavaScript and Go SDKs how an account (Account A) creates a ClaimableBalanceEntry with two claimants: Account A (itself) and Account B (another recipient).
+The below code demonstrates via the JavaScript, Python, and Go SDKs how an account (Account A) creates a ClaimableBalanceEntry with two claimants: Account A (itself) and Account B (another recipient).
 
 Each of these accounts can only claim the balance under unique conditions. Account B has a full minute to claim the balance before Account A can reclaim the balance back for itself.
 
@@ -215,6 +215,127 @@ async function createClaimableBalance() {
 
 // Run the function
 createClaimableBalance();
+```
+
+```python Python
+import math
+import time
+
+import requests
+from stellar_sdk import (
+    Asset,
+    ClaimPredicate,
+    Claimant,
+    CreateClaimableBalance,
+    Keypair,
+    Network,
+    SorobanServer,
+    TransactionBuilder,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus
+from stellar_sdk.xdr import TransactionResult
+
+
+def create_claimable_balance():
+    """Creates a claimable balance on Stellar testnet.
+
+    A claimable balance allows splitting a payment into two parts:
+    1. Sender creates the claimable balance
+    2. Recipient(s) can claim it later
+    """
+    # Connect to Stellar testnet RPC server
+    server = SorobanServer("https://soroban-testnet.stellar.org")
+
+    A = Keypair.random()
+    B = Keypair.random()
+
+    print(f"Account A... public key: {A.public_key}, secret: {A.secret}")
+    print(f"Account B... public key: {B.public_key}, secret: {B.secret}")
+
+    try:
+        # Fund the source account with testnet's Friendbot
+        friendbot_url = server.get_network().friendbot_url
+        requests.get(
+            friendbot_url, params={"addr": A.public_key}, timeout=30
+        ).raise_for_status()
+
+        # Load the funded account to get current sequence number
+        a_account = server.load_account(A.public_key)
+        print(f"Account sequence: {a_account.sequence}")
+
+        # Create a claimable balance with our two above-described conditions.
+        soon = math.ceil(time.time() + 60)
+        b_can_claim = ClaimPredicate.predicate_before_relative_time(60)
+        a_can_reclaim = ClaimPredicate.predicate_not(
+            ClaimPredicate.predicate_before_absolute_time(soon)
+        )
+
+        # Create claimable balance operation
+        claimable_balance_op = CreateClaimableBalance(
+            claimants=[
+                Claimant(destination=B.public_key, predicate=b_can_claim),
+                Claimant(destination=A.public_key, predicate=a_can_reclaim),
+            ],
+            asset=Asset.native(),
+            amount="420",
+        )
+
+        # Bid what recent transactions paid, capped at what you're willing to spend.
+        MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+        fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+        # Build the transaction
+        print("Building transaction...")
+        transaction = (
+            TransactionBuilder(
+                source_account=a_account,
+                network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+                base_fee=fee,
+            )
+            .append_operation(claimable_balance_op)
+            .set_timeout(180)
+            .build()
+        )
+
+        # Claimable BalanceIds are predictable and can be derived from the
+        # Sha256 hash of the operation that creates them.
+        predictable_balance_id = transaction.transaction.get_claimable_balance_id(0)
+
+        # Sign the transaction with source account
+        transaction.sign(A)
+
+        # Submit transaction to the network
+        print("Submitting transaction...")
+        response = server.send_transaction(transaction)
+
+        # Poll for transaction completion (RPC is asynchronous)
+        print("Polling for result...")
+        final_response = server.poll_transaction(response.hash)
+
+        if final_response.status == GetTransactionStatus.SUCCESS:
+            # Extract claimable balance ID from transaction result
+            tx_result = TransactionResult.from_xdr(final_response.result_xdr)
+            results = tx_result.result.results
+            operation_result = results[0].tr.create_claimable_balance_result
+            balance_id = operation_result.balance_id.to_xdr_bytes().hex()
+
+            print(f"Balance ID (from txResult): {balance_id}")
+            print(
+                "Predictable Balance ID (obtained before txSubmission): "
+                f"{predictable_balance_id}"
+            )
+            if balance_id == predictable_balance_id:
+                print("Balance ID from txResult matches the predictable ID")
+            else:
+                print(" Balance ID from txResult does NOT match the predictable ID")
+        else:
+            print(f"Transaction failed: {final_response.status.value}")
+    except Exception as error:
+        print(f"Error: {error}")
+
+
+# Run the function
+create_claimable_balance()
 ```
 
 ```go Go
@@ -444,6 +565,73 @@ async function fetchClaimableBalance(balanceId) {
 fetchClaimableBalance(BALANCE_ID);
 ```
 
+```python Python
+from stellar_sdk import Asset, SorobanServer, StrKey
+from stellar_sdk.xdr import (
+    ClaimableBalanceID,
+    LedgerEntryData,
+    LedgerEntryType,
+    LedgerKey,
+    LedgerKeyClaimableBalance,
+)
+
+# Replace with your actual Claimable Balance ID
+# Format: 72 hex characters (includes ClaimableBalanceId type + hash)
+BALANCE_ID = "00000000db1108ff108a807150d02b8672d9a8c0e808bff918cdbe5c7605e63a7f565df5"
+
+
+def fetch_claimable_balance(balance_id):
+    """Fetches and displays claimable balance details using Stellar RPC."""
+    server = SorobanServer("https://soroban-testnet.stellar.org")
+
+    try:
+        print(f"Looking up balance ID: {balance_id}")
+
+        # Parse the claimable balance ID from hex XDR
+        claimable_balance_id = ClaimableBalanceID.from_xdr_bytes(
+            bytes.fromhex(balance_id)
+        )
+
+        # Create ledger key for the claimable balance entry
+        ledger_key = LedgerKey(
+            LedgerEntryType.CLAIMABLE_BALANCE,
+            claimable_balance=LedgerKeyClaimableBalance(
+                balance_id=claimable_balance_id
+            ),
+        )
+
+        print("Fetching from RPC server...")
+
+        # Use SDK's get_ledger_entries method with XDR object list
+        response = server.get_ledger_entries([ledger_key])
+
+        if response.entries:
+            entry_data = LedgerEntryData.from_xdr(response.entries[0].xdr)
+            claimable_balance = entry_data.claimable_balance
+
+            asset = Asset.from_xdr_object(claimable_balance.asset)
+
+            print("Found claimable balance")
+            print(f"Amount: {claimable_balance.amount.int64}")
+            if asset.is_native():
+                print("Asset: native ")
+            else:
+                print(f"Asset: {asset.code}:{asset.issuer} ")
+            # Show claimant details
+            print("\nClaimants:")
+            for index, claimant in enumerate(claimable_balance.claimants):
+                destination = claimant.v0.destination.account_id.ed25519.uint256
+                address = StrKey.encode_ed25519_public_key(destination)
+                print(f"   {index + 1}. {address}")
+        else:
+            print("Claimable balance not found")
+    except Exception as error:
+        print(f"Error: {error}")
+
+
+fetch_claimable_balance(BALANCE_ID)
+```
+
 ```go Go
 package main
 
@@ -597,6 +785,72 @@ async function claimClaimableBalance(balanceId, claimantSecret) {
 }
 
 claimClaimableBalance(BALANCE_ID, CLAIMANT_SECRET);
+```
+
+```python Python
+from stellar_sdk import (
+    ClaimClaimableBalance,
+    Keypair,
+    Network,
+    SorobanServer,
+    TransactionBuilder,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus
+
+# Replace with your claimable balance ID
+BALANCE_ID = "0000000067a94da6c5d487fa09fc93c558ca91f6338413d3152d2a17771353f7c4111e11"
+
+# Replace with the secret key of one of the claimants
+CLAIMANT_SECRET = "SDJLAUDIHMDO6PAIVVVYH5IFIE5QMZOOBHO37NLF43335ULECK6EURVJ"
+
+
+def claim_claimable_balance(balance_id, claimant_secret):
+    """Claims a claimable balance."""
+    server = SorobanServer("https://soroban-testnet.stellar.org")
+
+    try:
+        print(f"Claiming balance ID: {balance_id}")
+        # Create keypair from claimant's secret key
+        claimant_keypair = Keypair.from_secret(claimant_secret)
+
+        # Load the claiming account
+        claimant_account = server.load_account(claimant_keypair.public_key)
+
+        # Create claim operation (it takes the balance ID as a hex string)
+        claim_operation = ClaimClaimableBalance(balance_id=balance_id)
+
+        # Bid what recent transactions paid, capped at what you're willing to spend.
+        MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+        fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+        # Build and sign transaction
+        transaction = (
+            TransactionBuilder(
+                source_account=claimant_account,
+                network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+                base_fee=fee,
+            )
+            .append_operation(claim_operation)
+            .set_timeout(180)
+            .build()
+        )
+
+        transaction.sign(claimant_keypair)
+
+        # Submit and poll for completion
+        response = server.send_transaction(transaction)
+        final_response = server.poll_transaction(response.hash)
+
+        if final_response.status == GetTransactionStatus.SUCCESS:
+            print("Claimable balance claimed successfully")
+            print(f"Transaction hash: {response.hash}")
+        else:
+            print(f"Transaction failed: {final_response.status.value}")
+    except Exception as error:
+        print(f"Error: {error}")
+
+
+claim_claimable_balance(BALANCE_ID, CLAIMANT_SECRET)
 ```
 
 ```go Go

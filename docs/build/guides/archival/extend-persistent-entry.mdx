@@ -31,9 +31,11 @@ There's also a ceiling: an entry can only be extended up to the network's [maxim
 
 ## Extending a persistent entry
 
-The example below assumes your contract keys its data with a symbol, which is the common case. If your contract uses a vec, a map, or a struct as its storage key, build the `ScVal` that matches instead of reaching for `scvSymbol`.
+The example below assumes your contract keys its data with a symbol, which is the common case. If your contract uses a vec, a map, or a struct as its storage key, build the `ScVal` that matches instead of reaching for `scvSymbol` (`scval.to_symbol` in Python).
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { Server } from "@stellar/stellar-sdk/rpc";
 
@@ -87,9 +89,74 @@ async function extendPersistentEntryTTL(
 }
 ```
 
+```python Python
+from stellar_sdk import (
+    Address,
+    Keypair,
+    Network,
+    SorobanDataBuilder,
+    SorobanServer,
+    TransactionBuilder,
+    scval,
+    xdr,
+)
+from stellar_sdk.soroban_rpc import SendTransactionResponse
+
+
+def extend_persistent_entry_ttl(
+    contract_id: str,
+    storage_key: str,
+    source_keypair: Keypair,
+) -> SendTransactionResponse:
+    server = SorobanServer("https://soroban-testnet.stellar.org")
+    account = server.load_account(source_keypair.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    # Create an identifier for the persistent entry
+    persistent_entry = xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_DATA,
+        contract_data=xdr.LedgerKeyContractData(
+            contract=Address(contract_id).to_xdr_sc_address(),
+            key=scval.to_symbol(storage_key),
+            durability=xdr.ContractDataDurability.PERSISTENT,
+        ),
+    )
+
+    # Build the transaction and attach the Soroban transaction data
+    transaction = (
+        TransactionBuilder(
+            source_account=account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_extend_footprint_ttl_op(
+            # The number of ledgers past the LCL (last closed ledger) by which
+            # to extend. Roughly 5 days
+            extend_to=100_000,
+        )
+        .set_timeout(30)
+        .set_soroban_data(
+            SorobanDataBuilder().set_read_only([persistent_entry]).build()
+        )
+        .build()
+    )
+
+    # Prepare the transaction for signing.
+    transaction = server.prepare_transaction(transaction)
+
+    transaction.sign(source_keypair)
+    return server.send_transaction(transaction)
+```
+
+</CodeGroup>
+
 ## Extending the contract instance
 
-`Contract.getFootprint()` hands you the ledger key for the deployed contract instance, so you don't have to assemble that one by hand.
+In JavaScript, `Contract.getFootprint()` hands you the ledger key for the deployed contract instance, so you don't have to assemble that one by hand. In Python, build it from the contract address and the `SCV_LEDGER_KEY_CONTRACT_INSTANCE` value.
 
 <Note>
 
@@ -99,7 +166,9 @@ If you're coming from the Rust side, this is a real difference worth internalizi
 
 </Note>
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { Server } from "@stellar/stellar-sdk/rpc";
 
@@ -147,13 +216,79 @@ async function extendContractInstanceTTL(
 }
 ```
 
+```python Python
+from stellar_sdk import (
+    Address,
+    Keypair,
+    Network,
+    SorobanDataBuilder,
+    SorobanServer,
+    TransactionBuilder,
+    xdr,
+)
+from stellar_sdk.soroban_rpc import SendTransactionResponse
+
+
+# The ledger key for a deployed contract instance
+def contract_instance_key(contract_id: str) -> xdr.LedgerKey:
+    return xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_DATA,
+        contract_data=xdr.LedgerKeyContractData(
+            contract=Address(contract_id).to_xdr_sc_address(),
+            key=xdr.SCVal(xdr.SCValType.SCV_LEDGER_KEY_CONTRACT_INSTANCE),
+            durability=xdr.ContractDataDurability.PERSISTENT,
+        ),
+    )
+
+
+def extend_contract_instance_ttl(
+    contract_id: str,
+    source_keypair: Keypair,
+) -> SendTransactionResponse:
+    server = SorobanServer("https://soroban-testnet.stellar.org")
+    account = server.load_account(source_keypair.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    # Get the ledger key for the contract instance
+    footprint = contract_instance_key(contract_id)
+
+    # Build the transaction and attach the Soroban transaction data
+    transaction = (
+        TransactionBuilder(
+            source_account=account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_extend_footprint_ttl_op(
+            extend_to=100_000,  # The number of ledgers past the LCL by which to extend
+        )
+        .set_timeout(30)
+        .set_soroban_data(SorobanDataBuilder().set_read_only([footprint]).build())
+        .build()
+    )
+
+    # Prepare the transaction
+    transaction = server.prepare_transaction(transaction)
+
+    transaction.sign(source_keypair)
+    return server.send_transaction(transaction)
+```
+
+</CodeGroup>
+
 ## Extending the contract code
 
 The code entry is keyed by the Wasm hash rather than by the contract address, and there's no local way to derive one from the other. That means one extra round trip: read the contract's instance entry from the network, pull the Wasm hash out of its executable, and build a `contractCode` ledger key from it.
 
 It's worth knowing every contract deployed from the same Wasm shares that single code entry, so extending it benefits all of them at once.
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { Server } from "@stellar/stellar-sdk/rpc";
 
@@ -228,6 +363,83 @@ async function extendContractCodeTTL(
 }
 ```
 
+```python Python
+from stellar_sdk import (
+    Keypair,
+    Network,
+    SorobanDataBuilder,
+    SorobanServer,
+    TransactionBuilder,
+    xdr,
+)
+from stellar_sdk.soroban_rpc import SendTransactionResponse
+
+
+# Look up the hash of the Wasm code that a deployed contract runs.
+# contract_instance_key() comes from the previous section.
+def get_wasm_hash(server: SorobanServer, contract_id: str) -> xdr.Hash:
+    entries = server.get_ledger_entries([contract_instance_key(contract_id)]).entries
+
+    if not entries:
+        raise ValueError(f"No instance entry found for {contract_id}")
+
+    # Each step checks the union arm and raises a TypeError if it doesn't match
+    data = xdr.LedgerEntryData.from_xdr(entries[0].xdr)
+    if data.contract_data is None:
+        raise TypeError("Expected a contract data entry")
+    instance = data.contract_data.val.instance
+    if instance is None:
+        raise TypeError("Expected a contract instance")
+    executable = instance.executable
+    if executable.type != xdr.ContractExecutableType.CONTRACT_EXECUTABLE_WASM:
+        raise TypeError("Expected a Wasm executable")
+    return executable.wasm_hash
+
+
+def extend_contract_code_ttl(
+    contract_id: str,
+    source_keypair: Keypair,
+) -> SendTransactionResponse:
+    server = SorobanServer("https://soroban-testnet.stellar.org")
+    account = server.load_account(source_keypair.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    # Create an identifier for the Wasm code entry
+    code_entry = xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_CODE,
+        contract_code=xdr.LedgerKeyContractCode(
+            hash=get_wasm_hash(server, contract_id),
+        ),
+    )
+
+    # Build the transaction and attach the Soroban transaction data
+    transaction = (
+        TransactionBuilder(
+            source_account=account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_extend_footprint_ttl_op(
+            extend_to=100_000,  # The number of ledgers past the LCL by which to extend
+        )
+        .set_timeout(30)
+        .set_soroban_data(SorobanDataBuilder().set_read_only([code_entry]).build())
+        .build()
+    )
+
+    # Prepare the transaction
+    transaction = server.prepare_transaction(transaction)
+
+    transaction.sign(source_keypair)
+    return server.send_transaction(transaction)
+```
+
+</CodeGroup>
+
 <Warning>
 
 `getWasmHash` assumes the contract runs an executable that _was deployed_. A [Stellar Asset Contract](/docs/tokens/stellar-asset-contract) instance has a built-in executable instead of a Wasm hash, so `getWasmHash` throws a `TypeError` for one of those. Check `instance.executable.type` first if your code has to handle both.
@@ -236,9 +448,11 @@ async function extendContractCodeTTL(
 
 ## Extending all three together
 
-A Soroban operation has to be the only operation in its transaction, so you might expect to need one transaction per entry. Happily, you don't. A single `ExtendFootprintTTLOp` extends _every_ entry listed in the transaction's read-only footprint, applying the same `extendTo` target to all of them. When a batch of entries should live until the same ledger, list them all in one footprint and extend them together. Here's all three at once, reusing the `getWasmHash` helper from the previous section:
+A Soroban operation has to be the only operation in its transaction, so you might expect to need one transaction per entry. Happily, you don't. A single `ExtendFootprintTTLOp` extends _every_ entry listed in the transaction's read-only footprint, applying the same `extendTo` target to all of them. When a batch of entries should live until the same ledger, list them all in one footprint and extend them together. Here's all three at once, reusing the `getWasmHash` helper (`get_wasm_hash` in Python) from the previous section:
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { Server } from "@stellar/stellar-sdk/rpc";
 
@@ -300,6 +514,82 @@ async function extendContractAndPersistentEntry(
 }
 ```
 
+```python Python
+from stellar_sdk import (
+    Address,
+    Keypair,
+    Network,
+    SorobanDataBuilder,
+    SorobanServer,
+    TransactionBuilder,
+    scval,
+    xdr,
+)
+from stellar_sdk.soroban_rpc import SendTransactionResponse
+
+
+# contract_instance_key() and get_wasm_hash() come from the previous sections.
+def extend_contract_and_persistent_entry(
+    contract_id: str,
+    storage_key: str,
+    source_keypair: Keypair,
+) -> SendTransactionResponse:
+    server = SorobanServer("https://soroban-testnet.stellar.org")
+    account = server.load_account(source_keypair.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    # Ledger key for the persistent entry...
+    persistent_entry = xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_DATA,
+        contract_data=xdr.LedgerKeyContractData(
+            contract=Address(contract_id).to_xdr_sc_address(),
+            key=scval.to_symbol(storage_key),
+            durability=xdr.ContractDataDurability.PERSISTENT,
+        ),
+    )
+
+    # ...the contract instance...
+    instance_entry = contract_instance_key(contract_id)
+
+    # ...and the Wasm code that instance runs.
+    code_entry = xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_CODE,
+        contract_code=xdr.LedgerKeyContractCode(
+            hash=get_wasm_hash(server, contract_id),
+        ),
+    )
+
+    # A single ExtendFootprintTTL operation extends the whole read-only footprint.
+    transaction = (
+        TransactionBuilder(
+            source_account=account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_extend_footprint_ttl_op(
+            extend_to=100_000,  # one shared target, applied to every key below
+        )
+        .set_timeout(30)
+        # List every key to extend together in one read-only footprint.
+        .set_soroban_data(
+            SorobanDataBuilder()
+            .set_read_only([persistent_entry, instance_entry, code_entry])
+            .build()
+        )
+        .build()
+    )
+
+    transaction = server.prepare_transaction(transaction)
+    transaction.sign(source_keypair)
+    return server.send_transaction(transaction)
+```
+
+</CodeGroup>
+
 That shared `extendTo` is the one real constraint. Entries that need _different_ target TTLs can't share an operation, so extend each one in its own transaction. That's exactly what the `extendPersistentEntryTTL`, `extendContractInstanceTTL`, and `extendContractCodeTTL` helpers above do: each builds its own operation, so each can carry its own `extendTo` target.
 
 <Note>
@@ -310,7 +600,9 @@ Batching keys into one footprint grows the transaction's resource usage, since `
 
 Putting one of these to work looks like this:
 
-```typescript
+<CodeGroup>
+
+```typescript JavaScript
 const contractId = "CBEE2DHGMYRKJKSJO5E55LBKFMPXE57ZWKTXTCRMC5ANIRJ7IW2Y2WVE";
 const storageKey = "BALANCE";
 const sourceKeypair = StellarSdk.Keypair.fromSecret(
@@ -321,3 +613,17 @@ extendPersistentEntryTTL(contractId, storageKey, sourceKeypair)
   .then((result) => console.log("Extension successful:", result))
   .catch((error) => console.error("Extension failed:", error));
 ```
+
+```python Python
+contract_id = "CBEE2DHGMYRKJKSJO5E55LBKFMPXE57ZWKTXTCRMC5ANIRJ7IW2Y2WVE"
+storage_key = "BALANCE"
+source_keypair = Keypair.from_secret("SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+
+try:
+    result = extend_persistent_entry_ttl(contract_id, storage_key, source_keypair)
+    print("Extension successful:", result)
+except Exception as error:
+    print("Extension failed:", error)
+```
+
+</CodeGroup>

@@ -223,124 +223,166 @@ sendPayments().catch((error) => {
 });
 ```
 
-```java Java
-// SendPaymentExample.java
-// Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
+```python Python
+# send_payment.py
+# pip install stellar-sdk requests
 
-import org.stellar.sdk.Account;
-import org.stellar.sdk.AssetTypeNative;
-import org.stellar.sdk.KeyPair;
-import org.stellar.sdk.MemoId;
-import org.stellar.sdk.Network;
-import org.stellar.sdk.SorobanServer;
-import org.stellar.sdk.Transaction;
-import org.stellar.sdk.TransactionBuilder;
-import org.stellar.sdk.operations.PaymentOperation;
-import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
-import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
-import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import sys
+import time
 
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
+import requests
+from stellar_sdk import Asset, Keypair, Network, SorobanServer, TransactionBuilder
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 
-import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
+rpc_server = SorobanServer("https://soroban-testnet.stellar.org")
 
-public class SendPaymentJavaExample {
-  public static void main(String[] args) throws Exception {
-    final String RPC_URL = "https://soroban-testnet.stellar.org";
-    SorobanServer rpc = new SorobanServer(RPC_URL);
 
-    // Generate sender/recipient and fund via Friendbot (testnet)
-    // get the friendbot url from rpc info
-    var info = rpc.getNetwork();
-    System.out.println("Friendbot URL: " + info.getFriendbotUrl());
+def fund_with_friendbot(account_id):
+    friendbot_url = rpc_server.get_network().friendbot_url
+    response = requests.get(friendbot_url, params={"addr": account_id}, timeout=30)
+    response.raise_for_status()
 
-    KeyPair sender = KeyPair.random();
-    KeyPair recipient = KeyPair.random();
-    friendbotFund(sender.getAccountId(), info.getFriendbotUrl());
-    friendbotFund(recipient.getAccountId(), info.getFriendbotUrl());
-    Files.writeString(Paths.get("sender_public.key"),
-        sender.getAccountId(),
-        StandardOpenOption.CREATE,
-        StandardOpenOption.TRUNCATE_EXISTING,
-        StandardOpenOption.WRITE);
 
-    // Load sender sequence using RPC getLedgerEntries
-    Account source = new Account(sender.getAccountId(), rpc.getAccount(sender.getAccountId()).getSequenceNumber());
+def send_payments():
+    sender_key_pair = Keypair.random()
+    recipient_key_pair = Keypair.random()
 
-    // do this in a loop, send payment once every 30 seconds
-    while (true) {
-      // Bid what recent transactions paid, capped at what you're willing to spend.
-      // Transaction.MIN_BASE_FEE (100 stroops) is the network minimum and gets
-      // outbid when the network is busy.
-      long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
-      long fee = Math.min(rpc.getFeeStats().getInclusionFee().getP90(), maxFee);
+    try:
+        # Fund the sender account with Friendbot, then load it
+        fund_with_friendbot(sender_key_pair.public_key)
+        sender_account = rpc_server.load_account(sender_key_pair.public_key)
+        print("Sender Account funded with airdrop")
+        print("Sender Account ID:", sender_account.account.account_id)
+        print("Sender Sequence number:", sender_account.sequence)
 
-      // Build classic payment: 10 XLM, memo id, 180s timeout
-      Transaction tx = new TransactionBuilder(source, Network.TESTNET)
-          .setBaseFee(fee)
-          .addOperation(PaymentOperation.builder().destination(recipient.getAccountId()).asset(new AssetTypeNative())
-              .amount(new BigDecimal("10")).build())
-          .addMemo(new MemoId(1234567890L))
-          .setTimeout(180)
-          .build();
+        # Note - this persistence of sender id to a file on file system is only
+        # done for demo purposes. It shares the created sender account with the
+        # payment monitor example which will run next.
+        with open("sender_public.key", "w") as key_file:
+            key_file.write(sender_account.account.account_id)
 
-      tx.sign(sender);
+        print("\n\n")
 
-      // Submit via RPC
-      var sendResp = rpc.sendTransaction(tx);
-      if (!SendTransactionStatus.PENDING.equals(sendResp.getStatus())) {
-        throw new RuntimeException("Failed to send transaction, status: " + sendResp.getStatus());
-      }
-      System.out.println("Submitted. Hash: " + sendResp.getHash());
+        fund_with_friendbot(recipient_key_pair.public_key)
+        print("Recipient Account funded with airdrop")
+        print("Recipient Account ID:", recipient_key_pair.public_key)
+    except Exception as err:
+        print("Airdrop / Account loading failed:", err)
+        return
 
-      // Poll final status (throws on FAILED/NOT_FOUND)
-      var finalResp = pollTransaction(rpc, sendResp.getHash());
-      System.out.println("Success! Committed on ledger: " + finalResp.getLedger());
-      Thread.sleep(30000L); // wait 30s
-    }
-  }
+    # Now call send_payment with the funded account, in a loop of once every 30 seconds
+    while True:
+        print("\n\nSending payment...")
+        send_payment(sender_key_pair, sender_account, recipient_key_pair.public_key)
+        time.sleep(30)  # wait for 30 seconds
 
-  // Fund account with Friendbot (testnet)
-  static void friendbotFund(String accountId, String friendbotUrl) throws Exception {
-    OkHttpClient http = new OkHttpClient.Builder().build();
-    String url = friendbotUrl + "?addr=" + URLEncoder.encode(accountId, StandardCharsets.UTF_8);
 
-    Request req = new Request.Builder().url(url).build();
-    Response res = http.newCall(req).execute();
+def send_payment(sender, sender_account, recipient):
+    # The next step is to parametrize and build the transaction object:
+    # Using the source account we just loaded we begin to assemble the transaction.
+    # We bid what recent transactions paid, capped at what we're willing to spend.
+    # 100 stroops is the network minimum and gets outbid when the network is busy.
+    # We also set the network passphrase to TESTNET.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(rpc_server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+    transaction = (
+        TransactionBuilder(
+            source_account=sender_account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        # We then add a payment operation to the transaction object.
+        # This operation will send 10 XLM to the destination account.
+        # Obs.: Not specifying a explicit source account here means that the
+        # operation will use the source account of the whole transaction.
+        .append_payment_op(destination=recipient, asset=Asset.native(), amount="10")
+        # We include an optional memo which oftentimes is used to identify the
+        # transaction when working with pooled accounts or to facilitate reconciliation.
+        .add_id_memo(1234567890)
+        # Finally, we set a timeout for the transaction.
+        # This means that the transaction will not be valid anymore after 180 seconds.
+        .set_timeout(180)
+        .build()
+    )
 
-    if (res.code() != 200) {
-      throw new RuntimeException("Friendbot funding failed: " + res.code() + " " + res.body().string());
-    }
-    System.out.println("Funded: " + accountId);
-  }
+    # We sign the transaction with the source account's secret key.
+    transaction.sign(sender)
 
-  // Helper: wrap SorobanServer.pollTransaction and enforce failure handling
-  static GetTransactionResponse pollTransaction(SorobanServer rpc, String txHash) throws Exception {
-    GetTransactionResponse resp = rpc.pollTransaction(txHash);
+    # Now we can send the transaction to the network.
+    # send_transaction returns right away with one of four statuses:
+    # PENDING, DUPLICATE, TRY_AGAIN_LATER or ERROR.
+    send_transaction_response = rpc_server.send_transaction(transaction)
 
-    if (GetTransactionStatus.SUCCESS.equals(resp.getStatus())) {
-      return resp;
-    }
-    if (GetTransactionStatus.FAILED.equals(resp.getStatus())) {
-      if (resp.getResultXdr() != null) {
-        System.err.println("Failed TX, Result XDR (base64): " + resp.getResultXdr());
-      }
-      throw new RuntimeException("Transaction failed.");
-    }
-    if (GetTransactionStatus.NOT_FOUND.equals(resp.getStatus())) {
-      throw new RuntimeException("Transaction not found.");
-    }
-    throw new RuntimeException("Unexpected status: " + resp.getStatus());
-  }
-}
+    # The transaction can go into a ledger only until its time bound (max_time).
+    max_time = transaction.transaction.preconditions.time_bounds.max_time
 
+    # TRY_AGAIN_LATER means the network did not accept the transaction this
+    # time, for example because an earlier transaction from this account still
+    # waits for a ledger. Wait, then send the same signed transaction again.
+    while (
+        send_transaction_response.status == SendTransactionStatus.TRY_AGAIN_LATER
+        and send_transaction_response.latest_ledger_close_time <= max_time
+    ):
+        time.sleep(2)
+        send_transaction_response = rpc_server.send_transaction(transaction)
+
+    # The loop stopped because a ledger closed after max_time. The network never
+    # accepted the transaction, and now it can never go into a ledger.
+    if send_transaction_response.status == SendTransactionStatus.TRY_AGAIN_LATER:
+        raise RuntimeError("Transaction expired before the network accepted it")
+
+    # ERROR means the network rejected the transaction. But a transaction that
+    # is already in a ledger also returns ERROR (txBAD_SEQ) when you send it
+    # again, so look it up before you raise.
+    if send_transaction_response.status == SendTransactionStatus.ERROR:
+        known = rpc_server.get_transaction(send_transaction_response.hash)
+        if known.status == GetTransactionStatus.NOT_FOUND:
+            raise RuntimeError(
+                "Failed to send transaction, status: "
+                f"{send_transaction_response.status.value}"
+            )
+
+    # PENDING means the network accepted the transaction. DUPLICATE means the
+    # network already has this transaction from an earlier send. In both cases,
+    # wait for the result.
+    if send_transaction_response.status in (
+        SendTransactionStatus.PENDING,
+        SendTransactionStatus.DUPLICATE,
+    ):
+        print("Payment Transaction submitted, hash:", send_transaction_response.hash)
+
+    # get_transaction returns NOT_FOUND until the transaction is in a ledger.
+    # NOT_FOUND does not mean that the transaction failed, so keep polling
+    # until a ledger closes after max_time.
+    final_status = rpc_server.get_transaction(send_transaction_response.hash)
+    while (
+        final_status.status == GetTransactionStatus.NOT_FOUND
+        and final_status.latest_ledger_close_time <= max_time
+    ):
+        time.sleep(1)
+        final_status = rpc_server.get_transaction(send_transaction_response.hash)
+
+    # We then check the final status of the transaction and handle it accordingly.
+    if final_status.status == GetTransactionStatus.FAILED:
+        print("Transaction failed, status:", final_status.status.value)
+        if final_status.result_xdr:
+            print("Transaction Result XDR (base64):", final_status.result_xdr)
+        raise RuntimeError(
+            f"Transaction failed with status: {final_status.status.value}"
+        )
+    if final_status.status == GetTransactionStatus.NOT_FOUND:
+        # A ledger closed after max_time, so the transaction can never go into
+        # a ledger. Only now is it safe to send a new payment.
+        raise RuntimeError("Transaction expired without going into a ledger")
+    print("Success! Committed on Ledger:", final_status.ledger)
+
+
+if __name__ == "__main__":
+    try:
+        send_payments()
+    except Exception as error:
+        print("Error executing send_payments function:", error)
+        sys.exit(1)
 ```
 
 ```go Go
@@ -540,6 +582,126 @@ func main() {
 }
 ```
 
+```java Java
+// SendPaymentExample.java
+// Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
+
+import org.stellar.sdk.Account;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.MemoId;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+
+public class SendPaymentJavaExample {
+  public static void main(String[] args) throws Exception {
+    final String RPC_URL = "https://soroban-testnet.stellar.org";
+    SorobanServer rpc = new SorobanServer(RPC_URL);
+
+    // Generate sender/recipient and fund via Friendbot (testnet)
+    // get the friendbot url from rpc info
+    var info = rpc.getNetwork();
+    System.out.println("Friendbot URL: " + info.getFriendbotUrl());
+
+    KeyPair sender = KeyPair.random();
+    KeyPair recipient = KeyPair.random();
+    friendbotFund(sender.getAccountId(), info.getFriendbotUrl());
+    friendbotFund(recipient.getAccountId(), info.getFriendbotUrl());
+    Files.writeString(Paths.get("sender_public.key"),
+        sender.getAccountId(),
+        StandardOpenOption.CREATE,
+        StandardOpenOption.TRUNCATE_EXISTING,
+        StandardOpenOption.WRITE);
+
+    // Load sender sequence using RPC getLedgerEntries
+    Account source = new Account(sender.getAccountId(), rpc.getAccount(sender.getAccountId()).getSequenceNumber());
+
+    // do this in a loop, send payment once every 30 seconds
+    while (true) {
+      // Bid what recent transactions paid, capped at what you're willing to spend.
+      // Transaction.MIN_BASE_FEE (100 stroops) is the network minimum and gets
+      // outbid when the network is busy.
+      long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+      long fee = Math.min(rpc.getFeeStats().getInclusionFee().getP90(), maxFee);
+
+      // Build classic payment: 10 XLM, memo id, 180s timeout
+      Transaction tx = new TransactionBuilder(source, Network.TESTNET)
+          .setBaseFee(fee)
+          .addOperation(PaymentOperation.builder().destination(recipient.getAccountId()).asset(new AssetTypeNative())
+              .amount(new BigDecimal("10")).build())
+          .addMemo(new MemoId(1234567890L))
+          .setTimeout(180)
+          .build();
+
+      tx.sign(sender);
+
+      // Submit via RPC
+      var sendResp = rpc.sendTransaction(tx);
+      if (!SendTransactionStatus.PENDING.equals(sendResp.getStatus())) {
+        throw new RuntimeException("Failed to send transaction, status: " + sendResp.getStatus());
+      }
+      System.out.println("Submitted. Hash: " + sendResp.getHash());
+
+      // Poll final status (throws on FAILED/NOT_FOUND)
+      var finalResp = pollTransaction(rpc, sendResp.getHash());
+      System.out.println("Success! Committed on ledger: " + finalResp.getLedger());
+      Thread.sleep(30000L); // wait 30s
+    }
+  }
+
+  // Fund account with Friendbot (testnet)
+  static void friendbotFund(String accountId, String friendbotUrl) throws Exception {
+    OkHttpClient http = new OkHttpClient.Builder().build();
+    String url = friendbotUrl + "?addr=" + URLEncoder.encode(accountId, StandardCharsets.UTF_8);
+
+    Request req = new Request.Builder().url(url).build();
+    Response res = http.newCall(req).execute();
+
+    if (res.code() != 200) {
+      throw new RuntimeException("Friendbot funding failed: " + res.code() + " " + res.body().string());
+    }
+    System.out.println("Funded: " + accountId);
+  }
+
+  // Helper: wrap SorobanServer.pollTransaction and enforce failure handling
+  static GetTransactionResponse pollTransaction(SorobanServer rpc, String txHash) throws Exception {
+    GetTransactionResponse resp = rpc.pollTransaction(txHash);
+
+    if (GetTransactionStatus.SUCCESS.equals(resp.getStatus())) {
+      return resp;
+    }
+    if (GetTransactionStatus.FAILED.equals(resp.getStatus())) {
+      if (resp.getResultXdr() != null) {
+        System.err.println("Failed TX, Result XDR (base64): " + resp.getResultXdr());
+      }
+      throw new RuntimeException("Transaction failed.");
+    }
+    if (GetTransactionStatus.NOT_FOUND.equals(resp.getStatus())) {
+      throw new RuntimeException("Transaction not found.");
+    }
+    throw new RuntimeException("Unexpected status: " + resp.getStatus());
+  }
+}
+
+```
+
 </CodeGroup>
 </Accordion>
 
@@ -665,117 +827,109 @@ monitorPayments().catch((error) => {
 });
 ```
 
-```java Java
-// MonitorPaymentExample.java
-// Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
+```python Python
+# monitor_payment.py
+# pip install stellar-sdk
 
-import org.stellar.sdk.SorobanServer;
-import org.stellar.sdk.responses.sorobanrpc.GetLatestLedgerResponse;
+import time
 
-import org.stellar.sdk.requests.sorobanrpc.EventFilterType;
-import org.stellar.sdk.requests.sorobanrpc.GetEventsRequest;
-import org.stellar.sdk.scval.Scv;
-import org.stellar.sdk.xdr.SCSymbol;
-import org.stellar.sdk.xdr.SCVal;
+from stellar_sdk import SorobanServer, scval
+from stellar_sdk.soroban_rpc import EventFilter, EventFilterType
 
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
 
-public class MonitorPaymentsJavaExample {
-  public static void main(String[] args) throws Exception {
-    final String RPC_URL = "https://soroban-testnet.stellar.org";
-    SorobanServer rpc = new SorobanServer(RPC_URL);
+def monitor_payments():
+    # Initialize RPC server for testnet
+    rpc_server = SorobanServer("https://soroban-testnet.stellar.org")
 
-    // Load the account we monitor payments FROM (written by send_payment example)
-    String monitoredFromAccount = Files.readString(Paths.get("sender_public.key"), StandardCharsets.UTF_8).trim();
+    # One-time initialization - everything encapsulated here
+    with open("sender_public.key") as key_file:
+        monitored_from_account = key_file.read().strip()
 
-    // Build topic filters using SDK helpers (base64 XDR via toXdrBase64())
-    String transferTopicFilter = Scv.toSymbol("transfer").toXdrBase64();
-    String fromTopicFilter = Scv.toAddress(monitoredFromAccount).toXdrBase64();
+    # create our payment event topic filter values
+    transfer_topic_filter = scval.to_symbol("transfer").to_xdr()
+    from_topic_filter = scval.to_address(monitored_from_account).to_xdr()
 
-    // Starting point: latest ledger
-    GetLatestLedgerResponse latest = rpc.getLatestLedger();
-    Long startLedger = latest.getSequence().longValue();
-    String cursor = null;
-    System.out.printf("Starting payment monitoring from ledger %d and from account %s%n", startLedger,
-        monitoredFromAccount);
+    # Get starting ledger
+    latest_ledger = rpc_server.get_latest_ledger()
+    print(
+        f"Starting payment monitoring from ledger {latest_ledger.sequence} "
+        f"and from account {monitored_from_account}"
+    )
+    current_start_ledger = latest_ledger.sequence
+    current_cursor = None
 
-    while (true) {
-      // filter will match on any 'to' address and any token(SAC or SEP-41)
-      GetEventsRequest.EventFilter eventFilter = GetEventsRequest.EventFilter.builder()
-          .type(EventFilterType.CONTRACT)
-          .topic(Arrays.asList(transferTopicFilter, fromTopicFilter, "**"))
-          .build();
-      GetEventsRequest.PaginationOptions paginationOptions = GetEventsRequest.PaginationOptions.builder()
-          .limit(10L)
-          .cursor(cursor)
-          .build();
-      GetEventsRequest getEventsRequest = GetEventsRequest.builder()
-          .startLedger(startLedger)
-          .filter(eventFilter)
-          .pagination(paginationOptions)
-          .build();
+    while True:
+        # Query for payments from our monitored account
+        events_response = rpc_server.get_events(
+            start_ledger=current_start_ledger,
+            cursor=current_cursor,
+            filters=[
+                EventFilter(
+                    event_type=EventFilterType.CONTRACT,
+                    topics=[
+                        [
+                            transfer_topic_filter,
+                            from_topic_filter,
+                            # filter will match on any 'to' address and any
+                            # token (SAC or SEP-41)
+                            "**",
+                        ]
+                    ],
+                )
+            ],
+            limit=10,
+        )
 
-      var eventsResp = rpc.getEvents(getEventsRequest);
-      var events = eventsResp.getEvents();
-      System.out.println("Found " + events.size() + " payment(s):");
+        # Process any events found
+        print(f"Found {len(events_response.events)} payment(s):")
 
-      for (var ev : events) {
-        System.out.println("\n--- Payment Received ---");
-        System.out.println("Ledger: " + ev.getLedger());
-        System.out.println("Transaction Hash: " + ev.getTransactionHash());
-        System.out.println("Closed At: " + ev.getLedgerClosedAt());
+        for event in events_response.events:
+            print("\n--- Payment Received ---")
+            print(f"Ledger: {event.ledger}")
+            print(f"Transaction Hash: {event.transaction_hash}")
+            print(f"Closed At: {event.ledger_close_at}")
 
-        List<String> topics = ev.getTopic();
-        if (topics.size() < 3) {
-          System.out.println("Invalid event, not enough topics.");
-          continue;
-        }
+            # Decode addresses from topics
+            try:
+                from_address = scval.from_address(event.topic[1]).address
+                to_address = scval.from_address(event.topic[2]).address
+                print(f"Transfer: {from_address} → {to_address}")
+            except Exception as error:
+                print("From/To: Unable to decode addresses", error)
+                continue
 
-        try {
-          String fromAddr = Scv.fromAddress(SCVal.fromXdrBase64(topics.get(1))).toString();
-          String toAddr = Scv.fromAddress(SCVal.fromXdrBase64(topics.get(2))).toString();
-          System.out.println("Transfer: " + fromAddr + " → " + toAddr);
-        } catch (Exception e) {
-          System.out.println("From/To: Unable to decode addresses: " + e.getMessage());
-        }
+            # Decode transfer amount from the event data
+            try:
+                # Protocol 23+ unified events model per CAP-67
+                # https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md
+                # The event value is the i128 amount, or a map with
+                # {amount: i128, to_muxed_id: u64|bytes|string}
+                # when muxed info is present
+                value = scval.to_native(event.value)
+                amount = value["amount"] if isinstance(value, dict) else value
+                print(f"Amount: {amount} stroops ({amount / 10_000_000:.7f} XLM)")
+            except Exception as error:
+                print("Failed to decode transfer amount:", error)
 
-        try {
-          // the event value is a map with key of Symbol for 'amount' to i128 value
-          Map<SCVal, SCVal> map = Scv.fromMap(SCVal.fromXdrBase64(ev.getValue()));
-          SCVal amount = map.get(Scv.toSymbol("amount"));
+            # Decode asset from topics[3], only present in events from SAC tokens
+            if len(event.topic) > 3:
+                asset = scval.to_native(event.topic[3])
+                print(f"Asset: {asset}")
 
-          if (amount != null) {
-            String amountStr = Scv.fromInt128(amount).toString();
-            BigDecimal raw = new BigDecimal(amountStr);
-            System.out.printf("Token Amount Transferred: (%.7f)%n", raw.scaleByPowerOfTen(-7));
-          }
-        } catch (Exception e) {
-          System.out.println("Failed to decode transfer amount: " + e.getMessage());
-        }
+        # Update cursor to drive next query
+        current_cursor = events_response.cursor
+        current_start_ledger = None
 
-        try {
-          if (topics.size() > 3) {
-            // Decode asset from topics[3], this is only present in events from SAC tokens
-            System.out.println("Asset: " + new String(Scv.fromString(SCVal.fromXdrBase64(topics.get(3)))));
-          }
-        } catch (Exception ex) {
-          System.out.println("Asset: Unable to decode asset" + ex.getMessage());
-        }
-      }
+        # Wait 5 seconds before next iteration
+        time.sleep(5)
 
-      // pagination: update cursor and clear startLedger for subsequent calls
-      cursor = eventsResp.getCursor();
-      startLedger = null;
-      Thread.sleep(5000L);
-    }
-  }
-}
+
+# Start the application
+if __name__ == "__main__":
+    try:
+        monitor_payments()
+    except Exception as error:
+        print("Failed during payment monitoring:", error)
 ```
 
 ```go Go
@@ -1110,6 +1264,119 @@ func decodeAssetFromXDR(base64XDR string) (string, error) {
 }
 ```
 
+```java Java
+// MonitorPaymentExample.java
+// Java 17, Stellar Java SDK (lightsail-network/java-stellar-sdk)
+
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.responses.sorobanrpc.GetLatestLedgerResponse;
+
+import org.stellar.sdk.requests.sorobanrpc.EventFilterType;
+import org.stellar.sdk.requests.sorobanrpc.GetEventsRequest;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCSymbol;
+import org.stellar.sdk.xdr.SCVal;
+
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+public class MonitorPaymentsJavaExample {
+  public static void main(String[] args) throws Exception {
+    final String RPC_URL = "https://soroban-testnet.stellar.org";
+    SorobanServer rpc = new SorobanServer(RPC_URL);
+
+    // Load the account we monitor payments FROM (written by send_payment example)
+    String monitoredFromAccount = Files.readString(Paths.get("sender_public.key"), StandardCharsets.UTF_8).trim();
+
+    // Build topic filters using SDK helpers (base64 XDR via toXdrBase64())
+    String transferTopicFilter = Scv.toSymbol("transfer").toXdrBase64();
+    String fromTopicFilter = Scv.toAddress(monitoredFromAccount).toXdrBase64();
+
+    // Starting point: latest ledger
+    GetLatestLedgerResponse latest = rpc.getLatestLedger();
+    Long startLedger = latest.getSequence().longValue();
+    String cursor = null;
+    System.out.printf("Starting payment monitoring from ledger %d and from account %s%n", startLedger,
+        monitoredFromAccount);
+
+    while (true) {
+      // filter will match on any 'to' address and any token(SAC or SEP-41)
+      GetEventsRequest.EventFilter eventFilter = GetEventsRequest.EventFilter.builder()
+          .type(EventFilterType.CONTRACT)
+          .topic(Arrays.asList(transferTopicFilter, fromTopicFilter, "**"))
+          .build();
+      GetEventsRequest.PaginationOptions paginationOptions = GetEventsRequest.PaginationOptions.builder()
+          .limit(10L)
+          .cursor(cursor)
+          .build();
+      GetEventsRequest getEventsRequest = GetEventsRequest.builder()
+          .startLedger(startLedger)
+          .filter(eventFilter)
+          .pagination(paginationOptions)
+          .build();
+
+      var eventsResp = rpc.getEvents(getEventsRequest);
+      var events = eventsResp.getEvents();
+      System.out.println("Found " + events.size() + " payment(s):");
+
+      for (var ev : events) {
+        System.out.println("\n--- Payment Received ---");
+        System.out.println("Ledger: " + ev.getLedger());
+        System.out.println("Transaction Hash: " + ev.getTransactionHash());
+        System.out.println("Closed At: " + ev.getLedgerClosedAt());
+
+        List<String> topics = ev.getTopic();
+        if (topics.size() < 3) {
+          System.out.println("Invalid event, not enough topics.");
+          continue;
+        }
+
+        try {
+          String fromAddr = Scv.fromAddress(SCVal.fromXdrBase64(topics.get(1))).toString();
+          String toAddr = Scv.fromAddress(SCVal.fromXdrBase64(topics.get(2))).toString();
+          System.out.println("Transfer: " + fromAddr + " → " + toAddr);
+        } catch (Exception e) {
+          System.out.println("From/To: Unable to decode addresses: " + e.getMessage());
+        }
+
+        try {
+          // the event value is a map with key of Symbol for 'amount' to i128 value
+          Map<SCVal, SCVal> map = Scv.fromMap(SCVal.fromXdrBase64(ev.getValue()));
+          SCVal amount = map.get(Scv.toSymbol("amount"));
+
+          if (amount != null) {
+            String amountStr = Scv.fromInt128(amount).toString();
+            BigDecimal raw = new BigDecimal(amountStr);
+            System.out.printf("Token Amount Transferred: (%.7f)%n", raw.scaleByPowerOfTen(-7));
+          }
+        } catch (Exception e) {
+          System.out.println("Failed to decode transfer amount: " + e.getMessage());
+        }
+
+        try {
+          if (topics.size() > 3) {
+            // Decode asset from topics[3], this is only present in events from SAC tokens
+            System.out.println("Asset: " + new String(Scv.fromString(SCVal.fromXdrBase64(topics.get(3)))));
+          }
+        } catch (Exception ex) {
+          System.out.println("Asset: Unable to decode asset" + ex.getMessage());
+        }
+      }
+
+      // pagination: update cursor and clear startLedger for subsequent calls
+      cursor = eventsResp.getCursor();
+      startLedger = null;
+      Thread.sleep(5000L);
+    }
+  }
+}
+```
+
 </CodeGroup>
 </Accordion>
 
@@ -1123,6 +1390,10 @@ func decodeAssetFromXDR(base64XDR string) (string, error) {
 ```bash bash
 # js
 node send_payment.js
+
+# python
+pip install stellar-sdk requests
+python send_payment.py
 
 # java
 # JRE 17 or higher should be installed - https://adoptium.net/temurin/releases/?version=17&package=jdk
@@ -1156,6 +1427,9 @@ go build -o sender sender/sender.go
 ```bash bash
 # js
 node monitor_payments.js
+
+# python
+python monitor_payment.py
 
 # java
 javac -cp "$JAR_FILE" MonitorPaymentExample.java
