@@ -31,9 +31,9 @@ There's also a ceiling: an entry can only be extended up to the network's [maxim
 
 ## Extending a persistent entry
 
-The example below assumes your contract keys its data with a symbol, which is the common case. If your contract uses a vec, a map, or a struct as its storage key, build the `ScVal` that matches instead of reaching for `scvSymbol` (`scval.to_symbol` in Python, `xdr.ScValTypeScvSymbol` in Go).
+The example below assumes your contract keys its data with a symbol, which is the common case. If your contract uses a vec, a map, or a struct as its storage key, build the `ScVal` that matches instead of reaching for `scvSymbol` (`scval.to_symbol` in Python, `xdr.ScValTypeScvSymbol` in Go, `Scv.toSymbol` in Java).
 
-The Go SDK has no `prepareTransaction`, so the Go tab defines a small one. It also defines an `extendFootprintTTL` helper that builds, prepares, signs, and sends the operation. The later Go tabs reuse both.
+The Go SDK has no `prepareTransaction`, so the Go tab defines a small one. It also defines an `extendFootprintTTL` helper that builds, prepares, signs, and sends the operation. The later Go tabs reuse both. The Java tab defines the same `extendFootprintTTL` helper in an `ExtendTtl` class, and the later Java tabs add methods to that class.
 
 <CodeGroup>
 
@@ -304,11 +304,77 @@ func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) 
 }
 ```
 
+```java Java
+import java.util.List;
+
+import org.stellar.sdk.Address;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanDataBuilder;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.ExtendFootprintTTLOperation;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.ContractDataDurability;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+
+public class ExtendTtl {
+  static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  static SendTransactionResponse extendPersistentEntryTTL(
+      String contractId, String storageKey, KeyPair sourceKeypair) {
+    // Create an identifier for the persistent entry
+    LedgerKey persistentEntry = LedgerKey.builder()
+      .discriminant(LedgerEntryType.CONTRACT_DATA)
+      .contractData(LedgerKey.LedgerKeyContractData.builder()
+        .contract(new Address(contractId).toSCAddress())
+        .key(Scv.toSymbol(storageKey))
+        .durability(ContractDataDurability.PERSISTENT)
+        .build())
+      .build();
+
+    // The number of ledgers past the LCL (last closed ledger) by which to extend.
+    // Roughly 5 days
+    return extendFootprintTTL(sourceKeypair, 100_000L, persistentEntry);
+  }
+
+  // extendFootprintTTL builds, prepares, signs, and sends an ExtendFootprintTTL
+  // operation that extends every key in `keys` to the same target.
+  static SendTransactionResponse extendFootprintTTL(
+      KeyPair sourceKeypair, long extendTo, LedgerKey... keys) {
+    TransactionBuilderAccount account = server.getAccount(sourceKeypair.getAccountId());
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    // Build the transaction and attach the Soroban transaction data
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(ExtendFootprintTTLOperation.builder().extendTo(extendTo).build())
+      .setTimeout(30)
+      .setSorobanData(new SorobanDataBuilder().setReadOnly(List.of(keys)).build())
+      .build();
+
+    // Prepare the transaction for signing.
+    transaction = server.prepareTransaction(transaction);
+
+    transaction.sign(sourceKeypair);
+    return server.sendTransaction(transaction);
+  }
+}
+```
+
 </CodeGroup>
 
 ## Extending the contract instance
 
-In JavaScript, `Contract.getFootprint()` hands you the ledger key for the deployed contract instance, so you don't have to assemble that one by hand. In Python and Go, build it from the contract address and the `SCV_LEDGER_KEY_CONTRACT_INSTANCE` value (`xdr.ScValTypeScvLedgerKeyContractInstance` in Go).
+In JavaScript, `Contract.getFootprint()` hands you the ledger key for the deployed contract instance, so you don't have to assemble that one by hand. In Python, Go, and Java, build it from the contract address and the `SCV_LEDGER_KEY_CONTRACT_INSTANCE` value (`xdr.ScValTypeScvLedgerKeyContractInstance` in Go, `Scv.toLedgerKeyContractInstance()` in Java).
 
 <Note>
 
@@ -461,6 +527,32 @@ func extendContractInstanceTTL(
 
   // The number of ledgers past the LCL by which to extend
   return extendFootprintTTL(ctx, sourceKeypair, 100_000, footprint)
+}
+```
+
+```java Java
+// Add these methods to the ExtendTtl class from the previous section.
+// extendFootprintTTL() comes from there too.
+
+// The ledger key for a deployed contract instance
+static LedgerKey contractInstanceKey(String contractId) {
+  return LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_DATA)
+    .contractData(LedgerKey.LedgerKeyContractData.builder()
+      .contract(new Address(contractId).toSCAddress())
+      .key(Scv.toLedgerKeyContractInstance())
+      .durability(ContractDataDurability.PERSISTENT)
+      .build())
+    .build();
+}
+
+static SendTransactionResponse extendContractInstanceTTL(
+    String contractId, KeyPair sourceKeypair) {
+  // Get the ledger key for the contract instance
+  LedgerKey footprint = contractInstanceKey(contractId);
+
+  // The number of ledgers past the LCL by which to extend
+  return extendFootprintTTL(sourceKeypair, 100_000L, footprint);
 }
 ```
 
@@ -687,11 +779,59 @@ func extendContractCodeTTL(
 }
 ```
 
+```java Java
+// Add these imports to the ExtendTtl class:
+//
+//   import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+//   import org.stellar.sdk.xdr.ContractExecutable;
+//   import org.stellar.sdk.xdr.ContractExecutableType;
+//   import org.stellar.sdk.xdr.Hash;
+//   import org.stellar.sdk.xdr.LedgerEntry;
+//   import org.stellar.sdk.xdr.SCVal;
+
+// Look up the hash of the Wasm code that a deployed contract runs.
+// contractInstanceKey() comes from the previous section.
+static Hash getWasmHash(String contractId) {
+  GetLedgerEntriesResponse response =
+    server.getLedgerEntries(List.of(contractInstanceKey(contractId)));
+
+  if (response.getEntries() == null || response.getEntries().isEmpty()) {
+    throw new IllegalStateException("No instance entry found for " + contractId);
+  }
+
+  // Each step checks the union arm and throws if it doesn't match
+  LedgerEntry.LedgerEntryData data = response.getEntries().get(0).parseXdr();
+  if (data.getDiscriminant() != LedgerEntryType.CONTRACT_DATA) {
+    throw new IllegalArgumentException("Expected a contract data entry");
+  }
+  SCVal val = data.getContractData().getVal();
+  if (val.getInstance() == null) {
+    throw new IllegalArgumentException("Expected a contract instance");
+  }
+  ContractExecutable executable = val.getInstance().getExecutable();
+  if (executable.getDiscriminant() != ContractExecutableType.CONTRACT_EXECUTABLE_WASM) {
+    throw new IllegalArgumentException("Expected a Wasm executable");
+  }
+  return executable.getWasm_hash();
+}
+
+static SendTransactionResponse extendContractCodeTTL(String contractId, KeyPair sourceKeypair) {
+  // Create an identifier for the Wasm code entry
+  LedgerKey codeEntry = LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_CODE)
+    .contractCode(LedgerKey.LedgerKeyContractCode.builder().hash(getWasmHash(contractId)).build())
+    .build();
+
+  // The number of ledgers past the LCL by which to extend
+  return extendFootprintTTL(sourceKeypair, 100_000L, codeEntry);
+}
+```
+
 </CodeGroup>
 
 <Warning>
 
-`getWasmHash` assumes the contract runs an executable that _was deployed_. A [Stellar Asset Contract](/docs/tokens/stellar-asset-contract) instance has a built-in executable instead of a Wasm hash, so `getWasmHash` throws a `TypeError` for one of those (in Go, it returns an error). Check `instance.executable.type` first if your code has to handle both.
+`getWasmHash` assumes the contract runs an executable that _was deployed_. A [Stellar Asset Contract](/docs/tokens/stellar-asset-contract) instance has a built-in executable instead of a Wasm hash, so `getWasmHash` throws a `TypeError` for one of those (in Go, it returns an error; in Java, it throws an `IllegalArgumentException`). Check `instance.executable.type` first if your code has to handle both.
 
 </Warning>
 
@@ -886,6 +1026,36 @@ func extendContractAndPersistentEntry(
 }
 ```
 
+```java Java
+// contractInstanceKey(), getWasmHash(), and extendFootprintTTL() come from
+// the previous sections.
+static SendTransactionResponse extendContractAndPersistentEntry(
+    String contractId, String storageKey, KeyPair sourceKeypair) {
+  // Ledger key for the persistent entry...
+  LedgerKey persistentEntry = LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_DATA)
+    .contractData(LedgerKey.LedgerKeyContractData.builder()
+      .contract(new Address(contractId).toSCAddress())
+      .key(Scv.toSymbol(storageKey))
+      .durability(ContractDataDurability.PERSISTENT)
+      .build())
+    .build();
+
+  // ...the contract instance...
+  LedgerKey instanceEntry = contractInstanceKey(contractId);
+
+  // ...and the Wasm code that instance runs.
+  LedgerKey codeEntry = LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_CODE)
+    .contractCode(LedgerKey.LedgerKeyContractCode.builder().hash(getWasmHash(contractId)).build())
+    .build();
+
+  // A single ExtendFootprintTTL operation extends the whole read-only footprint,
+  // with one shared target applied to every key.
+  return extendFootprintTTL(sourceKeypair, 100_000L, persistentEntry, instanceEntry, codeEntry);
+}
+```
+
 </CodeGroup>
 
 That shared `extendTo` is the one real constraint. Entries that need _different_ target TTLs can't share an operation, so extend each one in its own transaction. That's exactly what the `extendPersistentEntryTTL`, `extendContractInstanceTTL`, and `extendContractCodeTTL` helpers above do: each builds its own operation, so each can carry its own `extendTo` target.
@@ -936,6 +1106,22 @@ func main() {
     return
   }
   fmt.Println("Extension successful:", result)
+}
+```
+
+```java Java
+public static void main(String[] args) {
+  String contractId = "CBEE2DHGMYRKJKSJO5E55LBKFMPXE57ZWKTXTCRMC5ANIRJ7IW2Y2WVE";
+  String storageKey = "BALANCE";
+  KeyPair sourceKeypair = KeyPair.fromSecretSeed("SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+
+  try {
+    SendTransactionResponse result =
+      extendPersistentEntryTTL(contractId, storageKey, sourceKeypair);
+    System.out.println("Extension successful: " + result);
+  } catch (Exception error) {
+    System.err.println("Extension failed: " + error);
+  }
 }
 ```
 
