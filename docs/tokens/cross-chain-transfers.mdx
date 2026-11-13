@@ -137,7 +137,7 @@ Circle does not support upfront fees for transfers from Stellar, so the fee come
 
 ## Worked example
 
-This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. The TypeScript example uses `@stellar/stellar-sdk` v16, and the Python example uses `stellar-sdk` 17.
+This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. The TypeScript example uses `@stellar/stellar-sdk` v16, the Python example uses `stellar-sdk` 17, and the Go example uses `go-stellar-sdk` v0.9.0.
 
 <CodeGroup>
 
@@ -420,6 +420,332 @@ def bridge_to_base(amount: int, evm_recipient: str):
 if __name__ == "__main__":
     # 5 USDC in 7-decimal units
     bridge_to_base(50_000_000, "0xYourBaseSepoliaAddress")
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "encoding/hex"
+  "encoding/json"
+  "errors"
+  "fmt"
+  "log"
+  "math"
+  "net/http"
+  "os"
+  "strings"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+// Testnet values. For mainnet, use Circle's mainnet contract list,
+// the mainnet USDC SAC, and https://iris-api.circle.com.
+const (
+  rpcURL               = "https://soroban-testnet.stellar.org"
+  irisURL              = "https://iris-api-sandbox.circle.com"
+  tokenMessengerMinter = "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP"
+  usdcSAC              = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+  stellarDomain        = 27
+  baseDomain           = 6
+)
+
+// "cctp-forward", hook version 0, no extra data:
+// 0x636374702d666f72776172640000000000000000000000000000000000000000
+var forwardHook = append([]byte("cctp-forward"), make([]byte, 20)...)
+
+var (
+  server = client.NewClient(rpcURL, nil)
+  signer = keypair.MustParseFull(os.Getenv("STELLAR_SECRET_KEY"))
+)
+
+func evmAddressToBytes32(address string) ([]byte, error) {
+  raw, err := hex.DecodeString(strings.TrimPrefix(strings.ToLower(address), "0x"))
+  if err != nil || len(raw) != 20 {
+    return nil, fmt.Errorf("invalid EVM address: %s", address)
+  }
+  return append(make([]byte, 12), raw...), nil
+}
+
+// ScVal helpers for the contract arguments.
+func addressVal(address string) xdr.ScVal {
+  var scAddress xdr.ScAddress
+  if strings.HasPrefix(address, "C") {
+    var contractID xdr.ContractId
+    copy(contractID[:], strkey.MustDecode(strkey.VersionByteContract, address))
+    scAddress = xdr.ScAddress{
+      Type:       xdr.ScAddressTypeScAddressTypeContract,
+      ContractId: &contractID,
+    }
+  } else {
+    scAddress = xdr.ScAddress{
+      Type:      xdr.ScAddressTypeScAddressTypeAccount,
+      AccountId: xdr.MustAddressPtr(address),
+    }
+  }
+  return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddress}
+}
+
+func i128Val(amount int64) xdr.ScVal {
+  // Sign-extend the int64 to 128 bits.
+  parts := xdr.Int128Parts{Hi: xdr.Int64(amount >> 63), Lo: xdr.Uint64(amount)}
+  return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &parts}
+}
+
+func u32Val(value uint32) xdr.ScVal {
+  v := xdr.Uint32(value)
+  return xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &v}
+}
+
+func bytesVal(value []byte) xdr.ScVal {
+  b := xdr.ScBytes(value)
+  return xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &b}
+}
+
+func invoke(ctx context.Context, contractID, method string, args []xdr.ScVal) (string, error) {
+  account, err := server.LoadAccount(ctx, signer.Address())
+  if err != nil {
+    return "", err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  // This Stellar network fee is paid in XLM, apart from Circle's max_fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return "", err
+  }
+  const maxInclusionFee = 100_000 // stroops (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxInclusionFee)
+
+  tx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
+    Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+      HostFunction: xdr.HostFunction{
+        Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+        InvokeContract: &xdr.InvokeContractArgs{
+          ContractAddress: *addressVal(contractID).Address,
+          FunctionName:    xdr.ScSymbol(method),
+          Args:            args,
+        },
+      },
+    }},
+  })
+  if err != nil {
+    return "", err
+  }
+
+  tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+  if err != nil {
+    return "", err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return "", err
+  }
+  sent, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return "", err
+  }
+  if sent.Status != "PENDING" {
+    return "", fmt.Errorf("submit failed: %s", sent.Status)
+  }
+
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  result, err := server.PollTransaction(pollCtx, sent.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    // Not in a ledger yet: the outcome is unknown, not failed.
+    return "", fmt.Errorf("transaction %s not found yet", sent.Hash)
+  }
+  if err != nil {
+    return "", err
+  }
+  if result.Status != protocol.TransactionStatusSuccess {
+    return "", fmt.Errorf("transaction failed: %s", result.Status)
+  }
+  return sent.Hash, nil
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources, resource fee and authorization entries. The Go SDK has
+// no prepareTransaction.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+  if len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number. NewTransaction adds the
+  // resource fee from the Soroban data to the inclusion fee.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+func quoteMaxFee(amount int64) (int64, error) {
+  res, err := http.Get(fmt.Sprintf(
+    "%s/v2/burn/USDC/fees/%d/%d?forward=true", irisURL, stellarDomain, baseDomain,
+  ))
+  if err != nil {
+    return 0, err
+  }
+  defer res.Body.Close()
+
+  var quotes []struct {
+    FinalityThreshold int     `json:"finalityThreshold"`
+    MinimumFee        float64 `json:"minimumFee"`
+    ForwardFee        struct {
+      Med    *int64 `json:"med"`
+      Medium *int64 `json:"medium"`
+    } `json:"forwardFee"`
+  }
+  if err := json.NewDecoder(res.Body).Decode(&quotes); err != nil {
+    return 0, err
+  }
+  for _, quote := range quotes {
+    if quote.FinalityThreshold != 2000 {
+      continue
+    }
+    // The live API returns forwardFee.med. Circle's spec names it medium.
+    forwardFee := quote.ForwardFee.Med
+    if forwardFee == nil {
+      forwardFee = quote.ForwardFee.Medium
+    }
+    if forwardFee == nil {
+      return 0, errors.New("no forwardFee in the fee quote")
+    }
+    // minimumFee is in basis points. forwardFee uses 6 decimals, so
+    // multiply by 10 for Stellar's 7-decimal units.
+    protocolFee := amount * int64(math.Ceil(quote.MinimumFee*100)) / 1_000_000
+    return protocolFee + *forwardFee*10, nil
+  }
+  return 0, errors.New("no fee quote for finality threshold 2000")
+}
+
+type cctpMessage struct {
+  Status       string `json:"status"`
+  ForwardState string `json:"forwardState"`
+}
+
+func waitForAttestation(txHash string) (cctpMessage, error) {
+  url := fmt.Sprintf("%s/v2/messages/%d?transactionHash=%s", irisURL, stellarDomain, txHash)
+  for {
+    res, err := http.Get(url)
+    if err != nil {
+      return cctpMessage{}, err
+    }
+    var body struct {
+      Messages []cctpMessage `json:"messages"`
+    }
+    decodeErr := json.NewDecoder(res.Body).Decode(&body)
+    res.Body.Close()
+    if res.StatusCode == http.StatusOK && decodeErr == nil &&
+      len(body.Messages) > 0 && body.Messages[0].Status == "complete" {
+      return body.Messages[0], nil
+    }
+    time.Sleep(5 * time.Second)
+  }
+}
+
+func bridgeToBase(ctx context.Context, amount int64, evmRecipient string) error {
+  caller := signer.Address()
+  maxFee, err := quoteMaxFee(amount)
+  if err != nil {
+    return err
+  }
+  mintRecipient, err := evmAddressToBytes32(evmRecipient)
+  if err != nil {
+    return err
+  }
+
+  // Transaction 1: let the TokenMessengerMinter pull `amount` USDC.
+  latest, err := server.GetLatestLedger(ctx)
+  if err != nil {
+    return err
+  }
+  _, err = invoke(ctx, usdcSAC, "approve", []xdr.ScVal{
+    addressVal(caller),
+    addressVal(tokenMessengerMinter),
+    i128Val(amount),
+    u32Val(latest.Sequence + 100),
+  })
+  if err != nil {
+    return err
+  }
+
+  // Transaction 2: burn with the forwarding hook.
+  burnHash, err := invoke(ctx, tokenMessengerMinter, "deposit_for_burn_with_hook", []xdr.ScVal{
+    addressVal(caller),
+    i128Val(amount),
+    u32Val(baseDomain),
+    bytesVal(mintRecipient),
+    addressVal(usdcSAC),
+    bytesVal(make([]byte, 32)), // any caller
+    i128Val(maxFee),
+    u32Val(2000),
+    bytesVal(forwardHook),
+  })
+  if err != nil {
+    return err
+  }
+
+  message, err := waitForAttestation(burnHash)
+  if err != nil {
+    return err
+  }
+  fmt.Println("Burn:", burnHash, "Forward state:", message.ForwardState)
+  return nil
+}
+
+func main() {
+  defer server.Close()
+  // 5 USDC in 7-decimal units
+  if err := bridgeToBase(context.Background(), 50_000_000, "0xYourBaseSepoliaAddress"); err != nil {
+    log.Fatal(err)
+  }
+}
 ```
 
 </CodeGroup>
