@@ -4,7 +4,10 @@ import { fileURLToPath } from "url";
 
 // In case there are plugins to exclude from the list, add them here.
 // E.g. "user/repo"
-const excludePlugins = ["haqnawaz03329-debug/haqnawaz"];
+const excludePlugins = [
+  "haqnawaz03329-debug/haqnawaz",
+  "duraznito16/stellar-memory",
+];
 
 // The plugin list is built from GitHub repos that anyone can opt into by adding
 // the `stellar-cli-plugin` topic, so every field below (name, description, URL)
@@ -56,6 +59,7 @@ function exportMDX(data) {
 ${sanitizeText(item.description)}
 
 [${url}](${url})
+
 `;
 
     return buffer + plugin;
@@ -68,7 +72,7 @@ description: See a list of published Stellar CLI plugin
 
 This is a list of all plugins made available by the community, so please review with care before using them.
 
-${pluginsContent}
+${pluginsContent.trimEnd()}
 `;
 
   fs.writeFileSync("docs/tools/cli/plugins-list.mdx", modifiedContent);
