@@ -401,6 +401,108 @@ func preamble() error {
 }
 ```
 
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+//
+// The Java examples on this page are parts of one class, such as
+// `LiquidityPools`. Put the fields and methods of each example in it,
+// in the order they appear on this page.
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.List;
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.ChangeTrustAsset;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.LiquidityPool;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Price;
+import org.stellar.sdk.Server;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.operations.ChangeTrustOperation;
+import org.stellar.sdk.operations.LiquidityPoolDepositOperation;
+import org.stellar.sdk.operations.LiquidityPoolWithdrawOperation;
+import org.stellar.sdk.operations.Operation;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.AccountResponse;
+import org.stellar.sdk.responses.AssetAmount;
+import org.stellar.sdk.responses.LiquidityPoolResponse;
+import org.stellar.sdk.responses.operations.LiquidityPoolDepositOperationResponse;
+import org.stellar.sdk.responses.operations.OperationResponse;
+
+static final Server server = new Server("https://horizon-testnet.stellar.org");
+
+static final long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+
+// submitTx builds a transaction from `source`, signs it, and submits it.
+// Horizon answers a failed transaction with an error, so submitTransaction
+// throws a BadRequestException.
+static void submitTx(KeyPair source, List<KeyPair> signers, Operation... ops) {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // The minimum of 100 stroops gets outbid when the network is busy.
+  long fee = Math.min(server.feeStats().execute().getFeeCharged().getP90(), maxFee);
+
+  Transaction tx = new TransactionBuilder(server.loadAccount(source.getAccountId()), Network.TESTNET)
+    .setBaseFee(fee)
+    .addOperations(List.of(ops))
+    .setTimeout(30)
+    .build();
+  for (KeyPair signer : signers) {
+    tx.sign(signer);
+  }
+  server.submitTransaction(tx);
+}
+
+// orderAssets returns the given asset pair in "protocol order."
+static Asset[] orderAssets(Asset a, Asset b) {
+  return a.compareTo(b) <= 0 ? new Asset[] {a, b} : new Asset[] {b, a};
+}
+
+static final KeyPair[] kps = {
+  KeyPair.fromSecretSeed("SBGCD73TK2PTW2DQNWUYZSTCTHHVJPL4GZF3GVZMCDL6GYETYNAYOADN"),
+  KeyPair.fromSecretSeed("SAAQFHI2FMSIC6OFPWZ3PDIIX3OF64RS3EB52VLYYZBX6GYB54TW3Q4U"),
+  KeyPair.fromSecretSeed("SCJWYFTBDMDPAABHVJZE3DRMBRTEH4AIC5YUM54QGW57NUBM2XX6433P"),
+};
+
+// kp0 issues the assets
+static final KeyPair kp0 = kps[0];
+static final Asset[] assetPair = orderAssets(
+  Asset.createNonNativeAsset("A", kp0.getAccountId()),
+  Asset.createNonNativeAsset("B", kp0.getAccountId()));
+static final Asset assetA = assetPair[0];
+static final Asset assetB = assetPair[1];
+
+// distributeAssets establishes trustlines and funds `recipients` for all `assets`.
+static void distributeAssets(KeyPair issuer, List<KeyPair> recipients, Asset... assets) {
+  List<Operation> ops = new ArrayList<>();
+  List<KeyPair> signers = new ArrayList<>(List.of(issuer));
+  for (KeyPair recipient : recipients) {
+    for (Asset asset : assets) {
+      ops.add(ChangeTrustOperation.builder()
+        .sourceAccount(recipient.getAccountId())
+        .asset(new ChangeTrustAsset(asset))
+        .limit(new BigDecimal("100000"))
+        .build());
+      ops.add(PaymentOperation.builder()
+        .sourceAccount(issuer.getAccountId())
+        .destination(recipient.getAccountId())
+        .amount(new BigDecimal("100000"))
+        .asset(asset)
+        .build());
+    }
+    signers.add(recipient);
+  }
+  submitTx(issuer, signers, ops.toArray(new Operation[0]));
+}
+
+static void preamble() {
+  distributeAssets(kp0, List.of(kps[1], kps[2]), assetA, assetB);
+}
+```
+
 </CodeGroup>
 
 Here, we use `distributeAssets()` to establish trustlines and set up initial balances of two custom assets (`A` and `B`, issued by `kp0`) for two accounts (`kp2` and `kp3`). For someone to participate in the pool, they must establish trustlines to each of the asset issuers and to the pool share asset (explained below).
@@ -462,6 +564,19 @@ func establishPoolTrustline(source *keypair.Full, poolAsset txnbuild.ChangeTrust
     Line:  poolAsset,
     Limit: "100000",
   })
+}
+```
+
+```java Java
+// This constructor sets the fee to LiquidityPool.FEE (30 basis points),
+// the only fee the network supports today.
+static final LiquidityPool poolShareAsset = new LiquidityPool(assetA, assetB);
+
+static void establishPoolTrustline(KeyPair source, LiquidityPool poolAsset) {
+  submitTx(source, List.of(source), ChangeTrustOperation.builder()
+    .asset(new ChangeTrustAsset(poolAsset))
+    .limit(new BigDecimal("100000"))
+    .build());
 }
 ```
 
@@ -570,6 +685,25 @@ func addLiquidity(source *keypair.Full, maxReserveA, maxReserveB string) error {
     MinPrice:        minPrice,
     MaxPrice:        maxPrice,
   })
+}
+```
+
+```java Java
+// The hex form of the pool ID, which is also how Horizon names the pool.
+static final String poolId = poolShareAsset.getLiquidityPoolId();
+
+static void addLiquidity(KeyPair source, BigDecimal maxReserveA, BigDecimal maxReserveB) {
+  BigDecimal exactPrice = maxReserveA.divide(maxReserveB, 7, RoundingMode.HALF_UP);
+  BigDecimal minPrice = exactPrice.multiply(new BigDecimal("0.9")).setScale(7, RoundingMode.HALF_UP);
+  BigDecimal maxPrice = exactPrice.multiply(new BigDecimal("1.1")).setScale(7, RoundingMode.HALF_UP);
+
+  submitTx(source, List.of(source), LiquidityPoolDepositOperation.builder()
+    .liquidityPoolId(poolId)
+    .maxAmountA(maxReserveA)
+    .maxAmountB(maxReserveB)
+    .minPrice(Price.fromString(minPrice.toPlainString()))
+    .maxPrice(Price.fromString(maxPrice.toPlainString()))
+    .build());
 }
 ```
 
@@ -688,6 +822,30 @@ func minReserve(shares, totalShares int64, reserve string) (string, error) {
   out.Mul(out, big.NewInt(95))
   out.Quo(out, new(big.Int).Mul(big.NewInt(totalShares), big.NewInt(100)))
   return amount.StringFromInt64(out.Int64()), nil
+}
+```
+
+```java Java
+static void removeLiquidity(KeyPair source, BigDecimal sharesAmount) {
+  LiquidityPoolResponse pool = server.liquidityPools().liquidityPool(poolId);
+  BigDecimal totalShares = new BigDecimal(pool.getTotalShares());
+  BigDecimal minReserveA = minReserve(sharesAmount, totalShares, pool.getReserves().get(0).getAmount());
+  BigDecimal minReserveB = minReserve(sharesAmount, totalShares, pool.getReserves().get(1).getAmount());
+
+  submitTx(source, List.of(source), LiquidityPoolWithdrawOperation.builder()
+    .liquidityPoolId(poolId)
+    .amount(sharesAmount)
+    .minAmountA(minReserveA)
+    .minAmountB(minReserveB)
+    .build());
+}
+
+// minReserve returns 95% of the part of `reserve` that `shares` of
+// `totalShares` pool shares redeem, rounded down to 7 decimal places.
+static BigDecimal minReserve(BigDecimal shares, BigDecimal totalShares, String reserve) {
+  return shares.multiply(new BigDecimal(reserve))
+    .multiply(new BigDecimal("0.95"))
+    .divide(totalShares, 7, RoundingMode.DOWN);
 }
 ```
 
@@ -862,6 +1020,39 @@ func getSpotPrice() error {
 }
 ```
 
+```java Java
+public static void main(String[] args) {
+  preamble();
+
+  for (int i = 1; i < kps.length; i++) {
+    BigDecimal depositA = BigDecimal.valueOf(i * 1000L);
+    BigDecimal depositB = BigDecimal.valueOf(i * 3000L); // maintain a 1:3 ratio
+    establishPoolTrustline(kps[i], poolShareAsset);
+    addLiquidity(kps[i], depositA, depositB);
+    getSpotPrice();
+  }
+
+  // kp1 takes all his/her shares out
+  AccountResponse account = server.accounts().account(kps[1].getAccountId());
+  String balance = account.getBalances().stream()
+    .filter(b -> "liquidity_pool_shares".equals(b.getAssetType())
+      && poolId.equals(b.getLiquidityPoolId()))
+    .map(AccountResponse.Balance::getBalance)
+    .findFirst()
+    .orElseThrow(() -> new IllegalStateException("kp1 holds no shares of the pool"));
+  removeLiquidity(kps[1], new BigDecimal(balance));
+  getSpotPrice();
+}
+
+static void getSpotPrice() {
+  LiquidityPoolResponse pool = server.liquidityPools().liquidityPool(poolId);
+  String a = pool.getReserves().get(0).getAmount();
+  String b = pool.getReserves().get(1).getAmount();
+  BigDecimal spotPrice = new BigDecimal(a).divide(new BigDecimal(b), 7, RoundingMode.HALF_UP);
+  System.out.printf("Price: %s/%s = %s%n", a, b, spotPrice.toPlainString());
+}
+```
+
 </CodeGroup>
 
 #### Watching Liquidity Pool Activity
@@ -919,6 +1110,20 @@ for _, op := range ops.Embedded.Records {
     fmt.Printf("    %s of %s\n", r.Amount, r.Asset)
   }
   fmt.Println("  for pool shares: ", deposit.SharesReceived)
+}
+```
+
+```java Java
+for (OperationResponse op : server.operations().forLiquidityPool(poolId).execute().getRecords()) {
+  if (!(op instanceof LiquidityPoolDepositOperationResponse)) {
+    continue;
+  }
+  LiquidityPoolDepositOperationResponse deposit = (LiquidityPoolDepositOperationResponse) op;
+  System.out.println("Reserves deposited:");
+  for (AssetAmount r : deposit.getReservesDeposited()) {
+    System.out.printf("    %s of %s%n", r.getAmount(), r.getAsset());
+  }
+  System.out.println("  for pool shares: " + deposit.getSharesReceived());
 }
 ```
 

@@ -337,6 +337,74 @@ func check(err error) {
 }
 ```
 
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import java.util.List;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.scval.Scv;
+
+public final class SourceAccountAuth {
+  private static final SorobanServer s = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  // Pretend this is a real, funded account.
+  private static final KeyPair signer = KeyPair.random();
+  private static final String xlmContract = new AssetTypeNative().getContractId(Network.TESTNET);
+
+  public static void main(String[] args) throws InterruptedException {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(s.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    Transaction tx = new TransactionBuilder(s.getAccount(signer.getAccountId()), Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(
+        InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+            xlmContract, "balance", List.of(Scv.toAddress(signer.getAccountId())))
+          .build())
+      .setTimeout(30)
+      .build();
+
+    Transaction preppedTx = s.prepareTransaction(tx);
+    preppedTx.sign(signer);
+
+    GetTransactionResponse result = sendAndPoll(preppedTx);
+    System.out.println(result.getStatus());
+  }
+
+  // sendAndPoll sends the transaction, then polls for it up to 30 times,
+  // one second apart.
+  static GetTransactionResponse sendAndPoll(Transaction tx) throws InterruptedException {
+    SendTransactionResponse sendTx = s.sendTransaction(tx);
+    if (sendTx.getStatus() != SendTransactionStatus.PENDING
+        && sendTx.getStatus() != SendTransactionStatus.DUPLICATE) {
+      throw new IllegalStateException(
+        "send failed: " + sendTx.getStatus() + " " + sendTx.getErrorResultXdr());
+    }
+
+    GetTransactionResponse result = s.pollTransaction(sendTx.getHash());
+    if (result.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Still NOT_FOUND: the status is unknown, not failed.
+      throw new IllegalStateException(
+        "status of " + sendTx.getHash() + " unknown after 30 attempts: look it up later");
+    }
+    return result;
+  }
+}
+```
+
 </CodeGroup>
 
 Notice that, in contrast to the following example, we didn't need to do simulation separately. This is because we can sign the transaction as-is rather than needing to inspect its authorization entries.
@@ -755,6 +823,118 @@ func i128ScVal(amount int64) xdr.ScVal {
 }
 ```
 
+```java Java
+// Copy sendAndPoll from Example 1 into this class.
+
+import java.io.IOException;
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import org.stellar.sdk.Account;
+import org.stellar.sdk.Address;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.Auth;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SimulateTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SorobanAddressCredentials;
+import org.stellar.sdk.xdr.SorobanAuthorizationEntry;
+
+public final class MultiPartyAuth {
+  private static final SorobanServer s = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  // Pretend these are real, funded accounts.
+  private static final KeyPair[] signers = {KeyPair.random(), KeyPair.random()};
+  private static final String xlmContract = new AssetTypeNative().getContractId(Network.TESTNET);
+
+  public static void main(String[] args) throws IOException, InterruptedException {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // assembleTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(s.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    // Notice that the source account is the first keypair, but the transfer
+    // occurs _from_ the second keypair, which means the second keypair will
+    // need to sign for an authorization entry to approve the transfer.
+    InvokeHostFunctionOperation operation =
+      InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+          xlmContract,
+          "transfer",
+          List.of(
+            Scv.toAddress(signers[1].getAccountId()), // from
+            Scv.toAddress(signers[0].getAccountId()), // to
+            Scv.toInt128(BigInteger.valueOf(1000)))) // amount
+        .build();
+    Transaction tx = new TransactionBuilder(s.getAccount(signers[0].getAccountId()), Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    SimulateTransactionResponse simResult = s.simulateTransaction(tx);
+    if (simResult.getError() != null
+        || simResult.getResults() == null
+        || simResult.getResults().isEmpty()) {
+      throw new IllegalStateException("Simulation failed: " + simResult.getError());
+    }
+
+    // For every auth entry that needs signing, sign it with the correct keypair.
+    List<SorobanAuthorizationEntry> signedAuth = new ArrayList<>();
+    List<String> auth = simResult.getResults().get(0).getAuth();
+    for (String entryXdr : auth == null ? List.<String>of() : auth) {
+      SorobanAuthorizationEntry entry = SorobanAuthorizationEntry.fromXdrBase64(entryXdr);
+      // Ignore source account entries, which the transaction signature covers.
+      // getAddressCredentials reads V2 (or legacy) credentials and returns null
+      // for a source account entry.
+      SorobanAddressCredentials credentials = Auth.getAddressCredentials(entry.getCredentials());
+      if (credentials == null) {
+        signedAuth.add(entry);
+        continue;
+      }
+
+      // Find the keypair that matches the entry's address.
+      String address = Address.fromSCAddress(credentials.getAddress()).toString();
+      KeyPair signer = Arrays.stream(signers)
+        .filter(kp -> kp.getAccountId().equals(address))
+        .findFirst()
+        .orElseThrow(() -> new IllegalStateException("No keypair for " + address));
+
+      signedAuth.add(
+        Auth.authorizeEntry(
+          entry,
+          signer,
+          simResult.getLatestLedger() + 12, // signature is valid for ~1m
+          Network.TESTNET));
+    }
+
+    // Put the signed entries on the operation. assembleTransaction keeps an
+    // operation's own auth entries instead of the unsigned ones from simulation.
+    // build() adds one to the sequence number, so start one below tx's.
+    Transaction signedTx = new TransactionBuilder(
+        new Account(tx.getSourceAccount(), tx.getSequenceNumber() - 1), Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(operation.toBuilder().auth(signedAuth).build())
+      .addPreconditions(tx.getPreconditions())
+      .build();
+    Transaction preppedTx = SorobanServer.assembleTransaction(signedTx, simResult);
+    preppedTx.sign(signers[0]);
+
+    GetTransactionResponse result = sendAndPoll(preppedTx);
+    System.out.println(result.getStatus());
+  }
+}
+```
+
 </CodeGroup>
 
 Alternatively, we could go a step lower in the stack and build the authorization entries ourselves using [`authorizeInvocation`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#authorizeinvocation), giving us full control over the actual "call stack" that is being invoked. This can be useful if you want to authorize specific invocations, build the invocations yourself, or lower the network bandwidth you use when sharing entries for other parties to sign.
@@ -796,6 +976,15 @@ To keep things really simple, we won't do much coding. Instead, we'll just show 
 +  resimTx, err = resimTx.Sign(network.TestNetworkPassphrase, signers[0])
 +  check(err)
 +  result, err := sendAndPoll(ctx, resimTx)
+```
+
+```diff Java
+-    preppedTx.sign(signers[0]);
+-
+-    GetTransactionResponse result = sendAndPoll(preppedTx);
++    Transaction resimTx = s.prepareTransaction(preppedTx);
++    resimTx.sign(signers[0]);
++    GetTransactionResponse result = sendAndPoll(resimTx);
 ```
 
 </CodeGroup>
