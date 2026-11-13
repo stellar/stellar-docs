@@ -20,7 +20,7 @@ Unlike Horizon, [Stellar RPC does not return an account's trustlines alongside t
 - `getAssetBalance` is the quick path. One call tells you whether the trustline exists at all, whether it is authorized, and how much of the asset the account currently holds.
 - `getLedgerEntries` gives you the raw trustline entry, which you need when you also care about the trustline's **limit** — the maximum balance the account is willing to hold.
 
-Most applications only need the first. Reach for the second when a large payment could push the receiver past its limit. The Python and Go SDKs have no `getAssetBalance` helper, so their examples read the trustline entry with `get_ledger_entries` and `GetLedgerEntries`.
+Most applications only need the first. Reach for the second when a large payment could push the receiver past its limit. The Python, Go and Java SDKs have no `getAssetBalance` helper, so their examples read the trustline entry with `get_ledger_entries`, `GetLedgerEntries` and `getLedgerEntries`.
 
 ### Existence and authorization
 
@@ -233,6 +233,80 @@ func main() {
     USDC.Code, USDC.Issuer, receiver, trustLine.Balance)
 
   // Proceed with sending the payment...
+}
+```
+
+```java Java
+import java.util.List;
+
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.AssetTypeCreditAlphaNum;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.TrustLineAsset;
+import org.stellar.sdk.exception.AccountNotFoundException;
+import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+import org.stellar.sdk.xdr.TrustLineEntry;
+import org.stellar.sdk.xdr.TrustLineFlags;
+
+public final class VerifyTrustline {
+  public static void main(String[] args) {
+    // Initialize Stellar RPC server for testnet
+    SorobanServer rpc = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    // The account you're about to pay. Replace this with your real destination.
+    String receiver = "G...";
+
+    // First, check to make sure that the destination account exists.
+    try {
+      rpc.getAccount(receiver);
+    } catch (AccountNotFoundException error) {
+      System.err.println("Destination account " + receiver + " does not exist.");
+      throw error;
+    }
+
+    // Now we define which asset we want to check the trustline for.
+    // In this case, we are checking for USDC issued on testnet.
+    AssetTypeCreditAlphaNum USDC = (AssetTypeCreditAlphaNum)
+      Asset.createNonNativeAsset("USDC", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5");
+
+    // The Java SDK has no `getAssetBalance` helper, so we look up the trustline
+    // ledger entry directly. If the account has no trustline for the asset,
+    // `entries` comes back empty. A network or RPC error throws instead.
+    LedgerKey key = LedgerKey.builder()
+      .discriminant(LedgerEntryType.TRUSTLINE)
+      .trustLine(LedgerKey.LedgerKeyTrustLine.builder()
+        .accountID(KeyPair.fromAccountId(receiver).getXdrAccountId())
+        .asset(new TrustLineAsset(USDC).toXdr())
+        .build())
+      .build();
+    GetLedgerEntriesResponse response = rpc.getLedgerEntries(List.of(key));
+    if (response.getEntries() == null || response.getEntries().isEmpty()) {
+      System.err.printf("Trustline for asset %s issued by %s not found for account %s.%n",
+        USDC.getCode(), USDC.getIssuer(), receiver);
+      throw new IllegalStateException("Trustline not found");
+    }
+
+    TrustLineEntry trustLine = response.getEntries().get(0).parseXdr().getTrustLine();
+
+    // The trustline exists, but the issuer may not have authorized it yet. An
+    // unauthorized trustline cannot receive payments, so sending would fail.
+    long flags = trustLine.getFlags().getUint32().getNumber();
+    if ((flags & TrustLineFlags.AUTHORIZED_FLAG.getValue()) == 0) {
+      System.err.printf("Trustline for asset %s issued by %s is not authorized for account %s.%n",
+        USDC.getCode(), USDC.getIssuer(), receiver);
+      throw new IllegalStateException("Trustline not authorized");
+    }
+
+    // `balance` is the account's current balance of the asset, as a long of
+    // stroops (1 unit = 10,000,000 stroops).
+    System.out.printf("Trustline for asset %s issued by %s is valid for account %s (%d stroops).%n",
+      USDC.getCode(), USDC.getIssuer(), receiver, trustLine.getBalance().getInt64());
+
+    // Proceed with sending the payment...
+  }
 }
 ```
 
@@ -516,6 +590,89 @@ func main() {
 }
 ```
 
+```java Java
+import java.math.BigDecimal;
+import java.util.List;
+
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.AssetTypeCreditAlphaNum;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.TrustLineAsset;
+import org.stellar.sdk.operations.Operation;
+import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+import org.stellar.sdk.xdr.TrustLineEntry;
+import org.stellar.sdk.xdr.TrustLineFlags;
+
+public final class CheckTrustlineLimit {
+  public static void main(String[] args) {
+    SorobanServer rpc = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    // The account you're about to pay, and the asset and amount you want to send.
+    String receiver = "G...";
+    AssetTypeCreditAlphaNum USDC = (AssetTypeCreditAlphaNum)
+      Asset.createNonNativeAsset("USDC", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5");
+
+    // Amounts live on the ledger as int64 stroops. Convert the amount you want
+    // to send into stroops with Operation.toXdrAmount, which parses the decimal
+    // exactly (and throws if it has more than 7 decimal places), and compare there.
+    long sendingAmount = Operation.toXdrAmount(new BigDecimal("1"));
+
+    // A ledger key uniquely identifies an entry on the ledger. For a trustline, it
+    // is the combination of the account that holds it and the asset it is for.
+    LedgerKey key = LedgerKey.builder()
+      .discriminant(LedgerEntryType.TRUSTLINE)
+      .trustLine(LedgerKey.LedgerKeyTrustLine.builder()
+        .accountID(KeyPair.fromAccountId(receiver).getXdrAccountId())
+        .asset(new TrustLineAsset(USDC).toXdr())
+        .build())
+      .build();
+
+    // Query the ledger for that entry. If the account has no trustline for the
+    // asset, `entries` comes back empty rather than throwing.
+    GetLedgerEntriesResponse response = rpc.getLedgerEntries(List.of(key));
+    if (response.getEntries() == null || response.getEntries().isEmpty()) {
+      System.err.printf("Trustline for asset %s issued by %s not found for account %s.%n",
+        USDC.getCode(), USDC.getIssuer(), receiver);
+      throw new IllegalStateException("Trustline not found");
+    }
+
+    // Decode the ledger entry data. Its `trustLine` arm holds the trustline fields.
+    TrustLineEntry trustlineData = response.getEntries().get(0).parseXdr().getTrustLine();
+
+    // Trustline flags are a bitfield, so check the individual bit rather than
+    // comparing the whole value. An authorized, clawback-enabled trustline has
+    // flags of 5, so `flags == 1` would wrongly reject it.
+    long flags = trustlineData.getFlags().getUint32().getNumber();
+    if ((flags & TrustLineFlags.AUTHORIZED_FLAG.getValue()) == 0) {
+      System.err.printf("Trustline for asset %s issued by %s is not authorized for account %s.%n",
+        USDC.getCode(), USDC.getIssuer(), receiver);
+      throw new IllegalStateException("Trustline not authorized");
+    }
+
+    // The limit and balance are int64 stroops.
+    long limit = trustlineData.getLimit().getInt64();
+    long balance = trustlineData.getBalance().getInt64();
+
+    // Finally, we check if the trustline has enough limit to receive the payment.
+    // If the limit minus the current balance is less than the amount we want to
+    // send, the payment would fail, so we stop with an error.
+    if (limit - balance < sendingAmount) {
+      System.err.printf("Insufficient limit for asset %s issued by %s in account %s.%n",
+        USDC.getCode(), USDC.getIssuer(), receiver);
+      throw new IllegalStateException("Insufficient trustline limit");
+    }
+
+    System.out.printf("Trustline for asset %s issued by %s is valid for account %s.%n",
+      USDC.getCode(), USDC.getIssuer(), receiver);
+
+    // Proceed with sending the payment...
+  }
+}
+```
+
 </CodeGroup>
 
 ## Checking a Trustline through the Stellar Asset Contract (SAC)
@@ -794,6 +951,90 @@ func main() {
   log.Printf("Trustline for asset %s issued by %s is authorized for account %s.", USDC.Code, USDC.Issuer, receiver)
 
   // If the trustline is authorized, we can proceed with sending the payment...
+}
+```
+
+```java Java
+import java.util.List;
+
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.AssetTypeCreditAlphaNum;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.exception.AccountNotFoundException;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.SimulateTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+
+public final class CheckTrustlineSac {
+  public static void main(String[] args) {
+    // Initialize Stellar RPC server for testnet
+    SorobanServer rpc = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    // The account you're about to pay. Replace this with your real destination.
+    String receiver = "G...";
+
+    // First, check to make sure that the destination account exists.
+    TransactionBuilderAccount account;
+    try {
+      account = rpc.getAccount(receiver);
+    } catch (AccountNotFoundException error) {
+      System.err.println("Destination account " + receiver + " does not exist.");
+      throw error;
+    }
+
+    // Now we define which asset we want to check the trustline for.
+    // In this case, we are checking for USDC issued on testnet.
+    AssetTypeCreditAlphaNum USDC = (AssetTypeCreditAlphaNum)
+      Asset.createNonNativeAsset("USDC", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5");
+
+    // The Java SDK simulates the call directly, so it needs no generated
+    // bindings. We build a transaction that invokes the `authorized` function of
+    // the USDC asset contract. We only simulate it, so we never sign or send it.
+    Transaction tx = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(Transaction.MIN_BASE_FEE)
+      .setTimeout(30)
+      .addOperation(
+        InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+            USDC.getContractId(Network.TESTNET),
+            "authorized",
+            List.of(Scv.toAddress(receiver)))
+          .build())
+      .build();
+    SimulateTransactionResponse sim = rpc.simulateTransaction(tx);
+
+    // A missing trustline surfaces here rather than as a `false` result: the
+    // simulation fails with `Error(Contract, #13)`.
+    if (sim.getError() != null) {
+      System.err.println("Error simulating the transaction: " + sim.getError());
+      throw new IllegalStateException(sim.getError());
+    }
+
+    // The simulation result holds the return value of the contract function.
+    // If the trustline is authorized, it is true; otherwise, it is false.
+    if (sim.getResults() == null || sim.getResults().isEmpty()) {
+      throw new IllegalStateException("The simulation returned no result");
+    }
+    boolean authorized = Scv.fromBoolean(sim.getResults().get(0).parseXdr());
+
+    // A `false` result means the trustline exists but the issuer has not
+    // authorized it, so any attempt to send USDC to this account will fail.
+    if (!authorized) {
+      System.err.printf("Trustline for asset %s issued by %s not authorized for account %s.%n",
+        USDC.getCode(), USDC.getIssuer(), receiver);
+      throw new IllegalStateException("Trustline not authorized");
+    }
+
+    // If the trustline is authorized, we log a success message.
+    // This means that the account is allowed to receive payments in USDC.
+    System.out.printf("Trustline for asset %s issued by %s is authorized for account %s.%n",
+      USDC.getCode(), USDC.getIssuer(), receiver);
+
+    // If the trustline is authorized, we can proceed with sending the payment...
+  }
 }
 ```
 
