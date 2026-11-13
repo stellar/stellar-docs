@@ -218,4 +218,107 @@ except Exception as error:
     print("Something went wrong!", error)
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+func main() {
+  ctx := context.Background()
+
+  // Define the network passphrase (use network.PublicNetworkPassphrase for production)
+  networkPassphrase := network.TestNetworkPassphrase
+
+  // Create keypairs for the source account and the fee account
+  sourceKeypair := keypair.MustParseFull("SECREY_KEY_1")
+  feeKeypair := keypair.MustParseFull("SECREY_KEY_2")
+
+  // Load the source account (this requires network interaction)
+  server := client.NewClient("https://soroban-testnet.stellar.org", nil)
+  defer server.Close()
+  sourceAccount, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  check(err)
+
+  // Construct the inner transaction, just a example tx, to transfer 10 XLM to a
+  // destination account. The fee account pays the fee below, so the inner
+  // transaction can bid the network minimum.
+  innerTransaction, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        sourceAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              txnbuild.MinBaseFee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.Payment{
+        Destination: "GDWH3P3MNTCMOY42CA7RVEACUUAUPZ73XDYKPYUL3TWOFRF37FD6OVM6",
+        Asset:       txnbuild.NativeAsset{},
+        Amount:      "10",
+      },
+    },
+  })
+  check(err)
+
+  // Sign the inner transaction with the source account
+  innerTransaction, err = innerTransaction.Sign(networkPassphrase, sourceKeypair)
+  check(err)
+
+  // The fee account bids what recent transactions paid, capped at what it's
+  // willing to spend. MinBaseFee is the network minimum and gets outbid when
+  // the network is busy.
+  feeStats, err := server.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := max(min(int64(feeStats.InclusionFee.P90), maxFee), txnbuild.MinBaseFee)
+
+  // Build the fee-bump transaction
+  feeBumpTransaction, err := txnbuild.NewFeeBumpTransaction(txnbuild.FeeBumpTransactionParams{
+    Inner:      innerTransaction,
+    FeeAccount: feeKeypair.Address(),
+    BaseFee:    fee,
+  })
+  check(err)
+
+  // Sign the fee-bump transaction with the fee account
+  feeBumpTransaction, err = feeBumpTransaction.Sign(networkPassphrase, feeKeypair)
+  check(err)
+
+  // Submit the fee-bump transaction to the Stellar network
+  envelope, err := feeBumpTransaction.Base64()
+  check(err)
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  check(err)
+  if sendResponse.Status != "PENDING" {
+    log.Fatalf("Something went wrong! %+v", sendResponse)
+  }
+
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  response, err := server.PollTransaction(pollCtx, sendResponse.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    // Still NOT_FOUND: the status is unknown, not failed.
+    log.Fatalf("Status unknown, look up %s again later", sendResponse.Hash)
+  }
+  check(err)
+  log.Printf("transaction response: %+v", response)
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal("Something went wrong! ", err)
+  }
+}
+```
+
 </CodeGroup>

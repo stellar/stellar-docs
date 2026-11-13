@@ -93,7 +93,7 @@ The account balance decreases only by the transaction fee. You may want to detec
 
 ## Code Implementation
 
-_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` (`run_all_muxed_examples()` in Python) or execute individual examples using their respective functions._
+_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` (`run_all_muxed_examples()` in Python; the same name in Go) or execute individual examples using their respective functions._
 
 <CodeGroup>
 
@@ -630,6 +630,332 @@ def make_payment(source, dest, description="Payment"):
 
 # Run the main function
 run_all_muxed_examples()
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  "log"
+  "net/http"
+  "net/url"
+  "strings"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/amount"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var ctx = context.Background()
+var server = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+var custodian = keypair.MustRandom()
+var outsider = keypair.MustRandom()
+
+// A muxed customer: an M... address over the custodian's G... account
+type customer struct {
+  id      uint64
+  address string
+}
+
+var customers []customer
+var fee int64
+
+// Setup function to fund accounts and create muxed customers
+func preamble() error {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee = min(int64(feeStats.InclusionFee.P90), maxFee)
+
+  fmt.Println("=== FUNDING ACCOUNTS WITH XLM ===")
+  networkInfo, err := server.GetNetwork(ctx)
+  if err != nil {
+    return err
+  }
+  for _, kp := range []*keypair.Full{custodian, outsider} {
+    resp, err := http.Get(networkInfo.FriendbotURL + "?addr=" + url.QueryEscape(kp.Address()))
+    if err != nil {
+      return err
+    }
+    resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+      return fmt.Errorf("friendbot returned %s", resp.Status)
+    }
+  }
+  fmt.Println("All accounts funded with XLM via airdrop")
+
+  for _, id := range []uint64{1, 22, 333, 4444} {
+    muxed, err := xdr.MuxedAccountFromAccountId(custodian.Address(), id)
+    if err != nil {
+      return err
+    }
+    customers = append(customers, customer{id: id, address: muxed.Address()})
+  }
+
+  fmt.Println("\n=== ACCOUNT SETUP ===")
+  fmt.Println("Custodian:\n       ", custodian.Address())
+  fmt.Println("Outsider:\n       ", outsider.Address())
+  fmt.Println("Customers:")
+  for _, c := range customers {
+    fmt.Printf(" %4d: %s\n", c.id, c.address)
+  }
+  return nil
+}
+
+// Example 1: Basic payment between two G accounts
+func runUnmuxedExample() error {
+  fmt.Println("=== BASIC PAYMENT EXAMPLE (G → G) ===")
+
+  fmt.Println("=== INITIAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+
+  if err := makePayment(custodian.Address(), outsider.Address(), "Basic Payment from G to G address"); err != nil {
+    return err
+  }
+
+  fmt.Println("\n=== FINAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+
+  fmt.Println("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===")
+  return nil
+}
+
+// Example 2: Payment from M account to G account
+func runMuxedToUnmuxedExample() error {
+  fmt.Println("=== MUXED TO UNMUXED PAYMENT EXAMPLE (M → G) ===")
+
+  fmt.Println("=== INITIAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+  src := customers[0]
+  fmt.Printf("Sending 10 XLM from Customer %d to %s.\n", src.id, formatAccount(outsider.Address()))
+
+  if err := makePayment(src.address, outsider.Address(), "Payment from M to G address"); err != nil {
+    return err
+  }
+
+  fmt.Println("\n=== FINAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+
+  fmt.Println("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===")
+  return nil
+}
+
+// Example 3: Payment between two M accounts
+func runMuxedToMuxedExample() error {
+  fmt.Println("=== MUXED TO MUXED PAYMENT EXAMPLE (M → M) ===")
+
+  fmt.Println("=== INITIAL BALANCES ===")
+  showBalance(custodian.Address())
+
+  src := customers[1]  // Customer 22
+  dest := customers[2] // Customer 333
+
+  fmt.Printf("Sending 10 XLM from Customer %d to Customer %d.\n", src.id, dest.id)
+
+  if err := makePayment(src.address, dest.address, "Payment from M to M address"); err != nil {
+    return err
+  }
+
+  fmt.Println("\n=== FINAL BALANCES ===")
+  showBalance(custodian.Address())
+
+  fmt.Println("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===")
+  return nil
+}
+
+// Main function that runs preamble once and then all three examples
+func runAllMuxedExamples() error {
+  // Run setup/funding only once
+  if err := preamble(); err != nil {
+    return err
+  }
+
+  // Show initial state
+  fmt.Println("=== OVERALL INITIAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+  fmt.Println("\n" + strings.Repeat("=", 60) + "\n")
+
+  // Run all three examples sequentially
+  if err := runUnmuxedExample(); err != nil {
+    return err
+  }
+  fmt.Println("\n" + strings.Repeat("=", 60) + "\n")
+
+  if err := runMuxedToUnmuxedExample(); err != nil {
+    return err
+  }
+  fmt.Println("\n" + strings.Repeat("=", 60) + "\n")
+
+  if err := runMuxedToMuxedExample(); err != nil {
+    return err
+  }
+
+  fmt.Println("\n=== ALL MUXED ACCOUNT EXAMPLES COMPLETED ===")
+  return nil
+}
+
+// Helper function to format account ID with label
+func formatAccount(accountID string) string {
+  shortID := accountID[:8]
+  switch accountID {
+  case custodian.Address():
+    return shortID + " (Custodian)"
+  case outsider.Address():
+    return shortID + " (Outsider)"
+  }
+
+  // Check if it's a muxed account by finding the matching customer
+  for _, c := range customers {
+    if c.address == accountID {
+      return fmt.Sprintf("%s...%s (Customer %d)", accountID[:8], accountID[len(accountID)-6:], c.id)
+    }
+  }
+  return shortID
+}
+
+// Helper function to get XLM balance using RPC
+func getXLMBalance(accountID string) string {
+  account := xdr.MustAddress(accountID)
+  key, err := account.LedgerKey()
+  if err != nil {
+    return "0"
+  }
+  keyB64, err := xdr.MarshalBase64(key)
+  if err != nil {
+    return "0"
+  }
+  response, err := server.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+  if err != nil || len(response.Entries) == 0 {
+    return "0"
+  }
+  var entry xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(response.Entries[0].DataXDR, &entry); err != nil || entry.Account == nil {
+    return "0"
+  }
+  return amount.String(entry.Account.Balance)
+}
+
+// Helper function to submit transaction and poll for completion using RPC
+func submitAndPollTransaction(tx *txnbuild.Transaction, description string) error {
+  envelope, err := tx.Base64()
+  if err != nil {
+    return err
+  }
+  submitResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return err
+  }
+  if submitResponse.Status != "PENDING" {
+    return fmt.Errorf("transaction submission failed: %s", submitResponse.Status)
+  }
+
+  fmt.Printf("%s submitted: %s\n", description, submitResponse.Hash)
+
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  finalResponse, err := server.PollTransaction(pollCtx, submitResponse.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    // Not in a ledger yet: the outcome is unknown, not failed.
+    return fmt.Errorf("%s not found yet: %s", description, submitResponse.Hash)
+  }
+  if err != nil {
+    return err
+  }
+  if finalResponse.Status != protocol.TransactionStatusSuccess {
+    return fmt.Errorf("%s failed: %s", description, finalResponse.Status)
+  }
+
+  fmt.Printf("%s completed successfully\n", description)
+  return nil
+}
+
+func buildTx(source txnbuild.Account, signer *keypair.Full, ops []txnbuild.Operation) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        source,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           ops,
+  })
+  if err != nil {
+    return nil, err
+  }
+  return tx.Sign(network.TestNetworkPassphrase, signer)
+}
+
+// Helper function to resolve muxed accounts to their base G account
+func baseAccount(address string) string {
+  if strkey.IsValidMuxedAccountEd25519PublicKey(address) {
+    // Muxed accounts do not exist on the ledger: use the base G account
+    muxed := xdr.MustMuxedAddress(address)
+    return muxed.ToAccountId().Address()
+  }
+  return address
+}
+
+// Helper function to display balance of an account
+func showBalance(address string) {
+  fmt.Printf("%s: %s XLM\n", formatAccount(address), getXLMBalance(baseAccount(address)))
+}
+
+// Function to make a payment from source to destination account
+func makePayment(source, dest, description string) error {
+  fmt.Printf("\nPayment: %s → %s (10 XLM)\n", formatAccount(source), formatAccount(dest))
+
+  accountBeforePayment, err := server.LoadAccount(ctx, baseAccount(source))
+  if err != nil {
+    return err
+  }
+  fmt.Println("Before payment:")
+  showBalance(baseAccount(source))
+
+  payment := &txnbuild.Payment{
+    SourceAccount: source,
+    Destination:   dest,
+    Asset:         txnbuild.NativeAsset{},
+    Amount:        "10",
+  }
+
+  tx, err := buildTx(accountBeforePayment, custodian, []txnbuild.Operation{payment})
+  if err != nil {
+    return err
+  }
+
+  if err := submitAndPollTransaction(tx, description); err != nil {
+    return err
+  }
+
+  fmt.Println("After payment:")
+  showBalance(baseAccount(source))
+  return nil
+}
+
+// Run the main function
+func main() {
+  if err := runAllMuxedExamples(); err != nil {
+    log.Println("Error in examples:", err)
+  }
+}
 ```
 
 </CodeGroup>

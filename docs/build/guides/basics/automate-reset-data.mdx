@@ -33,6 +33,7 @@ Automating blockchain state on Stellar's Testnet and Futurenet can streamline de
 - [Node.js](https://nodejs.org/en) and `npm` installed.
 - Stellar SDK for [JavaScript](https://www.npmjs.com/package/@stellar/stellar-sdk) and `fs` installed
 - For the Python example: the [Python SDK](https://pypi.org/project/stellar-sdk/) and `requests` installed. It defines its own `submit_tx` helper.
+- For the Go example: [Go](https://go.dev/doc/install) 1.25 or later and the [Go SDK](https://github.com/stellar/go-stellar-sdk). It defines its own `submitTx` and `prepareTransaction` helpers.
 - An understanding of the rudimentary, retry-enabled transaction polling function `submitTx` which we outlined in [another guide](/docs/build/guides/transactions/submit-transaction-wait)
 
 ### Code
@@ -576,6 +577,468 @@ def automate_setup():
 
 if __name__ == "__main__":
     automate_setup()
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "crypto/rand"
+  "encoding/json"
+  "errors"
+  "fmt"
+  "log"
+  "net/http"
+  "net/url"
+  "os"
+  "strings"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var ctx = context.Background()
+
+// networkRPC := "USE EITHER FUTURENET OR TESTNET RPC"
+const networkRPC = "https://soroban-testnet.stellar.org"
+
+// Example
+// FOR FUTURENET - https://rpc-futurenet.stellar.org
+// FOR TESTNET - https://soroban-testnet.stellar.org
+var server = client.NewClient(networkRPC, nil)
+
+// networkURL := "USE EITHER FUTURENET OR TESTNET URL"
+const networkURL = "https://friendbot.stellar.org"
+
+// Example
+// FOR FUTURENET - https://friendbot-futurenet.stellar.org
+// FOR TESTNET - https://friendbot.stellar.org
+
+const networkPassphrase = network.TestNetworkPassphrase // or network.FutureNetworkPassphrase, network.PublicNetworkPassphrase
+
+// Each transaction below bids what recent transactions paid, capped at maxFee.
+// txnbuild.MinBaseFee is the network minimum and gets outbid when the network is busy.
+const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+
+// Send a signed transaction and wait for its final status.
+func submitTx(tx *txnbuild.Transaction) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+  if sendResponse.Status != "PENDING" {
+    return none, fmt.Errorf("submission failed: %+v", sendResponse)
+  }
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  response, err := server.PollTransaction(pollCtx, sendResponse.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    // Still NOT_FOUND: the status is unknown, not failed.
+    return none, fmt.Errorf("status unknown, look up %s again later", sendResponse.Hash)
+  }
+  if err != nil {
+    return none, err
+  }
+  if response.Status != protocol.TransactionStatusSuccess {
+    return none, fmt.Errorf("transaction status: %s", response.Status)
+  }
+  return response, nil
+}
+
+// Read a contract call's return value from the transaction meta.
+func returnValue(response protocol.GetTransactionResponse) (xdr.ScVal, error) {
+  var meta xdr.TransactionMeta
+  if err := xdr.SafeUnmarshalBase64(response.ResultMetaXDR, &meta); err != nil {
+    return xdr.ScVal{}, err
+  }
+  switch {
+  case meta.V4 != nil && meta.V4.SorobanMeta != nil && meta.V4.SorobanMeta.ReturnValue != nil:
+    return *meta.V4.SorobanMeta.ReturnValue, nil
+  case meta.V3 != nil && meta.V3.SorobanMeta != nil:
+    return meta.V3.SorobanMeta.ReturnValue, nil
+  }
+  return xdr.ScVal{}, errors.New("no return value in the transaction meta")
+}
+
+// The Go SDK has no prepareTransaction, so this helper simulates the
+// transaction, then builds it again with the simulated resources, resource
+// fee, and authorization entries.
+func prepareTransaction(params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+// Bid what recent transactions paid, capped at maxFee
+func bid(soroban bool) (int64, error) {
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return 0, err
+  }
+  if soroban {
+    return min(int64(feeStats.SorobanInclusionFee.P90), maxFee), nil
+  }
+  return min(int64(feeStats.InclusionFee.P90), maxFee), nil
+}
+
+// Build and sign a classic transaction
+func buildTx(source txnbuild.Account, fee int64, timeout int64, signer *keypair.Full, ops ...txnbuild.Operation) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        source,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(timeout)},
+    Operations:           ops,
+  })
+  if err != nil {
+    return nil, err
+  }
+  return tx.Sign(networkPassphrase, signer)
+}
+
+// Create an Account
+func createAccount(networkURL, secretKey string) (*keypair.Full, error) {
+  if secretKey != "" {
+    pair, err := keypair.ParseFull(secretKey)
+    if err != nil {
+      return nil, err
+    }
+    fmt.Println("Account Restored:", pair.Address())
+    return pair, nil
+  }
+  // Generate a keypair
+  pair := keypair.MustRandom()
+  // Fund the new account using Friendbot
+  response, err := http.Get(networkURL + "?addr=" + url.QueryEscape(pair.Address()))
+  if err != nil {
+    return nil, err
+  }
+  defer response.Body.Close()
+  var body map[string]any
+  if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+    return nil, err
+  }
+  fmt.Println("Account created:", body)
+  return pair, nil
+}
+
+// Issues an Asset
+func issueAsset(issuerKeys, receivingKeys *keypair.Full, customAsset txnbuild.CreditAsset) error {
+  fee, err := bid(false)
+  if err != nil {
+    return err
+  }
+
+  // First, the receiving account must trust the asset
+  receiver, err := server.LoadAccount(ctx, receivingKeys.Address())
+  if err != nil {
+    return err
+  }
+  transaction, err := buildTx(receiver, fee, 100, receivingKeys, &txnbuild.ChangeTrust{
+    Line:  customAsset.MustToChangeTrustAsset(),
+    Limit: "100000",
+  })
+  if err != nil {
+    return err
+  }
+  if _, err := submitTx(transaction); err != nil {
+    return err
+  }
+  fmt.Printf("Receiver Trusting %s Asset......\n", customAsset.Code)
+
+  // Second, the issuing account actually sends a payment using the asset
+  issuer, err := server.LoadAccount(ctx, issuerKeys.Address())
+  if err != nil {
+    return err
+  }
+  transaction, err = buildTx(issuer, fee, 100, issuerKeys, &txnbuild.Payment{
+    Destination: receivingKeys.Address(),
+    Asset:       customAsset,
+    Amount:      "1000", // change to desired amount you want to pay
+  })
+  if err != nil {
+    return err
+  }
+  if _, err := submitTx(transaction); err != nil {
+    return err
+  }
+  fmt.Printf("Issuer Payment using %s to %s\n", customAsset.Code, receivingKeys.Address())
+  return nil
+}
+
+// Create Liquidity Pool
+func createLiquidityPool(accountKeypair *keypair.Full, nativeAsset txnbuild.NativeAsset, customAsset txnbuild.CreditAsset) error {
+  account, err := server.LoadAccount(ctx, accountKeypair.Address())
+  if err != nil {
+    return err
+  }
+
+  // Create the liquidity pool
+  poolAsset := txnbuild.LiquidityPoolShareChangeTrustAsset{
+    LiquidityPoolParameters: txnbuild.LiquidityPoolParameters{
+      AssetA: nativeAsset,
+      AssetB: customAsset,
+      Fee:    txnbuild.LiquidityPoolFeeV18,
+    },
+  }
+  poolID, err := txnbuild.NewLiquidityPoolId(nativeAsset, customAsset) // To Get the Pool ID
+  if err != nil {
+    return err
+  }
+
+  fee, err := bid(false)
+  if err != nil {
+    return err
+  }
+
+  transaction, err := buildTx(account, fee, 30, accountKeypair,
+    &txnbuild.ChangeTrust{
+      Line:  poolAsset,
+      Limit: "100000", // Set an appropriate limit
+    },
+    &txnbuild.LiquidityPoolDeposit{
+      LiquidityPoolID: poolID,
+      MaxAmountA:      "1000",                // Amount of asset A to deposit
+      MaxAmountB:      "500",                 // Amount of asset B to deposit
+      MinPrice:        xdr.Price{N: 1, D: 2}, // Minimum price ratio (0.5)
+      MaxPrice:        xdr.Price{N: 2, D: 1}, // Maximum price ratio (2.0)
+    },
+  )
+  if err != nil {
+    return err
+  }
+  if _, err := submitTx(transaction); err != nil {
+    return err
+  }
+  fmt.Printf("Creating Liquidity Pool for native and %s\n", customAsset.Code)
+  return nil
+}
+
+// Deploy and Invoke Contract
+func deployAndInvokeContract(deployer *keypair.Full, contractWasmFilePath string) (string, []string, error) {
+  // Bid what recent transactions paid, capped at maxFee.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  fee, err := bid(true)
+  if err != nil {
+    return "", nil, err
+  }
+  sendSoroban := func(hostFunction xdr.HostFunction) (protocol.GetTransactionResponse, error) {
+    account, err := server.LoadAccount(ctx, deployer.Address())
+    if err != nil {
+      return protocol.GetTransactionResponse{}, err
+    }
+    tx, err := prepareTransaction(txnbuild.TransactionParams{
+      SourceAccount:        account,
+      IncrementSequenceNum: true,
+      BaseFee:              fee,
+      Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+      Operations:           []txnbuild.Operation{&txnbuild.InvokeHostFunction{HostFunction: hostFunction}},
+    })
+    if err != nil {
+      return protocol.GetTransactionResponse{}, err
+    }
+    if tx, err = tx.Sign(networkPassphrase, deployer); err != nil {
+      return protocol.GetTransactionResponse{}, err
+    }
+    return submitTx(tx)
+  }
+
+  // Step 1: Upload Wasm
+  bytecode, err := os.ReadFile(contractWasmFilePath)
+  if err != nil {
+    return "", nil, err
+  }
+  fmt.Println("Submitting Wasm upload transaction...")
+  response, err := sendSoroban(xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeUploadContractWasm,
+    Wasm: &bytecode,
+  })
+  if err != nil {
+    return "", nil, err
+  }
+  uploaded, err := returnValue(response)
+  if err != nil {
+    return "", nil, err
+  }
+  hashBytes, ok := uploaded.GetBytes()
+  if !ok {
+    return "", nil, errors.New("upload did not return a Wasm hash")
+  }
+  var wasmHash xdr.Hash
+  copy(wasmHash[:], hashBytes)
+
+  // Deploy the Contract, with a random salt
+  var salt xdr.Uint256
+  if _, err := rand.Read(salt[:]); err != nil {
+    return "", nil, err
+  }
+  response, err = sendSoroban(xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeCreateContractV2,
+    CreateContractV2: &xdr.CreateContractArgsV2{
+      ContractIdPreimage: xdr.ContractIdPreimage{
+        Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
+        FromAddress: &xdr.ContractIdPreimageFromAddress{
+          Address: xdr.ScAddress{
+            Type:      xdr.ScAddressTypeScAddressTypeAccount,
+            AccountId: xdr.MustAddressPtr(deployer.Address()),
+          },
+          Salt: salt,
+        },
+      },
+      Executable: xdr.ContractExecutable{
+        Type:     xdr.ContractExecutableTypeContractExecutableWasm,
+        WasmHash: &wasmHash,
+      },
+      ConstructorArgs: []xdr.ScVal{},
+    },
+  })
+  if err != nil {
+    return "", nil, err
+  }
+  fmt.Println("Contract Deployed...")
+
+  deployed, err := returnValue(response)
+  if err != nil {
+    return "", nil, err
+  }
+  contractAddress, ok := deployed.GetAddress()
+  if !ok || contractAddress.ContractId == nil {
+    return "", nil, errors.New("deploy did not return a contract address")
+  }
+  contractID := strkey.MustEncode(strkey.VersionByteContract, (*contractAddress.ContractId)[:])
+
+  // Invoke Contract
+  world := xdr.ScString("World")
+  response, err = sendSoroban(xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+    InvokeContract: &xdr.InvokeContractArgs{
+      ContractAddress: contractAddress,
+      FunctionName:    "hello",
+      Args:            []xdr.ScVal{{Type: xdr.ScValTypeScvString, Str: &world}},
+    },
+  })
+  if err != nil {
+    return "", nil, err
+  }
+  fmt.Println("Invoke Contract.")
+
+  // `hello` returns a vector of strings
+  result, err := returnValue(response)
+  if err != nil {
+    return "", nil, err
+  }
+  var returnValues []string
+  if vec, ok := result.GetVec(); ok && vec != nil {
+    for _, value := range *vec {
+      if str, ok := value.GetStr(); ok && str != "" {
+        returnValues = append(returnValues, string(str))
+      }
+    }
+  }
+  return contractID, returnValues, nil
+}
+
+func automateSetup() error {
+  // Check Network Status
+  fmt.Println("Checking network health...")
+  health, err := server.GetHealth(ctx)
+  if err != nil {
+    return err
+  }
+  fmt.Println("Network health:", health.Status)
+
+  // Flexible Account Configuration
+  // This is an example of a user's secret key
+  secretKey := "SBGGNMUPVF2SDN4KZOJQFVFX7VDR4Q4NK3FMEFRQC64D3UBMFELKF5GC"
+
+  accountOne, err := createAccount(networkURL, secretKey)
+  if err != nil {
+    return err
+  }
+  accountTwo, err := createAccount(networkURL, "")
+  if err != nil {
+    return err
+  }
+
+  fmt.Println("Issuing an Asset...")
+  // Issue assets to these accounts
+  customAsset := txnbuild.CreditAsset{Code: "Boya", Issuer: accountOne.Address()}
+  if err := issueAsset(accountOne, accountTwo, customAsset); err != nil {
+    return err
+  }
+
+  // Create liquidity pool
+  fmt.Println("Creating liquidity pool...")
+  if err := createLiquidityPool(accountTwo, txnbuild.NativeAsset{}, customAsset); err != nil {
+    return err
+  }
+
+  // Deploy a contract
+  fmt.Println("Deploying contract...")
+  // Ensure you have the contract Wasm file compiled and saved in the specified path.
+  // Adjust this path as necessary
+  contractWasmFilePath := "./target/wasm32v1-none/release/hello_world.wasm"
+  contractID, returnValues, err := deployAndInvokeContract(accountOne, contractWasmFilePath)
+  if err != nil {
+    return err
+  }
+
+  fmt.Println("Contract ID:", contractID)
+  fmt.Println("Return Values:", strings.Join(returnValues, ", "))
+  return nil
+}
+
+func main() {
+  if err := automateSetup(); err != nil {
+    log.Fatal("An error occurred: ", err)
+  }
+}
 ```
 
 </CodeGroup>

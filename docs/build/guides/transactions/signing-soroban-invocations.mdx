@@ -148,6 +148,163 @@ def invoke_with_full_signing(
     return response
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "fmt"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const rpcURL = "https://soroban-testnet.stellar.org"
+
+var server = client.NewClient(rpcURL, nil)
+
+var sourceKeypair = keypair.MustParseFull("S...")
+
+func invokeWithFullSigning(
+  ctx context.Context,
+  contractID string,
+  recipientAddress string,
+  amount int64,
+) (protocol.SendTransactionResponse, error) {
+  var none protocol.SendTransactionResponse
+  sourceAccount, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return none, err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  // prepareTransaction simulates and assembles in one step
+  preparedTx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        sourceAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.InvokeHostFunction{
+        HostFunction: contractCall(contractID, "transfer",
+          addressScVal(sourceKeypair.Address()),
+          addressScVal(recipientAddress),
+          i128ScVal(amount),
+        ),
+      },
+    },
+  })
+  if err != nil {
+    return none, err
+  }
+
+  // Sign the transaction envelope
+  preparedTx, err = preparedTx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  if err != nil {
+    return none, err
+  }
+
+  // Submit to network
+  envelope, err := preparedTx.Base64()
+  if err != nil {
+    return none, err
+  }
+  return server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+}
+
+// The Go SDK has no prepareTransaction, so this helper simulates the
+// transaction, then builds it again with the simulated resources, resource
+// fee, and authorization entries.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+// contractCall builds the host function that calls `function` on a contract.
+func contractCall(contractID, function string, args ...xdr.ScVal) xdr.HostFunction {
+  var id xdr.ContractId
+  copy(id[:], strkey.MustDecode(strkey.VersionByteContract, contractID))
+  return xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+    InvokeContract: &xdr.InvokeContractArgs{
+      ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id},
+      FunctionName:    xdr.ScSymbol(function),
+      Args:            args,
+    },
+  }
+}
+
+// addressScVal converts a G... or C... address to an address ScVal.
+func addressScVal(address string) xdr.ScVal {
+  var scAddress xdr.ScAddress
+  if strkey.IsValidEd25519PublicKey(address) {
+    scAddress = xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: xdr.MustAddressPtr(address)}
+  } else {
+    var id xdr.ContractId
+    copy(id[:], strkey.MustDecode(strkey.VersionByteContract, address))
+    scAddress = xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
+  }
+  return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddress}
+}
+
+// i128ScVal converts a non-negative amount to an i128 ScVal.
+func i128ScVal(amount int64) xdr.ScVal {
+  parts := xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(amount)}
+  return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &parts}
+}
+```
+
 </CodeGroup>
 
 <Note>
@@ -368,9 +525,208 @@ def build_signed_auth_entries(
     return tx.to_xdr()
 ```
 
+```go Go
+// Copy contractCall, addressScVal, and i128ScVal from Method 1 into this file.
+package main
+
+import (
+  "context"
+  "crypto/sha256"
+  "errors"
+  "fmt"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const rpcURL = "https://soroban-testnet.stellar.org"
+const networkPassphrase = network.TestNetworkPassphrase
+
+// The same placeholder source account the JavaScript SDK uses. The fee-payer
+// replaces it in step 2.
+const nullAccount = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+
+var server = client.NewClient(rpcURL, nil)
+
+// Client's keypair (authorizes the transfer)
+var senderKeypair = keypair.MustParseFull("S...")
+
+func buildSignedAuthEntries(
+  ctx context.Context,
+  tokenContractID string,
+  recipientAddress string,
+  amount int64,
+) (string, error) {
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: contractCall(tokenContractID, "transfer",
+      addressScVal(senderKeypair.Address()),
+      addressScVal(recipientAddress),
+      i128ScVal(amount),
+    ),
+  }
+  params := txnbuild.TransactionParams{
+    SourceAccount:        &txnbuild.SimpleAccount{AccountID: nullAccount, Sequence: 0},
+    IncrementSequenceNum: true,
+    BaseFee:              txnbuild.MinBaseFee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(300)},
+    Operations:           []txnbuild.Operation{operation},
+  }
+
+  // Build the transaction and simulate it (Recording Mode)
+  sim, tx, err := simulate(ctx, params)
+  if err != nil {
+    return "", err
+  }
+  if sim.Error != "" {
+    return "", fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  // Check who needs to sign, and sign the sender's auth entries
+  senderSigned := false
+  if len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return "", err
+      }
+      if entry.Credentials.Type == xdr.SorobanCredentialsTypeSorobanCredentialsAddress {
+        address, err := entry.Credentials.Address.Address.String()
+        if err != nil {
+          return "", err
+        }
+        if address == senderKeypair.Address() {
+          // ~5 minutes
+          entry, err = authorizeEntry(entry, senderKeypair, sim.LatestLedger+60, networkPassphrase)
+          if err != nil {
+            return "", err
+          }
+          senderSigned = true
+        }
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+  if !senderSigned {
+    return "", errors.New("sender not in required signers")
+  }
+
+  // Re-simulate to validate signatures (📌 Enforcing Mode)
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  sim, _, err = simulate(ctx, params)
+  if err != nil {
+    return "", err
+  }
+  if sim.Error != "" {
+    return "", fmt.Errorf("signature validation failed: %s", sim.Error)
+  }
+
+  // Verify all signatures collected
+  for _, entry := range operation.Auth {
+    if entry.Credentials.Type == xdr.SorobanCredentialsTypeSorobanCredentialsAddress &&
+      entry.Credentials.Address.Signature.Type == xdr.ScValTypeScvVoid {
+      return "", errors.New("missing signatures")
+    }
+  }
+
+  // Add the enforcing simulation's resources, then return the transaction XDR for the fee-payer
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return "", err
+  }
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+  signedTx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return "", err
+  }
+  return signedTx.Base64()
+}
+
+// simulate builds the transaction and simulates it.
+func simulate(
+  ctx context.Context,
+  params txnbuild.TransactionParams,
+) (protocol.SimulateTransactionResponse, *txnbuild.Transaction, error) {
+  var none protocol.SimulateTransactionResponse
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return none, nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  return sim, tx, err
+}
+
+// The Go SDK has no auth-entry signer, so authorizeEntry signs an auth entry
+// with a keypair, valid until and including validUntilLedger.
+func authorizeEntry(
+  entry xdr.SorobanAuthorizationEntry,
+  signer *keypair.Full,
+  validUntilLedger uint32,
+  networkPassphrase string,
+) (xdr.SorobanAuthorizationEntry, error) {
+  if entry.Credentials.Type != xdr.SorobanCredentialsTypeSorobanCredentialsAddress {
+    return entry, nil // source account credentials need no signature
+  }
+  credentials := *entry.Credentials.Address
+  credentials.SignatureExpirationLedger = xdr.Uint32(validUntilLedger)
+
+  // Sign the SHA-256 hash of the ENVELOPE_TYPE_SOROBAN_AUTHORIZATION preimage
+  preimage := xdr.HashIdPreimage{
+    Type: xdr.EnvelopeTypeEnvelopeTypeSorobanAuthorization,
+    SorobanAuthorization: &xdr.HashIdPreimageSorobanAuthorization{
+      NetworkId:                 xdr.Hash(sha256.Sum256([]byte(networkPassphrase))),
+      Nonce:                     credentials.Nonce,
+      SignatureExpirationLedger: credentials.SignatureExpirationLedger,
+      Invocation:                entry.RootInvocation,
+    },
+  }
+  payload, err := preimage.MarshalBinary()
+  if err != nil {
+    return entry, err
+  }
+  hash := sha256.Sum256(payload)
+  signature, err := signer.Sign(hash[:])
+  if err != nil {
+    return entry, err
+  }
+
+  // A G-account expects a vector of {public_key, signature} maps
+  publicKey := xdr.ScBytes(strkey.MustDecode(strkey.VersionByteAccountID, signer.Address()))
+  signatureBytes := xdr.ScBytes(signature)
+  publicKeyName := xdr.ScSymbol("public_key")
+  signatureName := xdr.ScSymbol("signature")
+  signatureMap := &xdr.ScMap{
+    {
+      Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &publicKeyName},
+      Val: xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &publicKey},
+    },
+    {
+      Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &signatureName},
+      Val: xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &signatureBytes},
+    },
+  }
+  signatures := &xdr.ScVec{{Type: xdr.ScValTypeScvMap, Map: &signatureMap}}
+  credentials.Signature = xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &signatures}
+
+  entry.Credentials.Address = &credentials
+  return entry, nil
+}
+```
+
 </CodeGroup>
 
-In Python, re-simulate with `prepare()`, not `simulate()`. `simulate()` builds the transaction again from scratch, without the signed auth entries.
+In Python, re-simulate with `prepare()`, not `simulate()`. `simulate()` builds the transaction again from scratch, without the signed auth entries. The Go SDK has no `AssembledTransaction` or auth-entry signer, so the Go version simulates by hand and signs with its own `authorizeEntry` helper.
 
 #### Step 2: Fee-payer rebuilds and submits
 
@@ -418,8 +774,14 @@ async function submitWithSignedAuth(
   // Rebuild transaction with fee-payer as source
   const feePayerAccount = await server.getAccount(feePayerKeypair.publicKey());
 
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // assembleTransaction adds the resource fee on top of this inclusion fee.
+  const { sorobanInclusionFee } = await server.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = String(Math.min(Number(sorobanInclusionFee.p90), MAX_FEE));
+
   const rebuiltTx = new TransactionBuilder(feePayerAccount, {
-    fee: clientTx.fee,
+    fee,
     networkPassphrase,
     sorobanData,
   })
@@ -489,11 +851,16 @@ def submit_with_signed_auth(transaction_xdr: str) -> SendTransactionResponse:
     # Rebuild transaction with fee-payer as source
     fee_payer_account = server.load_account(fee_payer_keypair.public_key)
 
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
     rebuilt_tx = (
         TransactionBuilder(
             source_account=fee_payer_account,
             network_passphrase=network_passphrase,
-            base_fee=client_tx.fee,
+            base_fee=fee,
         )
         .set_soroban_data(soroban_data)
         .set_timeout(30)
@@ -521,6 +888,110 @@ def submit_with_signed_auth(transaction_xdr: str) -> SendTransactionResponse:
     return server.send_transaction(assembled_tx)
 ```
 
+```go Go
+// Copy prepareTransaction from Method 1 into this file.
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const rpcURL = "https://soroban-testnet.stellar.org"
+const networkPassphrase = network.TestNetworkPassphrase
+
+var server = client.NewClient(rpcURL, nil)
+var feePayerKeypair = keypair.MustParseFull("S...")
+
+func submitWithSignedAuth(
+  ctx context.Context,
+  transactionXDR string,
+) (protocol.SendTransactionResponse, error) {
+  var none protocol.SendTransactionResponse
+
+  // Parse client's transaction to extract operation and Soroban data
+  parsed, err := txnbuild.TransactionFromXDR(transactionXDR)
+  if err != nil {
+    return none, err
+  }
+  clientTx, ok := parsed.Transaction()
+  if !ok {
+    return none, errors.New("expected a v1 transaction envelope")
+  }
+  operations := clientTx.Operations()
+  if len(operations) != 1 {
+    return none, errors.New("expected one operation")
+  }
+  invokeOp, ok := operations[0].(*txnbuild.InvokeHostFunction)
+  if !ok {
+    return none, errors.New("expected an InvokeHostFunction operation")
+  }
+  // The parsed operation carries the transaction's Soroban data in Ext
+  if invokeOp.Ext.SorobanData == nil {
+    return none, errors.New("missing Soroban data")
+  }
+
+  // 🚨 SECURITY: Verify the transaction/operation source is not the fee-payer's
+  // account, and that the auth entries do not reference the fee-payer's account
+
+  // Rebuild transaction with fee-payer as source
+  feePayerAccount, err := server.LoadAccount(ctx, feePayerKeypair.Address())
+  if err != nil {
+    return none, err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  // 📌 prepareTransaction simulates before submitting to catch errors without
+  // paying fees (Enforcing Mode), then applies the simulation's footprint and
+  // resource fee. It keeps the client's signed auth entries.
+  assembledTx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        feePayerAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.InvokeHostFunction{
+        HostFunction:  invokeOp.HostFunction,
+        Auth:          invokeOp.Auth,
+        SourceAccount: invokeOp.SourceAccount,
+        Ext:           invokeOp.Ext,
+      },
+    },
+  })
+  if err != nil {
+    return none, err
+  }
+
+  // Fee-payer signs and submits
+  assembledTx, err = assembledTx.Sign(networkPassphrase, feePayerKeypair)
+  if err != nil {
+    return none, err
+  }
+  envelope, err := assembledTx.Base64()
+  if err != nil {
+    return none, err
+  }
+  return server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+}
+```
+
 </CodeGroup>
 
 ### Key characteristics {#key-characteristics-1}
@@ -545,7 +1016,7 @@ For C-accounts:
 
 **Using `basicNodeSigner` for G-accounts (Node.js/backend)**
 
-The `basicNodeSigner` utility creates signing functions from a keypair, providing both `signAuthEntry` and `signTransaction` methods. This is useful for backend services or testing. In Python, `authorize_entry` signs an auth entry and the transaction envelope's `sign` method signs the transaction.
+The `basicNodeSigner` utility creates signing functions from a keypair, providing both `signAuthEntry` and `signTransaction` methods. This is useful for backend services or testing. In Python, `authorize_entry` signs an auth entry and the transaction envelope's `sign` method signs the transaction. In Go, the `authorizeEntry` helper from step 1 signs an auth entry and the transaction's `Sign` method signs the transaction.
 
 <CodeGroup>
 
@@ -581,6 +1052,32 @@ signed_auth_entry = authorize_entry(
 # Sign a transaction envelope
 signed_transaction = TransactionEnvelope.from_xdr(transaction_xdr, network_passphrase)
 signed_transaction.sign(keypair)
+```
+
+```go Go
+kp := keypair.MustParseFull("S...")
+networkPassphrase := "Test SDF Network ; September 2015"
+
+// Sign an auth entry, valid until and including the ledger you choose,
+// with the authorizeEntry helper from step 1
+signedAuthEntry, err := authorizeEntry(authEntry, kp, signatureExpirationLedger, networkPassphrase)
+if err != nil {
+  log.Fatal(err)
+}
+
+// Sign a transaction envelope
+parsed, err := txnbuild.TransactionFromXDR(transactionXDR)
+if err != nil {
+  log.Fatal(err)
+}
+tx, ok := parsed.Transaction()
+if !ok {
+  log.Fatal("expected a v1 transaction envelope")
+}
+signedTransaction, err := tx.Sign(networkPassphrase, kp)
+if err != nil {
+  log.Fatal(err)
+}
 ```
 
 </CodeGroup>

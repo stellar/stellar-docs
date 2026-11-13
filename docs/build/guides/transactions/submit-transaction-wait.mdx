@@ -154,9 +154,103 @@ def submit_tx(
         time.sleep(1)
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const rpcServer = "https://soroban-testnet.stellar.org/"
+
+var server = client.NewClient(rpcServer, nil)
+
+// Sends a transaction, then waits until it is in a ledger or has expired.
+func submitTx(
+  ctx context.Context,
+  tx *txnbuild.GenericTransaction,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+
+  // A transaction can go into a ledger only until its time bound (MaxTime).
+  inner, ok := tx.Transaction()
+  if feeBump, isFeeBump := tx.FeeBump(); isFeeBump {
+    inner, ok = feeBump.InnerTransaction(), true
+  }
+  if !ok {
+    return none, errors.New("empty transaction")
+  }
+  maxTime := inner.Timebounds().MaxTime
+  if maxTime == 0 {
+    return none, errors.New("set a timeout so that the transaction can expire")
+  }
+
+  envelope, err := tx.MarshalText()
+  if err != nil {
+    return none, err
+  }
+  request := protocol.SendTransactionRequest{Transaction: string(envelope)}
+
+  // TRY_AGAIN_LATER: send the same signed transaction again after a pause.
+  reply, err := server.SendTransaction(ctx, request)
+  if err != nil {
+    return none, err
+  }
+  for reply.Status == "TRY_AGAIN_LATER" && reply.LatestLedgerCloseTime <= maxTime {
+    time.Sleep(2 * time.Second)
+    if reply, err = server.SendTransaction(ctx, request); err != nil {
+      return none, err
+    }
+  }
+
+  // ERROR: a transaction that is already in a ledger also returns ERROR
+  // (txBAD_SEQ) when you send it again, so look it up before you fail.
+  if reply.Status == "ERROR" {
+    known, err := server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: reply.Hash})
+    if err != nil {
+      return none, err
+    }
+    if known.Status == protocol.TransactionStatusNotFound {
+      return none, fmt.Errorf("transaction rejected: %s", reply.ErrorResultXDR)
+    }
+  }
+
+  // Poll until the transaction is in a ledger or has expired.
+  // NOT_FOUND means "not in a ledger yet", not "failed".
+  for {
+    result, err := server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: reply.Hash})
+    if err != nil {
+      return none, err
+    }
+    switch result.Status {
+    case protocol.TransactionStatusSuccess:
+      return result, nil
+    case protocol.TransactionStatusFailed:
+      return result, fmt.Errorf("transaction failed: %s", result.ResultXDR)
+    }
+    // A ledger closed after MaxTime, so the transaction can never go
+    // into a ledger. Only now is it safe to build a new transaction.
+    if result.LatestLedgerCloseTime > maxTime {
+      return result, fmt.Errorf("transaction %s expired", reply.Hash)
+    }
+    time.Sleep(time.Second)
+  }
+}
+```
+
 </CodeGroup>
 
-RPC sends `latestLedgerCloseTime` as a string, so the JavaScript helper converts it with `Number()` before it compares it with `maxTime`. The Python SDK already parses it into an `int`.
+RPC sends `latestLedgerCloseTime` as a string, so the JavaScript helper converts it with `Number()` before it compares it with `maxTime`. The Python and Go SDKs already parse it into an integer.
+
+In Go, pass a `*txnbuild.Transaction` as `txnbuild.NewGenericTransactionWithTransaction(tx)` and a fee-bump transaction as `txnbuild.NewGenericTransactionWithFeeBumpTransaction(tx)`.
 
 <Warning>
 

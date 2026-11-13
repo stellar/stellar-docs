@@ -766,6 +766,359 @@ def preamble():
     print("All trustlines established successfully")
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  "log"
+  "net/http"
+  "net/url"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var ctx = context.Background()
+var server = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+var fee int64
+
+var A = keypair.MustRandom()
+var B = keypair.MustRandom()
+var C = keypair.MustRandom()
+
+var ASSET = txnbuild.CreditAsset{Code: "CLAW", Issuer: A.Address()}
+
+func init() {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  feeStats, err := server.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee = min(int64(feeStats.InclusionFee.P90), maxFee)
+
+  fmt.Println("=== ACCOUNT SETUP ===")
+  fmt.Printf("Account A (Issuer): %s\n", A.Address())
+  fmt.Printf("Account B (Trustor): %s\n", B.Address())
+  fmt.Printf("Account C (Trustor): %s\n", C.Address())
+  fmt.Println()
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+
+// Helper function to format account ID with label
+func formatAccount(accountID string) string {
+  shortID := accountID[:8]
+  switch accountID {
+  case A.Address():
+    return shortID + " (Account A)"
+  case B.Address():
+    return shortID + " (Account B)"
+  case C.Address():
+    return shortID + " (Account C)"
+  }
+  return shortID
+}
+
+// Helper function to scale int64 asset amounts
+func scaleAsset(x xdr.Int64) float64 {
+  return float64(int64(x)*10/10_000_000) / 10 // one decimal place
+}
+
+// Helper function to read one ledger entry with getLedgerEntries
+func getLedgerEntry(key xdr.LedgerKey) (*xdr.LedgerEntryData, error) {
+  keyB64, err := xdr.MarshalBase64(key)
+  if err != nil {
+    return nil, err
+  }
+  response, err := server.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+  if err != nil || len(response.Entries) == 0 {
+    return nil, err
+  }
+  var entry xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(response.Entries[0].DataXDR, &entry); err != nil {
+    return nil, err
+  }
+  return &entry, nil
+}
+
+// Helper function to fetch claimable balance details
+func fetchClaimableBalance(balanceID, description string) bool {
+  fmt.Printf("\n--- Checking %s ---\n", description)
+  fmt.Printf("Looking up balance ID: %s\n", balanceID)
+
+  var id xdr.ClaimableBalanceId
+  check(xdr.SafeUnmarshalHex(balanceID, &id))
+  entry, err := getLedgerEntry(xdr.LedgerKey{
+    Type:             xdr.LedgerEntryTypeClaimableBalance,
+    ClaimableBalance: &xdr.LedgerKeyClaimableBalance{BalanceId: id},
+  })
+  if err != nil || entry == nil || entry.ClaimableBalance == nil {
+    fmt.Printf("❌ Claimable balance not found (Claimable balance %s not found)\n", balanceID)
+    return false // Balance doesn't exist
+  }
+
+  claimableBalance := entry.ClaimableBalance
+  fmt.Println("✅ Found claimable balance")
+  fmt.Printf("   Amount: %.1f %s\n", scaleAsset(claimableBalance.Amount), claimableBalance.Asset.GetCode())
+  fmt.Printf("   Number of claimants: %d\n", len(claimableBalance.Claimants))
+
+  // Show claimant details
+  for index, claimant := range claimableBalance.Claimants {
+    claimantAddress := claimant.V0.Destination.Address()
+    fmt.Printf("   Claimant %d: %s\n", index+1, formatAccount(claimantAddress))
+  }
+
+  return true // Balance exists
+}
+
+// Fund accounts first
+func fundAccounts() {
+  fmt.Println("=== FUNDING ACCOUNTS WITH XLM ===")
+  networkInfo, err := server.GetNetwork(ctx)
+  check(err)
+  for _, kp := range []*keypair.Full{A, B, C} {
+    resp, err := http.Get(networkInfo.FriendbotURL + "?addr=" + url.QueryEscape(kp.Address()))
+    check(err)
+    resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+      log.Fatalf("friendbot returned %s", resp.Status)
+    }
+  }
+  fmt.Println("All accounts funded with XLM via airdrop")
+  // Wait for funding to complete
+  time.Sleep(3 * time.Second)
+}
+
+// Enables AuthClawbackEnabled on an account.
+func enableClawback(account txnbuild.Account, keys *keypair.Full) protocol.GetTransactionResponse {
+  fmt.Printf("Enabling clawback flags on account %s\n", formatAccount(account.GetAccountID()))
+  return submitAndPollTransaction(
+    buildTx(account, keys, &txnbuild.SetOptions{
+      SetFlags: []txnbuild.AccountFlag{txnbuild.AuthClawbackEnabled, txnbuild.AuthRevocable},
+    }),
+    "Enable Clawback Flags",
+  )
+}
+
+// Establishes a trustline for `recipient` for the CLAW Asset
+func establishTrustline(recipient txnbuild.Account, key *keypair.Full) protocol.GetTransactionResponse {
+  label := formatAccount(recipient.GetAccountID())
+  fmt.Printf("%s establishing trustline for %s\n", label, ASSET.Code)
+  return submitAndPollTransaction(
+    buildTx(recipient, key, &txnbuild.ChangeTrust{
+      Line:  ASSET.MustToChangeTrustAsset(),
+      Limit: "5000", // arbitrary
+    }),
+    fmt.Sprintf("Establish Trustline (%s)", label),
+  )
+}
+
+// Retrieves latest account info for all accounts.
+func getAccounts() []txnbuild.Account {
+  var accounts []txnbuild.Account
+  for _, kp := range []*keypair.Full{A, B, C} {
+    account, err := server.LoadAccount(ctx, kp.Address())
+    check(err)
+    accounts = append(accounts, account)
+  }
+  return accounts
+}
+
+// Show XLM balances (after funding)
+func showXLMBalances(accounts []txnbuild.Account) {
+  fmt.Println("\n=== XLM BALANCES ===")
+  for _, acc := range accounts {
+    accountID := acc.GetAccountID()
+    fmt.Printf("%s: %s XLM\n", formatAccount(accountID), getXLMBalance(accountID))
+  }
+}
+
+// Get XLM balance using account ledger entry
+func getXLMBalance(accountID string) string {
+  entry, err := getLedgerEntry(xdr.LedgerKey{
+    Type:    xdr.LedgerEntryTypeAccount,
+    Account: &xdr.LedgerKeyAccount{AccountId: xdr.MustAddress(accountID)},
+  })
+  if err != nil || entry == nil || entry.Account == nil {
+    return "0"
+  }
+  return fmt.Sprintf("%.1f", scaleAsset(entry.Account.Balance))
+}
+
+// Show CLAW balances
+func showCLAWBalances(accounts []txnbuild.Account) {
+  fmt.Println("\n=== CLAW BALANCES ===")
+  for _, acc := range accounts {
+    accountID := acc.GetAccountID()
+    fmt.Printf("%s: %s CLAW\n", formatAccount(accountID), getBalance(accountID))
+  }
+}
+
+// Get CLAW balance using the trustline ledger entry
+func getBalance(accountID string) string {
+  trustLineAsset, err := ASSET.MustToTrustLineAsset().ToXDR()
+  check(err)
+  entry, err := getLedgerEntry(xdr.LedgerKey{
+    Type: xdr.LedgerEntryTypeTrustline,
+    TrustLine: &xdr.LedgerKeyTrustLine{
+      AccountId: xdr.MustAddress(accountID),
+      Asset:     trustLineAsset,
+    },
+  })
+  if err != nil || entry == nil || entry.TrustLine == nil {
+    return "0"
+  }
+  return fmt.Sprintf("%.1f", scaleAsset(entry.TrustLine.Balance))
+}
+
+// Helps simplify creating & signing a transaction.
+func buildTx(source txnbuild.Account, signer *keypair.Full, ops ...txnbuild.Operation) *txnbuild.Transaction {
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        source,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           ops,
+  })
+  check(err)
+  tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+  check(err)
+  return tx
+}
+
+// Helper function to submit transaction and poll for completion using RPC
+func submitAndPollTransaction(tx *txnbuild.Transaction, description string) protocol.GetTransactionResponse {
+  envelope, err := tx.Base64()
+  check(err)
+  submitResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  check(err)
+  if submitResponse.Status != "PENDING" {
+    log.Fatalf("Transaction submission failed: %s", submitResponse.Status)
+  }
+
+  fmt.Printf("%s submitted: %s\n", description, submitResponse.Hash)
+
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  finalResponse, err := server.PollTransaction(pollCtx, submitResponse.Hash)
+  switch {
+  case errors.Is(err, context.DeadlineExceeded):
+    // Not in a ledger yet: the outcome is unknown, not failed.
+    fmt.Printf("%s not found yet: %s\n", description, submitResponse.Hash)
+  case err != nil:
+    log.Fatal(err)
+  case finalResponse.Status == protocol.TransactionStatusSuccess:
+    fmt.Printf("%s completed successfully\n", description)
+  default:
+    fmt.Printf("%s failed: %s\n", description, finalResponse.Status)
+  }
+  return finalResponse
+}
+
+// Makes payment from `fromAccount` to `toAccount` of `amount`
+func makePayment(toAccount, fromAccount txnbuild.Account, fromKey *keypair.Full, amount string) protocol.GetTransactionResponse {
+  fmt.Printf("\nPayment: %s → %s (%s CLAW)\n",
+    formatAccount(fromAccount.GetAccountID()), formatAccount(toAccount.GetAccountID()), amount)
+  return submitAndPollTransaction(
+    buildTx(fromAccount, fromKey, &txnbuild.Payment{
+      Destination: toAccount.GetAccountID(),
+      Asset:       ASSET,
+      Amount:      amount,
+    }),
+    fmt.Sprintf("Payment of %s CLAW", amount),
+  )
+}
+
+// Creates a claimable balance from `fromAccount` to `toAccount` of `amount`,
+// and returns the new balance ID
+func createClaimable(fromAccount txnbuild.Account, fromKey *keypair.Full, toAccount txnbuild.Account, amount string) string {
+  fmt.Printf("\nCreating claimable balance: %s → %s (%s CLAW)\n",
+    formatAccount(fromAccount.GetAccountID()), formatAccount(toAccount.GetAccountID()), amount)
+  tx := buildTx(fromAccount, fromKey, &txnbuild.CreateClaimableBalance{
+    Asset:        ASSET,
+    Amount:       amount,
+    Destinations: []txnbuild.Claimant{txnbuild.NewClaimant(toAccount.GetAccountID(), nil)},
+  })
+  submitAndPollTransaction(tx, fmt.Sprintf("Create Claimable Balance of %s CLAW", amount))
+  return getBalanceID(tx)
+}
+
+// The ClaimableBalanceId comes from the source account, sequence number and
+// operation index, so the Go SDK computes it from the built transaction
+func getBalanceID(tx *txnbuild.Transaction) string {
+  balanceID, err := tx.ClaimableBalanceID(0)
+  check(err)
+  return balanceID
+}
+
+// Clawback the claimable balance using its ID
+func clawbackClaimable(issuerAccount txnbuild.Account, issuerKey *keypair.Full, balanceID string) protocol.GetTransactionResponse {
+  fmt.Printf("\nClawback claimable balance: %s clawing back balance %s\n",
+    formatAccount(issuerAccount.GetAccountID()), balanceID)
+  return submitAndPollTransaction(
+    buildTx(issuerAccount, issuerKey, &txnbuild.ClawbackClaimableBalance{BalanceID: balanceID}),
+    "Clawback Claimable Balance",
+  )
+}
+
+// Clawback `amount` of CLAW from `fromAccount` by `byAccount`
+func doClawback(byAccount txnbuild.Account, byKey *keypair.Full, fromAccount txnbuild.Account, amount string) protocol.GetTransactionResponse {
+  fmt.Printf("\nClawback: %s clawing back %s CLAW from %s\n",
+    formatAccount(byAccount.GetAccountID()), amount, formatAccount(fromAccount.GetAccountID()))
+  return submitAndPollTransaction(
+    buildTx(byAccount, byKey, &txnbuild.Clawback{
+      From:   fromAccount.GetAccountID(),
+      Asset:  ASSET,
+      Amount: amount,
+    }),
+    fmt.Sprintf("Clawback of %s CLAW", amount),
+  )
+}
+
+// Disable clawback for a trustline by the issuer
+func disableClawback(issuerAccount txnbuild.Account, issuerKeys *keypair.Full, forTrustor txnbuild.Account) protocol.GetTransactionResponse {
+  fmt.Printf("\nDisabling clawback for %s on asset %s\n", formatAccount(forTrustor.GetAccountID()), ASSET.Code)
+  return submitAndPollTransaction(
+    buildTx(issuerAccount, issuerKeys, &txnbuild.SetTrustLineFlags{
+      Trustor:    forTrustor.GetAccountID(),
+      Asset:      ASSET,
+      ClearFlags: []txnbuild.TrustLineFlag{txnbuild.TrustLineClawbackEnabled},
+    }),
+    "Disable Clawback on Trustline",
+  )
+}
+
+// Enables clawback on A, and establishes trustlines for the CLAW asset for
+// accounts B and C.
+func preamble() {
+  fmt.Println("\n=== SETTING UP CLAWBACK AND TRUSTLINES ===")
+  accounts := getAccounts()
+
+  enableClawback(accounts[0], A)
+  fmt.Println("Clawback enabled successfully")
+
+  // Get fresh accounts after enabling clawback
+  accounts = getAccounts()
+  establishTrustline(accounts[1], B)
+  establishTrustline(accounts[2], C)
+  fmt.Println("All trustlines established successfully")
+}
+```
+
 </CodeGroup>
 
 ### Example 1: Payments
@@ -870,6 +1223,39 @@ def run_example1():
         print("\n=== CLAWBACK DEMO COMPLETED ===")
     except Exception as error:
         print("Error in example:", error)
+```
+
+```go Go
+func examplePaymentAndThenClawback() []txnbuild.Account {
+  fmt.Println("\n=== PAYMENT AND CLAWBACK EXAMPLE ===")
+  accounts := getAccounts()
+
+  // A issues 1000 CLAW to B
+  makePayment(accounts[1], accounts[0], A, "1000")
+  fmt.Println("\n--- After A → B payment ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts)
+
+  // B sends 500 CLAW to C
+  makePayment(accounts[2], accounts[1], B, "500")
+  fmt.Println("\n--- After B → C payment ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts)
+
+  // A claws back 250 CLAW from C
+  doClawback(accounts[0], A, accounts[2], "250")
+  return getAccounts()
+}
+
+func runExample1() {
+  fundAccounts()
+  showXLMBalances(getAccounts())
+  preamble()
+  finalAccounts := examplePaymentAndThenClawback()
+  fmt.Println("\n--- FINAL BALANCES ---")
+  showCLAWBalances(finalAccounts)
+  fmt.Println("\n=== CLAWBACK DEMO COMPLETED ===")
+}
 ```
 
 </CodeGroup>
@@ -1091,6 +1477,50 @@ def run_example2():
         print("Error in example:", error)
 ```
 
+```go Go
+func exampleClaimableBalanceClawback() []txnbuild.Account {
+  fmt.Println("\n=== CLAIMABLE BALANCE CLAWBACK EXAMPLE ===")
+  accounts := getAccounts()
+
+  fmt.Println("\n--- Initial CLAW balances ---")
+  showCLAWBalances(accounts)
+
+  // A pays 1000 CLAW to B
+  makePayment(accounts[1], accounts[0], A, "1000")
+  fmt.Println("\n--- After A → B payment ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts)
+
+  // B creates claimable balance for C
+  balanceID := createClaimable(accounts[1], B, accounts[2], "300")
+  fmt.Printf("Claimable balance created with ID: %s\n", balanceID)
+
+  fmt.Println("\n--- After claimable balance creation ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts)
+
+  // Check that the claimable balance exists
+  fetchClaimableBalance(balanceID, "claimable balance after creation")
+
+  // A claws back the claimable balance
+  clawbackClaimable(accounts[0], A, balanceID)
+
+  // Check that the claimable balance no longer exists
+  fetchClaimableBalance(balanceID, "claimable balance after clawback")
+  return getAccounts()
+}
+
+func runExample2() {
+  fundAccounts()
+  showXLMBalances(getAccounts())
+  preamble()
+  finalAccounts := exampleClaimableBalanceClawback()
+  fmt.Println("\n--- FINAL BALANCES ---")
+  showCLAWBalances(finalAccounts)
+  fmt.Println("\n=== CLAIMABLE BALANCE CLAWBACK DEMO COMPLETED ===")
+}
+```
+
 </CodeGroup>
 
 When you invoke `runExample2()` (`run_example2()` in Python), you should see output similar to:
@@ -1304,6 +1734,46 @@ def run_example3():
         print("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===")
     except Exception as error:
         print("Error in example:", error)
+```
+
+```go Go
+func exampleSelectiveClawbackThenDisableClawback() []txnbuild.Account {
+  fmt.Println("\n=== SELECTIVE CLAWBACK EXAMPLE ===")
+  accounts := getAccounts()
+
+  fmt.Println("\n--- Initial CLAW balances ---")
+  showCLAWBalances(accounts[:2])
+
+  // A pays 1000 CLAW to B
+  makePayment(accounts[1], accounts[0], A, "1000")
+  fmt.Println("\n--- After A → B payment ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts[:2])
+
+  // A claws back 500 CLAW from B (should work)
+  doClawback(accounts[0], A, accounts[1], "500")
+  fmt.Println("\n--- After first clawback ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts[:2])
+
+  // A disables clawback for B's trustline
+  disableClawback(accounts[0], A, accounts[1])
+
+  // Try to clawback again (should fail)
+  doClawback(accounts[0], A, accounts[1], "250")
+  return getAccounts()
+}
+
+func runExample3() {
+  fundAccounts()
+  accounts := getAccounts()
+  showXLMBalances(accounts[:2]) // Only show A and B
+  preamble()                    // This sets up clawback and trustlines for A, B, C
+  finalAccounts := exampleSelectiveClawbackThenDisableClawback()
+  fmt.Println("\n--- FINAL BALANCES ---")
+  showCLAWBalances(finalAccounts[:2]) // Only A and B
+  fmt.Println("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===")
+}
 ```
 
 </CodeGroup>
