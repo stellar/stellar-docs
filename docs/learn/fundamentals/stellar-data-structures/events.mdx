@@ -187,7 +187,7 @@ Events are ephemeral: RPC providers typically only keep short chunks (less than 
 
 To learn more about working with events, take a look at the [events guides](/docs/build/guides/events) and [this example contract](../../../build/smart-contracts/example-contracts/events).
 
-For a quick high-level demonstration, though, we'll use the [JavaScript or Python SDK](/docs/tools/sdks) to infinitely fetch all `transfer` events (defined by the [Soroban Token Interface](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md#interface)) involving the [XLM contract](https://stellar.expert/explorer/testnet/contract/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC) and display them in a human-friendly format.
+For a quick high-level demonstration, though, we'll use the [JavaScript, Python or Go SDK](/docs/tools/sdks) to infinitely fetch all `transfer` events (defined by the [Soroban Token Interface](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md#interface)) involving the [XLM contract](https://stellar.expert/explorer/testnet/contract/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC) and display them in a human-friendly format.
 
 <CodeGroup>
 
@@ -375,6 +375,168 @@ def cereal(data):
 
 if __name__ == "__main__":
     main()
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "encoding/json"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var s = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+func main() {
+  ctx := context.Background()
+  response, err := s.GetLatestLedger(ctx)
+  if err != nil {
+    log.Fatal(err)
+  }
+  xlmFilter, err := transferFilter()
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // Ask for XDR-JSON, so the topics and value arrive human-readable.
+  page, err := s.GetEvents(ctx, protocol.GetEventsRequest{
+    StartLedger: response.Sequence - 120, // start ~10m in the past
+    Filters:     []protocol.EventFilter{xlmFilter},
+    Pagination:  &protocol.PaginationOptions{Limit: 10},
+    Format:      protocol.FormatJSON,
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // Run forever until Ctrl+C'd by user
+  for {
+    if len(page.Events) == 0 {
+      time.Sleep(2 * time.Second)
+    } else {
+      //
+      // Two ways to output a human-friendly version:
+      //  1. the decoded topics and value alone
+      //  2. the same, with the event type and contract ID
+      //
+      fmt.Println(cereal(simpleEventLog(page.Events)))
+      fmt.Println(cereal(fullEventLog(page.Events)))
+    }
+
+    // Fetch the next page until events are exhausted, then wait.
+    cursor, err := protocol.ParseCursor(page.Cursor)
+    if err != nil {
+      log.Fatal(err)
+    }
+    page, err = s.GetEvents(ctx, protocol.GetEventsRequest{
+      Filters:    []protocol.EventFilter{xlmFilter},
+      Pagination: &protocol.PaginationOptions{Cursor: &cursor, Limit: 10},
+      Format:     protocol.FormatJSON,
+    })
+    if err != nil {
+      log.Fatal(err)
+    }
+  }
+}
+
+// transferFilter matches the `transfer` events of the XLM contract on Testnet.
+func transferFilter() (protocol.EventFilter, error) {
+  var none protocol.EventFilter
+  xlm, err := txnbuild.NativeAsset{}.ToXDR()
+  if err != nil {
+    return none, err
+  }
+  id, err := xlm.ContractID(network.TestNetworkPassphrase)
+  if err != nil {
+    return none, err
+  }
+  xlmContractID, err := strkey.Encode(strkey.VersionByteContract, id[:])
+  if err != nil {
+    return none, err
+  }
+
+  transfer := xdr.ScSymbol("transfer")
+  transferTopic, err := xdr.MarshalBase64(xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &transfer})
+  if err != nil {
+    return none, err
+  }
+  // A TopicFilter decodes from the same base64 strings and "*" wildcards
+  // that the RPC request takes.
+  segments, err := json.Marshal([]string{
+    // Defined in https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md#interface
+    // for all compatible transfer events.
+    transferTopic,
+    "*", // from anyone
+    "*", // to anyone
+    "*", // any asset (it'll be XLM anyway)
+  })
+  if err != nil {
+    return none, err
+  }
+  var topics protocol.TopicFilter
+  if err := json.Unmarshal(segments, &topics); err != nil {
+    return none, err
+  }
+
+  return protocol.EventFilter{
+    EventType:   protocol.EventTypeSet{protocol.EventTypeContract: nil},
+    ContractIDs: []string{xlmContractID},
+    Topics:      []protocol.TopicFilter{topics},
+  }, nil
+}
+
+type simpleEvent struct {
+  Topics []json.RawMessage `json:"topics"`
+  Value  json.RawMessage   `json:"value"`
+}
+
+func simpleEventLog(events []protocol.EventInfo) []simpleEvent {
+  out := make([]simpleEvent, 0, len(events))
+  for _, event := range events {
+    out = append(out, simpleEvent{Topics: event.TopicJSON, Value: event.ValueJSON})
+  }
+  return out
+}
+
+type fullEvent struct {
+  Type       string            `json:"type"`
+  ContractID string            `json:"contractId"`
+  Topics     []json.RawMessage `json:"topics"`
+  Data       json.RawMessage   `json:"data"`
+}
+
+func fullEventLog(events []protocol.EventInfo) []fullEvent {
+  out := make([]fullEvent, 0, len(events))
+  for _, event := range events {
+    out = append(out, fullEvent{
+      Type:       event.EventType,
+      ContractID: event.ContractID,
+      Topics:     event.TopicJSON,
+      Data:       event.ValueJSON,
+    })
+  }
+  return out
+}
+
+// cereal turns the data into indented JSON.
+func cereal(data any) string {
+  out, err := json.MarshalIndent(data, "", "  ")
+  if err != nil {
+    log.Fatal(err)
+  }
+  return string(out)
+}
 ```
 
 </CodeGroup>

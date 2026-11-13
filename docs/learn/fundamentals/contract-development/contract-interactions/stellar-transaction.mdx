@@ -7,7 +7,7 @@ description: Invoke and deploy smart contracts with the InvokeHostFunctionOp ope
 
 ## Example SDK Usage
 
-Some (but not all yet) of the Stellar SDKs have functions built-in to handle most of the process of building a Stellar transaction to interact with a Soroban smart contract. Below, we demonstrate in JavaScript and Python how to build and submit a Stellar transaction that will invoke an instance of the [increment example](../../../../build/smart-contracts/getting-started/storing-data) smart contract.
+Some (but not all yet) of the Stellar SDKs have functions built-in to handle most of the process of building a Stellar transaction to interact with a Soroban smart contract. Below, we demonstrate in JavaScript, Python, Go and Java how to build and submit a Stellar transaction that will invoke an instance of the [increment example](../../../../build/smart-contracts/getting-started/storing-data) smart contract.
 
 <Tabs>
 <Tab title="JavaScript">
@@ -197,6 +197,206 @@ fee = min(fee_stats.soroban_inclusion_fee.p90, MAX_FEE)
 client = IncrementContractClient(contract_address, rpc_server_url, network_passphrase)
 result = client.increment(source_keypair.public_key, base_fee=fee).sign_and_submit(source_keypair)
 print(result)
+```
+
+</Tab>
+<Tab title="Go">
+
+<Tip>
+
+The [Go SDK](https://github.com/stellar/go-stellar-sdk) builds Soroban transactions with `txnbuild.InvokeHostFunction` and talks to RPC with its `rpcclient` package. It has no `prepareTransaction`, so this example defines a small one.
+
+```bash
+go get github.com/stellar/go-stellar-sdk
+```
+
+</Tip>
+
+```go
+package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+func main() {
+  ctx := context.Background()
+
+  // The source account will be used to sign and send the transaction.
+  // GCWY3M4VRW4NXJRI7IVAU3CC7XOPN6PRBG6I5M7TAOQNKZXLT3KAH362
+  sourceKeypair := keypair.MustParseFull("SCQN3XGRO65BHNSWLSHYIR4B65AHLDUQ7YLHGIWQ4677AZFRS77TCZRB")
+
+  // Configure the client to use the `stellar-rpc` instance of your choosing.
+  server := client.NewClient("https://soroban-testnet.stellar.org:443", nil)
+  defer server.Close()
+
+  // Here we will use a deployed instance of the `increment` example contract.
+  const contractAddress = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6"
+  var contractID xdr.ContractId
+  copy(contractID[:], strkey.MustDecode(strkey.VersionByteContract, contractAddress))
+
+  // Transactions require a valid sequence number (which varies from one
+  // account to another). We fetch this sequence number from the RPC server.
+  sourceAccount, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  check(err)
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  // The invocation of the `increment` function of our contract. Note:
+  // `increment` doesn't require any parameters, but many contract functions
+  // do. You would need to provide those in `Args`.
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+      InvokeContract: &xdr.InvokeContractArgs{
+        ContractAddress: xdr.ScAddress{
+          Type:       xdr.ScAddressTypeScAddressTypeContract,
+          ContractId: &contractID,
+        },
+        FunctionName: "increment",
+        Args:         []xdr.ScVal{},
+      },
+    },
+  }
+
+  // We "prepare" the transaction: simulate it with the RPC server, then add
+  // the storage footprint and resource fee it reports.
+  preparedTransaction, err := prepareTransaction(ctx, server, txnbuild.TransactionParams{
+    SourceAccount:        sourceAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    // This transaction will be valid for the next 30 seconds
+    Preconditions: txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:    []txnbuild.Operation{operation},
+  })
+  check(err)
+
+  // Sign the transaction with the source account's keypair.
+  preparedTransaction, err = preparedTransaction.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  check(err)
+
+  // Let's see the base64-encoded XDR of the transaction we just built.
+  envelope, err := preparedTransaction.Base64()
+  check(err)
+  fmt.Println("Signed prepared transaction XDR:", envelope)
+
+  // Submit the transaction to the Stellar-RPC server. The RPC server will
+  // then submit the transaction into the network for us. Then we will have to
+  // wait, polling `GetTransaction` until the transaction completes.
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  check(err)
+  fmt.Printf("Sent transaction: %+v\n", sendResponse)
+  if sendResponse.Status != "PENDING" {
+    log.Fatalf("Sending transaction failed: %s", sendResponse.ErrorResultXDR)
+  }
+
+  // Poll `GetTransaction` until the status is not "NOT_FOUND"
+  var getResponse protocol.GetTransactionResponse
+  for {
+    fmt.Println("Waiting for transaction confirmation...")
+    // See if the transaction is complete
+    getResponse, err = server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: sendResponse.Hash})
+    check(err)
+    if getResponse.Status != protocol.TransactionStatusNotFound {
+      break
+    }
+    // Wait one second
+    time.Sleep(time.Second)
+  }
+
+  fmt.Printf("getTransaction response: %+v\n", getResponse)
+
+  if getResponse.Status != protocol.TransactionStatusSuccess {
+    log.Fatalf("Transaction failed: %s", getResponse.ResultXDR)
+  }
+
+  // Find the return value from the contract in the transaction meta
+  var meta xdr.TransactionMeta
+  check(xdr.SafeUnmarshalBase64(getResponse.ResultMetaXDR, &meta))
+  var returnValue xdr.ScVal
+  switch {
+  case meta.V4 != nil && meta.V4.SorobanMeta != nil && meta.V4.SorobanMeta.ReturnValue != nil:
+    returnValue = *meta.V4.SorobanMeta.ReturnValue
+  case meta.V3 != nil && meta.V3.SorobanMeta != nil:
+    returnValue = meta.V3.SorobanMeta.ReturnValue
+  }
+  counter, ok := returnValue.GetU32()
+  if !ok {
+    log.Fatalf("Unexpected return value type: %s", returnValue.Type)
+  }
+  fmt.Println("Transaction result:", uint32(counter))
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated footprint, resource fee and authorization entries.
+func prepareTransaction(
+  ctx context.Context,
+  server *client.Client,
+  params txnbuild.TransactionParams,
+) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
 ```
 
 </Tab>

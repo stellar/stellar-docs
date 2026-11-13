@@ -149,6 +149,194 @@ if __name__ == "__main__":
     print(main())
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var s = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+// Pretend this is a real, funded account.
+var signer = keypair.MustRandom()
+var xlmContract = nativeContractID(network.TestNetworkPassphrase)
+
+func main() {
+  ctx := context.Background()
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := s.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  account, err := s.LoadAccount(ctx, signer.Address())
+  check(err)
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.InvokeHostFunction{
+        HostFunction: contractCall(xlmContract, "balance", addressScVal(signer.Address())),
+      },
+    },
+  })
+  check(err)
+
+  preppedTx, err := prepareTransaction(ctx, tx)
+  check(err)
+  preppedTx, err = preppedTx.Sign(network.TestNetworkPassphrase, signer)
+  check(err)
+
+  result, err := sendAndPoll(ctx, preppedTx)
+  check(err)
+  fmt.Println(result.Status)
+}
+
+// The Go SDK has no prepareTransaction, so this helper simulates the
+// transaction, then assembles it with the simulation results.
+func prepareTransaction(ctx context.Context, tx *txnbuild.Transaction) (*txnbuild.Transaction, error) {
+  sim, err := simulate(ctx, tx)
+  if err != nil {
+    return nil, err
+  }
+  return assembleTransaction(tx, sim)
+}
+
+// simulate simulates a transaction and fails on a simulation error.
+func simulate(ctx context.Context, tx *txnbuild.Transaction) (protocol.SimulateTransactionResponse, error) {
+  envelope, err := tx.Base64()
+  if err != nil {
+    return protocol.SimulateTransactionResponse{}, err
+  }
+  sim, err := s.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return sim, err
+  }
+  if sim.Error != "" {
+    return sim, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+  return sim, nil
+}
+
+// assembleTransaction builds tx again with the same sequence number and the
+// simulated resources and resource fee. It keeps the operation's own auth
+// entries; otherwise it adds the simulated ones.
+func assembleTransaction(
+  tx *txnbuild.Transaction,
+  sim protocol.SimulateTransactionResponse,
+) (*txnbuild.Transaction, error) {
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  original, ok := tx.Operations()[0].(*txnbuild.InvokeHostFunction)
+  if !ok {
+    return nil, errors.New("expected an InvokeHostFunction operation")
+  }
+  // Work on a copy, so that tx itself stays unchanged.
+  operation := *original
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // NewTransaction adds the resource fee to the base fee.
+  source := tx.SourceAccount()
+  return txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount: &source,
+    BaseFee:       tx.BaseFee(),
+    Memo:          tx.Memo(),
+    Preconditions: txnbuild.Preconditions{TimeBounds: tx.Timebounds()},
+    Operations:    []txnbuild.Operation{&operation},
+  })
+}
+
+// sendAndPoll sends the transaction, then waits up to 30 seconds for it.
+func sendAndPoll(ctx context.Context, tx *txnbuild.Transaction) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+  sendTx, err := s.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+  if sendTx.Status != "PENDING" && sendTx.Status != "DUPLICATE" {
+    return none, fmt.Errorf("send failed: %s %s", sendTx.Status, sendTx.ErrorResultXDR)
+  }
+
+  // PollTransaction polls until the context ends, so give it a deadline.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  result, err := s.PollTransaction(pollCtx, sendTx.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    return none, fmt.Errorf("status of %s unknown after 30s: look it up later", sendTx.Hash)
+  }
+  return result, err
+}
+
+// nativeContractID returns the contract ID (C...) of the XLM contract.
+func nativeContractID(networkPassphrase string) string {
+  xlm, err := txnbuild.NativeAsset{}.ToXDR()
+  check(err)
+  id, err := xlm.ContractID(networkPassphrase)
+  check(err)
+  return strkey.MustEncode(strkey.VersionByteContract, id[:])
+}
+
+// contractCall builds the host function that calls `function` on a contract.
+func contractCall(contractID, function string, args ...xdr.ScVal) xdr.HostFunction {
+  var id xdr.ContractId
+  copy(id[:], strkey.MustDecode(strkey.VersionByteContract, contractID))
+  return xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+    InvokeContract: &xdr.InvokeContractArgs{
+      ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id},
+      FunctionName:    xdr.ScSymbol(function),
+      Args:            args,
+    },
+  }
+}
+
+// addressScVal converts a G... account address to an address ScVal.
+func addressScVal(address string) xdr.ScVal {
+  scAddress := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: xdr.MustAddressPtr(address)}
+  return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddress}
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
 </CodeGroup>
 
 Notice that, in contrast to the following example, we didn't need to do simulation separately. This is because we can sign the transaction as-is rather than needing to inspect its authorization entries.
@@ -354,6 +542,219 @@ if __name__ == "__main__":
     print(main())
 ```
 
+```go Go
+// Copy simulate, assembleTransaction, sendAndPoll, nativeContractID,
+// contractCall, addressScVal and check from Example 1 into this file.
+package main
+
+import (
+  "context"
+  "crypto/sha256"
+  "errors"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var s = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+// Pretend these are real, funded accounts.
+var signers = []*keypair.Full{keypair.MustRandom(), keypair.MustRandom()}
+var xlmContract = nativeContractID(network.TestNetworkPassphrase)
+
+func main() {
+  ctx := context.Background()
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // assembleTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := s.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  // Notice that the source account is the first keypair, but the transfer
+  // occurs *from* the second keypair, which means the second keypair will
+  // need to sign for an authorization entry to approve the transfer.
+  account, err := s.LoadAccount(ctx, signers[0].Address())
+  check(err)
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: contractCall(xlmContract, "transfer",
+      addressScVal(signers[1].Address()), // from
+      addressScVal(signers[0].Address()), // to
+      i128ScVal(1000),                    // amount
+    ),
+  }
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  check(err)
+
+  simResult, err := simulate(ctx, tx)
+  check(err)
+  if len(simResult.Results) == 0 || simResult.Results[0].AuthXDR == nil {
+    log.Fatal("simulation returned no auth entries")
+  }
+
+  // For every auth entry that needs signing, sign it with the correct keypair.
+  var signedAuth []xdr.SorobanAuthorizationEntry
+  for _, entryXDR := range *simResult.Results[0].AuthXDR {
+    var entry xdr.SorobanAuthorizationEntry
+    check(xdr.SafeUnmarshalBase64(entryXDR, &entry))
+
+    // Ignore source account entries, which the transaction signature covers.
+    credentials, ok := addressCredentials(entry)
+    if !ok {
+      signedAuth = append(signedAuth, entry)
+      continue
+    }
+
+    // Find the keypair that matches the entry's address.
+    address, err := credentials.Address.String()
+    check(err)
+    var signer *keypair.Full
+    for _, kp := range signers {
+      if kp.Address() == address {
+        signer = kp
+      }
+    }
+    if signer == nil {
+      log.Fatalf("No keypair for %s", address)
+    }
+
+    entry, err = authorizeEntry(
+      entry,
+      signer,
+      simResult.LatestLedger+12, // signature is valid for ~1m
+      network.TestNetworkPassphrase,
+    )
+    check(err)
+    signedAuth = append(signedAuth, entry)
+  }
+
+  // Put the signed entries on the operation. The transaction holds this same
+  // operation, and assembleTransaction keeps an operation's own auth entries
+  // instead of the unsigned ones from simulation.
+  operation.Auth = signedAuth
+  preppedTx, err := assembleTransaction(tx, simResult)
+  check(err)
+  preppedTx, err = preppedTx.Sign(network.TestNetworkPassphrase, signers[0])
+  check(err)
+
+  result, err := sendAndPoll(ctx, preppedTx)
+  check(err)
+  fmt.Println(result.Status)
+}
+
+// addressCredentials returns the address credentials of an auth entry.
+// Simulation returns them as V2 (or legacy) credentials. Source account
+// entries have none.
+func addressCredentials(entry xdr.SorobanAuthorizationEntry) (*xdr.SorobanAddressCredentials, bool) {
+  switch entry.Credentials.Type {
+  case xdr.SorobanCredentialsTypeSorobanCredentialsAddressV2:
+    return entry.Credentials.AddressV2, true
+  case xdr.SorobanCredentialsTypeSorobanCredentialsAddress:
+    return entry.Credentials.Address, true
+  }
+  return nil, false
+}
+
+// The Go SDK has no auth-entry signer, so authorizeEntry signs an address
+// entry with a keypair, valid until and including validUntilLedger.
+func authorizeEntry(
+  entry xdr.SorobanAuthorizationEntry,
+  signer *keypair.Full,
+  validUntilLedger uint32,
+  networkPassphrase string,
+) (xdr.SorobanAuthorizationEntry, error) {
+  original, ok := addressCredentials(entry)
+  if !ok {
+    return entry, nil // source account credentials need no signature
+  }
+  credentials := *original
+  credentials.SignatureExpirationLedger = xdr.Uint32(validUntilLedger)
+  isV2 := entry.Credentials.Type == xdr.SorobanCredentialsTypeSorobanCredentialsAddressV2
+
+  // Legacy credentials sign the ENVELOPE_TYPE_SOROBAN_AUTHORIZATION preimage.
+  // V2 credentials sign ENVELOPE_TYPE_SOROBAN_AUTHORIZATION_WITH_ADDRESS,
+  // which also holds the address.
+  networkID := xdr.Hash(sha256.Sum256([]byte(networkPassphrase)))
+  preimage := xdr.HashIdPreimage{
+    Type: xdr.EnvelopeTypeEnvelopeTypeSorobanAuthorization,
+    SorobanAuthorization: &xdr.HashIdPreimageSorobanAuthorization{
+      NetworkId:                 networkID,
+      Nonce:                     credentials.Nonce,
+      SignatureExpirationLedger: credentials.SignatureExpirationLedger,
+      Invocation:                entry.RootInvocation,
+    },
+  }
+  if isV2 {
+    preimage = xdr.HashIdPreimage{
+      Type: xdr.EnvelopeTypeEnvelopeTypeSorobanAuthorizationWithAddress,
+      SorobanAuthorizationWithAddress: &xdr.HashIdPreimageSorobanAuthorizationWithAddress{
+        NetworkId:                 networkID,
+        Nonce:                     credentials.Nonce,
+        SignatureExpirationLedger: credentials.SignatureExpirationLedger,
+        Address:                   credentials.Address,
+        Invocation:                entry.RootInvocation,
+      },
+    }
+  }
+  payload, err := preimage.MarshalBinary()
+  if err != nil {
+    return entry, err
+  }
+  hash := sha256.Sum256(payload)
+  signature, err := signer.Sign(hash[:])
+  if err != nil {
+    return entry, err
+  }
+
+  // A G-account expects a vector of {public_key, signature} maps
+  publicKey := xdr.ScBytes(strkey.MustDecode(strkey.VersionByteAccountID, signer.Address()))
+  signatureBytes := xdr.ScBytes(signature)
+  publicKeyName := xdr.ScSymbol("public_key")
+  signatureName := xdr.ScSymbol("signature")
+  signatureMap := &xdr.ScMap{
+    {
+      Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &publicKeyName},
+      Val: xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &publicKey},
+    },
+    {
+      Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &signatureName},
+      Val: xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &signatureBytes},
+    },
+  }
+  signatures := &xdr.ScVec{{Type: xdr.ScValTypeScvMap, Map: &signatureMap}}
+  credentials.Signature = xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &signatures}
+
+  if isV2 {
+    entry.Credentials.AddressV2 = &credentials
+  } else {
+    entry.Credentials.Address = &credentials
+  }
+  return entry, nil
+}
+
+// i128ScVal converts a non-negative amount to an i128 ScVal.
+func i128ScVal(amount int64) xdr.ScVal {
+  parts := xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(amount)}
+  return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &parts}
+}
+```
+
 </CodeGroup>
 
 Alternatively, we could go a step lower in the stack and build the authorization entries ourselves using [`authorizeInvocation`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#authorizeinvocation), giving us full control over the actual "call stack" that is being invoked. This can be useful if you want to authorize specific invocations, build the invocations yourself, or lower the network bandwidth you use when sharing entries for other parties to sign.
@@ -382,6 +783,19 @@ To keep things really simple, we won't do much coding. Instead, we'll just show 
 +    resim_tx = s.prepare_transaction(prepped_tx)
 +    resim_tx.sign(signers[0])
 +    send_tx = s.send_transaction(resim_tx)
+```
+
+```diff Go
+-  preppedTx, err = preppedTx.Sign(network.TestNetworkPassphrase, signers[0])
+-  check(err)
+-
+-  result, err := sendAndPoll(ctx, preppedTx)
++  // Copy prepareTransaction from Example 1 too.
++  resimTx, err := prepareTransaction(ctx, preppedTx)
++  check(err)
++  resimTx, err = resimTx.Sign(network.TestNetworkPassphrase, signers[0])
++  check(err)
++  result, err := sendAndPoll(ctx, resimTx)
 ```
 
 </CodeGroup>
