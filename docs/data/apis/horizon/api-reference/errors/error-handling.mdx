@@ -163,6 +163,159 @@ except NotFoundError:
     print("Transaction not found yet. Poll again later.")
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/clients/horizonclient"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const contractAddress = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE"
+
+func main() {
+  ctx := context.Background()
+  server := horizonclient.DefaultTestNetClient
+  // A contract call must be simulated before it is sent, so this example also
+  // uses Stellar RPC to prepare the transaction.
+  rpcClient := client.NewClient("https://soroban-testnet.stellar.org", nil)
+  defer rpcClient.Close()
+
+  sourceSecretKey := "S..." // replace with your secret key
+  sourceKeypair := keypair.MustParseFull(sourceSecretKey)
+  account, err := server.AccountDetail(horizonclient.AccountRequest{AccountID: sourceKeypair.Address()})
+  check(err)
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // The minimum base fee gets outbid when the network is busy.
+  feeStats, err := server.FeeStats()
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(feeStats.FeeCharged.P90, maxFee)
+
+  var contractID xdr.ContractId
+  copy(contractID[:], strkey.MustDecode(strkey.VersionByteContract, contractAddress))
+  // Simulate the call, then add its footprint and resource fee.
+  tx, err := prepareTransaction(ctx, rpcClient, txnbuild.TransactionParams{
+    SourceAccount:        &account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    // valid for the next 30s
+    Preconditions: txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    // Add an operation to call increment() on the contract
+    Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+      HostFunction: xdr.HostFunction{
+        Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+        InvokeContract: &xdr.InvokeContractArgs{
+          ContractAddress: xdr.ScAddress{
+            Type:       xdr.ScAddressTypeScAddressTypeContract,
+            ContractId: &contractID,
+          },
+          FunctionName: "increment",
+        },
+      },
+    }},
+  })
+  check(err)
+
+  // Sign this transaction with the secret key
+  // NOTE: signing a transaction is network specific. Test network transactions
+  // won't work in the public network. To switch networks, sign with
+  // network.PublicNetworkPassphrase instead.
+  tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  check(err)
+
+  result, err := server.AsyncSubmitTransaction(tx)
+  check(err)
+  fmt.Println("hash:", result.Hash)
+  fmt.Println("status:", result.TxStatus)
+  fmt.Println("errorResultXdr:", result.ErrorResultXDR)
+  // ERROR and TRY_AGAIN_LATER also arrive with a nil error. The transaction
+  // is not on its way to a ledger, so there is nothing to poll for.
+  if result.TxStatus != "PENDING" && result.TxStatus != "DUPLICATE" {
+    log.Fatalf("Submission not accepted: %s", result.TxStatus)
+  }
+
+  // Add a small sleep duration before polling the transaction.
+  time.Sleep(5 * time.Second)
+  txResult, err := server.TransactionDetail(result.Hash)
+  if horizonclient.IsNotFoundError(err) {
+    // Horizon returns 404 until the transaction is in a ledger.
+    fmt.Println("Transaction not found yet. Poll again later.")
+    return
+  }
+  check(err)
+  fmt.Printf("Transaction status: %+v\n", txResult)
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources and resource fee. The Go SDK has no prepareTransaction.
+func prepareTransaction(
+  ctx context.Context,
+  rpcClient *client.Client,
+  params txnbuild.TransactionParams,
+) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := rpcClient.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("prepare transaction failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number. NewTransaction adds the
+  // resource fee from the Soroban data to the inclusion fee.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
 </CodeGroup>
 
 #### Synchronous Transaction Submission
@@ -254,6 +407,48 @@ def submit_transaction(tx, timeout=None):
             timeout += 5
 ```
 
+```go Go
+import (
+  "errors"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/clients/horizonclient"
+  hProtocol "github.com/stellar/go-stellar-sdk/protocols/horizon"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+)
+
+var server = horizonclient.DefaultTestNetClient
+
+func submitTransaction(tx *txnbuild.Transaction) (*hProtocol.Transaction, error) {
+  timeBounds := tx.Timebounds()
+  if timeBounds.MaxTime == txnbuild.TimeoutInfinite {
+    return nil, errors.New("always set a reasonable timebound")
+  }
+  expiration := time.Unix(timeBounds.MaxTime, 0)
+
+  timeout := 1 * time.Second // start the (linear) back-off process
+  for {
+    resp, err := server.SubmitTransaction(tx)
+    if err == nil {
+      return &resp, nil
+    }
+    // isNonRetryErrorCase is your own check for errors that a retry can't fix.
+    if isNonRetryErrorCase(err) {
+      // ...do other error handling...
+      return nil, err
+    }
+
+    // the tx no longer has a chance of making it into a ledger
+    if !time.Now().Before(expiration) {
+      return nil, errors.New("the transaction timed out")
+    }
+
+    time.Sleep(timeout)
+    timeout += 5 * time.Second
+  }
+}
+```
+
 </CodeGroup>
 
 We assume the existence of a sleep implementation similar to the one [here](https://stackoverflow.com/a/39914235). Be sure to integrate backoff into your retry mechanism. In our example error-handling code above, we implement a simple linear backoff, but there are [plenty of recommendations](https://backoff-utils.readthedocs.io/en/latest/strategies.html#why-are-backoff-strategies-useful) for various other strategies. Backoff is important both for maintaining performance and avoiding rate-limiting issues.
@@ -294,6 +489,32 @@ except BadRequestError as error:
     account = server.load_account(account.account.account_id)
     tx = TransactionBuilder(account, ...).build()  # etc
     server.submit_transaction(tx)
+```
+
+```go Go
+// suppose `account` is an outdated `horizon.Account`,
+// inside a function that returns an error
+tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{SourceAccount: &account /* etc */})
+if err != nil {
+  return err
+}
+_, err = server.SubmitTransaction(tx)
+if hErr := horizonclient.GetError(err); hErr != nil {
+  codes, codesErr := hErr.ResultCodes()
+  if codesErr == nil && codes.TransactionCode == "tx_bad_seq" {
+    account, err = server.AccountDetail(horizonclient.AccountRequest{AccountID: account.AccountID})
+    if err != nil {
+      return err
+    }
+    tx, err = txnbuild.NewTransaction(txnbuild.TransactionParams{SourceAccount: &account /* etc */})
+    if err != nil {
+      return err
+    }
+    _, err = server.SubmitTransaction(tx)
+  }
+  // ...other error conditions...
+}
+return err
 ```
 
 </CodeGroup>
