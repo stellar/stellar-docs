@@ -22,7 +22,7 @@ The restoration process we'll use involves three discrete steps:
 2. If the simulation indicated it, we perform restoration with a `RestoreFootprintOp` operation using the hints we got from the simulation.
 3. We retry running our initial transaction.
 
-Here's a function called `submitOrRestoreAndRetry()` (`submit_or_restore_and_retry()` in Python) that will take care of all those steps for us:
+Here's a function called `submitOrRestoreAndRetry()` (`submit_or_restore_and_retry()` in Python) that will take care of all those steps for us. The Java version is a method to add to the `SubmitTx` class:
 
 <Info>
 
@@ -319,6 +319,79 @@ func assembleTransaction(
     Preconditions: txnbuild.Preconditions{TimeBounds: tx.Timebounds()},
     Operations:    []txnbuild.Operation{&operation},
   })
+}
+```
+
+```java Java
+// Add these imports to the ones from SubmitTx:
+//
+//   import org.stellar.sdk.Account;
+//   import org.stellar.sdk.KeyPair;
+//   import org.stellar.sdk.Network;
+//   import org.stellar.sdk.TransactionBuilder;
+//   import org.stellar.sdk.TransactionBuilderAccount;
+//   import org.stellar.sdk.operations.RestoreFootprintOperation;
+//   import org.stellar.sdk.responses.sorobanrpc.SimulateTransactionResponse;
+//
+// assume that `server` is the SorobanServer from SubmitTx
+
+public static GetTransactionResponse submitOrRestoreAndRetry(KeyPair signer, Transaction tx)
+    throws InterruptedException {
+  // We simulate first, instead of letting `prepareTransaction` do it,
+  // because we want to do restoration if necessary.
+  SimulateTransactionResponse sim = server.simulateTransaction(tx);
+
+  // Other failures are out of scope of this tutorial.
+  if (sim.getError() != null) {
+    throw new IllegalStateException("Simulation failed: " + sim.getError());
+  }
+
+  // No restorePreamble (the usual case since Protocol 23): just send it.
+  // The invocation restores any archived entries in its restore list.
+  if (sim.getRestorePreamble() == null) {
+    Transaction prepTx = server.prepareTransaction(tx, sim);
+    prepTx.sign(signer);
+    return submitTx(prepTx);
+  }
+
+  // Build the restoration operation using the RPC server's hints.
+  TransactionBuilderAccount account = server.getAccount(signer.getAccountId());
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // build() adds the resource fee from the restore preamble's transaction data
+  // on top of this inclusion fee.
+  long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+  long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+  Transaction restoreTx = new TransactionBuilder(account, Network.TESTNET)
+    .setBaseFee(fee)
+    .setSorobanData(sim.getRestorePreamble().getTransactionData())
+    .addOperation(RestoreFootprintOperation.builder().build())
+    .setTimeout(30)
+    .build();
+
+  restoreTx.sign(signer);
+
+  // submitTx throws if the restoration does not succeed
+  submitTx(restoreTx);
+
+  // now that we've restored the necessary data, we can retry our tx using
+  // the initial data from the simulation (which, hopefully, is still
+  // up-to-date)
+  // because we consumed a sequence number when restoring, we need to make sure
+  // we set the correct value on this copy: build() adds one to the sequence
+  // number of `retrySource`, so the copy uses tx's sequence number plus one
+  Account retrySource = new Account(tx.getSourceAccount(), tx.getSequenceNumber());
+  Transaction retryBase = new TransactionBuilder(retrySource, tx.getNetwork())
+    .setBaseFee(tx.getFee())
+    .addOperation(tx.getOperations()[0])
+    .addMemo(tx.getMemo())
+    .addPreconditions(tx.getPreconditions())
+    .build();
+  Transaction retryTx = SorobanServer.assembleTransaction(retryBase, sim);
+  retryTx.sign(signer);
+
+  return submitTx(retryTx);
 }
 ```
 

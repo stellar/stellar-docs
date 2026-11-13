@@ -12,9 +12,9 @@ flowchart LR
 
 We need **both** to be live for our contract calls to work.
 
-Let's work through how these can be recovered. The recovery process is slightly different for a convenient reason: we don't need simulation to figure out the footprints. Instead, we can leverage [`Contract.getFootprint()`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#contractgetfootprint) to get the ledger key of the contract instance (in Python and Go, we build the same key from the contract address). That key doesn't cover the backing WASM code, so we read the instance entry once to find its WASM hash and build the code's ledger key from it.
+Let's work through how these can be recovered. The recovery process is slightly different for a convenient reason: we don't need simulation to figure out the footprints. Instead, we can leverage [`Contract.getFootprint()`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#contractgetfootprint) to get the ledger key of the contract instance (in Python, Go, and Java, we build the same key from the contract address). That key doesn't cover the backing WASM code, so we read the instance entry once to find its WASM hash and build the code's ledger key from it.
 
-Unfortunately, we still need simulation to figure out the _fees_ for our restoration. This, however, can be easily covered by the SDK's [`Server.prepareTransaction()`](https://stellar.github.io/js-stellar-sdk/reference/network-rpc/#serverpreparetransactiontx-useupgradedauth) helper, which will do simulation and assembly for us. The Go SDK has no such helper, so the Go tab defines a small `prepareTransaction`.
+Unfortunately, we still need simulation to figure out the _fees_ for our restoration. This, however, can be easily covered by the SDK's [`Server.prepareTransaction()`](https://stellar.github.io/js-stellar-sdk/reference/network-rpc/#serverpreparetransactiontx-useupgradedauth) helper, which will do simulation and assembly for us. The Go SDK has no such helper, so the Go tab defines a small `prepareTransaction`. The Java SDK has `prepareTransaction`, and the Java tab's methods go in the `SubmitTx` class.
 
 <Info>
 
@@ -330,6 +330,95 @@ func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) 
   params.SourceAccount = &source
   params.IncrementSequenceNum = false
   return txnbuild.NewTransaction(params)
+}
+```
+
+```java Java
+// Add these imports to the ones from SubmitTx:
+//
+//   import java.util.List;
+//   import org.stellar.sdk.Address;
+//   import org.stellar.sdk.KeyPair;
+//   import org.stellar.sdk.Network;
+//   import org.stellar.sdk.SorobanDataBuilder;
+//   import org.stellar.sdk.TransactionBuilder;
+//   import org.stellar.sdk.TransactionBuilderAccount;
+//   import org.stellar.sdk.operations.RestoreFootprintOperation;
+//   import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+//   import org.stellar.sdk.scval.Scv;
+//   import org.stellar.sdk.xdr.ContractDataDurability;
+//   import org.stellar.sdk.xdr.ContractExecutable;
+//   import org.stellar.sdk.xdr.ContractExecutableType;
+//   import org.stellar.sdk.xdr.LedgerEntry;
+//   import org.stellar.sdk.xdr.LedgerEntryType;
+//   import org.stellar.sdk.xdr.LedgerKey;
+//   import org.stellar.sdk.xdr.SCVal;
+//
+// assume that `server` is the SorobanServer from SubmitTx
+
+public static GetTransactionResponse restoreContract(KeyPair signer, String contractId)
+    throws InterruptedException {
+  LedgerKey instance = getInstanceLedgerKey(contractId);
+
+  TransactionBuilderAccount account = server.getAccount(signer.getAccountId());
+  GetLedgerEntriesResponse response = server.getLedgerEntries(List.of(instance));
+  if (response.getEntries().isEmpty()) {
+    throw new IllegalStateException("No instance entry found for " + contractId);
+  }
+  LedgerKey wasmEntry = getWasmLedgerKey(response.getEntries().get(0).parseXdr());
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+  long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+  Transaction restoreTx = new TransactionBuilder(account, Network.TESTNET)
+    .setBaseFee(fee)
+    .setSorobanData(
+      // Set the restoration footprint (remember, it should be in the
+      // read-write part!)
+      new SorobanDataBuilder().setReadWrite(List.of(instance, wasmEntry)).build())
+    .addOperation(RestoreFootprintOperation.builder().build())
+    .setTimeout(30)
+    .build();
+
+  Transaction preppedTx = server.prepareTransaction(restoreTx);
+  preppedTx.sign(signer);
+  return submitTx(preppedTx);
+}
+
+// The ledger key of the contract instance (what Contract.getFootprint()
+// returns in JavaScript)
+static LedgerKey getInstanceLedgerKey(String contractId) {
+  return LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_DATA)
+    .contractData(LedgerKey.LedgerKeyContractData.builder()
+      .contract(new Address(contractId).toSCAddress())
+      .key(Scv.toLedgerKeyContractInstance())
+      .durability(ContractDataDurability.PERSISTENT)
+      .build())
+    .build();
+}
+
+// Read the Wasm hash out of the contract instance entry
+static LedgerKey getWasmLedgerKey(LedgerEntry.LedgerEntryData data) {
+  if (data.getDiscriminant() != LedgerEntryType.CONTRACT_DATA) {
+    throw new IllegalArgumentException("Expected a contract data entry");
+  }
+  SCVal val = data.getContractData().getVal();
+  if (val.getInstance() == null) {
+    throw new IllegalArgumentException("Expected a contract instance");
+  }
+  ContractExecutable executable = val.getInstance().getExecutable();
+  if (executable.getDiscriminant() != ContractExecutableType.CONTRACT_EXECUTABLE_WASM) {
+    throw new IllegalArgumentException("Expected a Wasm executable");
+  }
+
+  return LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_CODE)
+    .contractCode(
+      LedgerKey.LedgerKeyContractCode.builder().hash(executable.getWasm_hash()).build())
+    .build();
 }
 ```
 

@@ -7,7 +7,7 @@ Stellar RPC provides a [`getEvents` method] which allows you to query events fro
 
 There are many strategies you can use to ingest and keep the events published by a smart contract. Among the simplest might be using a community-developed tool such as [Mercury](https://mercurydata.app) which will take all the infrastructure work off your plate for a low subscription fee. Or, [indexers](/docs/data/indexers) can provide ingested event data for affordable prices.
 
-Another approach we'll explore here is using a cron job to query Stellar RPC periodically and store the relevant events in a locally stored SQLite database. We are going to use an Object Relational Mapper (ORM), allowing us to write database query directly in JavaScript, Python, or Go.
+Another approach we'll explore here is using a cron job to query Stellar RPC periodically and store the relevant events in a locally stored SQLite database. We are going to use an Object Relational Mapper (ORM), allowing us to write database query directly in JavaScript, Python, or Go. In Java, we use plain JDBC instead.
 
 ## Setup
 
@@ -31,6 +31,24 @@ go get github.com/stellar/go-stellar-sdk gorm.io/gorm gorm.io/driver/sqlite
 ```
 
 The `gorm.io/driver/sqlite` driver uses cgo, so it needs a C compiler such as `gcc`.
+
+</Tab>
+<Tab title="Java">
+
+Create a Maven project (Java 17 or later) and add the Stellar SDK and the SQLite JDBC driver to the `<dependencies>` section of its `pom.xml`:
+
+```xml
+<dependency>
+  <groupId>network.lightsail</groupId>
+  <artifactId>stellar-sdk</artifactId>
+  <version>6.0.0</version>
+</dependency>
+<dependency>
+  <groupId>org.xerial</groupId>
+  <artifactId>sqlite-jdbc</artifactId>
+  <version>3.54.1.0</version>
+</dependency>
+```
 
 </Tab>
 </Tabs>
@@ -165,6 +183,42 @@ func openDB() (*gorm.DB, error) {
 ```
 
 As with SQLAlchemy, another supported database only needs a different driver and connection string.
+
+</Tab>
+<Tab title="Java">
+
+To access the database, we will use plain [JDBC](https://docs.oracle.com/en/java/javase/17/docs/api/java.sql/java/sql/package-summary.html) with the SQLite driver. We are going to ingest events in a table named `StellarEvent`, with one row per event. A topic column is `NULL` when the event has fewer topics.
+
+The Java snippets on this page are methods of one `IngestEvents` class. Merge their imports into one block.
+
+```java
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+public class IngestEvents {
+  static Connection openDB() throws SQLException {
+    // An in-memory-only SQLite database. It lives as long as this connection.
+    Connection db = DriverManager.getConnection("jdbc:sqlite::memory:");
+
+    // the following creates the table in the DB
+    try (Statement statement = db.createStatement()) {
+      statement.execute(
+        "CREATE TABLE IF NOT EXISTS StellarEvent ("
+          + "id TEXT PRIMARY KEY, "
+          + "type TEXT NOT NULL, "
+          + "ledger INTEGER NOT NULL, "
+          + "contract_id TEXT NOT NULL, "
+          + "topic_1 TEXT, topic_2 TEXT, topic_3 TEXT, topic_4 TEXT, "
+          + "value TEXT NOT NULL)");
+    }
+    return db;
+  }
+}
+```
+
+To use another database, change only the JDBC driver and the connection string.
 
 </Tab>
 </Tabs>
@@ -328,6 +382,54 @@ func fetchEvents(ctx context.Context, db *gorm.DB) ([]protocol.EventInfo, error)
 ```
 
 </Tab>
+<Tab title="Java">
+
+We start from the latest ingested ledger. If the database is empty, we start near the oldest ledger the RPC still keeps, which `getHealth()` returns. The window moves forward with every new ledger, and `getEvents` rejects a start ledger outside it, so we add a small margin.
+
+```java
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.List;
+
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.requests.sorobanrpc.EventFilterType;
+import org.stellar.sdk.requests.sorobanrpc.GetEventsRequest;
+import org.stellar.sdk.responses.sorobanrpc.GetEventsResponse;
+
+static final String contractId = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+static List<GetEventsResponse.EventInfo> fetchEvents(Connection db) throws SQLException {
+  SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  long ledger;
+  try (PreparedStatement query = db.prepareStatement(
+      "SELECT ledger FROM StellarEvent WHERE contract_id = ? ORDER BY ledger DESC LIMIT 1")) {
+    query.setString(1, contractId);
+    try (ResultSet row = query.executeQuery()) {
+      if (row.next()) {
+        ledger = row.getLong("ledger");
+      } else {
+        ledger = server.getHealth().getOldestLedger() + 10;
+      }
+    }
+  }
+
+  GetEventsRequest request = GetEventsRequest.builder()
+    .startLedger(ledger)
+    .filters(List.of(GetEventsRequest.EventFilter.builder()
+      .type(EventFilterType.CONTRACT)
+      .contractIds(List.of(contractId))
+      // `transfer`, then any three topics
+      .topics(List.of(List.of("AAAADwAAAAh0cmFuc2Zlcg==", "*", "*", "*")))
+      .build()))
+    .build();
+  return server.getEvents(request).getEvents();
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Store Events in the Database
@@ -459,6 +561,71 @@ func main() {
 ```
 
 </Tab>
+<Tab title="Java">
+
+We write all records in one transaction. Each run starts again at the latest ingested ledger, so `INSERT OR IGNORE` skips events that are already stored.
+
+```java
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.Locale;
+
+import org.stellar.sdk.responses.sorobanrpc.GetEventsResponse;
+
+static void storeEvents(Connection db, List<GetEventsResponse.EventInfo> events)
+    throws SQLException {
+  if (events == null || events.isEmpty()) {
+    return;
+  }
+
+  String sql = "INSERT OR IGNORE INTO StellarEvent "
+    + "(id, type, ledger, contract_id, topic_1, topic_2, topic_3, topic_4, value) "
+    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  db.setAutoCommit(false);
+  try (PreparedStatement insert = db.prepareStatement(sql)) {
+    for (GetEventsResponse.EventInfo event : events) {
+      List<String> topics = event.getTopic();
+      insert.setString(1, event.getId());
+      insert.setString(2, event.getType().name().toLowerCase(Locale.ROOT)); // "contract"
+      insert.setLong(3, event.getLedger());
+      insert.setString(4, event.getContractId());
+      for (int i = 0; i < 4; i++) {
+        insert.setString(5 + i, i < topics.size() ? topics.get(i) : null);
+      }
+      insert.setString(9, event.getValue());
+      insert.addBatch();
+    }
+    insert.executeBatch();
+    db.commit();
+  } catch (SQLException e) {
+    db.rollback();
+    throw e;
+  } finally {
+    db.setAutoCommit(true);
+  }
+}
+```
+
+Then `main` puts the steps together:
+
+```java
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.List;
+
+import org.stellar.sdk.responses.sorobanrpc.GetEventsResponse;
+
+public static void main(String[] args) throws SQLException {
+  try (Connection db = openDB()) {
+    List<GetEventsResponse.EventInfo> events = fetchEvents(db);
+    storeEvents(db, events);
+  }
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Run the Script with Cron
@@ -489,6 +656,15 @@ Build the program once with `go build -o ingest-events`, then run the binary:
 ```
 
 </Tab>
+<Tab title="Java">
+
+Package the program once as a runnable JAR that holds its dependencies (for example, with the Maven Shade plugin), then run the JAR:
+
+```sh
+14 13 * * * java -jar /absolute/path/to/ingest-events.jar
+```
+
+</Tab>
 </Tabs>
 
 Here's another example that will run the script every 30 minutes:
@@ -512,6 +688,13 @@ Here's another example that will run the script every 30 minutes:
 
 ```sh
 30 * * * * /absolute/path/to/ingest-events
+```
+
+</Tab>
+<Tab title="Java">
+
+```sh
+30 * * * * java -jar /absolute/path/to/ingest-events.jar
 ```
 
 </Tab>
