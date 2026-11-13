@@ -31,7 +31,9 @@ There's also a ceiling: an entry can only be extended up to the network's [maxim
 
 ## Extending a persistent entry
 
-The example below assumes your contract keys its data with a symbol, which is the common case. If your contract uses a vec, a map, or a struct as its storage key, build the `ScVal` that matches instead of reaching for `scvSymbol` (`scval.to_symbol` in Python).
+The example below assumes your contract keys its data with a symbol, which is the common case. If your contract uses a vec, a map, or a struct as its storage key, build the `ScVal` that matches instead of reaching for `scvSymbol` (`scval.to_symbol` in Python, `xdr.ScValTypeScvSymbol` in Go).
+
+The Go SDK has no `prepareTransaction`, so the Go tab defines a small one. It also defines an `extendFootprintTTL` helper that builds, prepares, signs, and sends the operation. The later Go tabs reuse both.
 
 <CodeGroup>
 
@@ -152,11 +154,161 @@ def extend_persistent_entry_ttl(
     return server.send_transaction(transaction)
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "fmt"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var server = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+func extendPersistentEntryTTL(
+  ctx context.Context,
+  contractID string,
+  storageKey string,
+  sourceKeypair *keypair.Full,
+) (protocol.SendTransactionResponse, error) {
+  // Create an identifier for the persistent entry
+  contract, err := contractAddress(contractID)
+  if err != nil {
+    return protocol.SendTransactionResponse{}, err
+  }
+  symbol := xdr.ScSymbol(storageKey)
+  var persistentEntry xdr.LedgerKey
+  err = persistentEntry.SetContractData(
+    contract,
+    xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &symbol},
+    xdr.ContractDataDurabilityPersistent,
+  )
+  if err != nil {
+    return protocol.SendTransactionResponse{}, err
+  }
+
+  // The number of ledgers past the LCL (last closed ledger) by which to extend. Roughly 5 days
+  return extendFootprintTTL(ctx, sourceKeypair, 100_000, persistentEntry)
+}
+
+// extendFootprintTTL builds one ExtendFootprintTtl operation over the given
+// read-only keys, then prepares, signs, and sends the transaction.
+func extendFootprintTTL(
+  ctx context.Context,
+  sourceKeypair *keypair.Full,
+  extendTo uint32,
+  keys ...xdr.LedgerKey,
+) (protocol.SendTransactionResponse, error) {
+  var none protocol.SendTransactionResponse
+  account, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return none, err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  // Build the operation and attach the Soroban transaction data
+  operation := &txnbuild.ExtendFootprintTtl{
+    ExtendTo: extendTo,
+    Ext: xdr.TransactionExt{
+      V: 1,
+      SorobanData: &xdr.SorobanTransactionData{
+        Resources: xdr.SorobanResources{
+          Footprint: xdr.LedgerFootprint{ReadOnly: keys},
+        },
+      },
+    },
+  }
+
+  // Prepare the transaction for signing.
+  tx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  if err != nil {
+    return none, err
+  }
+
+  tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  if err != nil {
+    return none, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+  return server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+}
+
+// contractAddress turns a contract ID (C...) into an ScAddress.
+func contractAddress(contractID string) (xdr.ScAddress, error) {
+  decoded, err := strkey.Decode(strkey.VersionByteContract, contractID)
+  if err != nil {
+    return xdr.ScAddress{}, err
+  }
+  var id xdr.ContractId
+  copy(id[:], decoded)
+  return xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}, nil
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated footprint, resources, and resource fee.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  // Takes one ExtendFootprintTtl operation; any other type panics here.
+  operation := params.Operations[0].(*txnbuild.ExtendFootprintTtl)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+```
+
 </CodeGroup>
 
 ## Extending the contract instance
 
-In JavaScript, `Contract.getFootprint()` hands you the ledger key for the deployed contract instance, so you don't have to assemble that one by hand. In Python, build it from the contract address and the `SCV_LEDGER_KEY_CONTRACT_INSTANCE` value.
+In JavaScript, `Contract.getFootprint()` hands you the ledger key for the deployed contract instance, so you don't have to assemble that one by hand. In Python and Go, build it from the contract address and the `SCV_LEDGER_KEY_CONTRACT_INSTANCE` value (`xdr.ScValTypeScvLedgerKeyContractInstance` in Go).
 
 <Note>
 
@@ -276,6 +428,40 @@ def extend_contract_instance_ttl(
 
     transaction.sign(source_keypair)
     return server.send_transaction(transaction)
+```
+
+```go Go
+// contractAddress() and extendFootprintTTL() come from the previous section.
+
+// The ledger key for a deployed contract instance
+func contractInstanceKey(contractID string) (xdr.LedgerKey, error) {
+  var key xdr.LedgerKey
+  contract, err := contractAddress(contractID)
+  if err != nil {
+    return key, err
+  }
+  err = key.SetContractData(
+    contract,
+    xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+    xdr.ContractDataDurabilityPersistent,
+  )
+  return key, err
+}
+
+func extendContractInstanceTTL(
+  ctx context.Context,
+  contractID string,
+  sourceKeypair *keypair.Full,
+) (protocol.SendTransactionResponse, error) {
+  // Get the ledger key for the contract instance
+  footprint, err := contractInstanceKey(contractID)
+  if err != nil {
+    return protocol.SendTransactionResponse{}, err
+  }
+
+  // The number of ledgers past the LCL by which to extend
+  return extendFootprintTTL(ctx, sourceKeypair, 100_000, footprint)
+}
 ```
 
 </CodeGroup>
@@ -438,11 +624,74 @@ def extend_contract_code_ttl(
     return server.send_transaction(transaction)
 ```
 
+```go Go
+// Look up the hash of the Wasm code that a deployed contract runs.
+// contractInstanceKey() comes from the previous section.
+func getWasmHash(ctx context.Context, contractID string) (xdr.Hash, error) {
+  key, err := contractInstanceKey(contractID)
+  if err != nil {
+    return xdr.Hash{}, err
+  }
+  keyXDR, err := xdr.MarshalBase64(key)
+  if err != nil {
+    return xdr.Hash{}, err
+  }
+  response, err := server.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{
+    Keys: []string{keyXDR},
+  })
+  if err != nil {
+    return xdr.Hash{}, err
+  }
+
+  if len(response.Entries) == 0 {
+    return xdr.Hash{}, fmt.Errorf("no instance entry found for %s", contractID)
+  }
+
+  // Each step checks the union arm and returns an error if it doesn't match
+  var data xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(response.Entries[0].DataXDR, &data); err != nil {
+    return xdr.Hash{}, err
+  }
+  contractData, ok := data.GetContractData()
+  if !ok {
+    return xdr.Hash{}, fmt.Errorf("expected a contract data entry")
+  }
+  instance, ok := contractData.Val.GetInstance()
+  if !ok {
+    return xdr.Hash{}, fmt.Errorf("expected a contract instance")
+  }
+  wasmHash, ok := instance.Executable.GetWasmHash()
+  if !ok {
+    return xdr.Hash{}, fmt.Errorf("expected a Wasm executable")
+  }
+  return wasmHash, nil
+}
+
+func extendContractCodeTTL(
+  ctx context.Context,
+  contractID string,
+  sourceKeypair *keypair.Full,
+) (protocol.SendTransactionResponse, error) {
+  // Create an identifier for the Wasm code entry
+  wasmHash, err := getWasmHash(ctx, contractID)
+  if err != nil {
+    return protocol.SendTransactionResponse{}, err
+  }
+  var codeEntry xdr.LedgerKey
+  if err := codeEntry.SetContractCode(wasmHash); err != nil {
+    return protocol.SendTransactionResponse{}, err
+  }
+
+  // The number of ledgers past the LCL by which to extend
+  return extendFootprintTTL(ctx, sourceKeypair, 100_000, codeEntry)
+}
+```
+
 </CodeGroup>
 
 <Warning>
 
-`getWasmHash` assumes the contract runs an executable that _was deployed_. A [Stellar Asset Contract](/docs/tokens/stellar-asset-contract) instance has a built-in executable instead of a Wasm hash, so `getWasmHash` throws a `TypeError` for one of those. Check `instance.executable.type` first if your code has to handle both.
+`getWasmHash` assumes the contract runs an executable that _was deployed_. A [Stellar Asset Contract](/docs/tokens/stellar-asset-contract) instance has a built-in executable instead of a Wasm hash, so `getWasmHash` throws a `TypeError` for one of those (in Go, it returns an error). Check `instance.executable.type` first if your code has to handle both.
 
 </Warning>
 
@@ -588,6 +837,55 @@ def extend_contract_and_persistent_entry(
     return server.send_transaction(transaction)
 ```
 
+```go Go
+// contractAddress(), contractInstanceKey(), getWasmHash(), and
+// extendFootprintTTL() come from the previous sections.
+func extendContractAndPersistentEntry(
+  ctx context.Context,
+  contractID string,
+  storageKey string,
+  sourceKeypair *keypair.Full,
+) (protocol.SendTransactionResponse, error) {
+  var none protocol.SendTransactionResponse
+
+  // Ledger key for the persistent entry...
+  contract, err := contractAddress(contractID)
+  if err != nil {
+    return none, err
+  }
+  symbol := xdr.ScSymbol(storageKey)
+  var persistentEntry xdr.LedgerKey
+  err = persistentEntry.SetContractData(
+    contract,
+    xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &symbol},
+    xdr.ContractDataDurabilityPersistent,
+  )
+  if err != nil {
+    return none, err
+  }
+
+  // ...the contract instance...
+  instanceEntry, err := contractInstanceKey(contractID)
+  if err != nil {
+    return none, err
+  }
+
+  // ...and the Wasm code that instance runs.
+  wasmHash, err := getWasmHash(ctx, contractID)
+  if err != nil {
+    return none, err
+  }
+  var codeEntry xdr.LedgerKey
+  if err := codeEntry.SetContractCode(wasmHash); err != nil {
+    return none, err
+  }
+
+  // A single ExtendFootprintTtl operation extends the whole read-only footprint,
+  // with one shared target applied to every key.
+  return extendFootprintTTL(ctx, sourceKeypair, 100_000, persistentEntry, instanceEntry, codeEntry)
+}
+```
+
 </CodeGroup>
 
 That shared `extendTo` is the one real constraint. Entries that need _different_ target TTLs can't share an operation, so extend each one in its own transaction. That's exactly what the `extendPersistentEntryTTL`, `extendContractInstanceTTL`, and `extendContractCodeTTL` helpers above do: each builds its own operation, so each can carry its own `extendTo` target.
@@ -624,6 +922,21 @@ try:
     print("Extension successful:", result)
 except Exception as error:
     print("Extension failed:", error)
+```
+
+```go Go
+func main() {
+  contractID := "CBEE2DHGMYRKJKSJO5E55LBKFMPXE57ZWKTXTCRMC5ANIRJ7IW2Y2WVE"
+  storageKey := "BALANCE"
+  sourceKeypair := keypair.MustParseFull("SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+
+  result, err := extendPersistentEntryTTL(context.Background(), contractID, storageKey, sourceKeypair)
+  if err != nil {
+    fmt.Println("Extension failed:", err)
+    return
+  }
+  fmt.Println("Extension successful:", result)
+}
 ```
 
 </CodeGroup>

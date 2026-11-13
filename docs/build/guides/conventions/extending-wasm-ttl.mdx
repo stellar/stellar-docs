@@ -9,7 +9,7 @@ When a smart contract is deployed on the Stellar network, two ledger entries are
 
 The TTL is the number of ledgers between the current ledger and the final ledger for which the data can still be accessed. If the TTL expires, the data becomes archived and inaccessible. To prevent this, you need to periodically extend the TTL of the contract's Wasm code and instance entry.
 
-This guide will show you how to extend the TTL of a deployed contract's Wasm code and instance within a contract, and by submitting a TTL extension transaction using the Stellar JS SDK, the Python SDK, or the CLI.
+This guide will show you how to extend the TTL of a deployed contract's Wasm code and instance within a contract, and by submitting a TTL extension transaction using the Stellar JS SDK, the Python SDK, the Go SDK, or the CLI.
 
 ## Understanding TTL in Soroban
 
@@ -21,7 +21,7 @@ Before we demonstrate the TTL extension methods, you should note that in Soroban
 
 ## Prerequisites
 
-- Stellar SDK: `npm install @stellar/stellar-sdk` for JavaScript, or `pip install stellar-sdk` for Python
+- Stellar SDK: `npm install @stellar/stellar-sdk` for JavaScript, `pip install stellar-sdk` for Python, or `go get github.com/stellar/go-stellar-sdk` for Go (Go 1.25 or later)
 - Install the [Stellar CLI](../../../tools/cli/install-cli)
 - A [Stellar RPC](/docs/data/apis/rpc) endpoint (e.g., `https://soroban-testnet.stellar.org`)
 - Basic knowledge of the SDK in use
@@ -263,7 +263,178 @@ source_keypair = Keypair.from_secret("SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
 print(extend_contract_wasm_ttl(contract_id, wasm_hash, source_keypair))
 ```
 
+```go Go
+package main
+
+import (
+  "context"
+  "encoding/hex"
+  "encoding/json"
+  "fmt"
+  "log"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var server = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+func extendContractWasmTTL(
+  ctx context.Context,
+  contractID string,
+  wasmHash string,
+  sourceKeypair *keypair.Full,
+) (protocol.SendTransactionResponse, error) {
+  var none protocol.SendTransactionResponse
+
+  // Load the source account for the transaction
+  account, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return none, err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  // Build the contract instance ledger key
+  decoded, err := strkey.Decode(strkey.VersionByteContract, contractID)
+  if err != nil {
+    return none, err
+  }
+  var id xdr.ContractId
+  copy(id[:], decoded)
+  var instance xdr.LedgerKey
+  err = instance.SetContractData(
+    xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id},
+    xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+    xdr.ContractDataDurabilityPersistent,
+  )
+  if err != nil {
+    return none, err
+  }
+
+  // Build the contract code ledger key
+  hashBytes, err := hex.DecodeString(wasmHash)
+  if err != nil || len(hashBytes) != 32 {
+    return none, fmt.Errorf("invalid Wasm hash: %s", wasmHash)
+  }
+  var hash xdr.Hash
+  copy(hash[:], hashBytes)
+  var contractCode xdr.LedgerKey
+  if err := contractCode.SetContractCode(hash); err != nil {
+    return none, err
+  }
+
+  // Set the Soroban data and create an operation to extend the contract's TTL
+  // You can include any ledger keys you would like to extend in the slice
+  operation := &txnbuild.ExtendFootprintTtl{
+    ExtendTo: 500_000,
+    Ext: xdr.TransactionExt{
+      V: 1,
+      SorobanData: &xdr.SorobanTransactionData{
+        Resources: xdr.SorobanResources{
+          Footprint: xdr.LedgerFootprint{ReadOnly: []xdr.LedgerKey{instance, contractCode}},
+        },
+      },
+    },
+  }
+
+  // Simulate, sign, and submit the transaction
+  extendTx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  if err != nil {
+    return none, err
+  }
+  // Use appropriate network
+  extendTx, err = extendTx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  if err != nil {
+    return none, err
+  }
+  envelope, err := extendTx.Base64()
+  if err != nil {
+    return none, err
+  }
+  result, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+
+  out, err := json.MarshalIndent(result, "", "  ")
+  if err != nil {
+    return none, err
+  }
+  fmt.Println("Transaction submitted. Result:", string(out))
+  return result, nil
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated footprint, resources, and resource fee.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  // Takes one ExtendFootprintTtl operation; any other type panics here.
+  operation := params.Operations[0].(*txnbuild.ExtendFootprintTtl)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+// Usage
+func main() {
+  contractID := "CC77VMQFKNXIKZQ6LMX56FTH2S2NLAF2FDZIHITSM3UKW24Z75UZ4YW2"
+  wasmHash := "a7e8e679a9692676e19926cca52aa975a2ca6c933368bc2b09739eed140f2adc"
+  sourceKeypair := keypair.MustParseFull("SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+
+  result, err := extendContractWasmTTL(context.Background(), contractID, wasmHash, sourceKeypair)
+  if err != nil {
+    log.Fatal(err)
+  }
+  fmt.Println(result.Status)
+}
+```
+
 </CodeGroup>
+
+The Go SDK has no `prepareTransaction`, so the Go version defines one: it simulates the transaction, then adds the simulated footprint, resources, and resource fee to the operation.
 
 ### Breaking Down the Code
 
