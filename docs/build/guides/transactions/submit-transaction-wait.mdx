@@ -246,11 +246,76 @@ func submitTx(
 }
 ```
 
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.TimeBounds;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+
+public final class SubmitTx {
+  private static final String RPC_SERVER = "https://soroban-testnet.stellar.org/";
+  private static final SorobanServer server = new SorobanServer(RPC_SERVER);
+
+  // Sends a transaction, then waits until it is in a ledger or has expired.
+  public static GetTransactionResponse submitTx(Transaction tx) throws InterruptedException {
+    // A transaction can go into a ledger only until its time bound (maxTime).
+    TimeBounds timeBounds = tx.getTimeBounds();
+    long maxTime = timeBounds == null ? 0 : timeBounds.getMaxTime().longValue();
+    if (maxTime == 0) {
+      throw new IllegalArgumentException("Call setTimeout() so that the transaction can expire");
+    }
+
+    // TRY_AGAIN_LATER: send the same signed transaction again after a pause.
+    SendTransactionResponse reply = server.sendTransaction(tx);
+    while (reply.getStatus() == SendTransactionStatus.TRY_AGAIN_LATER
+        && reply.getLatestLedgerCloseTime() <= maxTime) {
+      Thread.sleep(2000);
+      reply = server.sendTransaction(tx);
+    }
+
+    // ERROR: a transaction that is already in a ledger also returns ERROR
+    // (txBAD_SEQ) when you send it again, so look it up before you throw.
+    if (reply.getStatus() == SendTransactionStatus.ERROR) {
+      GetTransactionResponse known = server.getTransaction(reply.getHash());
+      if (known.getStatus() == GetTransactionStatus.NOT_FOUND) {
+        throw new IllegalStateException("Transaction rejected: " + reply.getErrorResultXdr());
+      }
+    }
+
+    // Poll until the transaction is in a ledger or has expired.
+    // NOT_FOUND means "not in a ledger yet", not "failed".
+    while (true) {
+      GetTransactionResponse result = server.getTransaction(reply.getHash());
+      if (result.getStatus() == GetTransactionStatus.SUCCESS) {
+        return result;
+      }
+      if (result.getStatus() == GetTransactionStatus.FAILED) {
+        throw new IllegalStateException("Transaction failed: " + result.getResultXdr());
+      }
+      // A ledger closed after maxTime, so the transaction can never go
+      // into a ledger. Only now is it safe to build a new transaction.
+      if (result.getLatestLedgerCloseTime() > maxTime) {
+        throw new IllegalStateException("Transaction " + reply.getHash() + " expired");
+      }
+      Thread.sleep(1000);
+    }
+  }
+}
+```
+
 </CodeGroup>
 
-RPC sends `latestLedgerCloseTime` as a string, so the JavaScript helper converts it with `Number()` before it compares it with `maxTime`. The Python and Go SDKs already parse it into an integer.
+RPC sends `latestLedgerCloseTime` as a string, so the JavaScript helper converts it with `Number()` before it compares it with `maxTime`. The Python, Go, and Java SDKs already parse it into an integer.
 
 In Go, pass a `*txnbuild.Transaction` as `txnbuild.NewGenericTransactionWithTransaction(tx)` and a fee-bump transaction as `txnbuild.NewGenericTransactionWithFeeBumpTransaction(tx)`.
+
+In Java, `SorobanServer.sendTransaction` takes only a `Transaction`, so this helper does not accept a `FeeBumpTransaction`. The [fee-bump guide](/docs/build/guides/transactions/fee-bump-transactions) shows how to send one with a plain JSON-RPC request.
 
 <Warning>
 

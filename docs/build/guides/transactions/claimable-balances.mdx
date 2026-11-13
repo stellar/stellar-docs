@@ -56,7 +56,7 @@ Learn more about clawbacks in our [Clawback Guide](./clawbacks).
 
 ## Example
 
-The below code demonstrates via the JavaScript, Python, and Go SDKs how an account (Account A) creates a ClaimableBalanceEntry with two claimants: Account A (itself) and Account B (another recipient).
+The below code demonstrates via the JavaScript, Python, Go, and Java SDKs how an account (Account A) creates a ClaimableBalanceEntry with two claimants: Account A (itself) and Account B (another recipient).
 
 Each of these accounts can only claim the balance under unique conditions. Account B has a full minute to claim the balance before Account A can reclaim the balance back for itself.
 
@@ -97,6 +97,30 @@ func panicIf(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+```
+
+```java Java
+// Add this helper to the CreateClaimableBalance class below. It needs these imports:
+// java.net.URI, java.net.URLEncoder, java.net.http.HttpClient,
+// java.net.http.HttpRequest, java.net.http.HttpResponse and
+// java.nio.charset.StandardCharsets.
+private static void fundAccount(SorobanServer rpcClient, String address) throws Exception {
+  // Use getNetwork method from client
+  String friendbotUrl = rpcClient.getNetwork().getFriendbotUrl();
+  if (friendbotUrl == null || friendbotUrl.isEmpty()) {
+    throw new IllegalStateException("friendbot not configured for network");
+  }
+
+  HttpRequest request = HttpRequest.newBuilder(
+      URI.create(friendbotUrl + "?addr=" + URLEncoder.encode(address, StandardCharsets.UTF_8)))
+    .POST(HttpRequest.BodyPublishers.noBody())
+    .build();
+  HttpResponse<String> response =
+    HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+  if (response.statusCode() != 200) {
+    throw new IllegalStateException("friendbot failed with status: " + response.statusCode());
+  }
 }
 ```
 
@@ -493,6 +517,123 @@ func extractBalanceID(resp *protocol.GetTransactionResponse) (string, error) {
 }
 ```
 
+```java Java
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.Claimant;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Predicate;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.TransactionPreconditions;
+import org.stellar.sdk.Util;
+import org.stellar.sdk.operations.CreateClaimableBalanceOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.xdr.ClaimableBalanceID;
+import org.stellar.sdk.xdr.OperationResult;
+
+public final class CreateClaimableBalance {
+  public static void main(String[] args) throws Exception {
+    // Create RPC client
+    SorobanServer rpcClient = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    // Generate random keypairs
+    KeyPair A = KeyPair.random();
+    KeyPair B = KeyPair.random();
+
+    System.out.printf("Account A: public key: %s, secret key: %s%n",
+      A.getAccountId(), new String(A.getSecretSeed()));
+    System.out.printf("Account B: public key: %s%n", B.getAccountId());
+
+    // Fund account using getNetwork + friendbot
+    System.out.println("\nFunding account...");
+    fundAccount(rpcClient, A.getAccountId());
+    System.out.println("Account funded");
+
+    // Wait for funding
+    Thread.sleep(3000);
+
+    // Use getAccount method from the client
+    TransactionBuilderAccount sourceAccount = rpcClient.getAccount(A.getAccountId());
+
+    // Create a claimable balance with our two above-described conditions.
+    long soon = Instant.now().plusSeconds(60).getEpochSecond();
+    Predicate bCanClaim = new Predicate.RelBefore(60);
+    Predicate aCanReclaim = new Predicate.Not(new Predicate.AbsBefore(soon));
+
+    // Create claimable balance operation
+    CreateClaimableBalanceOperation claimableBalanceOp = CreateClaimableBalanceOperation.builder()
+      .claimants(List.of(
+        new Claimant(B.getAccountId(), bCanClaim),
+        new Claimant(A.getAccountId(), aCanReclaim)))
+      .asset(new AssetTypeNative())
+      .amount(new BigDecimal("1"))
+      .build();
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(rpcClient.getFeeStats().getInclusionFee().getP90(), maxFee);
+
+    // Build transaction
+    Transaction tx = new TransactionBuilder(sourceAccount, Network.TESTNET)
+      .setBaseFee(fee)
+      .setTimeout(TransactionPreconditions.TIMEOUT_INFINITE)
+      .addOperation(claimableBalanceOp)
+      .build();
+
+    // Sign transaction
+    tx.sign(A);
+
+    // Submit using RPC client's sendTransaction method
+    System.out.println("Submitting transaction...");
+    SendTransactionResponse sendResp = rpcClient.sendTransaction(tx);
+    if (sendResp.getStatus() != SendTransactionResponse.SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("Transaction not pending: " + sendResp.getStatus());
+    }
+
+    System.out.printf("Transaction submitted: %s%n", sendResp.getHash());
+
+    // Poll using RPC client's getTransaction method
+    System.out.println("Polling for result...");
+    for (int i = 0; i < 10; i++) {
+      GetTransactionResponse resp = rpcClient.getTransaction(sendResp.getHash());
+      if (resp.getStatus() != GetTransactionStatus.NOT_FOUND) {
+        if (resp.getStatus() == GetTransactionStatus.SUCCESS) {
+          // Extract balance ID
+          System.out.println("\nSUCCESS: Claimable balance created");
+          System.out.printf("Balance ID: %s%n", extractBalanceID(resp));
+        } else {
+          System.out.printf("Transaction failed: %s%n", resp.getStatus());
+        }
+        return;
+      }
+
+      Thread.sleep((i + 1) * 1000L);
+    }
+
+    System.out.println("Transaction polling timeout");
+  }
+
+  private static String extractBalanceID(GetTransactionResponse resp) throws Exception {
+    OperationResult[] results = resp.parseResultXdr().getResult().getResults();
+    if (results == null || results.length == 0) {
+      throw new IllegalStateException("no operation results");
+    }
+    ClaimableBalanceID balanceId =
+      results[0].getTr().getCreateClaimableBalanceResult().getBalanceID();
+    return Util.bytesToHex(balanceId.toXdrByteArray()).toLowerCase();
+  }
+}
+```
+
 </CodeGroup>
 
 At this point, the `ClaimableBalanceEntry` exists in the ledger, but we’ll need its Balance ID to claim it. You can call the RPC's [`getLedgerEntries`](../../../data/apis/rpc/api-reference/methods/getLedgerEntries) endpoint to do this.
@@ -703,6 +844,72 @@ func main() {
 	} else {
 		fmt.Println("Claimable balance not found")
 	}
+}
+```
+
+```java Java
+import java.util.List;
+
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Util;
+import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+import org.stellar.sdk.xdr.ClaimableBalanceEntry;
+import org.stellar.sdk.xdr.ClaimableBalanceID;
+import org.stellar.sdk.xdr.Claimant;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+
+public final class FetchClaimableBalance {
+  // Replace with your claimable balance ID
+  private static final String BALANCE_ID = "00000000a4c91c4561f2d8b30dad9cf6475221b3003a3b4e12fc0cf78a13251c0e7ff665";
+
+  public static void main(String[] args) throws Exception {
+    // Create RPC client
+    SorobanServer rpcClient = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    System.out.printf("Looking up balance ID: %s%n", BALANCE_ID);
+
+    // Parse claimable balance ID from hex
+    ClaimableBalanceID claimableBalanceID =
+      ClaimableBalanceID.fromXdrByteArray(Util.hexToBytes(BALANCE_ID));
+
+    // Create ledger key for claimable balance
+    LedgerKey ledgerKey = LedgerKey.builder()
+      .discriminant(LedgerEntryType.CLAIMABLE_BALANCE)
+      .claimableBalance(LedgerKey.LedgerKeyClaimableBalance.builder()
+        .balanceID(claimableBalanceID)
+        .build())
+      .build();
+
+    System.out.println("Fetching from RPC server...");
+
+    // Use getLedgerEntries method from client
+    GetLedgerEntriesResponse resp = rpcClient.getLedgerEntries(List.of(ledgerKey));
+
+    if (resp.getEntries() != null && !resp.getEntries().isEmpty()) {
+      System.out.println("Found claimable balance");
+
+      // Parse the ledger entry XDR
+      ClaimableBalanceEntry claimableBalance =
+        resp.getEntries().get(0).parseXdr().getClaimableBalance();
+
+      // Display details
+      System.out.printf("Amount: %d%n", claimableBalance.getAmount().getInt64());
+      System.out.printf("Asset: %s%n", Asset.fromXdr(claimableBalance.getAsset()));
+      // Show claimants
+      System.out.println("\nClaimants:");
+      Claimant[] claimants = claimableBalance.getClaimants();
+      for (int i = 0; i < claimants.length; i++) {
+        String address = KeyPair.fromXdrPublicKey(
+          claimants[i].getV0().getDestination().getAccountID()).getAccountId();
+        System.out.printf("   %d. %s%n", i + 1, address);
+      }
+    } else {
+      System.out.println("Claimable balance not found");
+    }
+  }
 }
 ```
 
@@ -967,6 +1174,92 @@ func main() {
 	}
 
 	fmt.Println("Transaction polling timeout")
+}
+```
+
+```java Java
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.TransactionPreconditions;
+import org.stellar.sdk.operations.ClaimClaimableBalanceOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+
+public final class ClaimClaimableBalance {
+  // Replace with your claimable balance ID and claimant secret
+  private static final String BALANCE_ID = "00000000a4c91c4561f2d8b30dad9cf6475221b3003a3b4e12fc0cf78a13251c0e7ff665";
+  private static final String CLAIMANT_SECRET = "SBMODTOLLH2LGF4AJU5XOGHRQCGKEVJUZSAUAGJL7KGKC7XLJ3SG3F7N";
+
+  public static void main(String[] args) throws Exception {
+    // Create RPC client
+    SorobanServer rpcClient = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    // Create keypair from claimant secret
+    KeyPair keypairAccA = KeyPair.fromSecretSeed(CLAIMANT_SECRET);
+
+    System.out.printf("Claiming account: %s%n", keypairAccA.getAccountId());
+    System.out.printf("Balance ID: %s%n", BALANCE_ID);
+
+    // Load the claimant account using client's getAccount method
+    TransactionBuilderAccount accountA = rpcClient.getAccount(keypairAccA.getAccountId());
+
+    // Create claim claimable balance operation (it takes the balance ID as a hex string)
+    ClaimClaimableBalanceOperation claimOp = ClaimClaimableBalanceOperation.builder()
+      .balanceId(BALANCE_ID)
+      .build();
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(rpcClient.getFeeStats().getInclusionFee().getP90(), maxFee);
+
+    // Build transaction
+    System.out.println("Building claim transaction...");
+    Transaction tx = new TransactionBuilder(accountA, Network.TESTNET)
+      .setBaseFee(fee)
+      .setTimeout(TransactionPreconditions.TIMEOUT_INFINITE)
+      .addOperation(claimOp)
+      .build();
+
+    // Sign transaction
+    tx.sign(keypairAccA);
+
+    // Submit using RPC client's sendTransaction method
+    System.out.println("Submitting claim transaction...");
+    SendTransactionResponse sendResp = rpcClient.sendTransaction(tx);
+    if (sendResp.getStatus() != SendTransactionResponse.SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("Transaction not pending: " + sendResp.getStatus());
+    }
+
+    System.out.printf("Transaction submitted: %s%n", sendResp.getHash());
+
+    // Poll for completion using RPC client's getTransaction method
+    System.out.println("Polling for result...");
+    for (int i = 0; i < 10; i++) {
+      GetTransactionResponse resp = rpcClient.getTransaction(sendResp.getHash());
+      if (resp.getStatus() != GetTransactionStatus.NOT_FOUND) {
+        if (resp.getStatus() == GetTransactionStatus.SUCCESS) {
+          System.out.println("\nSUCCESS: Claimable balance claimed");
+          System.out.printf("Transaction hash: %s%n", sendResp.getHash());
+          System.out.printf("Claimed by: %s%n", keypairAccA.getAccountId());
+        } else {
+          System.out.printf("Transaction failed: %s%n", resp.getStatus());
+          if (resp.getResultXdr() != null) {
+            System.out.printf("Result XDR: %s%n", resp.getResultXdr());
+          }
+        }
+        return;
+      }
+
+      Thread.sleep((i + 1) * 1000L);
+    }
+
+    System.out.println("Transaction polling timeout");
+  }
 }
 ```
 

@@ -1119,6 +1119,362 @@ func preamble() {
 }
 ```
 
+```java Java
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+
+import org.stellar.sdk.AccountFlag;
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.AssetTypeCreditAlphaNum;
+import org.stellar.sdk.ChangeTrustAsset;
+import org.stellar.sdk.Claimant;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Predicate;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.TrustLineAsset;
+import org.stellar.sdk.Util;
+import org.stellar.sdk.operations.ChangeTrustOperation;
+import org.stellar.sdk.operations.ClawbackClaimableBalanceOperation;
+import org.stellar.sdk.operations.ClawbackOperation;
+import org.stellar.sdk.operations.CreateClaimableBalanceOperation;
+import org.stellar.sdk.operations.Operation;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.operations.SetOptionsOperation;
+import org.stellar.sdk.operations.SetTrustlineFlagsOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.xdr.ClaimableBalanceEntry;
+import org.stellar.sdk.xdr.ClaimableBalanceID;
+import org.stellar.sdk.xdr.LedgerEntry;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+import org.stellar.sdk.xdr.TrustLineFlags;
+
+public final class Clawbacks {
+  private static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  private static final KeyPair A = KeyPair.random();
+  private static final KeyPair B = KeyPair.random();
+  private static final KeyPair C = KeyPair.random();
+
+  private static final AssetTypeCreditAlphaNum ASSET =
+    (AssetTypeCreditAlphaNum) Asset.createNonNativeAsset("CLAW", A.getAccountId());
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  private static final long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+  private static final long fee = Math.min(server.getFeeStats().getInclusionFee().getP90(), maxFee);
+
+  static {
+    System.out.println("=== ACCOUNT SETUP ===");
+    System.out.println("Account A (Issuer): " + A.getAccountId());
+    System.out.println("Account B (Trustor): " + B.getAccountId());
+    System.out.println("Account C (Trustor): " + C.getAccountId());
+    System.out.println();
+  }
+
+  // Helper function to format account ID with label
+  private static String formatAccount(String accountId) {
+    String shortId = accountId.substring(0, 8);
+    if (accountId.equals(A.getAccountId())) return shortId + " (Account A)";
+    if (accountId.equals(B.getAccountId())) return shortId + " (Account B)";
+    if (accountId.equals(C.getAccountId())) return shortId + " (Account C)";
+    return shortId;
+  }
+
+  // Helper function to scale int64 asset amounts
+  private static double scaleAsset(long x) {
+    return (x * 10 / 10_000_000) / 10.0; // one decimal place
+  }
+
+  // Helper function to read one ledger entry with getLedgerEntries
+  private static LedgerEntry.LedgerEntryData getLedgerEntry(LedgerKey key) {
+    GetLedgerEntriesResponse response = server.getLedgerEntries(List.of(key));
+    if (response.getEntries() == null || response.getEntries().isEmpty()) {
+      return null;
+    }
+    return response.getEntries().get(0).parseXdr();
+  }
+
+  // Helper function to fetch claimable balance details
+  private static boolean fetchClaimableBalance(String balanceId, String description) throws Exception {
+    System.out.printf("%n--- Checking %s ---%n", description);
+    System.out.println("Looking up balance ID: " + balanceId);
+
+    ClaimableBalanceID id = ClaimableBalanceID.fromXdrByteArray(Util.hexToBytes(balanceId));
+    LedgerEntry.LedgerEntryData entry = getLedgerEntry(LedgerKey.builder()
+      .discriminant(LedgerEntryType.CLAIMABLE_BALANCE)
+      .claimableBalance(LedgerKey.LedgerKeyClaimableBalance.builder().balanceID(id).build())
+      .build());
+    if (entry == null || entry.getClaimableBalance() == null) {
+      System.out.printf("❌ Claimable balance not found (Claimable balance %s not found)%n", balanceId);
+      return false; // Balance doesn't exist
+    }
+
+    ClaimableBalanceEntry claimableBalance = entry.getClaimableBalance();
+    String code = ((AssetTypeCreditAlphaNum) Asset.fromXdr(claimableBalance.getAsset())).getCode();
+    System.out.println("✅ Found claimable balance");
+    System.out.printf("   Amount: %.1f %s%n", scaleAsset(claimableBalance.getAmount().getInt64()), code);
+    System.out.printf("   Number of claimants: %d%n", claimableBalance.getClaimants().length);
+
+    // Show claimant details
+    for (int index = 0; index < claimableBalance.getClaimants().length; index++) {
+      String claimantAddress = KeyPair.fromXdrPublicKey(
+        claimableBalance.getClaimants()[index].getV0().getDestination().getAccountID()).getAccountId();
+      System.out.printf("   Claimant %d: %s%n", index + 1, formatAccount(claimantAddress));
+    }
+
+    return true; // Balance exists
+  }
+
+  // Fund accounts first
+  private static void fundAccounts() throws Exception {
+    System.out.println("=== FUNDING ACCOUNTS WITH XLM ===");
+    String friendbotUrl = server.getNetwork().getFriendbotUrl();
+    HttpClient http = HttpClient.newHttpClient();
+    for (KeyPair kp : List.of(A, B, C)) {
+      HttpRequest request = HttpRequest.newBuilder(
+          URI.create(friendbotUrl + "?addr=" + URLEncoder.encode(kp.getAccountId(), StandardCharsets.UTF_8)))
+        .GET()
+        .build();
+      HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200) {
+        throw new IllegalStateException("friendbot returned " + response.statusCode());
+      }
+    }
+    System.out.println("All accounts funded with XLM via airdrop");
+    // Wait for funding to complete
+    Thread.sleep(3000);
+  }
+
+  // Enables AuthClawbackEnabled on an account.
+  private static GetTransactionResponse enableClawback(TransactionBuilderAccount account, KeyPair keys)
+      throws InterruptedException {
+    System.out.println("Enabling clawback flags on account " + formatAccount(account.getAccountId()));
+    return submitAndPollTransaction(
+      buildTx(account, keys, SetOptionsOperation.builder()
+        .setFlags(AccountFlag.AUTH_CLAWBACK_ENABLED_FLAG.getValue() | AccountFlag.AUTH_REVOCABLE_FLAG.getValue())
+        .build()),
+      "Enable Clawback Flags");
+  }
+
+  // Establishes a trustline for `recipient` for the CLAW Asset
+  private static GetTransactionResponse establishTrustline(TransactionBuilderAccount recipient, KeyPair key)
+      throws InterruptedException {
+    String label = formatAccount(recipient.getAccountId());
+    System.out.printf("%s establishing trustline for %s%n", label, ASSET.getCode());
+    return submitAndPollTransaction(
+      buildTx(recipient, key, ChangeTrustOperation.builder()
+        .asset(new ChangeTrustAsset(ASSET))
+        .limit(new BigDecimal("5000")) // arbitrary
+        .build()),
+      "Establish Trustline (" + label + ")");
+  }
+
+  // Retrieves latest account info for all accounts.
+  private static List<TransactionBuilderAccount> getAccounts() {
+    List<TransactionBuilderAccount> accounts = new ArrayList<>();
+    for (KeyPair kp : List.of(A, B, C)) {
+      accounts.add(server.getAccount(kp.getAccountId()));
+    }
+    return accounts;
+  }
+
+  // Show XLM balances (after funding)
+  private static void showXLMBalances(List<TransactionBuilderAccount> accounts) {
+    System.out.println("\n=== XLM BALANCES ===");
+    for (TransactionBuilderAccount acc : accounts) {
+      String accountId = acc.getAccountId();
+      System.out.printf("%s: %s XLM%n", formatAccount(accountId), getXLMBalance(accountId));
+    }
+  }
+
+  // Get XLM balance using account ledger entry
+  private static String getXLMBalance(String accountId) {
+    LedgerEntry.LedgerEntryData entry = getLedgerEntry(LedgerKey.builder()
+      .discriminant(LedgerEntryType.ACCOUNT)
+      .account(LedgerKey.LedgerKeyAccount.builder()
+        .accountID(KeyPair.fromAccountId(accountId).getXdrAccountId())
+        .build())
+      .build());
+    if (entry == null || entry.getAccount() == null) {
+      return "0";
+    }
+    return String.format("%.1f", scaleAsset(entry.getAccount().getBalance().getInt64()));
+  }
+
+  // Show CLAW balances
+  private static void showCLAWBalances(List<TransactionBuilderAccount> accounts) {
+    System.out.println("\n=== CLAW BALANCES ===");
+    for (TransactionBuilderAccount acc : accounts) {
+      String accountId = acc.getAccountId();
+      System.out.printf("%s: %s CLAW%n", formatAccount(accountId), getBalance(accountId));
+    }
+  }
+
+  // Get CLAW balance using the trustline ledger entry
+  private static String getBalance(String accountId) {
+    LedgerEntry.LedgerEntryData entry = getLedgerEntry(LedgerKey.builder()
+      .discriminant(LedgerEntryType.TRUSTLINE)
+      .trustLine(LedgerKey.LedgerKeyTrustLine.builder()
+        .accountID(KeyPair.fromAccountId(accountId).getXdrAccountId())
+        .asset(new TrustLineAsset(ASSET).toXdr())
+        .build())
+      .build());
+    if (entry == null || entry.getTrustLine() == null) {
+      return "0";
+    }
+    return String.format("%.1f", scaleAsset(entry.getTrustLine().getBalance().getInt64()));
+  }
+
+  // Helps simplify creating & signing a transaction.
+  private static Transaction buildTx(TransactionBuilderAccount source, KeyPair signer, Operation... ops) {
+    TransactionBuilder builder = new TransactionBuilder(source, Network.TESTNET)
+      .setBaseFee(fee)
+      .setTimeout(30);
+    for (Operation op : ops) {
+      builder.addOperation(op);
+    }
+    Transaction tx = builder.build();
+    tx.sign(signer);
+    return tx;
+  }
+
+  // Helper function to submit transaction and poll for completion using RPC
+  private static GetTransactionResponse submitAndPollTransaction(Transaction tx, String description)
+      throws InterruptedException {
+    SendTransactionResponse submitResponse = server.sendTransaction(tx);
+    if (submitResponse.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("Transaction submission failed: " + submitResponse.getStatus());
+    }
+
+    System.out.printf("%s submitted: %s%n", description, submitResponse.getHash());
+
+    GetTransactionResponse finalResponse = server.pollTransaction(submitResponse.getHash());
+    if (finalResponse.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Not in a ledger yet: the outcome is unknown, not failed.
+      System.out.printf("%s not found yet: %s%n", description, submitResponse.getHash());
+    } else if (finalResponse.getStatus() == GetTransactionStatus.SUCCESS) {
+      System.out.printf("%s completed successfully%n", description);
+    } else {
+      System.out.printf("%s failed: %s%n", description, finalResponse.getStatus());
+    }
+    return finalResponse;
+  }
+
+  // Makes payment from `fromAccount` to `toAccount` of `amount`
+  private static GetTransactionResponse makePayment(
+      TransactionBuilderAccount toAccount, TransactionBuilderAccount fromAccount, KeyPair fromKey, String amount)
+      throws InterruptedException {
+    System.out.printf("%nPayment: %s → %s (%s CLAW)%n",
+      formatAccount(fromAccount.getAccountId()), formatAccount(toAccount.getAccountId()), amount);
+    return submitAndPollTransaction(
+      buildTx(fromAccount, fromKey, PaymentOperation.builder()
+        .destination(toAccount.getAccountId())
+        .asset(ASSET)
+        .amount(new BigDecimal(amount))
+        .build()),
+      "Payment of " + amount + " CLAW");
+  }
+
+  // Creates a claimable balance from `fromAccount` to `toAccount` of `amount`,
+  // and returns the new balance ID
+  private static String createClaimable(
+      TransactionBuilderAccount fromAccount, KeyPair fromKey, TransactionBuilderAccount toAccount, String amount)
+      throws InterruptedException {
+    System.out.printf("%nCreating claimable balance: %s → %s (%s CLAW)%n",
+      formatAccount(fromAccount.getAccountId()), formatAccount(toAccount.getAccountId()), amount);
+    Transaction tx = buildTx(fromAccount, fromKey, CreateClaimableBalanceOperation.builder()
+      .asset(ASSET)
+      .amount(new BigDecimal(amount))
+      .claimants(List.of(new Claimant(toAccount.getAccountId(), new Predicate.Unconditional())))
+      .build());
+    submitAndPollTransaction(tx, "Create Claimable Balance of " + amount + " CLAW");
+    return getBalanceID(tx);
+  }
+
+  // The ClaimableBalanceId comes from the source account, sequence number and
+  // operation index, so the Java SDK computes it from the built transaction
+  private static String getBalanceID(Transaction tx) {
+    return tx.getClaimableBalanceId(0);
+  }
+
+  // Clawback the claimable balance using its ID
+  private static GetTransactionResponse clawbackClaimable(
+      TransactionBuilderAccount issuerAccount, KeyPair issuerKey, String balanceId) throws InterruptedException {
+    System.out.printf("%nClawback claimable balance: %s clawing back balance %s%n",
+      formatAccount(issuerAccount.getAccountId()), balanceId);
+    return submitAndPollTransaction(
+      buildTx(issuerAccount, issuerKey, ClawbackClaimableBalanceOperation.builder().balanceId(balanceId).build()),
+      "Clawback Claimable Balance");
+  }
+
+  // Clawback `amount` of CLAW from `fromAccount` by `byAccount`
+  private static GetTransactionResponse doClawback(
+      TransactionBuilderAccount byAccount, KeyPair byKey, TransactionBuilderAccount fromAccount, String amount)
+      throws InterruptedException {
+    System.out.printf("%nClawback: %s clawing back %s CLAW from %s%n",
+      formatAccount(byAccount.getAccountId()), amount, formatAccount(fromAccount.getAccountId()));
+    return submitAndPollTransaction(
+      buildTx(byAccount, byKey, ClawbackOperation.builder()
+        .from(fromAccount.getAccountId())
+        .asset(ASSET)
+        .amount(new BigDecimal(amount))
+        .build()),
+      "Clawback of " + amount + " CLAW");
+  }
+
+  // Disable clawback for a trustline by the issuer
+  private static GetTransactionResponse disableClawback(
+      TransactionBuilderAccount issuerAccount, KeyPair issuerKeys, TransactionBuilderAccount forTrustor)
+      throws InterruptedException {
+    System.out.printf("%nDisabling clawback for %s on asset %s%n",
+      formatAccount(forTrustor.getAccountId()), ASSET.getCode());
+    return submitAndPollTransaction(
+      buildTx(issuerAccount, issuerKeys, SetTrustlineFlagsOperation.builder()
+        .trustor(forTrustor.getAccountId())
+        .asset(ASSET)
+        .setFlags(EnumSet.noneOf(TrustLineFlags.class))
+        .clearFlags(EnumSet.of(TrustLineFlags.TRUSTLINE_CLAWBACK_ENABLED_FLAG))
+        .build()),
+      "Disable Clawback on Trustline");
+  }
+
+  // Enables clawback on A, and establishes trustlines for the CLAW asset for
+  // accounts B and C.
+  private static void preamble() throws InterruptedException {
+    System.out.println("\n=== SETTING UP CLAWBACK AND TRUSTLINES ===");
+    List<TransactionBuilderAccount> accounts = getAccounts();
+
+    enableClawback(accounts.get(0), A);
+    System.out.println("Clawback enabled successfully");
+
+    // Get fresh accounts after enabling clawback
+    accounts = getAccounts();
+    establishTrustline(accounts.get(1), B);
+    establishTrustline(accounts.get(2), C);
+    System.out.println("All trustlines established successfully");
+  }
+
+  // Add the methods from the examples below here, plus a main method that
+  // calls runExample1(), runExample2(), or runExample3().
+}
+```
+
 </CodeGroup>
 
 ### Example 1: Payments
@@ -1256,6 +1612,40 @@ func runExample1() {
   showCLAWBalances(finalAccounts)
   fmt.Println("\n=== CLAWBACK DEMO COMPLETED ===")
 }
+```
+
+```java Java
+  private static List<TransactionBuilderAccount> examplePaymentAndThenClawback()
+      throws InterruptedException {
+    System.out.println("\n=== PAYMENT AND CLAWBACK EXAMPLE ===");
+    List<TransactionBuilderAccount> accounts = getAccounts();
+
+    // A issues 1000 CLAW to B
+    makePayment(accounts.get(1), accounts.get(0), A, "1000");
+    System.out.println("\n--- After A → B payment ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts);
+
+    // B sends 500 CLAW to C
+    makePayment(accounts.get(2), accounts.get(1), B, "500");
+    System.out.println("\n--- After B → C payment ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts);
+
+    // A claws back 250 CLAW from C
+    doClawback(accounts.get(0), A, accounts.get(2), "250");
+    return getAccounts();
+  }
+
+  private static void runExample1() throws Exception {
+    fundAccounts();
+    showXLMBalances(getAccounts());
+    preamble();
+    List<TransactionBuilderAccount> finalAccounts = examplePaymentAndThenClawback();
+    System.out.println("\n--- FINAL BALANCES ---");
+    showCLAWBalances(finalAccounts);
+    System.out.println("\n=== CLAWBACK DEMO COMPLETED ===");
+  }
 ```
 
 </CodeGroup>
@@ -1521,6 +1911,50 @@ func runExample2() {
 }
 ```
 
+```java Java
+  private static List<TransactionBuilderAccount> exampleClaimableBalanceClawback() throws Exception {
+    System.out.println("\n=== CLAIMABLE BALANCE CLAWBACK EXAMPLE ===");
+    List<TransactionBuilderAccount> accounts = getAccounts();
+
+    System.out.println("\n--- Initial CLAW balances ---");
+    showCLAWBalances(accounts);
+
+    // A pays 1000 CLAW to B
+    makePayment(accounts.get(1), accounts.get(0), A, "1000");
+    System.out.println("\n--- After A → B payment ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts);
+
+    // B creates claimable balance for C
+    String balanceId = createClaimable(accounts.get(1), B, accounts.get(2), "300");
+    System.out.println("Claimable balance created with ID: " + balanceId);
+
+    System.out.println("\n--- After claimable balance creation ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts);
+
+    // Check that the claimable balance exists
+    fetchClaimableBalance(balanceId, "claimable balance after creation");
+
+    // A claws back the claimable balance
+    clawbackClaimable(accounts.get(0), A, balanceId);
+
+    // Check that the claimable balance no longer exists
+    fetchClaimableBalance(balanceId, "claimable balance after clawback");
+    return getAccounts();
+  }
+
+  private static void runExample2() throws Exception {
+    fundAccounts();
+    showXLMBalances(getAccounts());
+    preamble();
+    List<TransactionBuilderAccount> finalAccounts = exampleClaimableBalanceClawback();
+    System.out.println("\n--- FINAL BALANCES ---");
+    showCLAWBalances(finalAccounts);
+    System.out.println("\n=== CLAIMABLE BALANCE CLAWBACK DEMO COMPLETED ===");
+  }
+```
+
 </CodeGroup>
 
 When you invoke `runExample2()` (`run_example2()` in Python), you should see output similar to:
@@ -1774,6 +2208,47 @@ func runExample3() {
   showCLAWBalances(finalAccounts[:2]) // Only A and B
   fmt.Println("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===")
 }
+```
+
+```java Java
+  private static List<TransactionBuilderAccount> exampleSelectiveClawbackThenDisableClawback()
+      throws InterruptedException {
+    System.out.println("\n=== SELECTIVE CLAWBACK EXAMPLE ===");
+    List<TransactionBuilderAccount> accounts = getAccounts();
+
+    System.out.println("\n--- Initial CLAW balances ---");
+    showCLAWBalances(accounts.subList(0, 2));
+
+    // A pays 1000 CLAW to B
+    makePayment(accounts.get(1), accounts.get(0), A, "1000");
+    System.out.println("\n--- After A → B payment ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts.subList(0, 2));
+
+    // A claws back 500 CLAW from B (should work)
+    doClawback(accounts.get(0), A, accounts.get(1), "500");
+    System.out.println("\n--- After first clawback ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts.subList(0, 2));
+
+    // A disables clawback for B's trustline
+    disableClawback(accounts.get(0), A, accounts.get(1));
+
+    // Try to clawback again (should fail)
+    doClawback(accounts.get(0), A, accounts.get(1), "250");
+    return getAccounts();
+  }
+
+  private static void runExample3() throws Exception {
+    fundAccounts();
+    List<TransactionBuilderAccount> accounts = getAccounts();
+    showXLMBalances(accounts.subList(0, 2)); // Only show A and B
+    preamble(); // This sets up clawback and trustlines for A, B, C
+    List<TransactionBuilderAccount> finalAccounts = exampleSelectiveClawbackThenDisableClawback();
+    System.out.println("\n--- FINAL BALANCES ---");
+    showCLAWBalances(finalAccounts.subList(0, 2)); // Only A and B
+    System.out.println("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===");
+  }
 ```
 
 </CodeGroup>

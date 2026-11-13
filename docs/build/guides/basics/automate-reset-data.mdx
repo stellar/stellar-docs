@@ -34,6 +34,7 @@ Automating blockchain state on Stellar's Testnet and Futurenet can streamline de
 - Stellar SDK for [JavaScript](https://www.npmjs.com/package/@stellar/stellar-sdk) and `fs` installed
 - For the Python example: the [Python SDK](https://pypi.org/project/stellar-sdk/) and `requests` installed. It defines its own `submit_tx` helper.
 - For the Go example: [Go](https://go.dev/doc/install) 1.25 or later and the [Go SDK](https://github.com/stellar/go-stellar-sdk). It defines its own `submitTx` and `prepareTransaction` helpers.
+- For the Java example: Java 17 or later and the [Java SDK](https://github.com/lightsail-network/java-stellar-sdk) (`network.lightsail:stellar-sdk:6.0.0`). It defines its own `submitTx` helper.
 - An understanding of the rudimentary, retry-enabled transaction polling function `submitTx` which we outlined in [another guide](/docs/build/guides/transactions/submit-transaction-wait)
 
 ### Code
@@ -1037,6 +1038,298 @@ func automateSetup() error {
 func main() {
   if err := automateSetup(); err != nil {
     log.Fatal("An error occurred: ", err)
+  }
+}
+```
+
+```java Java
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.stellar.sdk.Address;
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.AssetTypeCreditAlphaNum;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.ChangeTrustAsset;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.LiquidityPool;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Price;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.ChangeTrustOperation;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.operations.LiquidityPoolDepositOperation;
+import org.stellar.sdk.operations.Operation;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetFeeStatsResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+import org.stellar.sdk.xdr.SCValType;
+import org.stellar.sdk.xdr.TransactionMeta;
+
+public final class AutomateResetData {
+  // networkRPC = "USE EITHER FUTURENET OR TESTNET RPC"
+  private static final String networkRPC = "https://soroban-testnet.stellar.org";
+
+  // Example
+  // FOR FUTURENET - https://rpc-futurenet.stellar.org
+  // FOR TESTNET - https://soroban-testnet.stellar.org
+  private static final SorobanServer server = new SorobanServer(networkRPC);
+
+  // networkURL = "USE EITHER FUTURENET OR TESTNET URL"
+  private static final String networkURL = "https://friendbot.stellar.org";
+
+  // Example
+  // FOR FUTURENET - https://friendbot-futurenet.stellar.org
+  // FOR TESTNET - https://friendbot.stellar.org
+
+  private static final Network network = Network.TESTNET; // or Network.FUTURENET, Network.PUBLIC
+
+  // Each transaction below bids what recent transactions paid, capped at maxFee.
+  // Transaction.MIN_BASE_FEE is the network minimum and gets outbid when the network is busy.
+  private static final long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+
+  // Send a signed transaction and wait for its final status.
+  private static GetTransactionResponse submitTx(Transaction tx) throws InterruptedException {
+    SendTransactionResponse sendResponse = server.sendTransaction(tx);
+    if (sendResponse.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("submission failed: " + sendResponse);
+    }
+    GetTransactionResponse response = server.pollTransaction(sendResponse.getHash());
+    if (response.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Still NOT_FOUND: the status is unknown, not failed.
+      throw new IllegalStateException(
+        "status unknown, look up " + sendResponse.getHash() + " again later");
+    }
+    if (response.getStatus() != GetTransactionStatus.SUCCESS) {
+      throw new IllegalStateException("transaction status: " + response.getStatus());
+    }
+    return response;
+  }
+
+  // Read a contract call's return value from the transaction meta.
+  private static SCVal returnValue(GetTransactionResponse response) {
+    TransactionMeta meta = response.parseResultMetaXdr();
+    if (meta.getV4() != null && meta.getV4().getSorobanMeta() != null
+        && meta.getV4().getSorobanMeta().getReturnValue() != null) {
+      return meta.getV4().getSorobanMeta().getReturnValue();
+    }
+    if (meta.getV3() != null && meta.getV3().getSorobanMeta() != null) {
+      return meta.getV3().getSorobanMeta().getReturnValue();
+    }
+    throw new IllegalStateException("no return value in the transaction meta");
+  }
+
+  // Bid what recent transactions paid, capped at maxFee
+  private static long bid(boolean soroban) {
+    GetFeeStatsResponse feeStats = server.getFeeStats();
+    if (soroban) {
+      return Math.min(feeStats.getSorobanInclusionFee().getP90(), maxFee);
+    }
+    return Math.min(feeStats.getInclusionFee().getP90(), maxFee);
+  }
+
+  // Build and sign a classic transaction
+  private static Transaction buildTx(
+      TransactionBuilderAccount source, long fee, long timeout, KeyPair signer, Operation... ops) {
+    TransactionBuilder builder = new TransactionBuilder(source, network)
+      .setBaseFee(fee)
+      .setTimeout(timeout);
+    for (Operation op : ops) {
+      builder.addOperation(op);
+    }
+    Transaction tx = builder.build();
+    tx.sign(signer);
+    return tx;
+  }
+
+  // Create an Account
+  private static KeyPair createAccount(String networkURL, String secretKey) throws Exception {
+    if (secretKey != null && !secretKey.isEmpty()) {
+      KeyPair pair = KeyPair.fromSecretSeed(secretKey);
+      System.out.println("Account Restored: " + pair.getAccountId());
+      return pair;
+    }
+    // Generate a keypair
+    KeyPair pair = KeyPair.random();
+    // Fund the new account using Friendbot
+    HttpRequest request = HttpRequest.newBuilder(
+        URI.create(networkURL + "?addr=" + URLEncoder.encode(pair.getAccountId(), StandardCharsets.UTF_8)))
+      .GET()
+      .build();
+    HttpResponse<String> response =
+      HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+    System.out.println("Account created: " + response.body());
+    return pair;
+  }
+
+  // Issues an Asset
+  private static void issueAsset(KeyPair issuerKeys, KeyPair receivingKeys, AssetTypeCreditAlphaNum customAsset)
+      throws InterruptedException {
+    long fee = bid(false);
+
+    // First, the receiving account must trust the asset
+    TransactionBuilderAccount receiver = server.getAccount(receivingKeys.getAccountId());
+    Transaction transaction = buildTx(receiver, fee, 100, receivingKeys,
+      ChangeTrustOperation.builder()
+        .asset(new ChangeTrustAsset(customAsset))
+        .limit(new BigDecimal("100000"))
+        .build());
+    submitTx(transaction);
+    System.out.printf("Receiver Trusting %s Asset......%n", customAsset.getCode());
+
+    // Second, the issuing account actually sends a payment using the asset
+    TransactionBuilderAccount issuer = server.getAccount(issuerKeys.getAccountId());
+    transaction = buildTx(issuer, fee, 100, issuerKeys,
+      PaymentOperation.builder()
+        .destination(receivingKeys.getAccountId())
+        .asset(customAsset)
+        .amount(new BigDecimal("1000")) // change to desired amount you want to pay
+        .build());
+    submitTx(transaction);
+    System.out.printf("Issuer Payment using %s to %s%n", customAsset.getCode(), receivingKeys.getAccountId());
+  }
+
+  // Create Liquidity Pool
+  private static void createLiquidityPool(KeyPair accountKeypair, Asset nativeAsset, AssetTypeCreditAlphaNum customAsset)
+      throws InterruptedException {
+    TransactionBuilderAccount account = server.getAccount(accountKeypair.getAccountId());
+
+    // Create the liquidity pool (the pool ID comes from the two assets and the fee)
+    LiquidityPool poolAsset = new LiquidityPool(nativeAsset, customAsset);
+
+    long fee = bid(false);
+
+    Transaction transaction = buildTx(account, fee, 30, accountKeypair,
+      ChangeTrustOperation.builder()
+        .asset(new ChangeTrustAsset(poolAsset))
+        .limit(new BigDecimal("100000")) // Set an appropriate limit
+        .build(),
+      LiquidityPoolDepositOperation.builder()
+        .liquidityPoolId(poolAsset.getLiquidityPoolId())
+        .maxAmountA(new BigDecimal("1000")) // Amount of asset A to deposit
+        .maxAmountB(new BigDecimal("500")) // Amount of asset B to deposit
+        .minPrice(new Price(1, 2)) // Minimum price ratio (0.5)
+        .maxPrice(new Price(2, 1)) // Maximum price ratio (2.0)
+        .build());
+    submitTx(transaction);
+    System.out.printf("Creating Liquidity Pool for native and %s%n", customAsset.getCode());
+  }
+
+  record Deployment(String contractId, List<String> returnValues) {}
+
+  // Build, prepare, sign, and send one Soroban transaction for the deployer
+  private static GetTransactionResponse sendSoroban(KeyPair deployer, long fee, InvokeHostFunctionOperation operation)
+      throws InterruptedException {
+    TransactionBuilderAccount account = server.getAccount(deployer.getAccountId());
+    Transaction tx = new TransactionBuilder(account, network)
+      .setBaseFee(fee)
+      .setTimeout(30)
+      .addOperation(operation)
+      .build();
+    tx = server.prepareTransaction(tx);
+    tx.sign(deployer);
+    return submitTx(tx);
+  }
+
+  // Deploy and Invoke Contract
+  private static Deployment deployAndInvokeContract(KeyPair deployer, String contractWasmFilePath) throws Exception {
+    // Bid what recent transactions paid, capped at maxFee.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long fee = bid(true);
+
+    // Step 1: Upload Wasm
+    byte[] bytecode = Files.readAllBytes(Path.of(contractWasmFilePath));
+    System.out.println("Submitting Wasm upload transaction...");
+    GetTransactionResponse response = sendSoroban(deployer, fee,
+      InvokeHostFunctionOperation.uploadContractWasmOperationBuilder(bytecode).build());
+    byte[] wasmHash = Scv.fromBytes(returnValue(response));
+
+    // Deploy the Contract (a null salt makes the SDK pick a random one)
+    response = sendSoroban(deployer, fee,
+      InvokeHostFunctionOperation.createContractOperationBuilder(
+          wasmHash, new Address(deployer.getAccountId()), List.of(), null)
+        .build());
+    System.out.println("Contract Deployed...");
+
+    String contractId = Address.fromSCVal(returnValue(response)).toString();
+
+    // Invoke Contract
+    response = sendSoroban(deployer, fee,
+      InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+          contractId, "hello", List.of(Scv.toString("World")))
+        .build());
+    System.out.println("Invoke Contract.");
+
+    // `hello` returns a vector of strings
+    SCVal result = returnValue(response);
+    List<String> returnValues = new ArrayList<>();
+    if (result.getDiscriminant() == SCValType.SCV_VEC && result.getVec() != null) {
+      for (SCVal value : Scv.fromVec(result)) {
+        if (value.getDiscriminant() == SCValType.SCV_STRING) {
+          returnValues.add(new String(Scv.fromString(value), StandardCharsets.UTF_8));
+        }
+      }
+    }
+    return new Deployment(contractId, returnValues);
+  }
+
+  private static void automateSetup() throws Exception {
+    // Check Network Status
+    System.out.println("Checking network health...");
+    System.out.println("Network health: " + server.getHealth().getStatus());
+
+    // Flexible Account Configuration
+    // This is an example of a user's secret key
+    String secretKey = "SBGGNMUPVF2SDN4KZOJQFVFX7VDR4Q4NK3FMEFRQC64D3UBMFELKF5GC";
+
+    KeyPair accountOne = createAccount(networkURL, secretKey);
+    KeyPair accountTwo = createAccount(networkURL, "");
+
+    System.out.println("Issuing an Asset...");
+    // Issue assets to these accounts
+    AssetTypeCreditAlphaNum customAsset =
+      (AssetTypeCreditAlphaNum) Asset.createNonNativeAsset("Boya", accountOne.getAccountId());
+    issueAsset(accountOne, accountTwo, customAsset);
+
+    // Create liquidity pool
+    System.out.println("Creating liquidity pool...");
+    createLiquidityPool(accountTwo, new AssetTypeNative(), customAsset);
+
+    // Deploy a contract
+    System.out.println("Deploying contract...");
+    // Ensure you have the contract Wasm file compiled and saved in the specified path.
+    // Adjust this path as necessary
+    String contractWasmFilePath = "./target/wasm32v1-none/release/hello_world.wasm";
+    Deployment deployment = deployAndInvokeContract(accountOne, contractWasmFilePath);
+
+    System.out.println("Contract ID: " + deployment.contractId());
+    System.out.println("Return Values: " + String.join(", ", deployment.returnValues()));
+  }
+
+  public static void main(String[] args) {
+    try {
+      automateSetup();
+    } catch (Exception error) {
+      System.err.println("An error occurred: " + error);
+      System.exit(1);
+    }
   }
 }
 ```

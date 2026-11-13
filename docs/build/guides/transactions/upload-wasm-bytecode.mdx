@@ -38,6 +38,7 @@ We can use one of the [client SDKs](../../../tools/sdks/client-sdks), install ne
 - JavaScript SDK: [Node.js](https://nodejs.org/en) and npm
 - Python SDK: [pip](https://pip.pypa.io/en/stable/installation)
 - Go SDK: [Go](https://go.dev/doc/install)
+- Java SDK: [Java 17 or later](https://adoptium.net) and [Maven](https://maven.apache.org)
 
 Create a new directory for your project and navigate into it:
 
@@ -171,10 +172,9 @@ Run the script with `python3 install.py`, it reads the Wasm file, gets account d
 
 ```py
 import asyncio
-import time
 from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, xdr as stellar_xdr
 from stellar_sdk.exceptions import PrepareTransactionException
-from stellar_sdk.soroban_rpc import GetTransactionStatus
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 import hashlib
 
 
@@ -235,23 +235,32 @@ async def build_and_send_transaction(account, bytes):
     tx.sign(source_keypair)
 
     print("Submitting transaction...")
-    response = server.send_transaction(tx)
-    hash = response.hash
-    print(f"Transaction hash: {hash}")
-    print("Awaiting confirmation...")
+    send_response = server.send_transaction(tx)
+    print(f"Transaction hash: {send_response.hash}")
 
-    while True:
-        response = server.get_transaction(hash)
-        if response.status != GetTransactionStatus.NOT_FOUND:
-            break
-        time.sleep(1)
+    # PENDING and DUPLICATE mean the network has the transaction.
+    # TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+    if send_response.status in (
+        SendTransactionStatus.TRY_AGAIN_LATER,
+        SendTransactionStatus.ERROR,
+    ):
+        raise Exception(f"Transaction not accepted: {send_response.status.value}")
+
+    print("Awaiting confirmation...")
+    # Poll get_transaction once a second, for up to 30 attempts
+    response = server.poll_transaction(send_response.hash, max_attempts=30)
+
+    # NOT_FOUND after the last attempt means the result is unknown,
+    # not that the transaction failed
+    if response.status == GetTransactionStatus.NOT_FOUND:
+        raise Exception("Not confirmed yet. Check again before resending.")
 
     if response.status == GetTransactionStatus.SUCCESS:
         print("Transaction successful.")
         return response
     else:
         print("Transaction failed.")
-        raise Exception("Transaction failed")
+        raise Exception(f"Transaction did not succeed: {response.status.value}")
 
 # Upload contract to the testnet
 server = SorobanServer("https://soroban-testnet.stellar.org:443")
@@ -472,6 +481,122 @@ func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) 
   params.SourceAccount = &source
   params.IncrementSequenceNum = false
   return txnbuild.NewTransaction(params)
+}
+```
+
+</Tab>
+<Tab title="Java">
+
+This guide will walk you through installing the Wasm of the contract using the Java SDK: [java-stellar-sdk](https://github.com/lightsail-network/java-stellar-sdk).
+
+Create a new Maven project, and add the SDK to the `<dependencies>` section of its `pom.xml`:
+
+```xml
+<dependency>
+  <groupId>network.lightsail</groupId>
+  <artifactId>stellar-sdk</artifactId>
+  <version>6.0.0</version>
+</dependency>
+```
+
+Copy the code below into `src/main/java/UploadWasm.java`, then run its `main` method. It reads the Wasm file, gets account details, and uploads the contract in a transaction:
+
+```java
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+
+public final class UploadWasm {
+  // Upload contract to the testnet
+  private static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org:443");
+
+  // Replace `Your_Secret_Key`
+  private static final KeyPair sourceKeypair = KeyPair.fromSecretSeed("Your_Secret_Key");
+
+  // Adjust this path as necessary
+  private static final String wasmFilePath = "../target/wasm32v1-none/release/hello_world.wasm";
+
+  public static void main(String[] args) throws Exception {
+    uploadWasm(wasmFilePath);
+  }
+
+  private static void uploadWasm(String filePath) throws Exception {
+    // reads the compiled Wasm file
+    byte[] bytecode = Files.readAllBytes(Path.of(filePath));
+
+    // retrieves account details from the network
+    TransactionBuilderAccount account = server.getAccount(sourceKeypair.getAccountId());
+
+    // installs the bytecode with an `uploadContractWasm` host function wrapped in a transaction sent to the network
+    InvokeHostFunctionOperation operation =
+      InvokeHostFunctionOperation.uploadContractWasmOperationBuilder(bytecode).build();
+    buildAndSendTransaction(account, operation);
+
+    // The Wasm hash is the SHA-256 hash of the bytecode
+    byte[] wasmHash = MessageDigest.getInstance("SHA-256").digest(bytecode);
+    System.out.println("Wasm hash: " + HexFormat.of().formatHex(wasmHash));
+  }
+
+  // constructs a transaction, signs it, and submits it to the network, handling any necessary retries for transaction confirmation.
+  private static GetTransactionResponse buildAndSendTransaction(
+      TransactionBuilderAccount account, InvokeHostFunctionOperation operation)
+      throws InterruptedException {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    Transaction tx = server.prepareTransaction(transaction);
+    tx.sign(sourceKeypair);
+
+    System.out.println("Submitting transaction...");
+    SendTransactionResponse sendResponse = server.sendTransaction(tx);
+    System.out.println("Transaction hash: " + sendResponse.getHash());
+
+    // PENDING and DUPLICATE mean the network has the transaction.
+    // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+    if (sendResponse.getStatus() == SendTransactionStatus.TRY_AGAIN_LATER
+        || sendResponse.getStatus() == SendTransactionStatus.ERROR) {
+      throw new IllegalStateException("Transaction not accepted: " + sendResponse.getStatus());
+    }
+
+    System.out.println("Awaiting confirmation...");
+    // Poll getTransaction once a second, for up to 30 attempts
+    GetTransactionResponse response =
+      server.pollTransaction(sendResponse.getHash(), 30, attempt -> 1_000L);
+
+    // NOT_FOUND after the last attempt means the result is unknown,
+    // not that the transaction failed
+    if (response.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      throw new IllegalStateException("Not confirmed yet. Check again before resending.");
+    }
+
+    if (response.getStatus() == GetTransactionStatus.SUCCESS) {
+      System.out.println("Transaction successful.");
+      return response;
+    }
+    System.out.println("Transaction failed.");
+    throw new IllegalStateException("Transaction did not succeed: " + response.getStatus());
+  }
 }
 ```
 
