@@ -103,17 +103,28 @@ async function buildAndSendTransaction(account, operations) {
   tx.sign(sourceKeypair);
 
   console.log("Submitting transaction...");
-  let response = await server.sendTransaction(tx);
-  const hash = response.hash;
-  console.log(`Transaction hash: ${hash}`);
-  console.log("Awaiting confirmation...");
+  const sendResponse = await server.sendTransaction(tx);
+  console.log(`Transaction hash: ${sendResponse.hash}`);
 
-  while (true) {
-    response = await server.getTransaction(hash);
-    if (response.status !== "NOT_FOUND") {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+  // PENDING and DUPLICATE mean the network has the transaction.
+  // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+  if (
+    sendResponse.status === "TRY_AGAIN_LATER" ||
+    sendResponse.status === "ERROR"
+  ) {
+    throw new Error(`Transaction not accepted: ${sendResponse.status}`);
+  }
+
+  console.log("Awaiting confirmation...");
+  // Poll getTransaction once a second, for up to 30 attempts
+  const response = await server.pollTransaction(sendResponse.hash, {
+    attempts: 30,
+  });
+
+  // NOT_FOUND after the last attempt means the result is unknown,
+  // not that the transaction failed
+  if (response.status === "NOT_FOUND") {
+    throw new Error("Not confirmed yet. Check again before resending.");
   }
 
   if (response.status === "SUCCESS") {
@@ -121,7 +132,7 @@ async function buildAndSendTransaction(account, operations) {
     return response;
   } else {
     console.log("Transaction failed.");
-    throw new Error("Transaction failed");
+    throw new Error(`Transaction did not succeed: ${response.status}`);
   }
 }
 
@@ -136,8 +147,8 @@ const wasmFilePath = "../target/wasm32v1-none/release/hello_world.wasm";
 
 try {
   let uploadResponse = await uploadWasm(wasmFilePath);
-  const byteArray = uploadResponse.returnValue.bytes();
-  const wasmHash = byteArray.toString("hex");
+  const byteArray = StellarSDK.scValToNative(uploadResponse.returnValue);
+  const wasmHash = Buffer.from(byteArray).toString("hex");
   console.log(`Wasm hash: ${wasmHash}`);
 } catch (error) {
   console.error(error);
@@ -272,7 +283,7 @@ go mod init install-wasm
 go get github.com/stellar/go-stellar-sdk
 ```
 
-Copy the code below into `main.go` then run it with `go run main.go`, it reads the Wasm file, gets account details, and uploads the contract in a transaction:
+Copy the code below into `main.go`, then run it with `go run main.go`. It reads the Wasm file, gets account details, and uploads the contract in a transaction:
 
 ```go
 package main
@@ -383,13 +394,19 @@ func buildAndSendTransaction(
   if err != nil {
     return none, err
   }
-  hash := sendResponse.Hash
-  fmt.Printf("Transaction hash: %s\n", hash)
-  fmt.Println("Awaiting confirmation...")
+  fmt.Printf("Transaction hash: %s\n", sendResponse.Hash)
 
+  // PENDING and DUPLICATE mean the network has the transaction.
+  // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+  if sendResponse.Status == "TRY_AGAIN_LATER" || sendResponse.Status == "ERROR" {
+    return none, fmt.Errorf("transaction not accepted: %s", sendResponse.Status)
+  }
+
+  fmt.Println("Awaiting confirmation...")
+  // Poll getTransaction once a second, for up to 30 attempts
   var response protocol.GetTransactionResponse
-  for {
-    response, err = server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
+  for range 30 {
+    response, err = server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: sendResponse.Hash})
     if err != nil {
       return none, err
     }
@@ -399,16 +416,22 @@ func buildAndSendTransaction(
     time.Sleep(time.Second)
   }
 
+  // NOT_FOUND after the last attempt means the result is unknown,
+  // not that the transaction failed
+  if response.Status == protocol.TransactionStatusNotFound {
+    return none, errors.New("not confirmed yet, check again before resending")
+  }
+
   if response.Status == protocol.TransactionStatusSuccess {
     fmt.Println("Transaction successful.")
     return response, nil
   }
   fmt.Println("Transaction failed.")
-  return response, errors.New("transaction failed")
+  return response, fmt.Errorf("transaction did not succeed: %s", response.Status)
 }
 
 // prepareTransaction simulates the transaction, then builds it again with the
-// simulated resources, resource fee and authorization entries.
+// simulated resources, resource fee, and authorization entries.
 func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
   tx, err := txnbuild.NewTransaction(params)
   if err != nil {
