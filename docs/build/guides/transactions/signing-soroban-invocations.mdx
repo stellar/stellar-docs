@@ -305,6 +305,61 @@ func i128ScVal(amount int64) xdr.ScVal {
 }
 ```
 
+```java Java
+import java.math.BigInteger;
+import java.util.List;
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+
+public final class FullSigning {
+  private static final String rpcUrl = "https://soroban-testnet.stellar.org";
+  private static final SorobanServer server = new SorobanServer(rpcUrl);
+
+  private static final KeyPair sourceKeypair = KeyPair.fromSecretSeed("S...");
+
+  static SendTransactionResponse invokeWithFullSigning(
+      String contractId, String recipientAddress, BigInteger amount) {
+    TransactionBuilderAccount sourceAccount = server.getAccount(sourceKeypair.getAccountId());
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    Transaction transaction = new TransactionBuilder(sourceAccount, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(
+        InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+            contractId,
+            "transfer",
+            List.of(
+              Scv.toAddress(sourceKeypair.getAccountId()),
+              Scv.toAddress(recipientAddress),
+              Scv.toInt128(amount)))
+          .build())
+      .setTimeout(30)
+      .build();
+
+    // prepareTransaction simulates and assembles in one step
+    Transaction preparedTx = server.prepareTransaction(transaction);
+
+    // Sign the transaction envelope
+    preparedTx.sign(sourceKeypair);
+
+    // Submit to network
+    return server.sendTransaction(preparedTx);
+  }
+}
+```
+
 </CodeGroup>
 
 <Note>
@@ -724,9 +779,80 @@ func authorizeEntry(
 }
 ```
 
+```java Java
+import java.math.BigInteger;
+import java.util.List;
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.contract.AssembledTransaction;
+import org.stellar.sdk.contract.ContractClient;
+import org.stellar.sdk.responses.sorobanrpc.SimulateTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+
+public final class ClientAuthEntries {
+  private static final String rpcUrl = "https://soroban-testnet.stellar.org";
+  private static final Network network = Network.TESTNET;
+  private static final SorobanServer server = new SorobanServer(rpcUrl);
+
+  // Client's keypair (authorizes the transfer)
+  private static final KeyPair senderKeypair = KeyPair.fromSecretSeed("S...");
+
+  // The simulation needs a source account that exists and is not the sender.
+  // If the sender were the source, simulation would return source-account
+  // credentials, with no auth entry to sign. The fee-payer replaces it in step 2.
+  private static final String feePayerAddress = "G...";
+
+  static String buildSignedAuthEntries(String tokenContractId, String recipientAddress, BigInteger amount) {
+    // Build and simulate the transaction (Recording Mode).
+    // invoke() throws SimulationFailedException if the simulation fails.
+    ContractClient client = new ContractClient(tokenContractId, rpcUrl, network);
+    AssembledTransaction<SCVal> tx = client.invoke(
+      "transfer",
+      List.of(
+        Scv.toAddress(senderKeypair.getAccountId()),
+        Scv.toAddress(recipientAddress),
+        Scv.toInt128(amount)),
+      feePayerAddress,
+      null, // no transaction signer: the client signs only auth entries
+      null, // keep the raw SCVal result
+      100, // base fee: the fee-payer sets the real bid
+      300, // transaction timeout, in seconds
+      30, // submit timeout, unused here
+      true, // simulate now
+      false); // do not restore archived state
+
+    // Check who needs to sign
+    if (!tx.needsNonInvokerSigningBy(false).contains(senderKeypair.getAccountId())) {
+      throw new IllegalStateException("Sender not in required signers");
+    }
+
+    // Sign auth entries with the sender's keypair
+    tx.signAuthEntries(senderKeypair, tx.getSimulation().getLatestLedger() + 60); // ~5 minutes
+
+    // Re-simulate the signed transaction to validate signatures (📌 Enforcing Mode).
+    // tx.simulate() would build the transaction again without the signed entries.
+    SimulateTransactionResponse enforced = server.simulateTransaction(tx.getBuiltTransaction());
+    if (enforced.getError() != null) {
+      throw new IllegalStateException("Signature validation failed: " + enforced.getError());
+    }
+
+    // Verify all signatures collected
+    if (!tx.needsNonInvokerSigningBy(false).isEmpty()) {
+      throw new IllegalStateException("Missing signatures");
+    }
+
+    // Return transaction XDR for fee-payer
+    return tx.toEnvelopeXdrBase64();
+  }
+}
+```
+
 </CodeGroup>
 
-In Python, re-simulate with `prepare()`, not `simulate()`. `simulate()` builds the transaction again from scratch, without the signed auth entries. The Go SDK has no `AssembledTransaction` or auth-entry signer, so the Go version simulates by hand and signs with its own `authorizeEntry` helper.
+In Python, re-simulate with `prepare()`, not `simulate()`. `simulate()` builds the transaction again from scratch, without the signed auth entries. The Go SDK has no `AssembledTransaction` or auth-entry signer, so the Go version simulates by hand and signs with its own `authorizeEntry` helper. In Java, `simulate()` also builds the transaction again from scratch, so the Java version re-simulates the signed transaction with `simulateTransaction`. Java's `ContractClient.invoke` also needs a source account that exists on the network, so the Java version passes the fee-payer's address.
 
 #### Step 2: Fee-payer rebuilds and submits
 
@@ -992,6 +1118,82 @@ func submitWithSignedAuth(
 }
 ```
 
+```java Java
+import org.stellar.sdk.AbstractTransaction;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SimulateTransactionResponse;
+import org.stellar.sdk.xdr.SorobanTransactionData;
+
+public final class FeePayer {
+  private static final String rpcUrl = "https://soroban-testnet.stellar.org";
+  private static final Network network = Network.TESTNET;
+
+  private static final SorobanServer server = new SorobanServer(rpcUrl);
+  private static final KeyPair feePayerKeypair = KeyPair.fromSecretSeed("S...");
+
+  static SendTransactionResponse submitWithSignedAuth(String transactionXdr) {
+    // Parse client's transaction to extract operation and Soroban data
+    AbstractTransaction parsed = AbstractTransaction.fromEnvelopeXdr(transactionXdr, network);
+    if (!(parsed instanceof Transaction)) {
+      throw new IllegalArgumentException("Expected a v1 transaction envelope");
+    }
+    Transaction clientTx = (Transaction) parsed;
+
+    SorobanTransactionData sorobanData = clientTx.getSorobanData();
+    if (sorobanData == null) {
+      throw new IllegalArgumentException("Missing Soroban data");
+    }
+
+    if (!(clientTx.getOperations()[0] instanceof InvokeHostFunctionOperation)) {
+      throw new IllegalArgumentException("Expected an InvokeHostFunction operation");
+    }
+    InvokeHostFunctionOperation invokeOp = (InvokeHostFunctionOperation) clientTx.getOperations()[0];
+
+    // 🚨 SECURITY: Verify the transaction/operation source is not the fee-payer's
+    // account, and that the auth entries do not reference the fee-payer's account
+
+    // Rebuild transaction with fee-payer as source
+    TransactionBuilderAccount feePayerAccount = server.getAccount(feePayerKeypair.getAccountId());
+
+    // The client's fee includes its resource fee. The builder adds the resource
+    // fee from sorobanData again, so bid only the inclusion fee here.
+    long inclusionFee = clientTx.getFee() - sorobanData.getResourceFee().getInt64();
+
+    Transaction rebuiltTx = new TransactionBuilder(feePayerAccount, network)
+      .setBaseFee(inclusionFee)
+      .setSorobanData(sorobanData)
+      .setTimeout(30)
+      .addOperation(
+        InvokeHostFunctionOperation.builder()
+          .hostFunction(invokeOp.getHostFunction())
+          .auth(invokeOp.getAuth())
+          .sourceAccount(invokeOp.getSourceAccount())
+          .build())
+      .build();
+
+    // 📌 Simulate before submitting to catch errors without paying fees (Enforcing Mode)
+    SimulateTransactionResponse simResult = server.simulateTransaction(rebuiltTx);
+    if (simResult.getError() != null) {
+      throw new IllegalStateException("Fee-payer simulation failed: " + simResult.getError());
+    }
+
+    // Apply the simulation's footprint and resource fee
+    Transaction assembledTx = SorobanServer.assembleTransaction(rebuiltTx, simResult);
+
+    // Fee-payer signs and submits
+    assembledTx.sign(feePayerKeypair);
+    return server.sendTransaction(assembledTx);
+  }
+}
+```
+
 </CodeGroup>
 
 ### Key characteristics {#key-characteristics-1}
@@ -1016,7 +1218,7 @@ For C-accounts:
 
 **Using `basicNodeSigner` for G-accounts (Node.js/backend)**
 
-The `basicNodeSigner` utility creates signing functions from a keypair, providing both `signAuthEntry` and `signTransaction` methods. This is useful for backend services or testing. In Python, `authorize_entry` signs an auth entry and the transaction envelope's `sign` method signs the transaction. In Go, the `authorizeEntry` helper from step 1 signs an auth entry and the transaction's `Sign` method signs the transaction.
+The `basicNodeSigner` utility creates signing functions from a keypair, providing both `signAuthEntry` and `signTransaction` methods. This is useful for backend services or testing. In Python, `authorize_entry` signs an auth entry and the transaction envelope's `sign` method signs the transaction. In Go, the `authorizeEntry` helper from step 1 signs an auth entry and the transaction's `Sign` method signs the transaction. In Java, `Auth.authorizeEntry` signs an auth entry and the transaction's `sign` method signs the transaction.
 
 <CodeGroup>
 
@@ -1078,6 +1280,19 @@ signedTransaction, err := tx.Sign(networkPassphrase, kp)
 if err != nil {
   log.Fatal(err)
 }
+```
+
+```java Java
+KeyPair keypair = KeyPair.fromSecretSeed("S...");
+Network network = Network.TESTNET; // "Test SDF Network ; September 2015"
+
+// Sign an auth entry, valid until and including the ledger you choose
+SorobanAuthorizationEntry signedAuthEntry =
+  Auth.authorizeEntry(authEntry, keypair, signatureExpirationLedger, network);
+
+// Sign a transaction envelope
+Transaction signedTransaction = (Transaction) AbstractTransaction.fromEnvelopeXdr(transactionXdr, network);
+signedTransaction.sign(keypair);
 ```
 
 </CodeGroup>
