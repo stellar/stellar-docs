@@ -321,4 +321,99 @@ func check(err error) {
 }
 ```
 
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.FeeBumpTransaction;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+
+public final class FeeBump {
+  private static final String RPC_URL = "https://soroban-testnet.stellar.org";
+
+  public static void main(String[] args) throws Exception {
+    // Define the network (use Network.PUBLIC for production)
+    Network network = Network.TESTNET;
+
+    // Create keypairs for the source account and the fee account
+    KeyPair sourceKeypair = KeyPair.fromSecretSeed("SECREY_KEY_1");
+    KeyPair feeKeypair = KeyPair.fromSecretSeed("SECREY_KEY_2");
+
+    // Load the source account (this requires network interaction)
+    SorobanServer server = new SorobanServer(RPC_URL);
+    TransactionBuilderAccount sourceAccount = server.getAccount(sourceKeypair.getAccountId());
+
+    // Construct the inner transaction, just a example tx, to transfer 10 XLM to a
+    // destination account. The fee account pays the fee below, so the inner
+    // transaction can bid the network minimum.
+    Transaction innerTransaction = new TransactionBuilder(sourceAccount, network)
+      .setBaseFee(Transaction.MIN_BASE_FEE)
+      .addOperation(
+        PaymentOperation.builder()
+          .destination("GDWH3P3MNTCMOY42CA7RVEACUUAUPZ73XDYKPYUL3TWOFRF37FD6OVM6")
+          .asset(new AssetTypeNative())
+          .amount(new BigDecimal("10"))
+          .build())
+      .setTimeout(30)
+      .build();
+
+    // Sign the inner transaction with the source account
+    innerTransaction.sign(sourceKeypair);
+
+    // The fee account bids what recent transactions paid, capped at what it's
+    // willing to spend. MIN_BASE_FEE is the network minimum and gets outbid when
+    // the network is busy.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.max(
+      Math.min(server.getFeeStats().getInclusionFee().getP90(), maxFee),
+      Transaction.MIN_BASE_FEE);
+
+    // Build the fee-bump transaction
+    FeeBumpTransaction feeBumpTransaction =
+      FeeBumpTransaction.createWithBaseFee(feeKeypair.getAccountId(), fee, innerTransaction);
+
+    // Sign the fee-bump transaction with the fee account
+    feeBumpTransaction.sign(feeKeypair);
+
+    // Submit the fee-bump transaction to the Stellar network. SorobanServer.sendTransaction
+    // takes only a Transaction, so send the fee-bump envelope with a plain JSON-RPC request.
+    String body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"sendTransaction\","
+      + "\"params\":{\"transaction\":\"" + feeBumpTransaction.toEnvelopeXdrBase64() + "\"}}";
+    HttpRequest request = HttpRequest.newBuilder(URI.create(RPC_URL))
+      .header("Content-Type", "application/json")
+      .POST(HttpRequest.BodyPublishers.ofString(body))
+      .build();
+    String sendResponse = HttpClient.newHttpClient()
+      .send(request, HttpResponse.BodyHandlers.ofString())
+      .body();
+    if (!sendResponse.contains("\"status\":\"PENDING\"")) {
+      throw new IllegalStateException("Something went wrong! " + sendResponse);
+    }
+
+    // A fee-bump transaction is found by its own hash, not the inner transaction's hash.
+    String hash = feeBumpTransaction.hashHex();
+    GetTransactionResponse response = server.pollTransaction(hash, 5, attempt -> 1_000L * attempt);
+    if (response.getStatus() == GetTransactionResponse.GetTransactionStatus.NOT_FOUND) {
+      // Still NOT_FOUND: the status is unknown, not failed.
+      throw new IllegalStateException("Status unknown, look up " + hash + " again later");
+    }
+    System.out.println("transaction response: " + response);
+  }
+}
+```
+
 </CodeGroup>

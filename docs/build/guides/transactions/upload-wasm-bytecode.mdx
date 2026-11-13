@@ -38,6 +38,7 @@ We can use one of the [client SDKs](../../../tools/sdks/client-sdks), install ne
 - JavaScript SDK: [Node.js](https://nodejs.org/en) and npm
 - Python SDK: [pip](https://pip.pypa.io/en/stable/installation)
 - Go SDK: [Go](https://go.dev/doc/install)
+- Java SDK: [Java 17 or later](https://adoptium.net) and [Maven](https://maven.apache.org)
 
 Create a new directory for your project and navigate into it:
 
@@ -472,6 +473,114 @@ func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) 
   params.SourceAccount = &source
   params.IncrementSequenceNum = false
   return txnbuild.NewTransaction(params)
+}
+```
+
+</Tab>
+<Tab title="Java">
+
+This guide will walk you through installing the Wasm of the contract using the Java SDK: [java-stellar-sdk](https://github.com/lightsail-network/java-stellar-sdk).
+
+Create a new Maven project, and add the SDK to the `<dependencies>` section of its `pom.xml`:
+
+```xml
+<dependency>
+  <groupId>network.lightsail</groupId>
+  <artifactId>stellar-sdk</artifactId>
+  <version>6.0.0</version>
+</dependency>
+```
+
+Copy the code below into `src/main/java/UploadWasm.java` then run its `main` method, it reads the Wasm file, gets account details, and uploads the contract in a transaction:
+
+```java
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+
+public final class UploadWasm {
+  // Upload contract to the testnet
+  private static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org:443");
+
+  // Replace `Your_Secret_Key`
+  private static final KeyPair sourceKeypair = KeyPair.fromSecretSeed("Your_Secret_Key");
+
+  // Adjust this path as necessary
+  private static final String wasmFilePath = "../target/wasm32v1-none/release/hello_world.wasm";
+
+  public static void main(String[] args) throws Exception {
+    uploadWasm(wasmFilePath);
+  }
+
+  private static void uploadWasm(String filePath) throws Exception {
+    // reads the compiled Wasm file
+    byte[] bytecode = Files.readAllBytes(Path.of(filePath));
+
+    // retrieves account details from the network
+    TransactionBuilderAccount account = server.getAccount(sourceKeypair.getAccountId());
+
+    // installs the bytecode with an `uploadContractWasm` host function wrapped in a transaction sent to the network
+    InvokeHostFunctionOperation operation =
+      InvokeHostFunctionOperation.uploadContractWasmOperationBuilder(bytecode).build();
+    buildAndSendTransaction(account, operation);
+
+    // The Wasm hash is the SHA-256 hash of the bytecode
+    byte[] wasmHash = MessageDigest.getInstance("SHA-256").digest(bytecode);
+    System.out.println("Wasm hash: " + HexFormat.of().formatHex(wasmHash));
+  }
+
+  // constructs a transaction, signs it, and submits it to the network, handling any necessary retries for transaction confirmation.
+  private static GetTransactionResponse buildAndSendTransaction(
+      TransactionBuilderAccount account, InvokeHostFunctionOperation operation)
+      throws InterruptedException {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    Transaction tx = server.prepareTransaction(transaction);
+    tx.sign(sourceKeypair);
+
+    System.out.println("Submitting transaction...");
+    SendTransactionResponse sendResponse = server.sendTransaction(tx);
+    String hash = sendResponse.getHash();
+    System.out.println("Transaction hash: " + hash);
+    System.out.println("Awaiting confirmation...");
+
+    GetTransactionResponse response;
+    while (true) {
+      response = server.getTransaction(hash);
+      if (response.getStatus() != GetTransactionStatus.NOT_FOUND) {
+        break;
+      }
+      Thread.sleep(1000);
+    }
+
+    if (response.getStatus() == GetTransactionStatus.SUCCESS) {
+      System.out.println("Transaction successful.");
+      return response;
+    }
+    System.out.println("Transaction failed.");
+    throw new IllegalStateException("Transaction failed");
+  }
 }
 ```
 
