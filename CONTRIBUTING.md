@@ -59,7 +59,7 @@ pnpm check          # formatting, component padding, mint validate, and links
 pnpm check:links    # broken links, anchors, redirects, and snippets
 ```
 
-A husky pre-commit hook runs the formatting and padding checks; if it fails, run `pnpm format:mdx` and re-commit. CI runs the same checks plus `mint validate` and the link check. Mintlify builds a preview deployment for PRs to `main` and comments with the link; for PRs from forks, a maintainer approves the preview first.
+A husky pre-commit hook runs the formatting, padding, and link-style checks; if the formatting check fails, run `pnpm format:mdx` and re-commit. CI runs the same checks plus `mint validate` and the link check. Mintlify builds a preview deployment for PRs to `main` and comments with the link; for PRs from forks, a maintainer approves the preview first.
 
 ## Content Conventions
 
@@ -70,7 +70,7 @@ We follow [Mintlify's conventions](https://www.mintlify.com/docs) wherever we ca
 - **Internal links are root-relative URL paths with no file extension**: `[fees](/docs/learn/fundamentals/fees-resource-limits-metering#inclusion-fee)`. This is a change from what we asked for under Docusaurus. Use a path from the site root rather than a relative one (`../`), and leave off the `.mdx` or `.md` extension.
 - A section's landing page is its URL: link to `/docs/build`, not to `index.mdx` or `README.mdx`.
 - Run `pnpm check:links` before opening a PR. It catches broken links and anchors, which `mint validate` doesn't, and CI fails on them. It checks site pages with `mint broken-links` and the agent skills in `.mintlify/skills/` with `scripts/check-skill-links.mjs`, since Mintlify serves those as raw Markdown, not pages.
-- Older pages still contain relative links. Converting them is welcome when you're already editing that area; please don't add new ones.
+- Older pages still contain relative links. Converting them is welcome when you're already editing that area; please don't add new ones. The pre-commit hook and CI flag relative links and `.mdx` extensions on any line you add or change, so a line you edit needs its links converted too. To list every link in a section that still needs converting, run `pnpm check:link-style --all docs/learn`.
 - External links to other Stellar properties use `https://stellar.org/...` (no `www`).
 - Links inside the specs in `openapi/` and `openrpc/` use full `https://developers.stellar.org/...` URLs, so external consumers of those specs can resolve them.
 
