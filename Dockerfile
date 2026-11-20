@@ -20,7 +20,7 @@ COPY . /app/
 RUN pnpm ci
 RUN du -sh /app/*
 RUN pnpm rpcspec:build --no-minify
-RUN pnpm stellar-cli:build --no-minify --cli-ref=main
+RUN pnpm stellar-cli:build --no-minify --cli-ref=f2a7b74175c34585f3b30a1abf42a2d41cbcc390
 RUN pnpm stellar-cli:fix-links
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
