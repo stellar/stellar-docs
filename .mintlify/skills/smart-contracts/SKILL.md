@@ -3,7 +3,7 @@ name: smart-contracts
 description: Stellar smart contract development (Rust, soroban-sdk). Entry point with project setup, contract anatomy, and build/deploy workflow, routing to three companion files in this directory — development.md (storage/TTL, authorization, cross-contract calls, tokens, events, errors, upgrades, fees, troubleshooting), testing.md (unit, fuzz, property, fork, mutation, integration), and security.md (vulnerability classes, checklists, tooling, audits). Use when writing, testing, reviewing, securing, debugging, or shipping Stellar smart contracts, including anything the user calls "Soroban" — Soroban contracts, soroban-sdk, Soroban auth/storage/TTL errors, SEP-41 tokens, or SAC integration from contract code.
 user-invocable: true
 argument-hint: "[contract task]"
-source: https://github.com/stellar/stellar-dev-skill/tree/b1785b7b74deef345b16b9ee7022afc334e24ea4/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/6258d71d8cc6cdbee013b71c23ec4b59fdb838ad/skills
 ---
 
 # Stellar Smart Contracts
@@ -1007,7 +1007,7 @@ For integration jobs, run `stellar/quickstart` as a service container and deploy
 ## Checklist
 
 - [ ] Unit tests cover all public functions, including error paths (`try_` methods)
-- [ ] Edge cases: zero amounts, max values, empty state
+- [ ] Edge cases: zero amounts, max values, empty state, short or malformed byte inputs
 - [ ] Authorization verified with `env.auths()` or specific `mock_auths`
 - [ ] Events asserted (`event.to_xdr` comparison)
 - [ ] Storage TTL behavior validated
@@ -1168,6 +1168,45 @@ A function whose worst-case cost on attacker-shaped input exceeds network limits
 - CAP-71 delegation: `get_delegated_signers()` returns **unsanitized** user input — verify each address is actually a registered delegate before calling `delegate_auth`.
 - Details: [development.md](#custom-accounts-__check_auth).
 
+### 12. Malformed and short byte inputs
+
+Raw byte operations trap on bad input instead of returning an error. The caller gets a generic failure, never your `#[contracterror]` code: a `try_` call sees `Err(Err(InvokeError::Abort))`, or `Err(Ok(Error(Context, InvalidAction)))` when the function does not return `Result` (shapes: [development.md](#error-handling)).
+
+- `Bytes::slice` traps with `Error(Object, IndexBounds)` when the range runs past `len()`.
+- `Bytes::copy_into_slice` panics when the target buffer length differs from `len()`.
+- `FromXdr::from_xdr` traps when the bytes are not valid `ScVal` XDR. It returns `Err` only when valid XDR does not convert to the target type.
+- A `BytesN<N>` parameter rejects a wrong-length argument before your function body runs.
+
+```rust
+// BAD: traps with a host error when payload is shorter than 36 bytes
+pub fn submit(env: Env, payload: Bytes) {
+    let key = payload.slice(0..32);
+    let mut nonce = [0u8; 4];
+    payload.slice(32..36).copy_into_slice(&mut nonce);
+    // ...
+}
+
+// GOOD: check the length first, fail with a typed error
+pub fn submit(env: Env, payload: Bytes) -> Result<(), Error> {
+    if payload.len() != 36 {
+        return Err(Error::InvalidPayload);
+    }
+    let key: BytesN<32> = payload
+        .slice(0..32)
+        .try_into()
+        .map_err(|_| Error::InvalidPayload)?;
+    let mut nonce = [0u8; 4];
+    payload.slice(32..36).copy_into_slice(&mut nonce);
+    // ...
+    Ok(())
+}
+```
+
+- Fixed length, and a call-boundary rejection is acceptable: take `BytesN<N>`.
+- Fixed length, and callers need a typed error: take `Bytes`, then convert with `BytesN::<N>::try_from`, which returns `Err(ConversionError)` on a length mismatch.
+- Variable length: check `len()` before every `slice` or `copy_into_slice`. `Bytes::get(i)` returns `None` when out of bounds.
+- Structured input: take a `#[contracttype]` argument instead of XDR bytes you decode with `from_xdr`.
+
 ## Token-consumer review (AMMs, vaults, escrows, lenders)
 
 Any contract that takes a token address must assume it may be native XLM's SAC, a wrapped classic asset's SAC, or a custom contract:
@@ -1188,6 +1227,7 @@ Any contract that takes a token address must assume it may be native XLM's SAC, 
 - [ ] Initialization can only happen once (or uses `__constructor`)
 - [ ] External contract calls validated/allowlisted; return values sanity-checked
 - [ ] Arithmetic checked; input signs and ranges validated
+- [ ] Caller-supplied bytes length-checked before `slice` or `copy_into_slice`; structured input typed with `#[contracttype]`, not decoded with `from_xdr`
 - [ ] Storage keys typed and collision-free
 - [ ] Critical TTLs extended proactively; no TTL-as-security assumptions
 - [ ] Loops and footprints bounded on attacker-shaped input
