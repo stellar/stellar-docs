@@ -57,7 +57,7 @@ Certain transaction submission failures also need adjustments to succeed.
 
 Submissions using the `/transactions_async` endpoint return an immediate response back from Stellar-Core. There are different actions that clients can take based on the specific `tx_status` returned:
 
-1. `PENDING`: The submission is successful but the transaction is still waiting to be included in a ledger. You should use the [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) endpoint to poll for the submitted transaction and check if it makes into a ledger. Note that even though the submission was successful, it can still fail to get included in the ledger.
+1. `PENDING`: The submission is successful but the transaction is still waiting to be included in a ledger. You should use the [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) endpoint to poll for the submitted transaction and check if it makes into a ledger. For a fee-bump transaction, poll the hash of its inner transaction, which finds it whichever fee-bump transaction gets it into the ledger. Note that even though the submission was successful, it can still fail to get included in the ledger.
 2. `DUPLICATE`: The submission was a duplicate of a previously submitted transaction. This could happen if the client resubmitted the same transaction multiple times.
 3. `ERROR`: The submission did not go through due to an error in Stellar-Core. Take a look at the attached error message for more details, modify your transaction if necessary, and resubmit.
 4. `TRY_AGAIN_LATER`: This indicates that the Stellar-Core instance is currently unable to process submission of this particular transaction. Clients should wait for sometime before resubmitting the transaction. This could happen due to different reasons:
@@ -421,8 +421,8 @@ Due to the blocking nature of this endpoint, things are a little different compa
 1. The submission is successful and Horizon returns the transaction response back. This is the happy path and clients do not need to do anything but wait for Horizon's response.
 2. Stellar-Core sends back an `ERROR` response from the submission. Clients should consult the attached error message and retry the submission again.
 3. Timeouts: Horizon may respond with a `504` HTTP code. This response is not an error but a warning that your transaction hasn't been accepted by the network yet. There could be many possible reasons for the timeout, the most common of which is network congestion, but it could also be due to other transient issues.
-   1. **Polling the transaction hash**: Use the transaction hash in the timeout response and poll the [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) endpoint to see if it successfully makes it into a ledger.
-   2. **Resubmitting the transaction**: Before attempting any resubmissions, you need to make sure your transaction has timed out based on the time bounds you specified. After your transaction has expired, you can confirm it by polling the transaction again and getting a `tx_too_late` response from Horizon. Rebuild the transaction by updating the timebounds and resubmit the transaction.
+   1. **Polling the transaction hash**: Use the transaction hash in the timeout response and poll the [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) endpoint to see if it successfully makes it into a ledger. For a fee-bump transaction, poll the hash of its inner transaction, which finds it whichever fee-bump transaction gets it into the ledger.
+   2. **Resubmitting the transaction**: Before attempting any resubmissions, you need to make sure your transaction has timed out based on the time bounds you specified. After your transaction has expired, you can confirm it by polling the transaction again and getting a `tx_too_late` response from Horizon. Rebuild the transaction by updating the timebounds and resubmit the transaction. Before you rebuild it, check that it wasn't applied, as described in [Before Rebuilding a Transaction](#before-rebuilding-a-transaction).
 
 <Warning>
 
@@ -434,7 +434,7 @@ Do note that resubmitting a transaction is only safe when it is unchanged - same
 
 Timebounds are optional but **highly** recommended as they put a definitive time limit on the transaction's finality - after it times out, you will know for sure whether it made it into a ledger. For example, you submit a transaction, and it enters the queue of the Stellar network, but Horizon crashes while giving you a response. Uncertain about the transaction status, you resubmit the transaction (with no changes!) until either (a) Horizon comes back up to give you a reply or (b) your time bounds are exceeded.
 
-There are only two possible results to this scenario: either the transaction makes it into the ledger (exactly once) and Horizon gives you the response, or the transaction never makes it out of the queue, and you receive the corresponding `tx_too_late` response.
+There are only two possible results to this scenario: either the transaction makes it into the ledger (exactly once) and Horizon gives you the response, or the transaction never makes it out of the queue, and you receive the corresponding `tx_too_late` response. Before you rebuild the transaction after a `tx_too_late`, check that it wasn't applied, as described in [Before Rebuilding a Transaction](#before-rebuilding-a-transaction).
 
 Example implementation:
 
@@ -681,7 +681,15 @@ try {
 
 Despite the solution’s simplicity, things can go wrong fast if you don’t understand why the error occurred.
 
-Suppose you submit transactions from multiple places in your application simultaneously, and your user spammed a _Send Payment_ button a few times in their impatience. If you send the exact same payment transaction for each tap, naturally, only one will succeed. The others will fail with an invalid sequence number (`tx_bad_seq`), and if you resubmit blindly with an updated sequence number (as we do above), these payments will also succeed, resulting in more than one payment being made when only one was intended. So **be very careful when resubmitting transactions** that have been modified to work around an error.
+Suppose you submit transactions from multiple places in your application simultaneously, and your user spammed a _Send Payment_ button a few times in their impatience. If you send the exact same payment transaction for each tap, naturally, only one will succeed. The others will fail with an invalid sequence number (`tx_bad_seq`), and if you resubmit blindly with an updated sequence number (as we do above), these payments will also succeed, resulting in more than one payment being made when only one was intended. So **be very careful when resubmitting transactions** that have been modified to work around an error. Check whether the original transaction was applied before you rebuild it, as described in [Before Rebuilding a Transaction](#before-rebuilding-a-transaction).
+
+### Before Rebuilding a Transaction
+
+A transaction that you rebuild with a new sequence number is a new transaction. If the original transaction was applied as well, both take effect, for example as two payments. A lost response, a timeout, or a resubmission that fails with `tx_bad_seq` or `tx_too_late` doesn't show that the original transaction wasn't applied. Before you rebuild a transaction, check the ledger:
+
+1. Load the source account of the original transaction. For a fee-bump transaction, load the source account of its inner transaction.
+2. If the account's sequence number is lower than the original transaction's, the original transaction wasn't applied. Once its time bounds have expired, it never will be, and you can rebuild it.
+3. Otherwise, the original transaction's sequence number is used up, so it can't be applied from now on. Look up the original transaction by its hash with [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction). For a fee-bump transaction, use the hash of its inner transaction. If you find it and its `successful` field is `true`, it took effect, so don't rebuild it. If `successful` is `false`, none of its operations took effect, so you can fix the cause and rebuild it. If you don't find it, another transaction moved the account's sequence number past it, and the original transaction never took effect.
 
 ## Managing specific Errors
 
