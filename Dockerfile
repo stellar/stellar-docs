@@ -26,7 +26,7 @@ RUN pnpm stellar-cli:fix-links
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm build --no-minify
 
-FROM nginx:1.31
+FROM nginx:1.31-alpine-slim
 
 COPY --from=build /app/build/ /usr/share/nginx/html/
 COPY nginx /etc/nginx/
