@@ -3,7 +3,7 @@ name: standards
 description: Stellar standards, ecosystem, and reference. Covers SEPs (Stellar Ecosystem Proposals), CAPs (Core Advancement Proposals), and a quick map for picking the right standard for wallets, anchors, payments, deposits/withdrawals, federation, deep links, and KYC. Also bundles ecosystem references (DeFi protocols, dev tools, wallets, infra, community projects), curated documentation links, and MCP servers (live tools such as Raven). Use when you need to know which SEP applies, or want a starting point for ecosystem integrations, official docs, or live MCP tooling.
 user-invocable: true
 argument-hint: "[standards or ecosystem lookup]"
-source: https://github.com/stellar/stellar-dev-skill/tree/b1785b7b74deef345b16b9ee7022afc334e24ea4/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/f954e6a0f35c7a26d688dc1a24f66af068cd0f02/skills
 ---
 
 # Standards, Ecosystem, and Resources
@@ -250,6 +250,16 @@ AMM protocol on Stellar.
 - **GitHub**: https://github.com/Phoenix-Protocol-Group
 - **Use Case**: Token swaps, liquidity pools
 
+#### XOXNO Swap Aggregator
+DEX aggregator that splits and routes swaps across Soroswap, Aquarius, Phoenix, Sushi, Comet, and Curve, and executes each route atomically through one router contract. `GET /api/v1/config` returns the live venue list.
+- **Use Case**: Best-price swaps, multi-venue routing, swaps inside lending strategies
+- **Website**: https://xoxno.com
+- **Docs**: https://xoxno.com/docs/stellar-aggregator/overview (append `.md` for Markdown)
+- **Agent skill**: [`xoxno-swap-aggregator/SKILL.md`](https://raw.githubusercontent.com/XOXNO/rs-lending-xlm/main/skills/xoxno-swap-aggregator/SKILL.md)
+- **API**: https://stellar-swap.xoxno.com (quotes and unsigned XDR, [OpenAPI](https://stellar-swap.xoxno.com/api-docs/openapi.json)), no API key
+- **SDK**: TypeScript [`@xoxno/sdk-js`](https://github.com/XOXNO/sdk-js) (`stellar-lending`: `getStellarAggregatorQuote`, `buildStellarExecuteStrategyTx`)
+- **Router (mainnet)**: `CCVENFSVCBYDHVOACFZXMNNYVOZ3LKXPZYU5LUI4N7KTXOKRVYD7F3TR`
+
 ### Yield & Vaults
 
 #### DeFindex
@@ -481,7 +491,7 @@ Community-powered price oracle for Stellar.
 - **Docs**: https://developers.stellar.org/docs/data/oracles/oracle-providers
 - **Interface**: SEP-40 plus extensions: https://reflector.network/docs/interface. Read `decimals()` and `resolution()` from the contract; do not hard-code them.
 - **Features**: SEP-40 compatible, on-chain/off-chain prices, webhooks
-- **Integrations**: Blend, OrbitCDP, DeFindex, EquitX, Slender
+- **Integrations**: Blend, OrbitCDP, DeFindex, EquitX, Slender, XOXNO
 - **Examples**: staleness rules for Reflector, Chainlink Data Feeds and Pyth Pro side by side: https://github.com/kaankacar/stellar-chainlink-demo/blob/main/docs/field-note/oracle-comparison.md
 
 #### DIA Oracle
@@ -515,6 +525,17 @@ Pull oracle (formerly Pyth Lazer) with sub-second prices, live on Stellar mainne
 - **Freshness**: the verifier checks only that a currently trusted signer signed the update. It does not check price age or block replay. Request the `feedUpdateTimestamp` property and reject old or carried-forward feeds in your contract.
 - **Access**: needs a Pyth Pro API key from a Pyth Terminal account: https://docs.pyth.network/pro/acquire-api-key. Check that your plan covers the feeds you need, such as XLM/USD.
 - **Examples**: Pyth Pro prices verified and stored in a Soroban contract on testnet, with tests and scripts: https://github.com/kaankacar/stellar-pyth-pro-demo
+
+#### RedStone
+Push oracle with multi-source prices for majors, stablecoins, and tokenized assets.
+- **Website**: https://www.redstone.finance
+- **Docs**: https://docs.redstone.finance/docs/technical-reference/non-evm-chains/stellar/ (contract IDs: https://developers.stellar.org/docs/data/oracles/oracle-providers)
+- **Interface**: one SEP-40 contract (`lastprice`, `price`, `prices`) for supported Stellar assets, plus per-asset MultiFeed contracts that read from a shared adapter
+- **SEP-40 (mainnet)**: `CBMGLKUQZVSAIL5CPDDAWSUY7MAKXISHMOZEVLMBUWBMFGHRJSR4WYRF`
+- **MultiFeed adapter**: mainnet `CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG`, testnet `CBIHT4HVRIT5OMVLSXZ44J2ZAXYBDDGOSCN3LTN2DOC6SWHDS5IP6BK3`
+- **Updates**: on a 0.01 to 0.5 percent deviation or a heartbeat, depending on the feed. Most heartbeats are 12 or 24 hours; a few feeds update every few minutes or every 6 hours.
+- **SDK**: Rust https://github.com/redstone-finance/rust-sdk
+- **Integrations**: Blend, Templar, XOXNO
 
 #### Band Protocol
 Cross-chain data oracle on BandChain.

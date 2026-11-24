@@ -24,6 +24,8 @@ For more about these statuses and the errors behind them, see [Debugging errors]
 
 Poll until `getTransaction` returns `SUCCESS` or `FAILED`. If it still returns `NOT_FOUND` after a ledger closes later than `maxTime`, the transaction can never go into a ledger. Only then is it safe to build and send a new transaction.
 
+For a fee-bump transaction, poll the hash of its inner transaction. Anyone who has the signed inner transaction can submit it in a fee-bump transaction of their own, and `getTransaction` finds the inner hash whichever fee-bump transaction gets it into a ledger.
+
 <Warning>
 
 `server.pollTransaction()` stops after a fixed number of attempts (30 by default) and then returns the last `NOT_FOUND` response. Do not treat that response as a failure. If you send a new transaction at that point, the network can apply both transactions, and you pay twice.
@@ -35,7 +37,7 @@ Poll until `getTransaction` returns `SUCCESS` or `FAILED`. If it still returns `
 <CodeGroup>
 
 ```typescript JavaScript
-import { FeeBumpTransaction, Transaction } from "@stellar/stellar-sdk";
+import { FeeBumpTransaction, Transaction, xdr } from "@stellar/stellar-sdk";
 import { Api, Server } from "@stellar/stellar-sdk/rpc";
 
 const RPC_SERVER = "https://soroban-testnet.stellar.org/";
@@ -54,6 +56,10 @@ async function submitTx(
     throw new Error("Call setTimeout() so that the transaction can expire");
   }
 
+  // Look up the inner transaction hash. It finds the transaction whichever
+  // fee-bump transaction gets it into a ledger.
+  const hash = xdr.encodeBytes(inner.hash(), "hex");
+
   // TRY_AGAIN_LATER: send the same signed transaction again after a pause.
   let reply = await server.sendTransaction(tx);
   while (
@@ -67,7 +73,7 @@ async function submitTx(
   // ERROR: a transaction that is already in a ledger also returns ERROR
   // (txBAD_SEQ) when you send it again, so look it up before you throw.
   if (reply.status === "ERROR") {
-    const known = await server.getTransaction(reply.hash);
+    const known = await server.getTransaction(hash);
     if (known.status === Api.GetTransactionStatus.NOT_FOUND) {
       throw reply;
     }
@@ -76,7 +82,7 @@ async function submitTx(
   // Poll until the transaction is in a ledger or has expired.
   // NOT_FOUND means "not in a ledger yet", not "failed".
   while (true) {
-    const result = await server.getTransaction(reply.hash);
+    const result = await server.getTransaction(hash);
     switch (result.status) {
       case Api.GetTransactionStatus.SUCCESS:
         return result;
@@ -86,7 +92,7 @@ async function submitTx(
         // A ledger closed after maxTime, so the transaction can never go
         // into a ledger. Only now is it safe to build a new transaction.
         if (Number(result.latestLedgerCloseTime) > maxTime) {
-          throw new Error(`Transaction ${reply.hash} expired`);
+          throw new Error(`Transaction ${hash} expired`);
         }
         await sleep(1000);
     }
@@ -113,15 +119,20 @@ def submit_tx(
     tx: TransactionEnvelope | FeeBumpTransactionEnvelope,
 ) -> GetTransactionResponse:
     # A transaction can go into a ledger only until its time bound (max_time).
-    inner = (
-        tx.transaction.inner_transaction_envelope.transaction
+    inner_envelope = (
+        tx.transaction.inner_transaction_envelope
         if isinstance(tx, FeeBumpTransactionEnvelope)
-        else tx.transaction
+        else tx
     )
+    inner = inner_envelope.transaction
     time_bounds = inner.preconditions.time_bounds if inner.preconditions else None
     max_time = time_bounds.max_time if time_bounds else 0
     if max_time == 0:
         raise ValueError("Set a timeout so that the transaction can expire")
+
+    # Look up the inner transaction hash. It finds the transaction whichever
+    # fee-bump transaction gets it into a ledger.
+    tx_hash = inner_envelope.hash_hex()
 
     # TRY_AGAIN_LATER: send the same signed transaction again after a pause.
     reply = server.send_transaction(tx)
@@ -135,14 +146,14 @@ def submit_tx(
     # ERROR: a transaction that is already in a ledger also returns ERROR
     # (txBAD_SEQ) when you send it again, so look it up before you raise.
     if reply.status == SendTransactionStatus.ERROR:
-        known = server.get_transaction(reply.hash)
+        known = server.get_transaction(tx_hash)
         if known.status == GetTransactionStatus.NOT_FOUND:
             raise RuntimeError(f"Transaction rejected: {reply.error_result_xdr}")
 
     # Poll until the transaction is in a ledger or has expired.
     # NOT_FOUND means "not in a ledger yet", not "failed".
     while True:
-        result = server.get_transaction(reply.hash)
+        result = server.get_transaction(tx_hash)
         if result.status == GetTransactionStatus.SUCCESS:
             return result
         if result.status == GetTransactionStatus.FAILED:
@@ -150,7 +161,7 @@ def submit_tx(
         # A ledger closed after max_time, so the transaction can never go
         # into a ledger. Only now is it safe to build a new transaction.
         if result.latest_ledger_close_time > max_time:
-            raise RuntimeError(f"Transaction {reply.hash} expired")
+            raise RuntimeError(f"Transaction {tx_hash} expired")
         time.sleep(1)
 ```
 
@@ -163,6 +174,7 @@ import (
   "fmt"
   "time"
 
+  "github.com/stellar/go-stellar-sdk/network"
   "github.com/stellar/go-stellar-sdk/txnbuild"
 
   client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
@@ -170,6 +182,7 @@ import (
 )
 
 const rpcServer = "https://soroban-testnet.stellar.org/"
+const networkPassphrase = network.TestNetworkPassphrase
 
 var server = client.NewClient(rpcServer, nil)
 
@@ -193,6 +206,13 @@ func submitTx(
     return none, errors.New("set a timeout so that the transaction can expire")
   }
 
+  // Look up the inner transaction hash. It finds the transaction whichever
+  // fee-bump transaction gets it into a ledger.
+  hash, err := inner.HashHex(networkPassphrase)
+  if err != nil {
+    return none, err
+  }
+
   envelope, err := tx.MarshalText()
   if err != nil {
     return none, err
@@ -214,7 +234,7 @@ func submitTx(
   // ERROR: a transaction that is already in a ledger also returns ERROR
   // (txBAD_SEQ) when you send it again, so look it up before you fail.
   if reply.Status == "ERROR" {
-    known, err := server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: reply.Hash})
+    known, err := server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
     if err != nil {
       return none, err
     }
@@ -226,7 +246,7 @@ func submitTx(
   // Poll until the transaction is in a ledger or has expired.
   // NOT_FOUND means "not in a ledger yet", not "failed".
   for {
-    result, err := server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: reply.Hash})
+    result, err := server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
     if err != nil {
       return none, err
     }
@@ -239,7 +259,7 @@ func submitTx(
     // A ledger closed after MaxTime, so the transaction can never go
     // into a ledger. Only now is it safe to build a new transaction.
     if result.LatestLedgerCloseTime > maxTime {
-      return result, fmt.Errorf("transaction %s expired", reply.Hash)
+      return result, fmt.Errorf("transaction %s expired", hash)
     }
     time.Sleep(time.Second)
   }
