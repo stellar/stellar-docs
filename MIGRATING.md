@@ -94,8 +94,8 @@ else. When in doubt, do it the way Mintlify's docs say.
 - **New endpoint:** copy a neighboring endpoint page, change its `openapi:`
   line, and add it to `docs.json`.
 - **Was:** RPC pages rendered the spec live with `<RpcMethod>`. **Now:** they're
-  generated MDX. Edit `openrpc/`, then run `pnpm rpcspec:build`; ask a
-  maintainer to regenerate the pages.
+  generated MDX. Edit `openrpc/`, then run `pnpm rpcspec` to rebuild the specs
+  and regenerate the pages.
 - **Was:** the CLI cookbook and manual were rebuilt from `stellar/stellar-cli`
   on every deploy. **Now:** they're committed copies. Fix them here _and_
   upstream until regeneration is updated.

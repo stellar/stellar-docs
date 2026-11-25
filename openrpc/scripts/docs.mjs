@@ -389,7 +389,7 @@ for (const file of orphans) {
 }
 if (check && stale.length) {
   console.log(
-    "Run `pnpm rpcspec:build && pnpm rpcspec:docs` and commit the result.",
+    "Run `pnpm rpcspec` and commit the result.",
   );
 }
 process.exit(check && (stale.length || orphans.length) ? 1 : 0);

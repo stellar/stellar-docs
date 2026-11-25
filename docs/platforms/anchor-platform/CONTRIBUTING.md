@@ -83,22 +83,23 @@ directly.
 
 1. Edit the appropriate source files under `contentDescriptors/`, `examples/`,
    `methods/`, or `schemas/`.
-2. Build and validate the OpenRPC specifications:
+2. Build and validate the OpenRPC specifications, and regenerate the method
+   pages:
 
    ```bash
-   pnpm rpcspec:validate
+   pnpm rpcspec
    ```
 
-3. Commit the OpenRPC source changes and the regenerated
-   `docs/platforms/anchor-platform/api-reference/platform/rpc/anchor-platform.openrpc.json`
-   together.
-4. The method pages under
+   The method pages under
    `docs/platforms/anchor-platform/api-reference/platform/rpc/methods/` are
    generated from the specification. Don't hand-edit the generated part of a
-   page (between the `rpc-method` comments). Run `pnpm rpcspec:docs` to
-   regenerate them, and commit the pages with the spec. For a new method, also
-   add its page to `docs.json` and the methods index; for a removed one, delete
-   its page and those entries. The script prints a reminder in both cases.
+   page (between the `rpc-method` comments). For a new method, also add its page
+   to `docs.json` and the methods index; for a removed one, delete its page and
+   those entries. The script prints a reminder in both cases.
+
+3. Commit the OpenRPC source changes, the regenerated
+   `docs/platforms/anchor-platform/api-reference/platform/rpc/anchor-platform.openrpc.json`,
+   and the method pages together.
 
 See [`openrpc/README.md`](../../../openrpc/README.md) for the OpenRPC object
 structure and `$ref` conventions.
@@ -108,10 +109,10 @@ structure and `$ref` conventions.
 Run the checks relevant to your change from the repository root:
 
 ```bash
-pnpm check              # formatting, component padding, and mint validate
+pnpm check              # formatting, component padding, OpenRPC specs, mint validate, and links
 pnpm check:links        # broken links, anchors, redirects, and snippets
 pnpm api:bundle         # required after OpenAPI source changes
-pnpm rpcspec:validate   # required after OpenRPC source changes
+pnpm rpcspec            # required after OpenRPC source changes
 ```
 
 Before committing generated files, inspect `git diff` and make sure the change

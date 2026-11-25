@@ -55,7 +55,7 @@ We use [pnpm](https://pnpm.io/). See the [README](README.md#quick-start) for ful
 pnpm install        # install dependencies
 pnpm start          # Mintlify dev server (mint dev) at http://localhost:3000
 pnpm format:mdx     # format all md/mdx content
-pnpm check          # formatting, component padding, mint validate, and links
+pnpm check          # formatting, component padding, OpenRPC specs, mint validate, and links
 pnpm check:links    # broken links, anchors, redirects, and snippets
 ```
 
@@ -122,7 +122,7 @@ The bar for changes to the site itself (components, styling, `docs.json`, script
 
 The Horizon, Anchor Platform, and Stellar Disbursement Platform API reference pages are rendered by Mintlify from the bundled OpenAPI specs in `openapi/`. **Edit the spec sources, then run `pnpm api:bundle`**, and commit the sources and the updated bundles together. Each endpoint page is a small `.mdx` file whose frontmatter names the spec and the endpoint (`openapi: "openapi/horizon/bundled.yml GET /accounts"`); adding an endpoint means adding one of those pages and a `docs.json` entry.
 
-Stellar RPC and the Anchor Platform's JSON-RPC API are specified in `openrpc/`. **Edit the spec sources, then run `pnpm rpcspec:build`** (or `pnpm rpcspec:validate`) and commit the sources and the rebuilt `*.openrpc.json` files together. Their method pages are generated MDX: don't hand-edit the generated part of a method page (between the `rpc-method` comments). **Run `pnpm rpcspec:docs`** after the build to regenerate the pages, and commit them too. CI fails if the built specs or the pages are out of date with the sources. See [`openrpc/README.md`](openrpc/README.md).
+Stellar RPC and the Anchor Platform's JSON-RPC API are specified in `openrpc/`. Their method pages are generated MDX: don't hand-edit the generated part of a method page (between the `rpc-method` comments). **Edit the spec sources, then run `pnpm rpcspec`**, which builds and validates the `*.openrpc.json` files and regenerates the method pages. Commit the sources, the rebuilt `*.openrpc.json` files, and the pages together. `pnpm check` and CI fail if the built specs or the pages are out of date with the sources. See [`openrpc/README.md`](openrpc/README.md).
 
 ### CLI pages come from the `stellar-cli` repo
 
