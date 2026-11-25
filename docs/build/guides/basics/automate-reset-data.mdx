@@ -32,11 +32,16 @@ Automating blockchain state on Stellar's Testnet and Futurenet can streamline de
 
 - [Node.js](https://nodejs.org/en) and `npm` installed.
 - Stellar SDK for [JavaScript](https://www.npmjs.com/package/@stellar/stellar-sdk) and `fs` installed
-- An understanding of the rudimentary, retry-enabled transaction polling function `submitTx` which we outlined in [another guide](../transactions/submit-transaction-wait-js)
+- For the Python example: the [Python SDK](https://pypi.org/project/stellar-sdk/) and `requests` installed. It defines its own `submit_tx` helper.
+- For the Go example: [Go](https://go.dev/doc/install) 1.25 or later and the [Go SDK](https://github.com/stellar/go-stellar-sdk). It defines its own `submitTx` and `prepareTransaction` helpers.
+- For the Java example: Java 17 or later and the [Java SDK](https://github.com/lightsail-network/java-stellar-sdk) (`network.lightsail:stellar-sdk:6.0.0`). It defines its own `submitTx` helper.
+- An understanding of the rudimentary, retry-enabled transaction polling function `submitTx` which we outlined in [another guide](/docs/build/guides/transactions/submit-transaction-wait)
 
 ### Code
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 import {
   Networks,
   Keypair,
@@ -47,7 +52,6 @@ import {
   Contract,
   LiquidityPoolAsset,
   LiquidityPoolFeeV18,
-  BASE_FEE,
 } from "@stellar/stellar-sdk";
 import { Server, Api } from "@stellar/stellar-sdk/rpc";
 import fs from "fs";
@@ -66,6 +70,10 @@ const networkURL = "https://friendbot.stellar.org";
 // FOR TESTNET - https://friendbot.stellar.org
 
 const networkPassphrase = Networks.TESTNET; // or Networks.FUTURENET, PUBLIC
+
+// Each transaction below bids what recent transactions paid, capped at MAX_FEE.
+// BASE_FEE is the network minimum and gets outbid when the network is busy.
+const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
 
 // Create an Account
 async function createAccount(networkURL, SecretKey) {
@@ -98,10 +106,14 @@ async function createAccount(networkURL, SecretKey) {
 // Issues an Asset
 async function issueAsset(issuerKeys, receivingKeys, customAsset) {
   try {
+    // Bid what recent transactions paid, capped at MAX_FEE
+    const { inclusionFee } = await server.getFeeStats();
+    const fee = String(Math.min(Number(inclusionFee.p90), MAX_FEE));
+
     // First, the receiving account must trust the asset
     const receiver = await server.getAccount(receivingKeys.publicKey());
     let transaction = new TransactionBuilder(receiver, {
-      fee: BASE_FEE,
+      fee,
       networkPassphrase,
     })
       .addOperation(
@@ -123,7 +135,7 @@ async function issueAsset(issuerKeys, receivingKeys, customAsset) {
     // Second, the issuing account actually sends a payment using the asset
     const issuer = await server.getAccount(issuerKeys.publicKey());
     transaction = new TransactionBuilder(issuer, {
-      fee: BASE_FEE,
+      fee,
       networkPassphrase,
     })
       .addOperation(
@@ -164,9 +176,13 @@ async function createLiquidityPool(accountKeypair, nativeAsset, customAsset) {
     );
     const poolId = poolIdAsset.toString().split(":")[1]; // To Get the Pool ID
 
+    // Bid what recent transactions paid, capped at MAX_FEE
+    const { inclusionFee } = await server.getFeeStats();
+    const fee = String(Math.min(Number(inclusionFee.p90), MAX_FEE));
+
     const transaction = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: networkPassPhrase,
+      fee,
+      networkPassphrase,
     })
       .addOperation(
         Operation.changeTrust({
@@ -205,8 +221,13 @@ async function deployAndInvokeContract(deployer, contractWasmFilePath) {
     const bytecode = fs.readFileSync(contractWasmFilePath);
     const account = await server.getAccount(deployer.publicKey());
 
+    // Bid what recent transactions paid, capped at MAX_FEE.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    const { sorobanInclusionFee } = await server.getFeeStats();
+    const fee = String(Math.min(Number(sorobanInclusionFee.p90), MAX_FEE));
+
     const uploadTransaction = new TransactionBuilder(account, {
-      fee: BASE_FEE,
+      fee,
       networkPassphrase,
     })
       .addOperation(Operation.uploadContractWasm({ wasm: bytecode }))
@@ -227,7 +248,7 @@ async function deployAndInvokeContract(deployer, contractWasmFilePath) {
 
     // Deploy the Contract
     const createContractTransaction = new TransactionBuilder(account, {
-      fee: BASE_FEE,
+      fee,
       networkPassphrase,
     })
       .addOperation(
@@ -257,11 +278,11 @@ async function deployAndInvokeContract(deployer, contractWasmFilePath) {
 
     // Invoke Contract
     const invokeContractTransaction = new TransactionBuilder(account, {
-      fee: BASE_FEE,
+      fee,
       networkPassphrase,
     })
       .addOperation(
-        contract.call("hello", nativeToScVal("World", { type: "symbol" })),
+        contract.call("hello", nativeToScVal("World", { type: "string" })),
       )
       .setTimeout(30)
       .build();
@@ -329,6 +350,992 @@ async function automateSetup() {
 automateSetup();
 ```
 
+```python Python
+import requests
+from stellar_sdk import (
+    Asset,
+    Keypair,
+    LiquidityPoolAsset,
+    Network,
+    SorobanServer,
+    TransactionBuilder,
+    scval,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import TransactionMeta
+
+# network_rpc = "USE EITHER FUTURENET OR TESTNET RPC"
+network_rpc = "https://soroban-testnet.stellar.org"
+# Example
+# FOR FUTURENET - https://rpc-futurenet.stellar.org
+# FOR TESTNET - https://soroban-testnet.stellar.org
+server = SorobanServer(network_rpc)
+
+# network_url = "USE EITHER FUTURENET OR TESTNET URL"
+network_url = "https://friendbot.stellar.org"
+# Example
+# FOR FUTURENET - https://friendbot-futurenet.stellar.org
+# FOR TESTNET - https://friendbot.stellar.org
+
+# or Network.FUTURENET_NETWORK_PASSPHRASE, Network.PUBLIC_NETWORK_PASSPHRASE
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+
+# Each transaction below bids what recent transactions paid, capped at MAX_FEE.
+# The minimum base fee gets outbid when the network is busy.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+
+
+def submit_tx(tx):
+    """Send a signed transaction and wait for its final status."""
+    send_response = server.send_transaction(tx)
+    if send_response.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(f"Submission failed: {send_response}")
+    response = server.poll_transaction(send_response.hash)
+    if response.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"Transaction status: {response.status}")
+    return response
+
+
+def return_value(response):
+    """Read a contract call's return value from the transaction meta."""
+    meta = TransactionMeta.from_xdr(response.result_meta_xdr)
+    return (meta.v4 or meta.v3).soroban_meta.return_value
+
+
+# Create an Account
+def create_account(network_url, secret_key=None):
+    if not secret_key:
+        # Generate a keypair
+        pair = Keypair.random()
+        # Fund the new account using Friendbot
+        response = requests.get(network_url, params={"addr": pair.public_key})
+        print("Account created:", response.json())
+        return pair
+    pair = Keypair.from_secret(secret_key)
+    print("Account Restored:", pair.public_key)
+    return pair
+
+
+# Issues an Asset
+def issue_asset(issuer_keys, receiving_keys, custom_asset):
+    # Bid what recent transactions paid, capped at MAX_FEE
+    fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+    # First, the receiving account must trust the asset
+    receiver = server.load_account(receiving_keys.public_key)
+    transaction = (
+        TransactionBuilder(receiver, network_passphrase, base_fee=fee)
+        .append_change_trust_op(asset=custom_asset, limit="100000")
+        .set_timeout(100)
+        .build()
+    )
+    transaction.sign(receiving_keys)
+    submit_tx(transaction)
+    print(f"Receiver Trusting {custom_asset.code} Asset......")
+
+    # Second, the issuing account actually sends a payment using the asset
+    issuer = server.load_account(issuer_keys.public_key)
+    transaction = (
+        TransactionBuilder(issuer, network_passphrase, base_fee=fee)
+        .append_payment_op(
+            destination=receiving_keys.public_key,
+            asset=custom_asset,
+            amount="1000",  # change to desired amount you want to pay
+        )
+        .set_timeout(100)
+        .build()
+    )
+    transaction.sign(issuer_keys)
+    submit_tx(transaction)
+    print(
+        f"Issuer Payment using {custom_asset.code} to {receiving_keys.public_key}"
+    )
+
+
+# Create Liquidity Pool
+def create_liquidity_pool(account_keypair, native_asset, custom_asset):
+    account = server.load_account(account_keypair.public_key)
+
+    # Create the liquidity pool
+    pool_asset = LiquidityPoolAsset(native_asset, custom_asset)
+    pool_id = pool_asset.liquidity_pool_id  # To Get the Pool ID
+
+    # Bid what recent transactions paid, capped at MAX_FEE
+    fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+    transaction = (
+        TransactionBuilder(account, network_passphrase, base_fee=fee)
+        .append_change_trust_op(
+            asset=pool_asset, limit="100000"  # Set an appropriate limit
+        )
+        .append_liquidity_pool_deposit_op(
+            liquidity_pool_id=pool_id,
+            max_amount_a="1000",  # Amount of asset A to deposit
+            max_amount_b="500",  # Amount of asset B to deposit
+            min_price="0.5",  # Minimum price ratio
+            max_price="2.0",  # Maximum price ratio
+        )
+        .set_timeout(30)
+        .build()
+    )
+    transaction.sign(account_keypair)
+    submit_tx(transaction)
+    print(
+        f"Creating Liquidity Pool for {native_asset.code} and {custom_asset.code}"
+    )
+
+
+# Deploy and Invoke Contract
+def deploy_and_invoke_contract(deployer, contract_wasm_file_path):
+    # Bid what recent transactions paid, capped at MAX_FEE.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    # Step 1: Upload Wasm
+    account = server.load_account(deployer.public_key)
+    upload_tx = (
+        TransactionBuilder(account, network_passphrase, base_fee=fee)
+        .append_upload_contract_wasm_op(contract=contract_wasm_file_path)
+        .set_timeout(30)
+        .build()
+    )
+    upload_tx = server.prepare_transaction(upload_tx)
+    upload_tx.sign(deployer)
+
+    print("Submitting Wasm upload transaction...")
+    response = submit_tx(upload_tx)
+    wasm_hash = scval.from_bytes(return_value(response))
+
+    # Deploy the Contract
+    create_contract_tx = (
+        TransactionBuilder(account, network_passphrase, base_fee=fee)
+        .append_create_contract_op(wasm_id=wasm_hash, address=deployer.public_key)
+        .set_timeout(30)
+        .build()
+    )
+    create_contract_tx = server.prepare_transaction(create_contract_tx)
+    create_contract_tx.sign(deployer)
+    response = submit_tx(create_contract_tx)
+    print("Contract Deployed...")
+
+    contract_id = scval.from_address(return_value(response)).address
+
+    # Invoke Contract
+    invoke_contract_tx = (
+        TransactionBuilder(account, network_passphrase, base_fee=fee)
+        .append_invoke_contract_function_op(
+            contract_id=contract_id,
+            function_name="hello",
+            parameters=[scval.to_string("World")],
+        )
+        .set_timeout(30)
+        .build()
+    )
+    invoke_contract_tx = server.prepare_transaction(invoke_contract_tx)
+    invoke_contract_tx.sign(deployer)
+    response = submit_tx(invoke_contract_tx)
+    print("Invoke Contract.")
+
+    return_values = [v for v in scval.to_native(return_value(response)) if v]
+    return contract_id, return_values
+
+
+def automate_setup():
+    # Check Network Status
+    print("Checking network health...")
+    health = server.get_health()
+    print("Network health:", health.status)
+
+    # Flexible Account Configuration
+    # This is an example of a user's secret key
+    secret_key = "SBGGNMUPVF2SDN4KZOJQFVFX7VDR4Q4NK3FMEFRQC64D3UBMFELKF5GC"
+
+    account_one = create_account(network_url, secret_key)
+    account_two = create_account(network_url)
+
+    print("Issuing an Asset...")
+    # Issue assets to these accounts
+    custom_asset = Asset("Boya", account_one.public_key)
+    issue_asset(account_one, account_two, custom_asset)
+
+    # Create liquidity pool
+    print("Creating liquidity pool...")
+    native_asset = Asset.native()
+    create_liquidity_pool(account_two, native_asset, custom_asset)
+
+    # Deploy a contract
+    print("Deploying contract...")
+    # Ensure you have the contract Wasm file compiled and saved in the specified path.
+    # Adjust this path as necessary
+    contract_wasm_file_path = "./target/wasm32v1-none/release/hello_world.wasm"
+    contract_id, return_values = deploy_and_invoke_contract(
+        account_one, contract_wasm_file_path
+    )
+
+    print("Contract ID:", contract_id)
+    print("Return Values:", ", ".join(return_values))
+
+
+if __name__ == "__main__":
+    automate_setup()
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "crypto/rand"
+  "encoding/json"
+  "errors"
+  "fmt"
+  "log"
+  "net/http"
+  "net/url"
+  "os"
+  "strings"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var ctx = context.Background()
+
+// networkRPC := "USE EITHER FUTURENET OR TESTNET RPC"
+const networkRPC = "https://soroban-testnet.stellar.org"
+
+// Example
+// FOR FUTURENET - https://rpc-futurenet.stellar.org
+// FOR TESTNET - https://soroban-testnet.stellar.org
+var server = client.NewClient(networkRPC, nil)
+
+// networkURL := "USE EITHER FUTURENET OR TESTNET URL"
+const networkURL = "https://friendbot.stellar.org"
+
+// Example
+// FOR FUTURENET - https://friendbot-futurenet.stellar.org
+// FOR TESTNET - https://friendbot.stellar.org
+
+const networkPassphrase = network.TestNetworkPassphrase // or network.FutureNetworkPassphrase, network.PublicNetworkPassphrase
+
+// Each transaction below bids what recent transactions paid, capped at maxFee.
+// txnbuild.MinBaseFee is the network minimum and gets outbid when the network is busy.
+const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+
+// Send a signed transaction and wait for its final status.
+func submitTx(tx *txnbuild.Transaction) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+  if sendResponse.Status != "PENDING" {
+    return none, fmt.Errorf("submission failed: %+v", sendResponse)
+  }
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  response, err := server.PollTransaction(pollCtx, sendResponse.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    // Still NOT_FOUND: the status is unknown, not failed.
+    return none, fmt.Errorf("status unknown, look up %s again later", sendResponse.Hash)
+  }
+  if err != nil {
+    return none, err
+  }
+  if response.Status != protocol.TransactionStatusSuccess {
+    return none, fmt.Errorf("transaction status: %s", response.Status)
+  }
+  return response, nil
+}
+
+// Read a contract call's return value from the transaction meta.
+func returnValue(response protocol.GetTransactionResponse) (xdr.ScVal, error) {
+  var meta xdr.TransactionMeta
+  if err := xdr.SafeUnmarshalBase64(response.ResultMetaXDR, &meta); err != nil {
+    return xdr.ScVal{}, err
+  }
+  switch {
+  case meta.V4 != nil && meta.V4.SorobanMeta != nil && meta.V4.SorobanMeta.ReturnValue != nil:
+    return *meta.V4.SorobanMeta.ReturnValue, nil
+  case meta.V3 != nil && meta.V3.SorobanMeta != nil:
+    return meta.V3.SorobanMeta.ReturnValue, nil
+  }
+  return xdr.ScVal{}, errors.New("no return value in the transaction meta")
+}
+
+// The Go SDK has no prepareTransaction, so this helper simulates the
+// transaction, then builds it again with the simulated resources, resource
+// fee, and authorization entries.
+func prepareTransaction(params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+// Bid what recent transactions paid, capped at maxFee
+func bid(soroban bool) (int64, error) {
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return 0, err
+  }
+  if soroban {
+    return min(int64(feeStats.SorobanInclusionFee.P90), maxFee), nil
+  }
+  return min(int64(feeStats.InclusionFee.P90), maxFee), nil
+}
+
+// Build and sign a classic transaction
+func buildTx(source txnbuild.Account, fee int64, timeout int64, signer *keypair.Full, ops ...txnbuild.Operation) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        source,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(timeout)},
+    Operations:           ops,
+  })
+  if err != nil {
+    return nil, err
+  }
+  return tx.Sign(networkPassphrase, signer)
+}
+
+// Create an Account
+func createAccount(networkURL, secretKey string) (*keypair.Full, error) {
+  if secretKey != "" {
+    pair, err := keypair.ParseFull(secretKey)
+    if err != nil {
+      return nil, err
+    }
+    fmt.Println("Account Restored:", pair.Address())
+    return pair, nil
+  }
+  // Generate a keypair
+  pair := keypair.MustRandom()
+  // Fund the new account using Friendbot
+  response, err := http.Get(networkURL + "?addr=" + url.QueryEscape(pair.Address()))
+  if err != nil {
+    return nil, err
+  }
+  defer response.Body.Close()
+  var body map[string]any
+  if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+    return nil, err
+  }
+  fmt.Println("Account created:", body)
+  return pair, nil
+}
+
+// Issues an Asset
+func issueAsset(issuerKeys, receivingKeys *keypair.Full, customAsset txnbuild.CreditAsset) error {
+  fee, err := bid(false)
+  if err != nil {
+    return err
+  }
+
+  // First, the receiving account must trust the asset
+  receiver, err := server.LoadAccount(ctx, receivingKeys.Address())
+  if err != nil {
+    return err
+  }
+  transaction, err := buildTx(receiver, fee, 100, receivingKeys, &txnbuild.ChangeTrust{
+    Line:  customAsset.MustToChangeTrustAsset(),
+    Limit: "100000",
+  })
+  if err != nil {
+    return err
+  }
+  if _, err := submitTx(transaction); err != nil {
+    return err
+  }
+  fmt.Printf("Receiver Trusting %s Asset......\n", customAsset.Code)
+
+  // Second, the issuing account actually sends a payment using the asset
+  issuer, err := server.LoadAccount(ctx, issuerKeys.Address())
+  if err != nil {
+    return err
+  }
+  transaction, err = buildTx(issuer, fee, 100, issuerKeys, &txnbuild.Payment{
+    Destination: receivingKeys.Address(),
+    Asset:       customAsset,
+    Amount:      "1000", // change to desired amount you want to pay
+  })
+  if err != nil {
+    return err
+  }
+  if _, err := submitTx(transaction); err != nil {
+    return err
+  }
+  fmt.Printf("Issuer Payment using %s to %s\n", customAsset.Code, receivingKeys.Address())
+  return nil
+}
+
+// Create Liquidity Pool
+func createLiquidityPool(accountKeypair *keypair.Full, nativeAsset txnbuild.NativeAsset, customAsset txnbuild.CreditAsset) error {
+  account, err := server.LoadAccount(ctx, accountKeypair.Address())
+  if err != nil {
+    return err
+  }
+
+  // Create the liquidity pool
+  poolAsset := txnbuild.LiquidityPoolShareChangeTrustAsset{
+    LiquidityPoolParameters: txnbuild.LiquidityPoolParameters{
+      AssetA: nativeAsset,
+      AssetB: customAsset,
+      Fee:    txnbuild.LiquidityPoolFeeV18,
+    },
+  }
+  poolID, err := txnbuild.NewLiquidityPoolId(nativeAsset, customAsset) // To Get the Pool ID
+  if err != nil {
+    return err
+  }
+
+  fee, err := bid(false)
+  if err != nil {
+    return err
+  }
+
+  transaction, err := buildTx(account, fee, 30, accountKeypair,
+    &txnbuild.ChangeTrust{
+      Line:  poolAsset,
+      Limit: "100000", // Set an appropriate limit
+    },
+    &txnbuild.LiquidityPoolDeposit{
+      LiquidityPoolID: poolID,
+      MaxAmountA:      "1000",                // Amount of asset A to deposit
+      MaxAmountB:      "500",                 // Amount of asset B to deposit
+      MinPrice:        xdr.Price{N: 1, D: 2}, // Minimum price ratio (0.5)
+      MaxPrice:        xdr.Price{N: 2, D: 1}, // Maximum price ratio (2.0)
+    },
+  )
+  if err != nil {
+    return err
+  }
+  if _, err := submitTx(transaction); err != nil {
+    return err
+  }
+  fmt.Printf("Creating Liquidity Pool for native and %s\n", customAsset.Code)
+  return nil
+}
+
+// Deploy and Invoke Contract
+func deployAndInvokeContract(deployer *keypair.Full, contractWasmFilePath string) (string, []string, error) {
+  // Bid what recent transactions paid, capped at maxFee.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  fee, err := bid(true)
+  if err != nil {
+    return "", nil, err
+  }
+  sendSoroban := func(hostFunction xdr.HostFunction) (protocol.GetTransactionResponse, error) {
+    account, err := server.LoadAccount(ctx, deployer.Address())
+    if err != nil {
+      return protocol.GetTransactionResponse{}, err
+    }
+    tx, err := prepareTransaction(txnbuild.TransactionParams{
+      SourceAccount:        account,
+      IncrementSequenceNum: true,
+      BaseFee:              fee,
+      Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+      Operations:           []txnbuild.Operation{&txnbuild.InvokeHostFunction{HostFunction: hostFunction}},
+    })
+    if err != nil {
+      return protocol.GetTransactionResponse{}, err
+    }
+    if tx, err = tx.Sign(networkPassphrase, deployer); err != nil {
+      return protocol.GetTransactionResponse{}, err
+    }
+    return submitTx(tx)
+  }
+
+  // Step 1: Upload Wasm
+  bytecode, err := os.ReadFile(contractWasmFilePath)
+  if err != nil {
+    return "", nil, err
+  }
+  fmt.Println("Submitting Wasm upload transaction...")
+  response, err := sendSoroban(xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeUploadContractWasm,
+    Wasm: &bytecode,
+  })
+  if err != nil {
+    return "", nil, err
+  }
+  uploaded, err := returnValue(response)
+  if err != nil {
+    return "", nil, err
+  }
+  hashBytes, ok := uploaded.GetBytes()
+  if !ok {
+    return "", nil, errors.New("upload did not return a Wasm hash")
+  }
+  var wasmHash xdr.Hash
+  copy(wasmHash[:], hashBytes)
+
+  // Deploy the Contract, with a random salt
+  var salt xdr.Uint256
+  if _, err := rand.Read(salt[:]); err != nil {
+    return "", nil, err
+  }
+  response, err = sendSoroban(xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeCreateContractV2,
+    CreateContractV2: &xdr.CreateContractArgsV2{
+      ContractIdPreimage: xdr.ContractIdPreimage{
+        Type: xdr.ContractIdPreimageTypeContractIdPreimageFromAddress,
+        FromAddress: &xdr.ContractIdPreimageFromAddress{
+          Address: xdr.ScAddress{
+            Type:      xdr.ScAddressTypeScAddressTypeAccount,
+            AccountId: xdr.MustAddressPtr(deployer.Address()),
+          },
+          Salt: salt,
+        },
+      },
+      Executable: xdr.ContractExecutable{
+        Type:     xdr.ContractExecutableTypeContractExecutableWasm,
+        WasmHash: &wasmHash,
+      },
+      ConstructorArgs: []xdr.ScVal{},
+    },
+  })
+  if err != nil {
+    return "", nil, err
+  }
+  fmt.Println("Contract Deployed...")
+
+  deployed, err := returnValue(response)
+  if err != nil {
+    return "", nil, err
+  }
+  contractAddress, ok := deployed.GetAddress()
+  if !ok || contractAddress.ContractId == nil {
+    return "", nil, errors.New("deploy did not return a contract address")
+  }
+  contractID := strkey.MustEncode(strkey.VersionByteContract, (*contractAddress.ContractId)[:])
+
+  // Invoke Contract
+  world := xdr.ScString("World")
+  response, err = sendSoroban(xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+    InvokeContract: &xdr.InvokeContractArgs{
+      ContractAddress: contractAddress,
+      FunctionName:    "hello",
+      Args:            []xdr.ScVal{{Type: xdr.ScValTypeScvString, Str: &world}},
+    },
+  })
+  if err != nil {
+    return "", nil, err
+  }
+  fmt.Println("Invoke Contract.")
+
+  // `hello` returns a vector of strings
+  result, err := returnValue(response)
+  if err != nil {
+    return "", nil, err
+  }
+  var returnValues []string
+  if vec, ok := result.GetVec(); ok && vec != nil {
+    for _, value := range *vec {
+      if str, ok := value.GetStr(); ok && str != "" {
+        returnValues = append(returnValues, string(str))
+      }
+    }
+  }
+  return contractID, returnValues, nil
+}
+
+func automateSetup() error {
+  // Check Network Status
+  fmt.Println("Checking network health...")
+  health, err := server.GetHealth(ctx)
+  if err != nil {
+    return err
+  }
+  fmt.Println("Network health:", health.Status)
+
+  // Flexible Account Configuration
+  // This is an example of a user's secret key
+  secretKey := "SBGGNMUPVF2SDN4KZOJQFVFX7VDR4Q4NK3FMEFRQC64D3UBMFELKF5GC"
+
+  accountOne, err := createAccount(networkURL, secretKey)
+  if err != nil {
+    return err
+  }
+  accountTwo, err := createAccount(networkURL, "")
+  if err != nil {
+    return err
+  }
+
+  fmt.Println("Issuing an Asset...")
+  // Issue assets to these accounts
+  customAsset := txnbuild.CreditAsset{Code: "Boya", Issuer: accountOne.Address()}
+  if err := issueAsset(accountOne, accountTwo, customAsset); err != nil {
+    return err
+  }
+
+  // Create liquidity pool
+  fmt.Println("Creating liquidity pool...")
+  if err := createLiquidityPool(accountTwo, txnbuild.NativeAsset{}, customAsset); err != nil {
+    return err
+  }
+
+  // Deploy a contract
+  fmt.Println("Deploying contract...")
+  // Ensure you have the contract Wasm file compiled and saved in the specified path.
+  // Adjust this path as necessary
+  contractWasmFilePath := "./target/wasm32v1-none/release/hello_world.wasm"
+  contractID, returnValues, err := deployAndInvokeContract(accountOne, contractWasmFilePath)
+  if err != nil {
+    return err
+  }
+
+  fmt.Println("Contract ID:", contractID)
+  fmt.Println("Return Values:", strings.Join(returnValues, ", "))
+  return nil
+}
+
+func main() {
+  if err := automateSetup(); err != nil {
+    log.Fatal("An error occurred: ", err)
+  }
+}
+```
+
+```java Java
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.stellar.sdk.Address;
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.AssetTypeCreditAlphaNum;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.ChangeTrustAsset;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.LiquidityPool;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Price;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.ChangeTrustOperation;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.operations.LiquidityPoolDepositOperation;
+import org.stellar.sdk.operations.Operation;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetFeeStatsResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+import org.stellar.sdk.xdr.SCValType;
+import org.stellar.sdk.xdr.TransactionMeta;
+
+public final class AutomateResetData {
+  // networkRPC = "USE EITHER FUTURENET OR TESTNET RPC"
+  private static final String networkRPC = "https://soroban-testnet.stellar.org";
+
+  // Example
+  // FOR FUTURENET - https://rpc-futurenet.stellar.org
+  // FOR TESTNET - https://soroban-testnet.stellar.org
+  private static final SorobanServer server = new SorobanServer(networkRPC);
+
+  // networkURL = "USE EITHER FUTURENET OR TESTNET URL"
+  private static final String networkURL = "https://friendbot.stellar.org";
+
+  // Example
+  // FOR FUTURENET - https://friendbot-futurenet.stellar.org
+  // FOR TESTNET - https://friendbot.stellar.org
+
+  private static final Network network = Network.TESTNET; // or Network.FUTURENET, Network.PUBLIC
+
+  // Each transaction below bids what recent transactions paid, capped at maxFee.
+  // Transaction.MIN_BASE_FEE is the network minimum and gets outbid when the network is busy.
+  private static final long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+
+  // Send a signed transaction and wait for its final status.
+  private static GetTransactionResponse submitTx(Transaction tx) throws InterruptedException {
+    SendTransactionResponse sendResponse = server.sendTransaction(tx);
+    if (sendResponse.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("submission failed: " + sendResponse);
+    }
+    GetTransactionResponse response = server.pollTransaction(sendResponse.getHash());
+    if (response.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Still NOT_FOUND: the status is unknown, not failed.
+      throw new IllegalStateException(
+        "status unknown, look up " + sendResponse.getHash() + " again later");
+    }
+    if (response.getStatus() != GetTransactionStatus.SUCCESS) {
+      throw new IllegalStateException("transaction status: " + response.getStatus());
+    }
+    return response;
+  }
+
+  // Read a contract call's return value from the transaction meta.
+  private static SCVal returnValue(GetTransactionResponse response) {
+    TransactionMeta meta = response.parseResultMetaXdr();
+    if (meta.getV4() != null && meta.getV4().getSorobanMeta() != null
+        && meta.getV4().getSorobanMeta().getReturnValue() != null) {
+      return meta.getV4().getSorobanMeta().getReturnValue();
+    }
+    if (meta.getV3() != null && meta.getV3().getSorobanMeta() != null) {
+      return meta.getV3().getSorobanMeta().getReturnValue();
+    }
+    throw new IllegalStateException("no return value in the transaction meta");
+  }
+
+  // Bid what recent transactions paid, capped at maxFee
+  private static long bid(boolean soroban) {
+    GetFeeStatsResponse feeStats = server.getFeeStats();
+    if (soroban) {
+      return Math.min(feeStats.getSorobanInclusionFee().getP90(), maxFee);
+    }
+    return Math.min(feeStats.getInclusionFee().getP90(), maxFee);
+  }
+
+  // Build and sign a classic transaction
+  private static Transaction buildTx(
+      TransactionBuilderAccount source, long fee, long timeout, KeyPair signer, Operation... ops) {
+    TransactionBuilder builder = new TransactionBuilder(source, network)
+      .setBaseFee(fee)
+      .setTimeout(timeout);
+    for (Operation op : ops) {
+      builder.addOperation(op);
+    }
+    Transaction tx = builder.build();
+    tx.sign(signer);
+    return tx;
+  }
+
+  // Create an Account
+  private static KeyPair createAccount(String networkURL, String secretKey) throws Exception {
+    if (secretKey != null && !secretKey.isEmpty()) {
+      KeyPair pair = KeyPair.fromSecretSeed(secretKey);
+      System.out.println("Account Restored: " + pair.getAccountId());
+      return pair;
+    }
+    // Generate a keypair
+    KeyPair pair = KeyPair.random();
+    // Fund the new account using Friendbot
+    HttpRequest request = HttpRequest.newBuilder(
+        URI.create(networkURL + "?addr=" + URLEncoder.encode(pair.getAccountId(), StandardCharsets.UTF_8)))
+      .GET()
+      .build();
+    HttpResponse<String> response =
+      HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+    System.out.println("Account created: " + response.body());
+    return pair;
+  }
+
+  // Issues an Asset
+  private static void issueAsset(KeyPair issuerKeys, KeyPair receivingKeys, AssetTypeCreditAlphaNum customAsset)
+      throws InterruptedException {
+    long fee = bid(false);
+
+    // First, the receiving account must trust the asset
+    TransactionBuilderAccount receiver = server.getAccount(receivingKeys.getAccountId());
+    Transaction transaction = buildTx(receiver, fee, 100, receivingKeys,
+      ChangeTrustOperation.builder()
+        .asset(new ChangeTrustAsset(customAsset))
+        .limit(new BigDecimal("100000"))
+        .build());
+    submitTx(transaction);
+    System.out.printf("Receiver Trusting %s Asset......%n", customAsset.getCode());
+
+    // Second, the issuing account actually sends a payment using the asset
+    TransactionBuilderAccount issuer = server.getAccount(issuerKeys.getAccountId());
+    transaction = buildTx(issuer, fee, 100, issuerKeys,
+      PaymentOperation.builder()
+        .destination(receivingKeys.getAccountId())
+        .asset(customAsset)
+        .amount(new BigDecimal("1000")) // change to desired amount you want to pay
+        .build());
+    submitTx(transaction);
+    System.out.printf("Issuer Payment using %s to %s%n", customAsset.getCode(), receivingKeys.getAccountId());
+  }
+
+  // Create Liquidity Pool
+  private static void createLiquidityPool(KeyPair accountKeypair, Asset nativeAsset, AssetTypeCreditAlphaNum customAsset)
+      throws InterruptedException {
+    TransactionBuilderAccount account = server.getAccount(accountKeypair.getAccountId());
+
+    // Create the liquidity pool (the pool ID comes from the two assets and the fee)
+    LiquidityPool poolAsset = new LiquidityPool(nativeAsset, customAsset);
+
+    long fee = bid(false);
+
+    Transaction transaction = buildTx(account, fee, 30, accountKeypair,
+      ChangeTrustOperation.builder()
+        .asset(new ChangeTrustAsset(poolAsset))
+        .limit(new BigDecimal("100000")) // Set an appropriate limit
+        .build(),
+      LiquidityPoolDepositOperation.builder()
+        .liquidityPoolId(poolAsset.getLiquidityPoolId())
+        .maxAmountA(new BigDecimal("1000")) // Amount of asset A to deposit
+        .maxAmountB(new BigDecimal("500")) // Amount of asset B to deposit
+        .minPrice(new Price(1, 2)) // Minimum price ratio (0.5)
+        .maxPrice(new Price(2, 1)) // Maximum price ratio (2.0)
+        .build());
+    submitTx(transaction);
+    System.out.printf("Creating Liquidity Pool for native and %s%n", customAsset.getCode());
+  }
+
+  record Deployment(String contractId, List<String> returnValues) {}
+
+  // Build, prepare, sign, and send one Soroban transaction for the deployer
+  private static GetTransactionResponse sendSoroban(KeyPair deployer, long fee, InvokeHostFunctionOperation operation)
+      throws InterruptedException {
+    TransactionBuilderAccount account = server.getAccount(deployer.getAccountId());
+    Transaction tx = new TransactionBuilder(account, network)
+      .setBaseFee(fee)
+      .setTimeout(30)
+      .addOperation(operation)
+      .build();
+    tx = server.prepareTransaction(tx);
+    tx.sign(deployer);
+    return submitTx(tx);
+  }
+
+  // Deploy and Invoke Contract
+  private static Deployment deployAndInvokeContract(KeyPair deployer, String contractWasmFilePath) throws Exception {
+    // Bid what recent transactions paid, capped at maxFee.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long fee = bid(true);
+
+    // Step 1: Upload Wasm
+    byte[] bytecode = Files.readAllBytes(Path.of(contractWasmFilePath));
+    System.out.println("Submitting Wasm upload transaction...");
+    GetTransactionResponse response = sendSoroban(deployer, fee,
+      InvokeHostFunctionOperation.uploadContractWasmOperationBuilder(bytecode).build());
+    byte[] wasmHash = Scv.fromBytes(returnValue(response));
+
+    // Deploy the Contract (a null salt makes the SDK pick a random one)
+    response = sendSoroban(deployer, fee,
+      InvokeHostFunctionOperation.createContractOperationBuilder(
+          wasmHash, new Address(deployer.getAccountId()), List.of(), null)
+        .build());
+    System.out.println("Contract Deployed...");
+
+    String contractId = Address.fromSCVal(returnValue(response)).toString();
+
+    // Invoke Contract
+    response = sendSoroban(deployer, fee,
+      InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+          contractId, "hello", List.of(Scv.toString("World")))
+        .build());
+    System.out.println("Invoke Contract.");
+
+    // `hello` returns a vector of strings
+    SCVal result = returnValue(response);
+    List<String> returnValues = new ArrayList<>();
+    if (result.getDiscriminant() == SCValType.SCV_VEC && result.getVec() != null) {
+      for (SCVal value : Scv.fromVec(result)) {
+        if (value.getDiscriminant() == SCValType.SCV_STRING) {
+          returnValues.add(new String(Scv.fromString(value), StandardCharsets.UTF_8));
+        }
+      }
+    }
+    return new Deployment(contractId, returnValues);
+  }
+
+  private static void automateSetup() throws Exception {
+    // Check Network Status
+    System.out.println("Checking network health...");
+    System.out.println("Network health: " + server.getHealth().getStatus());
+
+    // Flexible Account Configuration
+    // This is an example of a user's secret key
+    String secretKey = "SBGGNMUPVF2SDN4KZOJQFVFX7VDR4Q4NK3FMEFRQC64D3UBMFELKF5GC";
+
+    KeyPair accountOne = createAccount(networkURL, secretKey);
+    KeyPair accountTwo = createAccount(networkURL, "");
+
+    System.out.println("Issuing an Asset...");
+    // Issue assets to these accounts
+    AssetTypeCreditAlphaNum customAsset =
+      (AssetTypeCreditAlphaNum) Asset.createNonNativeAsset("Boya", accountOne.getAccountId());
+    issueAsset(accountOne, accountTwo, customAsset);
+
+    // Create liquidity pool
+    System.out.println("Creating liquidity pool...");
+    createLiquidityPool(accountTwo, new AssetTypeNative(), customAsset);
+
+    // Deploy a contract
+    System.out.println("Deploying contract...");
+    // Ensure you have the contract Wasm file compiled and saved in the specified path.
+    // Adjust this path as necessary
+    String contractWasmFilePath = "./target/wasm32v1-none/release/hello_world.wasm";
+    Deployment deployment = deployAndInvokeContract(accountOne, contractWasmFilePath);
+
+    System.out.println("Contract ID: " + deployment.contractId());
+    System.out.println("Return Values: " + String.join(", ", deployment.returnValues()));
+  }
+
+  public static void main(String[] args) {
+    try {
+      automateSetup();
+    } catch (Exception error) {
+      System.err.println("An error occurred: " + error);
+      System.exit(1);
+    }
+  }
+}
+```
+
+</CodeGroup>
+
 The code defines several asynchronous functions:
 
 1. `createAccount(networkURL)`:
@@ -355,7 +1362,7 @@ Initializes the Stellar server connection, Creates two accounts, Issues a custom
 
 `sleep(ms)`: A utility function to introduce delays in asynchronous operations.
 
-`submitTx(tx)`: a retry-enabled transaction submission function `submitTx` outlined in [another guide](../transactions/submit-transaction-wait-js)
+`submitTx(tx)`: a retry-enabled transaction submission function `submitTx` outlined in [another guide](/docs/build/guides/transactions/submit-transaction-wait)
 
 ### Conclusion
 

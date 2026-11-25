@@ -37,6 +37,8 @@ We can use one of the [client SDKs](../../../tools/sdks/client-sdks), install ne
 
 - JavaScript SDK: [Node.js](https://nodejs.org/en) and npm
 - Python SDK: [pip](https://pip.pypa.io/en/stable/installation)
+- Go SDK: [Go](https://go.dev/doc/install)
+- Java SDK: [Java 17 or later](https://adoptium.net) and [Maven](https://maven.apache.org)
 
 Create a new directory for your project and navigate into it:
 
@@ -84,8 +86,14 @@ async function uploadWasm(filePath) {
 
 // constructs a transaction, signs it, and submits it to the network, handling any necessary retries for transaction confirmation.
 async function buildAndSendTransaction(account, operations) {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  const { sorobanInclusionFee } = await server.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = String(Math.min(Number(sorobanInclusionFee.p90), MAX_FEE));
+
   const transaction = new StellarSDK.TransactionBuilder(account, {
-    fee: StellarSDK.BASE_FEE,
+    fee,
     networkPassphrase: StellarSDK.Networks.TESTNET,
   })
     .addOperation(operations)
@@ -96,17 +104,28 @@ async function buildAndSendTransaction(account, operations) {
   tx.sign(sourceKeypair);
 
   console.log("Submitting transaction...");
-  let response = await server.sendTransaction(tx);
-  const hash = response.hash;
-  console.log(`Transaction hash: ${hash}`);
-  console.log("Awaiting confirmation...");
+  const sendResponse = await server.sendTransaction(tx);
+  console.log(`Transaction hash: ${sendResponse.hash}`);
 
-  while (true) {
-    response = await server.getTransaction(hash);
-    if (response.status !== "NOT_FOUND") {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+  // PENDING and DUPLICATE mean the network has the transaction.
+  // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+  if (
+    sendResponse.status === "TRY_AGAIN_LATER" ||
+    sendResponse.status === "ERROR"
+  ) {
+    throw new Error(`Transaction not accepted: ${sendResponse.status}`);
+  }
+
+  console.log("Awaiting confirmation...");
+  // Poll getTransaction once a second, for up to 30 attempts
+  const response = await server.pollTransaction(sendResponse.hash, {
+    attempts: 30,
+  });
+
+  // NOT_FOUND after the last attempt means the result is unknown,
+  // not that the transaction failed
+  if (response.status === "NOT_FOUND") {
+    throw new Error("Not confirmed yet. Check again before resending.");
   }
 
   if (response.status === "SUCCESS") {
@@ -114,7 +133,7 @@ async function buildAndSendTransaction(account, operations) {
     return response;
   } else {
     console.log("Transaction failed.");
-    throw new Error("Transaction failed");
+    throw new Error(`Transaction did not succeed: ${response.status}`);
   }
 }
 
@@ -129,8 +148,8 @@ const wasmFilePath = "../target/wasm32v1-none/release/hello_world.wasm";
 
 try {
   let uploadResponse = await uploadWasm(wasmFilePath);
-  const byteArray = uploadResponse.returnValue.bytes();
-  const wasmHash = byteArray.toString("hex");
+  const byteArray = StellarSDK.scValToNative(uploadResponse.returnValue);
+  const wasmHash = Buffer.from(byteArray).toString("hex");
   console.log(`Wasm hash: ${wasmHash}`);
 } catch (error) {
   console.error(error);
@@ -153,10 +172,9 @@ Run the script with `python3 install.py`, it reads the Wasm file, gets account d
 
 ```py
 import asyncio
-import time
 from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, xdr as stellar_xdr
 from stellar_sdk.exceptions import PrepareTransactionException
-from stellar_sdk.soroban_rpc import GetTransactionStatus
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
 import hashlib
 
 
@@ -190,10 +208,17 @@ async def upload_wasm(file_path):
 
 
 async def build_and_send_transaction(account, bytes):
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # Without base_fee, the builder bids 100 stroops, the network minimum.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
     transaction = (
         TransactionBuilder(
             source_account=account,
             network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
         )
         .append_upload_contract_wasm_op(bytes)
         .set_timeout(30)
@@ -210,23 +235,32 @@ async def build_and_send_transaction(account, bytes):
     tx.sign(source_keypair)
 
     print("Submitting transaction...")
-    response = server.send_transaction(tx)
-    hash = response.hash
-    print(f"Transaction hash: {hash}")
-    print("Awaiting confirmation...")
+    send_response = server.send_transaction(tx)
+    print(f"Transaction hash: {send_response.hash}")
 
-    while True:
-        response = server.get_transaction(hash)
-        if response.status != GetTransactionStatus.NOT_FOUND:
-            break
-        time.sleep(1)
+    # PENDING and DUPLICATE mean the network has the transaction.
+    # TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+    if send_response.status in (
+        SendTransactionStatus.TRY_AGAIN_LATER,
+        SendTransactionStatus.ERROR,
+    ):
+        raise Exception(f"Transaction not accepted: {send_response.status.value}")
+
+    print("Awaiting confirmation...")
+    # Poll get_transaction once a second, for up to 30 attempts
+    response = server.poll_transaction(send_response.hash, max_attempts=30)
+
+    # NOT_FOUND after the last attempt means the result is unknown,
+    # not that the transaction failed
+    if response.status == GetTransactionStatus.NOT_FOUND:
+        raise Exception("Not confirmed yet. Check again before resending.")
 
     if response.status == GetTransactionStatus.SUCCESS:
         print("Transaction successful.")
         return response
     else:
         print("Transaction failed.")
-        raise Exception("Transaction failed")
+        raise Exception(f"Transaction did not succeed: {response.status.value}")
 
 # Upload contract to the testnet
 server = SorobanServer("https://soroban-testnet.stellar.org:443")
@@ -244,6 +278,326 @@ async def main():
 
 # Run the main function
 asyncio.run(main())
+```
+
+</Tab>
+<Tab title="Go">
+
+This guide will walk you through installing the Wasm of the contract using the Go SDK: [go-stellar-sdk](https://github.com/stellar/go-stellar-sdk).
+
+Create a new Go module, and install the necessary dependencies:
+
+```bash
+go mod init install-wasm
+go get github.com/stellar/go-stellar-sdk
+```
+
+Copy the code below into `main.go`, then run it with `go run main.go`. It reads the Wasm file, gets account details, and uploads the contract in a transaction:
+
+```go
+package main
+
+import (
+  "context"
+  "crypto/sha256"
+  "encoding/hex"
+  "errors"
+  "fmt"
+  "log"
+  "os"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+// Upload contract to the testnet
+var server = client.NewClient("https://soroban-testnet.stellar.org:443", nil)
+
+// Replace `Your_Secret_Key`
+var sourceKeypair = keypair.MustParseFull("Your_Secret_Key")
+
+// Adjust this path as necessary
+const wasmFilePath = "../target/wasm32v1-none/release/hello_world.wasm"
+
+func main() {
+  if err := uploadWasm(context.Background(), wasmFilePath); err != nil {
+    log.Fatal(err)
+  }
+}
+
+func uploadWasm(ctx context.Context, filePath string) error {
+  // reads the compiled Wasm file
+  bytecode, err := os.ReadFile(filePath)
+  if err != nil {
+    return err
+  }
+
+  // retrieves account details from the network
+  account, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  if err != nil {
+    return err
+  }
+
+  // installs the bytecode with an `UploadContractWasm` host function wrapped in a transaction sent to the network
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: xdr.HostFunction{
+      Type: xdr.HostFunctionTypeHostFunctionTypeUploadContractWasm,
+      Wasm: &bytecode,
+    },
+    SourceAccount: sourceKeypair.Address(),
+  }
+  if _, err := buildAndSendTransaction(ctx, account, operation); err != nil {
+    return err
+  }
+
+  // The Wasm hash is the SHA-256 hash of the bytecode
+  wasmHash := sha256.Sum256(bytecode)
+  fmt.Printf("Wasm hash: %s\n", hex.EncodeToString(wasmHash[:]))
+  return nil
+}
+
+// constructs a transaction, signs it, and submits it to the network, handling any necessary retries for transaction confirmation.
+func buildAndSendTransaction(
+  ctx context.Context,
+  account txnbuild.Account,
+  operation *txnbuild.InvokeHostFunction,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  tx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  if err != nil {
+    return none, err
+  }
+  tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  if err != nil {
+    return none, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+
+  fmt.Println("Submitting transaction...")
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+  fmt.Printf("Transaction hash: %s\n", sendResponse.Hash)
+
+  // PENDING and DUPLICATE mean the network has the transaction.
+  // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+  if sendResponse.Status == "TRY_AGAIN_LATER" || sendResponse.Status == "ERROR" {
+    return none, fmt.Errorf("transaction not accepted: %s", sendResponse.Status)
+  }
+
+  fmt.Println("Awaiting confirmation...")
+  // Poll getTransaction once a second, for up to 30 attempts
+  var response protocol.GetTransactionResponse
+  for range 30 {
+    response, err = server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: sendResponse.Hash})
+    if err != nil {
+      return none, err
+    }
+    if response.Status != protocol.TransactionStatusNotFound {
+      break
+    }
+    time.Sleep(time.Second)
+  }
+
+  // NOT_FOUND after the last attempt means the result is unknown,
+  // not that the transaction failed
+  if response.Status == protocol.TransactionStatusNotFound {
+    return none, errors.New("not confirmed yet, check again before resending")
+  }
+
+  if response.Status == protocol.TransactionStatusSuccess {
+    fmt.Println("Transaction successful.")
+    return response, nil
+  }
+  fmt.Println("Transaction failed.")
+  return response, fmt.Errorf("transaction did not succeed: %s", response.Status)
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources, resource fee, and authorization entries.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+```
+
+</Tab>
+<Tab title="Java">
+
+This guide will walk you through installing the Wasm of the contract using the Java SDK: [java-stellar-sdk](https://github.com/lightsail-network/java-stellar-sdk).
+
+Create a new Maven project, and add the SDK to the `<dependencies>` section of its `pom.xml`:
+
+```xml
+<dependency>
+  <groupId>network.lightsail</groupId>
+  <artifactId>stellar-sdk</artifactId>
+  <version>6.0.0</version>
+</dependency>
+```
+
+Copy the code below into `src/main/java/UploadWasm.java`, then run its `main` method. It reads the Wasm file, gets account details, and uploads the contract in a transaction:
+
+```java
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+
+public final class UploadWasm {
+  // Upload contract to the testnet
+  private static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org:443");
+
+  // Replace `Your_Secret_Key`
+  private static final KeyPair sourceKeypair = KeyPair.fromSecretSeed("Your_Secret_Key");
+
+  // Adjust this path as necessary
+  private static final String wasmFilePath = "../target/wasm32v1-none/release/hello_world.wasm";
+
+  public static void main(String[] args) throws Exception {
+    uploadWasm(wasmFilePath);
+  }
+
+  private static void uploadWasm(String filePath) throws Exception {
+    // reads the compiled Wasm file
+    byte[] bytecode = Files.readAllBytes(Path.of(filePath));
+
+    // retrieves account details from the network
+    TransactionBuilderAccount account = server.getAccount(sourceKeypair.getAccountId());
+
+    // installs the bytecode with an `uploadContractWasm` host function wrapped in a transaction sent to the network
+    InvokeHostFunctionOperation operation =
+      InvokeHostFunctionOperation.uploadContractWasmOperationBuilder(bytecode).build();
+    buildAndSendTransaction(account, operation);
+
+    // The Wasm hash is the SHA-256 hash of the bytecode
+    byte[] wasmHash = MessageDigest.getInstance("SHA-256").digest(bytecode);
+    System.out.println("Wasm hash: " + HexFormat.of().formatHex(wasmHash));
+  }
+
+  // constructs a transaction, signs it, and submits it to the network, handling any necessary retries for transaction confirmation.
+  private static GetTransactionResponse buildAndSendTransaction(
+      TransactionBuilderAccount account, InvokeHostFunctionOperation operation)
+      throws InterruptedException {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    Transaction tx = server.prepareTransaction(transaction);
+    tx.sign(sourceKeypair);
+
+    System.out.println("Submitting transaction...");
+    SendTransactionResponse sendResponse = server.sendTransaction(tx);
+    System.out.println("Transaction hash: " + sendResponse.getHash());
+
+    // PENDING and DUPLICATE mean the network has the transaction.
+    // TRY_AGAIN_LATER and ERROR mean the network did not accept it.
+    if (sendResponse.getStatus() == SendTransactionStatus.TRY_AGAIN_LATER
+        || sendResponse.getStatus() == SendTransactionStatus.ERROR) {
+      throw new IllegalStateException("Transaction not accepted: " + sendResponse.getStatus());
+    }
+
+    System.out.println("Awaiting confirmation...");
+    // Poll getTransaction once a second, for up to 30 attempts
+    GetTransactionResponse response =
+      server.pollTransaction(sendResponse.getHash(), 30, attempt -> 1_000L);
+
+    // NOT_FOUND after the last attempt means the result is unknown,
+    // not that the transaction failed
+    if (response.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      throw new IllegalStateException("Not confirmed yet. Check again before resending.");
+    }
+
+    if (response.getStatus() == GetTransactionStatus.SUCCESS) {
+      System.out.println("Transaction successful.");
+      return response;
+    }
+    System.out.println("Transaction failed.");
+    throw new IllegalStateException("Transaction did not succeed: " + response.getStatus());
+  }
+}
 ```
 
 </Tab>

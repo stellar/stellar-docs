@@ -57,7 +57,7 @@ Certain transaction submission failures also need adjustments to succeed.
 
 Submissions using the `/transactions_async` endpoint return an immediate response back from Stellar-Core. There are different actions that clients can take based on the specific `tx_status` returned:
 
-1. `PENDING`: The submission is successful but the transaction is still waiting to be included in a ledger. You should use the [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) endpoint to poll for the submitted transaction and check if it makes into a ledger. Note that even though the submission was successful, it can still fail to get included in the ledger.
+1. `PENDING`: The submission is successful but the transaction is still waiting to be included in a ledger. You should use the [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) endpoint to poll for the submitted transaction and check if it makes into a ledger. For a fee-bump transaction, poll the hash of its inner transaction, which finds it whichever fee-bump transaction gets it into the ledger. Note that even though the submission was successful, it can still fail to get included in the ledger.
 2. `DUPLICATE`: The submission was a duplicate of a previously submitted transaction. This could happen if the client resubmitted the same transaction multiple times.
 3. `ERROR`: The submission did not go through due to an error in Stellar-Core. Take a look at the attached error message for more details, modify your transaction if necessary, and resubmit.
 4. `TRY_AGAIN_LATER`: This indicates that the Stellar-Core instance is currently unable to process submission of this particular transaction. Clients should wait for sometime before resubmitting the transaction. This could happen due to different reasons:
@@ -67,12 +67,17 @@ Submissions using the `/transactions_async` endpoint return an immediate respons
 <CodeGroup>
 
 ```js JavaScript
-let server = sdk.Server("https://horizon-testnet.stellar.org");
+let server = new StellarSdk.Horizon.Server(
+  "https://horizon-testnet.stellar.org",
+);
 let contractId = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE";
 let contract = new StellarSdk.Contract(contractId);
 
-// Right now, this is just the default fee for this example.
-const fee = StellarSdk.BASE_FEE;
+// Bid what recent transactions paid, capped at what you're willing to spend.
+// BASE_FEE is the network minimum and gets outbid when the network is busy.
+const { fee_charged } = await server.feeStats();
+const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+const fee = String(Math.min(Number(fee_charged.p90), MAX_FEE));
 
 let transaction = new StellarSdk.TransactionBuilder(account, { fee })
   .setNetworkPassphrase(StellarSdk.Networks.TESTNET)
@@ -105,6 +110,308 @@ server
   });
 ```
 
+```python Python
+import time
+
+from stellar_sdk import Keypair, Network, Server, SorobanServer, TransactionBuilder
+from stellar_sdk.exceptions import NotFoundError
+
+server = Server("https://horizon-testnet.stellar.org")
+# A contract call must be simulated before it is sent, so this example also
+# uses Stellar RPC to prepare the transaction.
+rpc = SorobanServer("https://soroban-testnet.stellar.org")
+contract_id = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE"
+
+source_secret_key = "S..."  # replace with your secret key
+source_keypair = Keypair.from_secret(source_secret_key)
+account = server.load_account(source_keypair.public_key)
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+# The minimum base fee gets outbid when the network is busy.
+fee_charged = server.fee_stats().call()["fee_charged"]
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(int(fee_charged["p90"]), MAX_FEE)
+
+transaction = (
+    TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=fee)
+    .set_timeout(30)  # valid for the next 30s
+    # Add an operation to call increment() on the contract
+    .append_invoke_contract_function_op(contract_id, "increment")
+    .build()
+)
+# Simulate the call, then add its footprint and resource fee.
+transaction = rpc.prepare_transaction(transaction)
+
+# Sign this transaction with the secret key
+# NOTE: signing is transaction is network specific. Test network transactions
+# won't work in the public network. To switch networks, use the Network object
+# as explained above (look for stellar_sdk.Network).
+transaction.sign(source_keypair)
+
+result = server.submit_transaction_async(transaction)
+print("hash:", result["hash"])
+print("status:", result["tx_status"])
+print("errorResultXdr:", result.get("error_result_xdr"))
+
+# Add a small sleep duration before polling the transaction.
+time.sleep(5)
+try:
+    tx_result = server.transactions().transaction(result["hash"]).call()
+    print("Transaction status:", tx_result)
+except NotFoundError:
+    # Horizon returns 404 until the transaction is in a ledger.
+    print("Transaction not found yet. Poll again later.")
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/clients/horizonclient"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const contractAddress = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE"
+
+func main() {
+  ctx := context.Background()
+  server := horizonclient.DefaultTestNetClient
+  // A contract call must be simulated before it is sent, so this example also
+  // uses Stellar RPC to prepare the transaction.
+  rpcClient := client.NewClient("https://soroban-testnet.stellar.org", nil)
+  defer rpcClient.Close()
+
+  sourceSecretKey := "S..." // replace with your secret key
+  sourceKeypair := keypair.MustParseFull(sourceSecretKey)
+  account, err := server.AccountDetail(horizonclient.AccountRequest{AccountID: sourceKeypair.Address()})
+  check(err)
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // The minimum base fee gets outbid when the network is busy.
+  feeStats, err := server.FeeStats()
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(feeStats.FeeCharged.P90, maxFee)
+
+  var contractID xdr.ContractId
+  copy(contractID[:], strkey.MustDecode(strkey.VersionByteContract, contractAddress))
+  // Simulate the call, then add its footprint and resource fee.
+  tx, err := prepareTransaction(ctx, rpcClient, txnbuild.TransactionParams{
+    SourceAccount:        &account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    // valid for the next 30s
+    Preconditions: txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    // Add an operation to call increment() on the contract
+    Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+      HostFunction: xdr.HostFunction{
+        Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+        InvokeContract: &xdr.InvokeContractArgs{
+          ContractAddress: xdr.ScAddress{
+            Type:       xdr.ScAddressTypeScAddressTypeContract,
+            ContractId: &contractID,
+          },
+          FunctionName: "increment",
+        },
+      },
+    }},
+  })
+  check(err)
+
+  // Sign this transaction with the secret key
+  // NOTE: signing a transaction is network specific. Test network transactions
+  // won't work in the public network. To switch networks, sign with
+  // network.PublicNetworkPassphrase instead.
+  tx, err = tx.Sign(network.TestNetworkPassphrase, sourceKeypair)
+  check(err)
+
+  result, err := server.AsyncSubmitTransaction(tx)
+  check(err)
+  fmt.Println("hash:", result.Hash)
+  fmt.Println("status:", result.TxStatus)
+  fmt.Println("errorResultXdr:", result.ErrorResultXDR)
+  // ERROR and TRY_AGAIN_LATER also arrive with a nil error. The transaction
+  // is not on its way to a ledger, so there is nothing to poll for.
+  if result.TxStatus != "PENDING" && result.TxStatus != "DUPLICATE" {
+    log.Fatalf("Submission not accepted: %s", result.TxStatus)
+  }
+
+  // Add a small sleep duration before polling the transaction.
+  time.Sleep(5 * time.Second)
+  txResult, err := server.TransactionDetail(result.Hash)
+  if horizonclient.IsNotFoundError(err) {
+    // Horizon returns 404 until the transaction is in a ledger.
+    fmt.Println("Transaction not found yet. Poll again later.")
+    return
+  }
+  check(err)
+  fmt.Printf("Transaction status: %+v\n", txResult)
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources and resource fee. The Go SDK has no prepareTransaction.
+func prepareTransaction(
+  ctx context.Context,
+  rpcClient *client.Client,
+  params txnbuild.TransactionParams,
+) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := rpcClient.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("prepare transaction failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number. NewTransaction adds the
+  // resource fee from the Soroban data to the inclusion fee.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Server;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.exception.BadRequestException;
+import org.stellar.sdk.exception.BadResponseException;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.SubmitTransactionAsyncResponse;
+import org.stellar.sdk.responses.SubmitTransactionAsyncResponse.TransactionStatus;
+import org.stellar.sdk.responses.TransactionResponse;
+
+public final class AsyncSubmit {
+  private static final String CONTRACT_ID = "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE";
+
+  public static void main(String[] args) throws Exception {
+    Server server = new Server("https://horizon-testnet.stellar.org");
+    // A contract call must be simulated before it is sent, so this example also
+    // uses Stellar RPC to prepare the transaction.
+    SorobanServer rpc = new SorobanServer("https://soroban-testnet.stellar.org");
+
+    String sourceSecretKey = "S..."; // replace with your secret key
+    KeyPair sourceKeypair = KeyPair.fromSecretSeed(sourceSecretKey);
+    TransactionBuilderAccount account = server.loadAccount(sourceKeypair.getAccountId());
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // The minimum base fee gets outbid when the network is busy.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.feeStats().execute().getFeeCharged().getP90(), maxFee);
+
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .setTimeout(30) // valid for the next 30s
+      // Add an operation to call increment() on the contract
+      .addOperation(InvokeHostFunctionOperation
+        .invokeContractFunctionOperationBuilder(CONTRACT_ID, "increment", null)
+        .build())
+      .build();
+    // Simulate the call, then add its footprint and resource fee.
+    transaction = rpc.prepareTransaction(transaction);
+
+    // Sign this transaction with the secret key
+    // NOTE: signing a transaction is network specific. Test network transactions
+    // won't work in the public network. To switch networks, build the transaction
+    // with Network.PUBLIC instead.
+    transaction.sign(sourceKeypair);
+
+    // Horizon answers PENDING with HTTP 201. It answers DUPLICATE (409), ERROR (400),
+    // and TRY_AGAIN_LATER (503) with an error status, so the SDK throws and puts
+    // the async response on the exception.
+    SubmitTransactionAsyncResponse result;
+    try {
+      result = server.submitTransactionAsync(transaction);
+    } catch (BadRequestException e) {
+      result = e.getSubmitTransactionAsyncProblem();
+      if (result == null || result.getTxStatus() == null) {
+        throw e; // a malformed request, not a Stellar-Core status
+      }
+    } catch (BadResponseException e) {
+      result = e.getSubmitTransactionAsyncProblem();
+      if (result == null || result.getTxStatus() == null) {
+        throw e; // a Horizon server error, not a Stellar-Core status
+      }
+    }
+    System.out.println("hash: " + result.getHash());
+    System.out.println("status: " + result.getTxStatus());
+    System.out.println("errorResultXdr: " + result.getErrorResultXdr());
+    // After ERROR or TRY_AGAIN_LATER, the transaction is not on its way to a
+    // ledger, so there is nothing to poll for.
+    if (result.getTxStatus() != TransactionStatus.PENDING
+        && result.getTxStatus() != TransactionStatus.DUPLICATE) {
+      throw new IllegalStateException("Submission not accepted: " + result.getTxStatus());
+    }
+
+    // Add a small sleep duration before polling the transaction.
+    Thread.sleep(5_000L);
+    try {
+      TransactionResponse txResult = server.transactions().transaction(result.getHash());
+      System.out.println("Transaction status: " + txResult);
+    } catch (BadRequestException e) {
+      if (e.getCode() != 404) {
+        throw e;
+      }
+      // Horizon returns 404 until the transaction is in a ledger.
+      System.out.println("Transaction not found yet. Poll again later.");
+    }
+  }
+}
+```
+
 </CodeGroup>
 
 #### Synchronous Transaction Submission
@@ -114,8 +421,8 @@ Due to the blocking nature of this endpoint, things are a little different compa
 1. The submission is successful and Horizon returns the transaction response back. This is the happy path and clients do not need to do anything but wait for Horizon's response.
 2. Stellar-Core sends back an `ERROR` response from the submission. Clients should consult the attached error message and retry the submission again.
 3. Timeouts: Horizon may respond with a `504` HTTP code. This response is not an error but a warning that your transaction hasn't been accepted by the network yet. There could be many possible reasons for the timeout, the most common of which is network congestion, but it could also be due to other transient issues.
-   1. **Polling the transaction hash**: Use the transaction hash in the timeout response and poll the [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) endpoint to see if it successfully makes it into a ledger.
-   2. **Resubmitting the transaction**: Before attempting any resubmissions, you need to make sure your transaction has timed out based on the time bounds you specified. After your transaction has expired, you can confirm it by polling the transaction again and getting a `tx_too_late` response from Horizon. Rebuild the transaction by updating the timebounds and resubmit the transaction.
+   1. **Polling the transaction hash**: Use the transaction hash in the timeout response and poll the [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) endpoint to see if it successfully makes it into a ledger. For a fee-bump transaction, poll the hash of its inner transaction, which finds it whichever fee-bump transaction gets it into the ledger.
+   2. **Resubmitting the transaction**: Before attempting any resubmissions, you need to make sure your transaction has timed out based on the time bounds you specified. After your transaction has expired, you can confirm it by polling the transaction again and getting a `tx_too_late` response from Horizon. Rebuild the transaction by updating the timebounds and resubmit the transaction. Before you rebuild it, check that it wasn't applied, as described in [Before Rebuilding a Transaction](#before-rebuilding-a-transaction).
 
 <Warning>
 
@@ -127,7 +434,7 @@ Do note that resubmitting a transaction is only safe when it is unchanged - same
 
 Timebounds are optional but **highly** recommended as they put a definitive time limit on the transaction's finality - after it times out, you will know for sure whether it made it into a ledger. For example, you submit a transaction, and it enters the queue of the Stellar network, but Horizon crashes while giving you a response. Uncertain about the transaction status, you resubmit the transaction (with no changes!) until either (a) Horizon comes back up to give you a reply or (b) your time bounds are exceeded.
 
-There are only two possible results to this scenario: either the transaction makes it into the ledger (exactly once) and Horizon gives you the response, or the transaction never makes it out of the queue, and you receive the corresponding `tx_too_late` response.
+There are only two possible results to this scenario: either the transaction makes it into the ledger (exactly once) and Horizon gives you the response, or the transaction never makes it out of the queue, and you receive the corresponding `tx_too_late` response. Before you rebuild the transaction after a `tx_too_late`, check that it wasn't applied, as described in [Before Rebuilding a Transaction](#before-rebuilding-a-transaction).
 
 Example implementation:
 
@@ -163,6 +470,125 @@ function submitTransaction(tx, timeout) {
 }
 ```
 
+```python Python
+import time
+
+from stellar_sdk import Server
+from stellar_sdk.exceptions import BaseRequestError
+
+server = Server("https://horizon-testnet.stellar.org")
+
+
+def submit_transaction(tx, timeout=None):
+    preconditions = tx.transaction.preconditions
+    time_bounds = preconditions.time_bounds if preconditions else None
+    if time_bounds is None or time_bounds.max_time == 0:
+        raise ValueError("Always set a reasonable timebound!")
+    expiration = time_bounds.max_time  # Unix time in seconds
+
+    while True:
+        try:
+            return server.submit_transaction(tx)
+        except BaseRequestError as error:
+            if is_non_retry_error_case(error):
+                # ...do other error handling...
+                return None
+
+            # the tx no longer has a chance of making it into a ledger
+            if time.time() >= expiration:
+                raise RuntimeError("The transaction timed out.") from error
+
+            timeout = timeout or 1  # start the (linear) back-off process
+            time.sleep(timeout)
+            timeout += 5
+```
+
+```go Go
+import (
+  "errors"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/clients/horizonclient"
+  hProtocol "github.com/stellar/go-stellar-sdk/protocols/horizon"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+)
+
+var server = horizonclient.DefaultTestNetClient
+
+func submitTransaction(tx *txnbuild.Transaction) (*hProtocol.Transaction, error) {
+  timeBounds := tx.Timebounds()
+  if timeBounds.MaxTime == txnbuild.TimeoutInfinite {
+    return nil, errors.New("always set a reasonable timebound")
+  }
+  expiration := time.Unix(timeBounds.MaxTime, 0)
+
+  timeout := 1 * time.Second // start the (linear) back-off process
+  for {
+    resp, err := server.SubmitTransaction(tx)
+    if err == nil {
+      return &resp, nil
+    }
+    // isNonRetryErrorCase is your own check for errors that a retry can't fix.
+    if isNonRetryErrorCase(err) {
+      // ...do other error handling...
+      return nil, err
+    }
+
+    // the tx no longer has a chance of making it into a ledger
+    if !time.Now().Before(expiration) {
+      return nil, errors.New("the transaction timed out")
+    }
+
+    time.Sleep(timeout)
+    timeout += 5 * time.Second
+  }
+}
+```
+
+```java Java
+import java.time.Instant;
+
+import org.stellar.sdk.Server;
+import org.stellar.sdk.TimeBounds;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionPreconditions;
+import org.stellar.sdk.exception.NetworkException;
+import org.stellar.sdk.responses.TransactionResponse;
+
+public final class TimeBoundsExample {
+  private static final Server server = new Server("https://horizon-testnet.stellar.org");
+
+  static TransactionResponse submitTransaction(Transaction tx) throws InterruptedException {
+    TimeBounds timeBounds = tx.getTimeBounds();
+    if (timeBounds == null || timeBounds.getMaxTime().equals(TransactionPreconditions.TIMEOUT_INFINITE)) {
+      throw new IllegalArgumentException("Always set a reasonable timebound!");
+    }
+    long expiration = timeBounds.getMaxTime().longValueExact(); // Unix time in seconds
+
+    long timeout = 1; // seconds: start the (linear) back-off process
+    while (true) {
+      try {
+        return server.submitTransaction(tx);
+      } catch (NetworkException error) {
+        // isNonRetryErrorCase is your own check for errors that a retry can't fix.
+        if (isNonRetryErrorCase(error)) {
+          // ...do other error handling...
+          throw error;
+        }
+
+        // the tx no longer has a chance of making it into a ledger
+        if (Instant.now().getEpochSecond() >= expiration) {
+          throw new IllegalStateException("The transaction timed out.", error);
+        }
+
+        Thread.sleep(timeout * 1_000L);
+        timeout += 5;
+      }
+    }
+  }
+}
+```
+
 </CodeGroup>
 
 We assume the existence of a sleep implementation similar to the one [here](https://stackoverflow.com/a/39914235). Be sure to integrate backoff into your retry mechanism. In our example error-handling code above, we implement a simple linear backoff, but there are [plenty of recommendations](https://backoff-utils.readthedocs.io/en/latest/strategies.html#why-are-backoff-strategies-useful) for various other strategies. Backoff is important both for maintaining performance and avoiding rate-limiting issues.
@@ -189,11 +615,81 @@ server.submitTransaction(tx).catch(function (error) {
 })
 ```
 
+```python Python
+from stellar_sdk.exceptions import BadRequestError
+
+# suppose `account` is an outdated `Account` object
+tx = TransactionBuilder(account, ...).build()  # etc
+try:
+    server.submit_transaction(tx)
+except BadRequestError as error:
+    result_codes = (error.extras or {}).get("result_codes", {})
+    if result_codes.get("transaction") != "tx_bad_seq":
+        raise  # ...other error conditions...
+    account = server.load_account(account.account.account_id)
+    tx = TransactionBuilder(account, ...).build()  # etc
+    server.submit_transaction(tx)
+```
+
+```go Go
+// suppose `account` is an outdated `horizon.Account`,
+// inside a function that returns an error
+tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{SourceAccount: &account /* etc */})
+if err != nil {
+  return err
+}
+_, err = server.SubmitTransaction(tx)
+if hErr := horizonclient.GetError(err); hErr != nil {
+  codes, codesErr := hErr.ResultCodes()
+  if codesErr == nil && codes.TransactionCode == "tx_bad_seq" {
+    account, err = server.AccountDetail(horizonclient.AccountRequest{AccountID: account.AccountID})
+    if err != nil {
+      return err
+    }
+    tx, err = txnbuild.NewTransaction(txnbuild.TransactionParams{SourceAccount: &account /* etc */})
+    if err != nil {
+      return err
+    }
+    _, err = server.SubmitTransaction(tx)
+  }
+  // ...other error conditions...
+}
+return err
+```
+
+```java Java
+// suppose `account` is an outdated `TransactionBuilderAccount`
+Transaction tx = new TransactionBuilder(account, Network.TESTNET)/* etc */.build();
+try {
+  server.submitTransaction(tx);
+} catch (BadRequestException error) {
+  Problem problem = error.getProblem();
+  boolean badSeq = problem != null
+    && problem.getExtras() != null
+    && problem.getExtras().getResultCodes() != null
+    && "tx_bad_seq".equals(problem.getExtras().getResultCodes().getTransactionResultCode());
+  if (!badSeq) {
+    throw error; // ...other error conditions...
+  }
+  account = server.loadAccount(account.getAccountId());
+  tx = new TransactionBuilder(account, Network.TESTNET)/* etc */.build();
+  server.submitTransaction(tx);
+}
+```
+
 </CodeGroup>
 
 Despite the solution’s simplicity, things can go wrong fast if you don’t understand why the error occurred.
 
-Suppose you submit transactions from multiple places in your application simultaneously, and your user spammed a _Send Payment_ button a few times in their impatience. If you send the exact same payment transaction for each tap, naturally, only one will succeed. The others will fail with an invalid sequence number (`tx_bad_seq`), and if you resubmit blindly with an updated sequence number (as we do above), these payments will also succeed, resulting in more than one payment being made when only one was intended. So **be very careful when resubmitting transactions** that have been modified to work around an error.
+Suppose you submit transactions from multiple places in your application simultaneously, and your user spammed a _Send Payment_ button a few times in their impatience. If you send the exact same payment transaction for each tap, naturally, only one will succeed. The others will fail with an invalid sequence number (`tx_bad_seq`), and if you resubmit blindly with an updated sequence number (as we do above), these payments will also succeed, resulting in more than one payment being made when only one was intended. So **be very careful when resubmitting transactions** that have been modified to work around an error. Check whether the original transaction was applied before you rebuild it, as described in [Before Rebuilding a Transaction](#before-rebuilding-a-transaction).
+
+### Before Rebuilding a Transaction
+
+A transaction that you rebuild with a new sequence number is a new transaction. If the original transaction was applied as well, both take effect, for example as two payments. A lost response, a timeout, or a resubmission that fails with `tx_bad_seq` or `tx_too_late` doesn't show that the original transaction wasn't applied. Before you rebuild a transaction, check the ledger:
+
+1. Load the source account of the original transaction. For a fee-bump transaction, load the source account of its inner transaction.
+2. If the account's sequence number is lower than the original transaction's, the original transaction wasn't applied. Once its time bounds have expired, it never will be, and you can rebuild it.
+3. Otherwise, the original transaction's sequence number is used up, so it can't be applied from now on. Look up the original transaction by its hash with [GET /transactions/:transaction_hash](/docs/data/apis/horizon/api-reference/retrieve-a-transaction). For a fee-bump transaction, use the hash of its inner transaction. If you find it and its `successful` field is `true`, it took effect, so don't rebuild it. If `successful` is `false`, none of its operations took effect, so you can fix the cause and rebuild it. If you don't find it, another transaction moved the account's sequence number past it, and the original transaction never took effect.
 
 ## Managing specific Errors
 

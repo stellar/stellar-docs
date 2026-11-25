@@ -93,11 +93,13 @@ const transactionXDR =
 simulateTransaction(transactionXDR);
 ```
 
-### Using the JavaScript SDK
+### Using an SDK
 
-The Stellar SDK provides a convenient method to simulate a transaction:
+The Stellar SDKs provide a convenient method to simulate a transaction:
 
-```javascript
+<CodeGroup>
+
+```javascript JavaScript
 import {
   Keypair,
   rpc as StellarRpc,
@@ -127,7 +129,9 @@ console.log(`funded account: ${publicKey}`);
 // Load the account (getting the sequence number for the account and making an account object.)
 const account = await RpcServer.getAccount(publicKey);
 
-// Define the transaction
+// Define the transaction. This example only simulates it and never sends it,
+// so the fee does not matter here. To send a transaction, bid a fee from
+// getFeeStats() instead: BASE_FEE is the network minimum and gets outbid.
 const transaction = new TransactionBuilder(account, {
   fee: BASE_FEE,
 })
@@ -162,15 +166,309 @@ if (StellarRpc.Api.isSimulationError(sim)) {
 }
 ```
 
+```python Python
+import requests
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
+
+rpc_url = "https://soroban-testnet.stellar.org:443"
+
+# Initialize the rpc server
+rpc_server = SorobanServer(rpc_url)
+
+# Generate a new keypair for transaction authorization.
+keypair = Keypair.random()
+secret = keypair.secret
+public_key = keypair.public_key
+print("publicKey:", public_key)
+
+# Fund the account with Friendbot. raise_for_status() raises if the
+# funding request failed.
+friendbot_url = rpc_server.get_network().friendbot_url
+requests.get(friendbot_url, params={"addr": public_key}, timeout=30).raise_for_status()
+print(f"funded account: {public_key}")
+
+# Load the account (getting the sequence number for the account and making an
+# account object.)
+account = rpc_server.load_account(public_key)
+
+# Define the transaction. This example only simulates it and never sends it,
+# so the fee does not matter here, and the builder uses the network minimum.
+# To send a transaction, bid a fee from get_fee_stats() instead: the minimum
+# gets outbid.
+transaction = (
+    TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE)
+    .set_timeout(30)
+    .append_invoke_contract_function_op(
+        # the contract function and address need to be set by you.
+        contract_id="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        function_name="symbol",
+        parameters=[],
+    )
+    .build()
+)
+# To get this as an XDR string directly, use `transaction.to_xdr()`
+
+sim = rpc_server.simulate_transaction(transaction)
+print("latestLedger:", sim.latest_ledger)
+
+if sim.error:
+    # A failed simulation has no result to decode, so report the error first.
+    print("error:", sim.error)
+elif not sim.results:
+    # Only the simulation of a contract invocation returns a result.
+    print("no invocation result")
+else:
+    print("minResourceFee:", sim.min_resource_fee)
+    print("result:", sim.results[0])
+    # the result is a base64 ScVal, so we can parse it to human readable output
+    # using the sdk's `scval.to_native` function.
+    # A function that returns nothing decodes to `None`.
+    print("humanReadable Result:", scval.to_native(sim.results[0].xdr))
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "log"
+  "net/http"
+  "net/url"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const rpcURL = "https://soroban-testnet.stellar.org:443"
+
+func main() {
+  ctx := context.Background()
+
+  // Initialize the rpc client
+  rpcClient := client.NewClient(rpcURL, nil)
+  defer rpcClient.Close()
+
+  // Generate a new keypair for transaction authorization.
+  kp := keypair.MustRandom()
+  publicKey := kp.Address()
+  log.Println("publicKey:", publicKey)
+
+  // Fund the account with Friendbot, and stop if the funding request failed.
+  networkInfo, err := rpcClient.GetNetwork(ctx)
+  check(err)
+  resp, err := http.Get(networkInfo.FriendbotURL + "?addr=" + url.QueryEscape(publicKey))
+  check(err)
+  resp.Body.Close()
+  if resp.StatusCode != http.StatusOK {
+    log.Fatalf("friendbot returned %s", resp.Status)
+  }
+  log.Println("funded account:", publicKey)
+
+  // Load the account (getting the sequence number for the account and making an
+  // account object.)
+  account, err := rpcClient.LoadAccount(ctx, publicKey)
+  check(err)
+
+  // the contract function and address need to be set by you.
+  var contractID xdr.ContractId
+  copy(contractID[:], strkey.MustDecode(strkey.VersionByteContract, "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"))
+
+  // Define the transaction. This example only simulates it and never sends it,
+  // so the fee does not matter here. To send a transaction, bid a fee from
+  // GetFeeStats() instead: txnbuild.MinBaseFee is the network minimum and gets outbid.
+  transaction, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              txnbuild.MinBaseFee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.InvokeHostFunction{
+        HostFunction: xdr.HostFunction{
+          Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+          InvokeContract: &xdr.InvokeContractArgs{
+            ContractAddress: xdr.ScAddress{
+              Type:       xdr.ScAddressTypeScAddressTypeContract,
+              ContractId: &contractID,
+            },
+            FunctionName: "symbol",
+            Args:         []xdr.ScVal{},
+          },
+        },
+        SourceAccount: publicKey,
+      },
+    },
+  })
+  check(err)
+
+  // The XDR string to simulate
+  transactionXDR, err := transaction.Base64()
+  check(err)
+
+  sim, err := rpcClient.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: transactionXDR})
+  check(err)
+  log.Println("latestLedger:", sim.LatestLedger)
+
+  if sim.Error != "" {
+    // A failed simulation has no result to decode, so report the error first.
+    log.Println("error:", sim.Error)
+  } else if len(sim.Results) == 0 || sim.Results[0].ReturnValueXDR == nil {
+    // Only the simulation of a contract invocation returns a result.
+    log.Println("no invocation result")
+  } else {
+    log.Println("minResourceFee:", sim.MinResourceFee)
+    log.Println("result:", *sim.Results[0].ReturnValueXDR)
+    // the result is a base64 ScVal. Go has no scValToNative, so decode it and
+    // read the arm that matches its type. `symbol` returns a string.
+    var retval xdr.ScVal
+    check(xdr.SafeUnmarshalBase64(*sim.Results[0].ReturnValueXDR, &retval))
+    if str, ok := retval.GetStr(); ok {
+      log.Println("humanReadable Result:", string(str))
+    } else {
+      log.Println("result type:", retval.Type)
+    }
+  }
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
+```java Java
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.SimulateTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+import org.stellar.sdk.xdr.SCValType;
+
+public final class Simulate {
+  private static final String RPC_URL = "https://soroban-testnet.stellar.org:443";
+
+  public static void main(String[] args) throws Exception {
+    // Initialize the rpc server
+    SorobanServer rpcServer = new SorobanServer(RPC_URL);
+
+    // Generate a new keypair for transaction authorization.
+    KeyPair keypair = KeyPair.random();
+    String publicKey = keypair.getAccountId();
+    System.out.println("publicKey: " + publicKey);
+
+    // Fund the account with Friendbot, and stop if the funding request failed.
+    String friendbotUrl = rpcServer.getNetwork().getFriendbotUrl();
+    HttpRequest fundRequest = HttpRequest.newBuilder(
+        URI.create(friendbotUrl + "?addr=" + URLEncoder.encode(publicKey, StandardCharsets.UTF_8)))
+      .GET()
+      .build();
+    HttpResponse<String> fundResponse =
+      HttpClient.newHttpClient().send(fundRequest, HttpResponse.BodyHandlers.ofString());
+    if (fundResponse.statusCode() != 200) {
+      throw new IllegalStateException("friendbot returned " + fundResponse.statusCode());
+    }
+    System.out.println("funded account: " + publicKey);
+
+    // Load the account (getting the sequence number for the account and making an
+    // account object.)
+    TransactionBuilderAccount account = rpcServer.getAccount(publicKey);
+
+    // Define the transaction. This example only simulates it and never sends it,
+    // so the fee does not matter here. To send a transaction, bid a fee from
+    // getFeeStats() instead: MIN_BASE_FEE is the network minimum and gets outbid.
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(Transaction.MIN_BASE_FEE)
+      .setTimeout(30)
+      .addOperation(
+        InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+            // the contract function and address need to be set by you.
+            "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+            "symbol",
+            Collections.emptyList())
+          .build())
+      .build();
+    // To get this as an XDR string directly, use `transaction.toEnvelopeXdrBase64()`
+
+    SimulateTransactionResponse sim = rpcServer.simulateTransaction(transaction);
+    System.out.println("latestLedger: " + sim.getLatestLedger());
+
+    if (sim.getError() != null) {
+      // A failed simulation has no result to decode, so report the error first.
+      System.out.println("error: " + sim.getError());
+    } else if (sim.getResults() == null || sim.getResults().isEmpty()) {
+      // Only the simulation of a contract invocation returns a result.
+      System.out.println("no invocation result");
+    } else {
+      System.out.println("minResourceFee: " + sim.getMinResourceFee());
+      System.out.println("result: " + sim.getResults().get(0).getXdr());
+      // the result is a base64 ScVal. Java has no scValToNative, so decode it and
+      // read the arm that matches its type. `symbol` returns a string.
+      SCVal retval = sim.getResults().get(0).parseXdr();
+      if (retval.getDiscriminant() == SCValType.SCV_STRING) {
+        System.out.println(
+          "humanReadable Result: " + new String(Scv.fromString(retval), StandardCharsets.UTF_8));
+      } else {
+        System.out.println("result type: " + retval.getDiscriminant());
+      }
+    }
+  }
+}
+```
+
+</CodeGroup>
+
 #### Running the example
 
 To run the above code, you will need to install the Stellar SDK into your project. You can do this by running the following command in your project directory:
 
-`npm install @stellar/stellar-sdk`
+<CodeGroup>
 
-Once your project is set up, you can create a new mjs file and paste the code above. You can then run the file using Node.js by running:
+```bash JavaScript
+npm install @stellar/stellar-sdk
+```
+
+```bash Python
+pip install stellar-sdk
+```
+
+```bash Go
+go get github.com/stellar/go-stellar-sdk
+```
+
+```xml Java
+<!-- Maven: add to the <dependencies> section of pom.xml -->
+<dependency>
+  <groupId>network.lightsail</groupId>
+  <artifactId>stellar-sdk</artifactId>
+  <version>6.0.0</version>
+</dependency>
+```
+
+</CodeGroup>
+
+Once your project is set up, create a new file and paste the code above. For JavaScript, use an `.mjs` file and run it with Node.js:
 
 `node <filename>.mjs`
+
+For Python, run it with `python <filename>.py`. For Go, run it with `go run <filename>.go` inside a Go module. For Java, save it as `Simulate.java` in a Maven project and run its `main` method.
 
 ## Understanding the Footprint
 
@@ -198,7 +496,7 @@ interface RestorePreamble {
 }
 ```
 
-For the manual path, see [Restore archived contract data using the JavaScript SDK](/docs/build/guides/archival/restore-data-js). Its example submits the `RestoreFootprint` transaction from the `restorePreamble` and then retries the invocation.
+For the manual path, see [Restore archived contract data](/docs/build/guides/archival/restore-data). Its example submits the `RestoreFootprint` transaction from the `restorePreamble` and then retries the invocation.
 
 ## Fees and Resource Usage
 

@@ -1,0 +1,301 @@
+---
+title: Create a restoration footprint manually to restore archived data
+description: Manually set up a restoration footprint with the Stellar SDKs
+---
+
+<Info>
+
+The manual operation (`RestoreFootprintOp`) is, for the most part, no longer needed starting in Protocol 23, as archived entries included in a transaction's restore list (usually populated during transaction simulation) are [automatically restored](../../../learn/fundamentals/contract-development/storage/state-archival#contract-data-automatic-restoration) when the `InvokeHostFunctionOp` executes. `RestoreFootprintOp` can be used in rare use cases [described in this section](../../../learn/fundamentals/contract-development/storage/state-archival#restorefootprintop).
+
+</Info>
+
+In this guide, we'll create a utility method named `createRestorationFootprint` used for manually creating a restoration footprint and restore archived data in a contract.
+
+First let's revisit how data is stored in a smart contract with the three different state archival types:
+
+| Temporary | Instance | Persistent |
+| --- | --- | --- |
+| Cheapest option | Expensive option | Expensive option |
+| Deleted after TTL reaches `0` | Archived when TTL reaches `0` | Archived when TTL reaches `0` |
+| Cannot be restored | Can be restored using the `RestoreFootprintOp` operation | Can be restored using the `RestoreFootprintOp` operation |
+| Unlimited amount of storage | Limited amount of storage available | Unlimited amount of storage |
+
+As seen above, all contract data is automatically archived when TTL reaches `0`, except for `Temporary` entries, which are deleted permanently from the ledger.
+
+Both types `Instance` and `Persistent` are suitable for storing data that cannot be easily recreated, with the nuance that `Instance` shares the same TTL as the contract instance while `Persistent` does not and, if the contract instance is not archived, `Persistent` data may be archived and need to be restored before invoking the contract.
+
+For a detailed explanation of contract data archival, check out the [State Archival section](./../../../learn/fundamentals/contract-development/storage/state-archival).
+
+<CodeGroup>
+
+```typescript JavaScript
+import {
+  Contract,
+  Networks,
+  Keypair,
+  Operation,
+  TransactionBuilder,
+  xdr,
+  Address,
+  Account,
+  Transaction,
+} from "@stellar/stellar-sdk";
+
+async function createRestorationFootprint(
+  account: Account,
+  contractAddress: string,
+  fee: string,
+  dataKey: xdr.ScVal,
+  signer: Keypair,
+) {
+  // Initialise contract & address
+  const contract: Contract = new Contract(contractAddress);
+  const address: Address = Address.fromString(contract.contractId());
+  // Setup contract data
+  const contractDataXDR = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: address.toScAddress(),
+      key: dataKey,
+      durability: xdr.ContractDataDurability.persistent,
+    }),
+  );
+  // Prepare transaction data
+  const restoreData: xdr.SorobanTransactionData =
+    new xdr.SorobanTransactionData({
+      resources: new xdr.SorobanResources({
+        footprint: new xdr.LedgerFootprint({
+          readOnly: [],
+          readWrite: [contractDataXDR],
+        }),
+        instructions: 0,
+        diskReadBytes: 0,
+        writeBytes: 0,
+      }),
+      resourceFee: xdr.Int64.fromString("0"),
+      ext: xdr.SorobanTransactionDataExt.v0(),
+    });
+  // Restore transaction with created restoration footprint
+  const restoreTx: Transaction = new TransactionBuilder(account, { fee: fee })
+    .setNetworkPassphrase(Networks.TESTNET)
+    .setSorobanData(restoreData)
+    .addOperation(Operation.restoreFootprint({}))
+    .build();
+
+  restoreTx.sign(signer);
+}
+```
+
+```python Python
+from stellar_sdk import (
+    Account,
+    Address,
+    Keypair,
+    Network,
+    TransactionBuilder,
+    TransactionEnvelope,
+    xdr,
+)
+
+
+def create_restoration_footprint(
+    account: Account,
+    contract_address: str,
+    fee: int,
+    data_key: xdr.SCVal,
+    signer: Keypair,
+) -> TransactionEnvelope:
+    # Setup contract data
+    contract_data_key = xdr.LedgerKey(
+        xdr.LedgerEntryType.CONTRACT_DATA,
+        contract_data=xdr.LedgerKeyContractData(
+            contract=Address(contract_address).to_xdr_sc_address(),
+            key=data_key,
+            durability=xdr.ContractDataDurability.PERSISTENT,
+        ),
+    )
+    # Prepare transaction data
+    restore_data = xdr.SorobanTransactionData(
+        ext=xdr.SorobanTransactionDataExt(0),
+        resources=xdr.SorobanResources(
+            footprint=xdr.LedgerFootprint(
+                read_only=[],
+                read_write=[contract_data_key],
+            ),
+            instructions=xdr.Uint32(0),
+            disk_read_bytes=xdr.Uint32(0),
+            write_bytes=xdr.Uint32(0),
+        ),
+        resource_fee=xdr.Int64(0),
+    )
+    # Restore transaction with created restoration footprint
+    restore_tx = (
+        TransactionBuilder(
+            source_account=account,
+            network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .set_soroban_data(restore_data)
+        .append_restore_footprint_op()
+        .set_timeout(30)
+        .build()
+    )
+
+    restore_tx.sign(signer)
+    return restore_tx
+```
+
+```go Go
+import (
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+)
+
+func createRestorationFootprint(
+  account txnbuild.Account,
+  contractAddress string,
+  fee int64,
+  dataKey xdr.ScVal,
+  signer *keypair.Full,
+) (*txnbuild.Transaction, error) {
+  // Initialise contract address
+  decoded, err := strkey.Decode(strkey.VersionByteContract, contractAddress)
+  if err != nil {
+    return nil, err
+  }
+  var contractID xdr.ContractId
+  copy(contractID[:], decoded)
+  address := xdr.ScAddress{
+    Type:       xdr.ScAddressTypeScAddressTypeContract,
+    ContractId: &contractID,
+  }
+  // Setup contract data
+  var contractDataKey xdr.LedgerKey
+  err = contractDataKey.SetContractData(address, dataKey, xdr.ContractDataDurabilityPersistent)
+  if err != nil {
+    return nil, err
+  }
+  // Prepare transaction data
+  restoreData := xdr.SorobanTransactionData{
+    Resources: xdr.SorobanResources{
+      Footprint: xdr.LedgerFootprint{
+        ReadOnly:  []xdr.LedgerKey{},
+        ReadWrite: []xdr.LedgerKey{contractDataKey},
+      },
+      Instructions:  0,
+      DiskReadBytes: 0,
+      WriteBytes:    0,
+    },
+    ResourceFee: 0,
+  }
+  // Restore transaction with created restoration footprint
+  restoreTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.RestoreFootprint{
+        Ext: xdr.TransactionExt{V: 1, SorobanData: &restoreData},
+      },
+    },
+  })
+  if err != nil {
+    return nil, err
+  }
+
+  return restoreTx.Sign(network.TestNetworkPassphrase, signer)
+}
+```
+
+```java Java
+import java.util.List;
+
+import org.stellar.sdk.Address;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanDataBuilder;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.RestoreFootprintOperation;
+import org.stellar.sdk.xdr.ContractDataDurability;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+import org.stellar.sdk.xdr.SCVal;
+import org.stellar.sdk.xdr.SorobanTransactionData;
+
+static Transaction createRestorationFootprint(
+    TransactionBuilderAccount account,
+    String contractAddress,
+    long fee,
+    SCVal dataKey,
+    KeyPair signer) {
+  // Initialise contract address
+  Address address = new Address(contractAddress);
+  // Setup contract data
+  LedgerKey contractDataKey = LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_DATA)
+    .contractData(LedgerKey.LedgerKeyContractData.builder()
+      .contract(address.toSCAddress())
+      .key(dataKey)
+      .durability(ContractDataDurability.PERSISTENT)
+      .build())
+    .build();
+  // Prepare transaction data: SorobanDataBuilder starts with an empty
+  // read-only footprint, zero resources, and a zero resource fee
+  SorobanTransactionData restoreData = new SorobanDataBuilder()
+    .setReadWrite(List.of(contractDataKey))
+    .build();
+  // Restore transaction with created restoration footprint
+  Transaction restoreTx = new TransactionBuilder(account, Network.TESTNET)
+    .setBaseFee(fee)
+    .setSorobanData(restoreData)
+    .addOperation(RestoreFootprintOperation.builder().build())
+    .setTimeout(30)
+    .build();
+
+  restoreTx.sign(signer);
+  return restoreTx;
+}
+```
+
+</CodeGroup>
+
+## Code walkthrough
+
+First we import the Stellar SDK: [`js-stellar-sdk`](https://stellar.github.io/js-stellar-sdk) for JavaScript, [`stellar-sdk`](https://stellar-sdk.readthedocs.io/en/latest) for Python, [`go-stellar-sdk`](https://github.com/stellar/go-stellar-sdk) for Go, or [`java-stellar-sdk`](https://github.com/lightsail-network/java-stellar-sdk) for Java. The Java snippet is a method body: put it in a class of your own.
+
+Our function will require the following parameters:
+
+- `account`: The Stellar account from which the transaction will be sent.
+- `contractAddress`: The address of the contract to be restored.
+- `fee`: The fee for the transaction.
+- `dataKey`: The key for the contract data to be restored.
+- `signer`: The keypair that will sign the transaction.
+
+After we initialize contract and address instances, we create an XDR representation of the contract data which includes:
+
+- `contract`: The contract address.
+- `key`: The key for the contract data.
+- `durability`: Specifies that the contract data is persistent - we assume it's `Persistent`.
+
+Next up we are preparing the (Soroban) transaction data with:
+
+- `resources`: Specifies the resources needed for the transaction.
+- `footprint`: Defines which parts of the ledger will be read and written.
+- `instructions`, `diskReadBytes`, `writeBytes`: Sets the resource limits (all set to 0 here).
+- `resourceFee`: Sets the resource fee to 0 (placeholder).
+- `ext`: Extension point for future use (set to 0).
+
+Note that for restoration footprints we only need to fill in `readWrite`.
+
+<Warning>
+
+The `diskReadBytes`, `writeBytes`, and `resourceFee` values above are zeroed **placeholders** to keep the example focused on footprint construction. A real restoration will not succeed with these left at `0` — Core compares the restored entry's serialized size against the declared resources and rejects the operation (`RESTORE_FOOTPRINT_RESOURCE_LIMIT_EXCEEDED`) when they are too low. Before signing, populate valid resource values by running the transaction through [simulation](../../../learn/fundamentals/contract-development/contract-interactions/transaction-simulation) (for example with `server.prepareTransaction`), which fills in the required resources and fee for you.
+
+</Warning>
+
+The transaction can now be submitted to the Stellar (test) network & signed to restore the specified contract’s data.

@@ -83,7 +83,7 @@ else. When in doubt, do it the way Mintlify's docs say.
 
 - **Was:** redirects in `nginx/includes/redirects.conf`, plus `routes.txt`
   checks. **Now:** redirects are `{ "source", "destination" }` entries in
-  `redirects.json`. Wildcards use `:slug*`.
+  `config/redirects.json`. Wildcards use `:slug*`.
 - Moving or renaming a page still needs a redirect.
 
 ## Generated content

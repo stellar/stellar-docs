@@ -1,0 +1,344 @@
+---
+title: Submit a transaction to Stellar RPC
+description: Use a looping mechanism to submit a transaction to the RPC.
+---
+
+This guide builds `submitTx`, a helper that sends a signed transaction to Stellar RPC and waits for the result. Other guides reuse it.
+
+## Send statuses
+
+[`sendTransaction`](/docs/data/apis/rpc/api-reference/methods/sendTransaction) returns right away with one of four statuses. Only `ERROR` is a final rejection.
+
+| Status | Meaning | What to do |
+| --- | --- | --- |
+| `PENDING` | The network accepted the transaction. It waits for a ledger. | Poll `getTransaction` for the result. |
+| `DUPLICATE` | The network already has this transaction in its queue, for example from an earlier send. | Do not treat it as an error. Poll `getTransaction` for the result. |
+| `TRY_AGAIN_LATER` | The network did not accept the transaction this time. Usually another transaction from the same source account still waits for a ledger. If you send a transaction again after it is in a ledger, you also get `TRY_AGAIN_LATER` for about 10 ledgers. | Wait, then send the same signed transaction again. |
+| `ERROR` | The network rejected the transaction. `errorResult` has the reason. | Fix the transaction. But first call `getTransaction`: if you send a transaction again after it is in a ledger, you get `ERROR` (`txBAD_SEQ`) once those 10 or so ledgers pass. |
+
+For more about these statuses and the errors behind them, see [Debugging errors](/docs/learn/fundamentals/contract-development/errors-and-debugging/debugging-errors).
+
+## Wait for the result
+
+[`getTransaction`](/docs/data/apis/rpc/api-reference/methods/getTransaction) returns `NOT_FOUND` until the transaction is in a ledger. `NOT_FOUND` does not mean that the transaction failed. The transaction can go into a ledger at any time until its time bound (`maxTime`) passes.
+
+Poll until `getTransaction` returns `SUCCESS` or `FAILED`. If it still returns `NOT_FOUND` after a ledger closes later than `maxTime`, the transaction can never go into a ledger. Only then is it safe to build and send a new transaction.
+
+For a fee-bump transaction, poll the hash of its inner transaction. Anyone who has the signed inner transaction can submit it in a fee-bump transaction of their own, and `getTransaction` finds the inner hash whichever fee-bump transaction gets it into a ledger.
+
+<Warning>
+
+`server.pollTransaction()` stops after a fixed number of attempts (30 by default) and then returns the last `NOT_FOUND` response. Do not treat that response as a failure. If you send a new transaction at that point, the network can apply both transactions, and you pay twice.
+
+</Warning>
+
+## The `submitTx` helper
+
+<CodeGroup>
+
+```typescript JavaScript
+import { FeeBumpTransaction, Transaction, xdr } from "@stellar/stellar-sdk";
+import { Api, Server } from "@stellar/stellar-sdk/rpc";
+
+const RPC_SERVER = "https://soroban-testnet.stellar.org/";
+const server = new Server(RPC_SERVER);
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Sends a transaction, then waits until it is in a ledger or has expired.
+async function submitTx(
+  tx: Transaction | FeeBumpTransaction,
+): Promise<Api.GetTransactionResponse> {
+  // A transaction can go into a ledger only until its time bound (maxTime).
+  const inner = tx instanceof FeeBumpTransaction ? tx.innerTransaction : tx;
+  const maxTime = Number(inner.timeBounds?.maxTime ?? 0);
+  if (maxTime === 0) {
+    throw new Error("Call setTimeout() so that the transaction can expire");
+  }
+
+  // Look up the inner transaction hash. It finds the transaction whichever
+  // fee-bump transaction gets it into a ledger.
+  const hash = xdr.encodeBytes(inner.hash(), "hex");
+
+  // TRY_AGAIN_LATER: send the same signed transaction again after a pause.
+  let reply = await server.sendTransaction(tx);
+  while (
+    reply.status === "TRY_AGAIN_LATER" &&
+    Number(reply.latestLedgerCloseTime) <= maxTime
+  ) {
+    await sleep(2000);
+    reply = await server.sendTransaction(tx);
+  }
+
+  // ERROR: a transaction that is already in a ledger also returns ERROR
+  // (txBAD_SEQ) when you send it again, so look it up before you throw.
+  if (reply.status === "ERROR") {
+    const known = await server.getTransaction(hash);
+    if (known.status === Api.GetTransactionStatus.NOT_FOUND) {
+      throw reply;
+    }
+  }
+
+  // Poll until the transaction is in a ledger or has expired.
+  // NOT_FOUND means "not in a ledger yet", not "failed".
+  while (true) {
+    const result = await server.getTransaction(hash);
+    switch (result.status) {
+      case Api.GetTransactionStatus.SUCCESS:
+        return result;
+      case Api.GetTransactionStatus.FAILED:
+        throw result;
+      case Api.GetTransactionStatus.NOT_FOUND:
+        // A ledger closed after maxTime, so the transaction can never go
+        // into a ledger. Only now is it safe to build a new transaction.
+        if (Number(result.latestLedgerCloseTime) > maxTime) {
+          throw new Error(`Transaction ${hash} expired`);
+        }
+        await sleep(1000);
+    }
+  }
+}
+```
+
+```python Python
+import time
+
+from stellar_sdk import FeeBumpTransactionEnvelope, SorobanServer, TransactionEnvelope
+from stellar_sdk.soroban_rpc import (
+    GetTransactionResponse,
+    GetTransactionStatus,
+    SendTransactionStatus,
+)
+
+RPC_SERVER = "https://soroban-testnet.stellar.org/"
+server = SorobanServer(RPC_SERVER)
+
+
+# Sends a transaction, then waits until it is in a ledger or has expired.
+def submit_tx(
+    tx: TransactionEnvelope | FeeBumpTransactionEnvelope,
+) -> GetTransactionResponse:
+    # A transaction can go into a ledger only until its time bound (max_time).
+    inner_envelope = (
+        tx.transaction.inner_transaction_envelope
+        if isinstance(tx, FeeBumpTransactionEnvelope)
+        else tx
+    )
+    inner = inner_envelope.transaction
+    time_bounds = inner.preconditions.time_bounds if inner.preconditions else None
+    max_time = time_bounds.max_time if time_bounds else 0
+    if max_time == 0:
+        raise ValueError("Set a timeout so that the transaction can expire")
+
+    # Look up the inner transaction hash. It finds the transaction whichever
+    # fee-bump transaction gets it into a ledger.
+    tx_hash = inner_envelope.hash_hex()
+
+    # TRY_AGAIN_LATER: send the same signed transaction again after a pause.
+    reply = server.send_transaction(tx)
+    while (
+        reply.status == SendTransactionStatus.TRY_AGAIN_LATER
+        and reply.latest_ledger_close_time <= max_time
+    ):
+        time.sleep(2)
+        reply = server.send_transaction(tx)
+
+    # ERROR: a transaction that is already in a ledger also returns ERROR
+    # (txBAD_SEQ) when you send it again, so look it up before you raise.
+    if reply.status == SendTransactionStatus.ERROR:
+        known = server.get_transaction(tx_hash)
+        if known.status == GetTransactionStatus.NOT_FOUND:
+            raise RuntimeError(f"Transaction rejected: {reply.error_result_xdr}")
+
+    # Poll until the transaction is in a ledger or has expired.
+    # NOT_FOUND means "not in a ledger yet", not "failed".
+    while True:
+        result = server.get_transaction(tx_hash)
+        if result.status == GetTransactionStatus.SUCCESS:
+            return result
+        if result.status == GetTransactionStatus.FAILED:
+            raise RuntimeError(f"Transaction failed: {result.result_xdr}")
+        # A ledger closed after max_time, so the transaction can never go
+        # into a ledger. Only now is it safe to build a new transaction.
+        if result.latest_ledger_close_time > max_time:
+            raise RuntimeError(f"Transaction {tx_hash} expired")
+        time.sleep(1)
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+const rpcServer = "https://soroban-testnet.stellar.org/"
+const networkPassphrase = network.TestNetworkPassphrase
+
+var server = client.NewClient(rpcServer, nil)
+
+// Sends a transaction, then waits until it is in a ledger or has expired.
+func submitTx(
+  ctx context.Context,
+  tx *txnbuild.GenericTransaction,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+
+  // A transaction can go into a ledger only until its time bound (MaxTime).
+  inner, ok := tx.Transaction()
+  if feeBump, isFeeBump := tx.FeeBump(); isFeeBump {
+    inner, ok = feeBump.InnerTransaction(), true
+  }
+  if !ok {
+    return none, errors.New("empty transaction")
+  }
+  maxTime := inner.Timebounds().MaxTime
+  if maxTime == 0 {
+    return none, errors.New("set a timeout so that the transaction can expire")
+  }
+
+  // Look up the inner transaction hash. It finds the transaction whichever
+  // fee-bump transaction gets it into a ledger.
+  hash, err := inner.HashHex(networkPassphrase)
+  if err != nil {
+    return none, err
+  }
+
+  envelope, err := tx.MarshalText()
+  if err != nil {
+    return none, err
+  }
+  request := protocol.SendTransactionRequest{Transaction: string(envelope)}
+
+  // TRY_AGAIN_LATER: send the same signed transaction again after a pause.
+  reply, err := server.SendTransaction(ctx, request)
+  if err != nil {
+    return none, err
+  }
+  for reply.Status == "TRY_AGAIN_LATER" && reply.LatestLedgerCloseTime <= maxTime {
+    time.Sleep(2 * time.Second)
+    if reply, err = server.SendTransaction(ctx, request); err != nil {
+      return none, err
+    }
+  }
+
+  // ERROR: a transaction that is already in a ledger also returns ERROR
+  // (txBAD_SEQ) when you send it again, so look it up before you fail.
+  if reply.Status == "ERROR" {
+    known, err := server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
+    if err != nil {
+      return none, err
+    }
+    if known.Status == protocol.TransactionStatusNotFound {
+      return none, fmt.Errorf("transaction rejected: %s", reply.ErrorResultXDR)
+    }
+  }
+
+  // Poll until the transaction is in a ledger or has expired.
+  // NOT_FOUND means "not in a ledger yet", not "failed".
+  for {
+    result, err := server.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
+    if err != nil {
+      return none, err
+    }
+    switch result.Status {
+    case protocol.TransactionStatusSuccess:
+      return result, nil
+    case protocol.TransactionStatusFailed:
+      return result, fmt.Errorf("transaction failed: %s", result.ResultXDR)
+    }
+    // A ledger closed after MaxTime, so the transaction can never go
+    // into a ledger. Only now is it safe to build a new transaction.
+    if result.LatestLedgerCloseTime > maxTime {
+      return result, fmt.Errorf("transaction %s expired", hash)
+    }
+    time.Sleep(time.Second)
+  }
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.TimeBounds;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+
+public final class SubmitTx {
+  private static final String RPC_SERVER = "https://soroban-testnet.stellar.org/";
+  private static final SorobanServer server = new SorobanServer(RPC_SERVER);
+
+  // Sends a transaction, then waits until it is in a ledger or has expired.
+  public static GetTransactionResponse submitTx(Transaction tx) throws InterruptedException {
+    // A transaction can go into a ledger only until its time bound (maxTime).
+    TimeBounds timeBounds = tx.getTimeBounds();
+    long maxTime = timeBounds == null ? 0 : timeBounds.getMaxTime().longValue();
+    if (maxTime == 0) {
+      throw new IllegalArgumentException("Call setTimeout() so that the transaction can expire");
+    }
+
+    // TRY_AGAIN_LATER: send the same signed transaction again after a pause.
+    SendTransactionResponse reply = server.sendTransaction(tx);
+    while (reply.getStatus() == SendTransactionStatus.TRY_AGAIN_LATER
+        && reply.getLatestLedgerCloseTime() <= maxTime) {
+      Thread.sleep(2000);
+      reply = server.sendTransaction(tx);
+    }
+
+    // ERROR: a transaction that is already in a ledger also returns ERROR
+    // (txBAD_SEQ) when you send it again, so look it up before you throw.
+    if (reply.getStatus() == SendTransactionStatus.ERROR) {
+      GetTransactionResponse known = server.getTransaction(reply.getHash());
+      if (known.getStatus() == GetTransactionStatus.NOT_FOUND) {
+        throw new IllegalStateException("Transaction rejected: " + reply.getErrorResultXdr());
+      }
+    }
+
+    // Poll until the transaction is in a ledger or has expired.
+    // NOT_FOUND means "not in a ledger yet", not "failed".
+    while (true) {
+      GetTransactionResponse result = server.getTransaction(reply.getHash());
+      if (result.getStatus() == GetTransactionStatus.SUCCESS) {
+        return result;
+      }
+      if (result.getStatus() == GetTransactionStatus.FAILED) {
+        throw new IllegalStateException("Transaction failed: " + result.getResultXdr());
+      }
+      // A ledger closed after maxTime, so the transaction can never go
+      // into a ledger. Only now is it safe to build a new transaction.
+      if (result.getLatestLedgerCloseTime() > maxTime) {
+        throw new IllegalStateException("Transaction " + reply.getHash() + " expired");
+      }
+      Thread.sleep(1000);
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+RPC sends `latestLedgerCloseTime` as a string, so the JavaScript helper converts it with `Number()` before it compares it with `maxTime`. The Python, Go, and Java SDKs already parse it into an integer.
+
+In Go, pass a `*txnbuild.Transaction` as `txnbuild.NewGenericTransactionWithTransaction(tx)` and a fee-bump transaction as `txnbuild.NewGenericTransactionWithFeeBumpTransaction(tx)`.
+
+In Java, `SorobanServer.sendTransaction` takes only a `Transaction`, so this helper does not accept a `FeeBumpTransaction`. The [fee-bump guide](/docs/build/guides/transactions/fee-bump-transactions) shows how to send one with a plain JSON-RPC request.
+
+<Warning>
+
+Remember: You should always handle errors gracefully! This is a fail-hard and fail-fast approach that should only be used in these examples.
+
+</Warning>

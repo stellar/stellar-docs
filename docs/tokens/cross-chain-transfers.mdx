@@ -137,12 +137,13 @@ Circle does not support upfront fees for transfers from Stellar, so the fee come
 
 ## Worked example
 
-This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. It uses `@stellar/stellar-sdk` v16.
+This example sends USDC from Stellar testnet to Base Sepolia with the Circle Forwarding Service. It uses two transactions, `approve` and then `deposit_for_burn_with_hook`, signed by a secret key. The TypeScript example uses `@stellar/stellar-sdk` v16, the Python example uses `stellar-sdk` 17, the Go example uses `go-stellar-sdk` v0.9.0, and the Java example uses `network.lightsail:stellar-sdk` 6.0.0.
+
+<CodeGroup>
 
 ```ts TypeScript
 import {
   Address,
-  BASE_FEE,
   Contract,
   Keypair,
   Networks,
@@ -181,8 +182,18 @@ function evmAddressToBytes32(address: string): Buffer {
 
 async function invoke(contractId: string, method: string, args: xdr.ScVal[]) {
   const account = await server.getAccount(signer.publicKey());
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  // This Stellar network fee is paid in XLM, apart from Circle's max_fee.
+  const { sorobanInclusionFee } = await server.getFeeStats();
+  const MAX_INCLUSION_FEE = 100_000; // stroops (0.01 XLM): pick your own cap
+  const fee = String(
+    Math.min(Number(sorobanInclusionFee.p90), MAX_INCLUSION_FEE),
+  );
+
   const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee,
     networkPassphrase: Networks.TESTNET,
   })
     .addOperation(new Contract(contractId).call(method, ...args))
@@ -270,6 +281,667 @@ async function bridgeToBase(amount: bigint, evmRecipient: string) {
 // 5 USDC in 7-decimal units
 bridgeToBase(50_000_000n, "0xYourBaseSepoliaAddress").catch(console.error);
 ```
+
+```python Python
+import math
+import os
+import time
+
+import requests
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+
+# Testnet values. For mainnet, use Circle's mainnet contract list,
+# the mainnet USDC SAC, and https://iris-api.circle.com.
+RPC_URL = "https://soroban-testnet.stellar.org"
+IRIS_URL = "https://iris-api-sandbox.circle.com"
+TOKEN_MESSENGER_MINTER = "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP"
+USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+STELLAR_DOMAIN = 27
+BASE_DOMAIN = 6
+
+# "cctp-forward", hook version 0, no extra data
+FORWARD_HOOK = bytes.fromhex(
+    "636374702d666f72776172640000000000000000000000000000000000000000"
+)
+
+server = SorobanServer(RPC_URL)
+signer = Keypair.from_secret(os.environ["STELLAR_SECRET_KEY"])
+
+
+def evm_address_to_bytes32(address: str) -> bytes:
+    hex_str = address.lower().removeprefix("0x")
+    if len(hex_str) != 40 or any(c not in "0123456789abcdef" for c in hex_str):
+        raise ValueError(f"Invalid EVM address: {address}")
+    return bytes.fromhex(hex_str.rjust(64, "0"))
+
+
+def invoke(contract_id, method, args):
+    account = server.load_account(signer.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    # This Stellar network fee is paid in XLM, apart from Circle's max_fee.
+    MAX_INCLUSION_FEE = 100_000  # stroops (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_INCLUSION_FEE)
+
+    tx = (
+        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=fee)
+        .append_invoke_contract_function_op(contract_id, method, args)
+        .set_timeout(60)
+        .build()
+    )
+
+    prepared = server.prepare_transaction(tx)
+    prepared.sign(signer)
+    sent = server.send_transaction(prepared)
+    if sent.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(f"Submit failed: {sent.status}")
+    result = server.poll_transaction(sent.hash)
+    if result.status == GetTransactionStatus.NOT_FOUND:
+        # Not in a ledger yet: the outcome is unknown, not failed.
+        raise RuntimeError(f"Transaction {sent.hash} not found yet")
+    if result.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"Transaction failed: {result.status}")
+    return sent.hash
+
+
+def quote_max_fee(amount: int) -> int:
+    res = requests.get(
+        f"{IRIS_URL}/v2/burn/USDC/fees/{STELLAR_DOMAIN}/{BASE_DOMAIN}",
+        params={"forward": "true"},
+        timeout=30,
+    )
+    quote = next((q for q in res.json() if q["finalityThreshold"] == 2000), None)
+    if quote is None:
+        raise RuntimeError("No fee quote for finality threshold 2000")
+    # The live API returns forwardFee.med. Circle's spec names it medium.
+    forward_fee = quote["forwardFee"].get("med")
+    if forward_fee is None:
+        forward_fee = quote["forwardFee"]["medium"]
+    # minimumFee is in basis points. forwardFee uses 6 decimals, so
+    # multiply by 10 for Stellar's 7-decimal units.
+    protocol_fee = amount * math.ceil(quote["minimumFee"] * 100) // 1_000_000
+    return protocol_fee + int(forward_fee) * 10
+
+
+def wait_for_attestation(tx_hash: str):
+    while True:
+        res = requests.get(
+            f"{IRIS_URL}/v2/messages/{STELLAR_DOMAIN}",
+            params={"transactionHash": tx_hash},
+            timeout=30,
+        )
+        if res.ok:
+            messages = res.json().get("messages") or []
+            if messages and messages[0].get("status") == "complete":
+                return messages[0]
+        time.sleep(5)
+
+
+def bridge_to_base(amount: int, evm_recipient: str):
+    caller = signer.public_key
+    max_fee = quote_max_fee(amount)
+
+    # Transaction 1: let the TokenMessengerMinter pull `amount` USDC.
+    sequence = server.get_latest_ledger().sequence
+    invoke(
+        USDC_SAC,
+        "approve",
+        [
+            scval.to_address(caller),
+            scval.to_address(TOKEN_MESSENGER_MINTER),
+            scval.to_int128(amount),
+            scval.to_uint32(sequence + 100),
+        ],
+    )
+
+    # Transaction 2: burn with the forwarding hook.
+    burn_hash = invoke(
+        TOKEN_MESSENGER_MINTER,
+        "deposit_for_burn_with_hook",
+        [
+            scval.to_address(caller),
+            scval.to_int128(amount),
+            scval.to_uint32(BASE_DOMAIN),
+            scval.to_bytes(evm_address_to_bytes32(evm_recipient)),
+            scval.to_address(USDC_SAC),
+            scval.to_bytes(bytes(32)),  # any caller
+            scval.to_int128(max_fee),
+            scval.to_uint32(2000),
+            scval.to_bytes(FORWARD_HOOK),
+        ],
+    )
+
+    message = wait_for_attestation(burn_hash)
+    print("Burn:", burn_hash, "Forward state:", message.get("forwardState"))
+
+
+if __name__ == "__main__":
+    # 5 USDC in 7-decimal units
+    bridge_to_base(50_000_000, "0xYourBaseSepoliaAddress")
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "encoding/hex"
+  "encoding/json"
+  "errors"
+  "fmt"
+  "log"
+  "math"
+  "net/http"
+  "os"
+  "strings"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+// Testnet values. For mainnet, use Circle's mainnet contract list,
+// the mainnet USDC SAC, and https://iris-api.circle.com.
+const (
+  rpcURL               = "https://soroban-testnet.stellar.org"
+  irisURL              = "https://iris-api-sandbox.circle.com"
+  tokenMessengerMinter = "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP"
+  usdcSAC              = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+  stellarDomain        = 27
+  baseDomain           = 6
+)
+
+// "cctp-forward", hook version 0, no extra data:
+// 0x636374702d666f72776172640000000000000000000000000000000000000000
+var forwardHook = append([]byte("cctp-forward"), make([]byte, 20)...)
+
+var (
+  server     = client.NewClient(rpcURL, nil)
+  signer     = keypair.MustParseFull(os.Getenv("STELLAR_SECRET_KEY"))
+  httpClient = &http.Client{Timeout: 30 * time.Second}
+)
+
+func evmAddressToBytes32(address string) ([]byte, error) {
+  raw, err := hex.DecodeString(strings.TrimPrefix(strings.ToLower(address), "0x"))
+  if err != nil || len(raw) != 20 {
+    return nil, fmt.Errorf("invalid EVM address: %s", address)
+  }
+  return append(make([]byte, 12), raw...), nil
+}
+
+// ScVal helpers for the contract arguments.
+func addressVal(address string) xdr.ScVal {
+  var scAddress xdr.ScAddress
+  if strings.HasPrefix(address, "C") {
+    var contractID xdr.ContractId
+    copy(contractID[:], strkey.MustDecode(strkey.VersionByteContract, address))
+    scAddress = xdr.ScAddress{
+      Type:       xdr.ScAddressTypeScAddressTypeContract,
+      ContractId: &contractID,
+    }
+  } else {
+    scAddress = xdr.ScAddress{
+      Type:      xdr.ScAddressTypeScAddressTypeAccount,
+      AccountId: xdr.MustAddressPtr(address),
+    }
+  }
+  return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddress}
+}
+
+func i128Val(amount int64) xdr.ScVal {
+  // Sign-extend the int64 to 128 bits.
+  parts := xdr.Int128Parts{Hi: xdr.Int64(amount >> 63), Lo: xdr.Uint64(amount)}
+  return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &parts}
+}
+
+func u32Val(value uint32) xdr.ScVal {
+  v := xdr.Uint32(value)
+  return xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &v}
+}
+
+func bytesVal(value []byte) xdr.ScVal {
+  b := xdr.ScBytes(value)
+  return xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &b}
+}
+
+func invoke(ctx context.Context, contractID, method string, args []xdr.ScVal) (string, error) {
+  account, err := server.LoadAccount(ctx, signer.Address())
+  if err != nil {
+    return "", err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  // This Stellar network fee is paid in XLM, apart from Circle's max_fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return "", err
+  }
+  const maxInclusionFee = 100_000 // stroops (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxInclusionFee)
+
+  tx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
+    Operations: []txnbuild.Operation{&txnbuild.InvokeHostFunction{
+      HostFunction: xdr.HostFunction{
+        Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+        InvokeContract: &xdr.InvokeContractArgs{
+          ContractAddress: *addressVal(contractID).Address,
+          FunctionName:    xdr.ScSymbol(method),
+          Args:            args,
+        },
+      },
+    }},
+  })
+  if err != nil {
+    return "", err
+  }
+
+  tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+  if err != nil {
+    return "", err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return "", err
+  }
+  sent, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return "", err
+  }
+  if sent.Status != "PENDING" {
+    return "", fmt.Errorf("submit failed: %s", sent.Status)
+  }
+
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  result, err := server.PollTransaction(pollCtx, sent.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    // Not in a ledger yet: the outcome is unknown, not failed.
+    return "", fmt.Errorf("transaction %s not found yet", sent.Hash)
+  }
+  if err != nil {
+    return "", err
+  }
+  if result.Status != protocol.TransactionStatusSuccess {
+    return "", fmt.Errorf("transaction failed: %s", result.Status)
+  }
+  return sent.Hash, nil
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources, resource fee, and authorization entries. The Go SDK has
+// no prepareTransaction.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  operation := params.Operations[0].(*txnbuild.InvokeHostFunction)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+  if len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // Build again with the same sequence number. NewTransaction adds the
+  // resource fee from the Soroban data to the inclusion fee.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+
+func quoteMaxFee(amount int64) (int64, error) {
+  res, err := httpClient.Get(fmt.Sprintf(
+    "%s/v2/burn/USDC/fees/%d/%d?forward=true", irisURL, stellarDomain, baseDomain,
+  ))
+  if err != nil {
+    return 0, err
+  }
+  defer res.Body.Close()
+  if res.StatusCode != http.StatusOK {
+    return 0, fmt.Errorf("fee quote failed: %s", res.Status)
+  }
+
+  var quotes []struct {
+    FinalityThreshold int     `json:"finalityThreshold"`
+    MinimumFee        float64 `json:"minimumFee"`
+    ForwardFee        struct {
+      Med    *int64 `json:"med"`
+      Medium *int64 `json:"medium"`
+    } `json:"forwardFee"`
+  }
+  if err := json.NewDecoder(res.Body).Decode(&quotes); err != nil {
+    return 0, err
+  }
+  for _, quote := range quotes {
+    if quote.FinalityThreshold != 2000 {
+      continue
+    }
+    // The live API returns forwardFee.med. Circle's spec names it medium.
+    forwardFee := quote.ForwardFee.Med
+    if forwardFee == nil {
+      forwardFee = quote.ForwardFee.Medium
+    }
+    if forwardFee == nil {
+      return 0, errors.New("no forwardFee in the fee quote")
+    }
+    // minimumFee is in basis points. forwardFee uses 6 decimals, so
+    // multiply by 10 for Stellar's 7-decimal units.
+    protocolFee := amount * int64(math.Ceil(quote.MinimumFee*100)) / 1_000_000
+    return protocolFee + *forwardFee*10, nil
+  }
+  return 0, errors.New("no fee quote for finality threshold 2000")
+}
+
+type cctpMessage struct {
+  Status       string `json:"status"`
+  ForwardState string `json:"forwardState"`
+}
+
+func waitForAttestation(txHash string) (cctpMessage, error) {
+  url := fmt.Sprintf("%s/v2/messages/%d?transactionHash=%s", irisURL, stellarDomain, txHash)
+  for {
+    res, err := httpClient.Get(url)
+    if err != nil {
+      return cctpMessage{}, err
+    }
+    var body struct {
+      Messages []cctpMessage `json:"messages"`
+    }
+    decodeErr := json.NewDecoder(res.Body).Decode(&body)
+    res.Body.Close()
+    if res.StatusCode == http.StatusOK && decodeErr == nil &&
+      len(body.Messages) > 0 && body.Messages[0].Status == "complete" {
+      return body.Messages[0], nil
+    }
+    time.Sleep(5 * time.Second)
+  }
+}
+
+func bridgeToBase(ctx context.Context, amount int64, evmRecipient string) error {
+  caller := signer.Address()
+  maxFee, err := quoteMaxFee(amount)
+  if err != nil {
+    return err
+  }
+  mintRecipient, err := evmAddressToBytes32(evmRecipient)
+  if err != nil {
+    return err
+  }
+
+  // Transaction 1: let the TokenMessengerMinter pull `amount` USDC.
+  latest, err := server.GetLatestLedger(ctx)
+  if err != nil {
+    return err
+  }
+  _, err = invoke(ctx, usdcSAC, "approve", []xdr.ScVal{
+    addressVal(caller),
+    addressVal(tokenMessengerMinter),
+    i128Val(amount),
+    u32Val(latest.Sequence + 100),
+  })
+  if err != nil {
+    return err
+  }
+
+  // Transaction 2: burn with the forwarding hook.
+  burnHash, err := invoke(ctx, tokenMessengerMinter, "deposit_for_burn_with_hook", []xdr.ScVal{
+    addressVal(caller),
+    i128Val(amount),
+    u32Val(baseDomain),
+    bytesVal(mintRecipient),
+    addressVal(usdcSAC),
+    bytesVal(make([]byte, 32)), // any caller
+    i128Val(maxFee),
+    u32Val(2000),
+    bytesVal(forwardHook),
+  })
+  if err != nil {
+    return err
+  }
+
+  message, err := waitForAttestation(burnHash)
+  if err != nil {
+    return err
+  }
+  fmt.Println("Burn:", burnHash, "Forward state:", message.ForwardState)
+  return nil
+}
+
+func main() {
+  defer server.Close()
+  // 5 USDC in 7-decimal units
+  if err := bridgeToBase(context.Background(), 50_000_000, "0xYourBaseSepoliaAddress"); err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+//   com.google.code.gson:gson:2.15.0
+
+import java.math.BigInteger;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.HexFormat;
+import java.util.List;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+
+public final class CctpBridge {
+  // Testnet values. For mainnet, use Circle's mainnet contract list,
+  // the mainnet USDC SAC, and https://iris-api.circle.com.
+  private static final String RPC_URL = "https://soroban-testnet.stellar.org";
+  private static final String IRIS_URL = "https://iris-api-sandbox.circle.com";
+  private static final String TOKEN_MESSENGER_MINTER =
+    "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP";
+  private static final String USDC_SAC = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+  private static final int STELLAR_DOMAIN = 27;
+  private static final int BASE_DOMAIN = 6;
+
+  // "cctp-forward", hook version 0, no extra data
+  private static final byte[] FORWARD_HOOK =
+    HexFormat.of().parseHex("636374702d666f72776172640000000000000000000000000000000000000000");
+
+  private static final SorobanServer server = new SorobanServer(RPC_URL);
+  private static final KeyPair signer = KeyPair.fromSecretSeed(System.getenv("STELLAR_SECRET_KEY"));
+  private static final HttpClient httpClient =
+    HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
+
+  private static byte[] evmAddressToBytes32(String address) {
+    String hex = address.toLowerCase().replaceFirst("^0x", "");
+    if (!hex.matches("[0-9a-f]{40}")) {
+      throw new IllegalArgumentException("Invalid EVM address: " + address);
+    }
+    return HexFormat.of().parseHex("0".repeat(24) + hex);
+  }
+
+  private static String invoke(String contractId, String method, List<SCVal> args)
+      throws InterruptedException {
+    TransactionBuilderAccount account = server.getAccount(signer.getAccountId());
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    // This Stellar network fee is paid in XLM, apart from Circle's max_fee.
+    long maxInclusionFee = 100_000L; // stroops (0.01 XLM): pick your own cap
+    long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxInclusionFee);
+
+    Transaction tx = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(InvokeHostFunctionOperation
+        .invokeContractFunctionOperationBuilder(contractId, method, args)
+        .build())
+      .setTimeout(60)
+      .build();
+
+    Transaction prepared = server.prepareTransaction(tx);
+    prepared.sign(signer);
+    SendTransactionResponse sent = server.sendTransaction(prepared);
+    if (sent.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("Submit failed: " + sent.getStatus());
+    }
+    // pollTransaction checks up to 30 times, 1 second apart.
+    GetTransactionResponse result = server.pollTransaction(sent.getHash());
+    if (result.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Not in a ledger yet: the outcome is unknown, not failed.
+      throw new IllegalStateException("Transaction " + sent.getHash() + " not found yet");
+    }
+    if (result.getStatus() != GetTransactionStatus.SUCCESS) {
+      throw new IllegalStateException("Transaction failed: " + result.getStatus());
+    }
+    return sent.getHash();
+  }
+
+  private static HttpResponse<String> get(String url) throws Exception {
+    HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+      .timeout(Duration.ofSeconds(30))
+      .GET()
+      .build();
+    return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static long quoteMaxFee(long amount) throws Exception {
+    HttpResponse<String> res = get(String.format(
+      "%s/v2/burn/USDC/fees/%d/%d?forward=true", IRIS_URL, STELLAR_DOMAIN, BASE_DOMAIN));
+    if (res.statusCode() != 200) {
+      throw new IllegalStateException("Fee quote failed: HTTP " + res.statusCode());
+    }
+    for (JsonElement element : JsonParser.parseString(res.body()).getAsJsonArray()) {
+      JsonObject quote = element.getAsJsonObject();
+      if (quote.get("finalityThreshold").getAsInt() != 2000) {
+        continue;
+      }
+      // The live API returns forwardFee.med. Circle's spec names it medium.
+      JsonObject forwardFees = quote.getAsJsonObject("forwardFee");
+      JsonElement forwardFee = forwardFees.has("med") ? forwardFees.get("med") : forwardFees.get("medium");
+      if (forwardFee == null || forwardFee.isJsonNull()) {
+        throw new IllegalStateException("No forwardFee in the fee quote");
+      }
+      // minimumFee is in basis points. forwardFee uses 6 decimals, so
+      // multiply by 10 for Stellar's 7-decimal units.
+      long minimumFee = (long) Math.ceil(quote.get("minimumFee").getAsDouble() * 100);
+      long protocolFee = amount * minimumFee / 1_000_000L;
+      return protocolFee + forwardFee.getAsLong() * 10;
+    }
+    throw new IllegalStateException("No fee quote for finality threshold 2000");
+  }
+
+  private static JsonObject waitForAttestation(String txHash) throws Exception {
+    String url = String.format(
+      "%s/v2/messages/%d?transactionHash=%s", IRIS_URL, STELLAR_DOMAIN, txHash);
+    while (true) {
+      HttpResponse<String> res = get(url);
+      if (res.statusCode() == 200) {
+        JsonArray messages = JsonParser.parseString(res.body()).getAsJsonObject().getAsJsonArray("messages");
+        if (messages != null && !messages.isEmpty()) {
+          JsonObject message = messages.get(0).getAsJsonObject();
+          JsonElement status = message.get("status");
+          if (status != null && !status.isJsonNull() && "complete".equals(status.getAsString())) {
+            return message;
+          }
+        }
+      }
+      Thread.sleep(5_000L);
+    }
+  }
+
+  private static void bridgeToBase(long amount, String evmRecipient) throws Exception {
+    String caller = signer.getAccountId();
+    long maxFee = quoteMaxFee(amount);
+    byte[] mintRecipient = evmAddressToBytes32(evmRecipient);
+
+    // Transaction 1: let the TokenMessengerMinter pull `amount` USDC.
+    long sequence = server.getLatestLedger().getSequence();
+    invoke(USDC_SAC, "approve", List.of(
+      Scv.toAddress(caller),
+      Scv.toAddress(TOKEN_MESSENGER_MINTER),
+      Scv.toInt128(BigInteger.valueOf(amount)),
+      Scv.toUint32(sequence + 100)));
+
+    // Transaction 2: burn with the forwarding hook.
+    String burnHash = invoke(TOKEN_MESSENGER_MINTER, "deposit_for_burn_with_hook", List.of(
+      Scv.toAddress(caller),
+      Scv.toInt128(BigInteger.valueOf(amount)),
+      Scv.toUint32(BASE_DOMAIN),
+      Scv.toBytes(mintRecipient),
+      Scv.toAddress(USDC_SAC),
+      Scv.toBytes(new byte[32]), // any caller
+      Scv.toInt128(BigInteger.valueOf(maxFee)),
+      Scv.toUint32(2000),
+      Scv.toBytes(FORWARD_HOOK)));
+
+    JsonObject message = waitForAttestation(burnHash);
+    // forwardState can be missing until the forward starts.
+    JsonElement forwardState = message.get("forwardState");
+    String state = forwardState == null || forwardState.isJsonNull() ? "" : forwardState.getAsString();
+    System.out.println("Burn: " + burnHash + " Forward state: " + state);
+  }
+
+  public static void main(String[] args) throws Exception {
+    // 5 USDC in 7-decimal units
+    bridgeToBase(50_000_000L, "0xYourBaseSepoliaAddress");
+  }
+}
+```
+
+</CodeGroup>
 
 `forwardState` can stay empty for a short time after the attestation completes. Check the same endpoint again to see the destination transaction in `forwardTxHash`.
 

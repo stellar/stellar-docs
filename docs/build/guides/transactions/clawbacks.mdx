@@ -58,6 +58,11 @@ import * as sdk from "@stellar/stellar-sdk";
 
 let server = new sdk.rpc.Server("https://soroban-testnet.stellar.org");
 
+// Bid what recent transactions paid, capped at what you're willing to spend.
+const { inclusionFee } = await server.getFeeStats();
+const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+const fee = String(Math.min(Number(inclusionFee.p90), MAX_FEE));
+
 const A = sdk.Keypair.random();
 const B = sdk.Keypair.random();
 const C = sdk.Keypair.random();
@@ -225,7 +230,7 @@ function getBalance(accountId) {
 // Helps simplify creating & signing a transaction.
 function buildTx(source, signer, ops) {
   var tx = new sdk.TransactionBuilder(source, {
-    fee: sdk.BASE_FEE,
+    fee,
     networkPassphrase: sdk.Networks.TESTNET,
   });
 
@@ -393,6 +398,1083 @@ function preamble() {
 }
 ```
 
+```python Python
+import time
+
+import requests
+from stellar_sdk import (
+    Asset,
+    AuthorizationFlag,
+    ChangeTrust,
+    Claimant,
+    Clawback,
+    ClawbackClaimableBalance,
+    CreateClaimableBalance,
+    Keypair,
+    Network,
+    Payment,
+    SetOptions,
+    SetTrustLineFlags,
+    SorobanServer,
+    StrKey,
+    TransactionBuilder,
+    TrustLineFlags,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import (
+    ClaimableBalanceID,
+    LedgerEntryData,
+    LedgerEntryType,
+    LedgerKey,
+    LedgerKeyAccount,
+    LedgerKeyClaimableBalance,
+    LedgerKeyTrustLine,
+    TransactionResult,
+)
+
+server = SorobanServer("https://soroban-testnet.stellar.org")
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+A = Keypair.random()
+B = Keypair.random()
+C = Keypair.random()
+
+print("=== ACCOUNT SETUP ===")
+print(f"Account A (Issuer): {A.public_key}")
+print(f"Account B (Trustor): {B.public_key}")
+print(f"Account C (Trustor): {C.public_key}")
+print()
+
+ASSET = Asset("CLAW", A.public_key)
+
+
+# Helper function to format account ID with label
+def format_account(account_id):
+    short_id = account_id[:8]
+    if account_id == A.public_key:
+        return f"{short_id} (Account A)"
+    elif account_id == B.public_key:
+        return f"{short_id} (Account B)"
+    elif account_id == C.public_key:
+        return f"{short_id} (Account C)"
+    return short_id
+
+
+# Helper function to scale int64 asset amounts
+def scale_asset(x):
+    return (x * 10 // 10_000_000) / 10  # one decimal place
+
+
+# Helper function to read one ledger entry with getLedgerEntries
+def get_ledger_entry(key):
+    response = server.get_ledger_entries([key])
+    if not response.entries:
+        return None
+    return LedgerEntryData.from_xdr(response.entries[0].xdr)
+
+
+# Helper function to fetch claimable balance details
+def fetch_claimable_balance(balance_id, description="Claimable Balance"):
+    print(f"\n--- Checking {description} ---")
+    print(f"Looking up balance ID: {balance_id}")
+
+    key = LedgerKey(
+        LedgerEntryType.CLAIMABLE_BALANCE,
+        claimable_balance=LedgerKeyClaimableBalance(
+            balance_id=ClaimableBalanceID.from_xdr_bytes(bytes.fromhex(balance_id))
+        ),
+    )
+    entry = get_ledger_entry(key)
+    if entry is None:
+        print(
+            f"❌ Claimable balance not found (Claimable balance {balance_id} not found)"
+        )
+        return False  # Balance doesn't exist
+
+    claimable_balance = entry.claimable_balance
+    asset = Asset.from_xdr_object(claimable_balance.asset)
+    amount = scale_asset(claimable_balance.amount.int64)
+
+    print("✅ Found claimable balance")
+    print(f"   Amount: {amount:.1f} {asset.code}")
+    print(f"   Number of claimants: {len(claimable_balance.claimants)}")
+
+    # Show claimant details
+    for index, claimant in enumerate(claimable_balance.claimants):
+        destination = claimant.v0.destination.account_id.ed25519.uint256
+        claimant_address = StrKey.encode_ed25519_public_key(destination)
+        print(f"   Claimant {index + 1}: {format_account(claimant_address)}")
+
+    return True  # Balance exists
+
+
+# Fund accounts first
+def fund_accounts():
+    print("=== FUNDING ACCOUNTS WITH XLM ===")
+    friendbot_url = server.get_network().friendbot_url
+    for keypair in (A, B, C):
+        response = requests.get(
+            friendbot_url, params={"addr": keypair.public_key}, timeout=30
+        )
+        response.raise_for_status()
+    print("All accounts funded with XLM via airdrop")
+    # Wait for funding to complete
+    time.sleep(3)
+
+
+# Enables AUTHORIZATION_CLAWBACK_ENABLED on an account.
+def enable_clawback(account, keys):
+    label = format_account(account.account.account_id)
+    print(f"Enabling clawback flags on account {label}")
+    return submit_and_poll_transaction(
+        build_tx(
+            account,
+            keys,
+            [
+                SetOptions(
+                    set_flags=AuthorizationFlag.AUTHORIZATION_CLAWBACK_ENABLED
+                    | AuthorizationFlag.AUTHORIZATION_REVOCABLE
+                )
+            ],
+        ),
+        "Enable Clawback Flags",
+    )
+
+
+# Establishes a trustline for `recipient` for the CLAW Asset
+def establish_trustline(recipient, key):
+    label = format_account(recipient.account.account_id)
+    print(f"{label} establishing trustline for {ASSET.code}")
+    return submit_and_poll_transaction(
+        build_tx(recipient, key, [ChangeTrust(asset=ASSET, limit="5000")]),  # arbitrary
+        f"Establish Trustline ({label})",
+    )
+
+
+# Retrieves latest account info for all accounts.
+def get_accounts():
+    return [server.load_account(kp.public_key) for kp in (A, B, C)]
+
+
+# Show XLM balances (after funding)
+def show_xlm_balances(accounts):
+    print("\n=== XLM BALANCES ===")
+    for acc in accounts:
+        account_id = acc.account.account_id
+        print(f"{format_account(account_id)}: {get_xlm_balance(account_id)} XLM")
+
+
+# Get XLM balance using account ledger entry
+def get_xlm_balance(account_id):
+    key = LedgerKey(
+        LedgerEntryType.ACCOUNT,
+        account=LedgerKeyAccount(
+            account_id=Keypair.from_public_key(account_id).xdr_account_id()
+        ),
+    )
+    entry = get_ledger_entry(key)
+    if entry is None:
+        return "0"
+    return f"{scale_asset(entry.account.balance.int64):.1f}"
+
+
+# Show CLAW balances
+def show_claw_balances(accounts):
+    print("\n=== CLAW BALANCES ===")
+    for acc in accounts:
+        account_id = acc.account.account_id
+        print(f"{format_account(account_id)}: {get_balance(account_id)} CLAW")
+
+
+# Get CLAW balance using the trustline ledger entry
+def get_balance(account_id):
+    key = LedgerKey(
+        LedgerEntryType.TRUSTLINE,
+        trust_line=LedgerKeyTrustLine(
+            account_id=Keypair.from_public_key(account_id).xdr_account_id(),
+            asset=ASSET.to_trust_line_asset_xdr_object(),
+        ),
+    )
+    entry = get_ledger_entry(key)
+    if entry is None:
+        return "0"
+    return f"{scale_asset(entry.trust_line.balance.int64):.1f}"
+
+
+# Helps simplify creating & signing a transaction.
+def build_tx(source, signer, ops):
+    builder = TransactionBuilder(
+        source_account=source,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    for op in ops:
+        builder.append_operation(op)
+    tx = builder.set_timeout(30).build()
+    tx.sign(signer)
+    return tx
+
+
+# Helper function to submit transaction and poll for completion using RPC
+def submit_and_poll_transaction(transaction, description="Transaction"):
+    submit_response = server.send_transaction(transaction)
+    if submit_response.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(
+            f"Transaction submission failed: {submit_response.status.value}"
+        )
+
+    print(f"{description} submitted: {submit_response.hash}")
+
+    final_response = server.poll_transaction(submit_response.hash)
+    if final_response.status == GetTransactionStatus.SUCCESS:
+        print(f"{description} completed successfully")
+    elif final_response.status == GetTransactionStatus.NOT_FOUND:
+        # Not in a ledger yet: the outcome is unknown, not failed.
+        print(f"{description} not found yet: {submit_response.hash}")
+    else:
+        print(f"{description} failed: {final_response.status.value}")
+
+    return {
+        "hash": submit_response.hash,
+        "status": final_response.status,
+        "result_xdr": final_response.result_xdr,
+    }
+
+
+# Makes payment from `from_account` to `to_account` of `amount`
+def make_payment(to_account, from_account, from_key, amount):
+    from_id = from_account.account.account_id
+    to_id = to_account.account.account_id
+    print(
+        f"\nPayment: {format_account(from_id)} → {format_account(to_id)} "
+        f"({amount} CLAW)"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            from_account,
+            from_key,
+            [Payment(destination=to_id, asset=ASSET, amount=amount)],
+        ),
+        f"Payment of {amount} CLAW",
+    )
+
+
+# Creates a claimable balance from `from_account` to `to_account` of `amount`
+def create_claimable(from_account, from_key, to_account, amount):
+    from_id = from_account.account.account_id
+    to_id = to_account.account.account_id
+    print(
+        f"\nCreating claimable balance: {format_account(from_id)} → "
+        f"{format_account(to_id)} ({amount} CLAW)"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            from_account,
+            from_key,
+            [
+                CreateClaimableBalance(
+                    asset=ASSET, amount=amount, claimants=[Claimant(destination=to_id)]
+                )
+            ],
+        ),
+        f"Create Claimable Balance of {amount} CLAW",
+    )
+
+
+# Parse the ClaimableBalanceId from the transaction result XDR
+def get_balance_id(tx_response):
+    tx_result = TransactionResult.from_xdr(tx_response["result_xdr"])
+    operation_result = tx_result.result.results[0]
+
+    creation_result = operation_result.tr.create_claimable_balance_result
+    return creation_result.balance_id.to_xdr_bytes().hex()
+
+
+# Clawback the claimable balance using its ID
+def clawback_claimable(issuer_account, issuer_key, balance_id):
+    print(
+        f"\nClawback claimable balance: "
+        f"{format_account(issuer_account.account.account_id)} "
+        f"clawing back balance {balance_id}"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            issuer_account,
+            issuer_key,
+            [ClawbackClaimableBalance(balance_id=balance_id)],
+        ),
+        "Clawback Claimable Balance",
+    )
+
+
+# Clawback `amount` of CLAW from `from_account` by `by_account`
+def do_clawback(by_account, by_key, from_account, amount):
+    from_id = from_account.account.account_id
+    print(
+        f"\nClawback: {format_account(by_account.account.account_id)} "
+        f"clawing back {amount} CLAW from {format_account(from_id)}"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            by_account,
+            by_key,
+            [Clawback(asset=ASSET, from_=from_id, amount=amount)],
+        ),
+        f"Clawback of {amount} CLAW",
+    )
+
+
+# Disable clawback for a trustline by the issuer
+def disable_clawback(issuer_account, issuer_keys, for_trustor):
+    trustor_id = for_trustor.account.account_id
+    print(
+        f"\nDisabling clawback for {format_account(trustor_id)} "
+        f"on asset {ASSET.code}"
+    )
+    return submit_and_poll_transaction(
+        build_tx(
+            issuer_account,
+            issuer_keys,
+            [
+                SetTrustLineFlags(
+                    trustor=trustor_id,
+                    asset=ASSET,
+                    clear_flags=TrustLineFlags.TRUSTLINE_CLAWBACK_ENABLED_FLAG,
+                )
+            ],
+        ),
+        "Disable Clawback on Trustline",
+    )
+
+
+# Enables clawback on A, and establishes trustlines for the CLAW asset for
+# accounts B and C.
+def preamble():
+    print("\n=== SETTING UP CLAWBACK AND TRUSTLINES ===")
+    account_a, account_b, account_c = get_accounts()
+
+    enable_clawback(account_a, A)
+    print("Clawback enabled successfully")
+
+    # Get fresh accounts after enabling clawback
+    account_a, account_b, account_c = get_accounts()
+    establish_trustline(account_b, B)
+    establish_trustline(account_c, C)
+    print("All trustlines established successfully")
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  "log"
+  "net/http"
+  "net/url"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var ctx = context.Background()
+var server = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+var fee int64
+
+var A = keypair.MustRandom()
+var B = keypair.MustRandom()
+var C = keypair.MustRandom()
+
+var ASSET = txnbuild.CreditAsset{Code: "CLAW", Issuer: A.Address()}
+
+func init() {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  feeStats, err := server.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee = min(int64(feeStats.InclusionFee.P90), maxFee)
+
+  fmt.Println("=== ACCOUNT SETUP ===")
+  fmt.Printf("Account A (Issuer): %s\n", A.Address())
+  fmt.Printf("Account B (Trustor): %s\n", B.Address())
+  fmt.Printf("Account C (Trustor): %s\n", C.Address())
+  fmt.Println()
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+
+// Helper function to format account ID with label
+func formatAccount(accountID string) string {
+  shortID := accountID[:8]
+  switch accountID {
+  case A.Address():
+    return shortID + " (Account A)"
+  case B.Address():
+    return shortID + " (Account B)"
+  case C.Address():
+    return shortID + " (Account C)"
+  }
+  return shortID
+}
+
+// Helper function to scale int64 asset amounts
+func scaleAsset(x xdr.Int64) float64 {
+  return float64(int64(x)*10/10_000_000) / 10 // one decimal place
+}
+
+// Helper function to read one ledger entry with getLedgerEntries
+func getLedgerEntry(key xdr.LedgerKey) (*xdr.LedgerEntryData, error) {
+  keyB64, err := xdr.MarshalBase64(key)
+  if err != nil {
+    return nil, err
+  }
+  response, err := server.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+  if err != nil || len(response.Entries) == 0 {
+    return nil, err
+  }
+  var entry xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(response.Entries[0].DataXDR, &entry); err != nil {
+    return nil, err
+  }
+  return &entry, nil
+}
+
+// Helper function to fetch claimable balance details
+func fetchClaimableBalance(balanceID, description string) bool {
+  fmt.Printf("\n--- Checking %s ---\n", description)
+  fmt.Printf("Looking up balance ID: %s\n", balanceID)
+
+  var id xdr.ClaimableBalanceId
+  check(xdr.SafeUnmarshalHex(balanceID, &id))
+  entry, err := getLedgerEntry(xdr.LedgerKey{
+    Type:             xdr.LedgerEntryTypeClaimableBalance,
+    ClaimableBalance: &xdr.LedgerKeyClaimableBalance{BalanceId: id},
+  })
+  if err != nil || entry == nil || entry.ClaimableBalance == nil {
+    fmt.Printf("❌ Claimable balance not found (Claimable balance %s not found)\n", balanceID)
+    return false // Balance doesn't exist
+  }
+
+  claimableBalance := entry.ClaimableBalance
+  fmt.Println("✅ Found claimable balance")
+  fmt.Printf("   Amount: %.1f %s\n", scaleAsset(claimableBalance.Amount), claimableBalance.Asset.GetCode())
+  fmt.Printf("   Number of claimants: %d\n", len(claimableBalance.Claimants))
+
+  // Show claimant details
+  for index, claimant := range claimableBalance.Claimants {
+    claimantAddress := claimant.V0.Destination.Address()
+    fmt.Printf("   Claimant %d: %s\n", index+1, formatAccount(claimantAddress))
+  }
+
+  return true // Balance exists
+}
+
+// Fund accounts first
+func fundAccounts() {
+  fmt.Println("=== FUNDING ACCOUNTS WITH XLM ===")
+  networkInfo, err := server.GetNetwork(ctx)
+  check(err)
+  for _, kp := range []*keypair.Full{A, B, C} {
+    resp, err := http.Get(networkInfo.FriendbotURL + "?addr=" + url.QueryEscape(kp.Address()))
+    check(err)
+    resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+      log.Fatalf("friendbot returned %s", resp.Status)
+    }
+  }
+  fmt.Println("All accounts funded with XLM via airdrop")
+  // Wait for funding to complete
+  time.Sleep(3 * time.Second)
+}
+
+// Enables AuthClawbackEnabled on an account.
+func enableClawback(account txnbuild.Account, keys *keypair.Full) protocol.GetTransactionResponse {
+  fmt.Printf("Enabling clawback flags on account %s\n", formatAccount(account.GetAccountID()))
+  return submitAndPollTransaction(
+    buildTx(account, keys, &txnbuild.SetOptions{
+      SetFlags: []txnbuild.AccountFlag{txnbuild.AuthClawbackEnabled, txnbuild.AuthRevocable},
+    }),
+    "Enable Clawback Flags",
+  )
+}
+
+// Establishes a trustline for `recipient` for the CLAW Asset
+func establishTrustline(recipient txnbuild.Account, key *keypair.Full) protocol.GetTransactionResponse {
+  label := formatAccount(recipient.GetAccountID())
+  fmt.Printf("%s establishing trustline for %s\n", label, ASSET.Code)
+  return submitAndPollTransaction(
+    buildTx(recipient, key, &txnbuild.ChangeTrust{
+      Line:  ASSET.MustToChangeTrustAsset(),
+      Limit: "5000", // arbitrary
+    }),
+    fmt.Sprintf("Establish Trustline (%s)", label),
+  )
+}
+
+// Retrieves latest account info for all accounts.
+func getAccounts() []txnbuild.Account {
+  var accounts []txnbuild.Account
+  for _, kp := range []*keypair.Full{A, B, C} {
+    account, err := server.LoadAccount(ctx, kp.Address())
+    check(err)
+    accounts = append(accounts, account)
+  }
+  return accounts
+}
+
+// Show XLM balances (after funding)
+func showXLMBalances(accounts []txnbuild.Account) {
+  fmt.Println("\n=== XLM BALANCES ===")
+  for _, acc := range accounts {
+    accountID := acc.GetAccountID()
+    fmt.Printf("%s: %s XLM\n", formatAccount(accountID), getXLMBalance(accountID))
+  }
+}
+
+// Get XLM balance using account ledger entry
+func getXLMBalance(accountID string) string {
+  entry, err := getLedgerEntry(xdr.LedgerKey{
+    Type:    xdr.LedgerEntryTypeAccount,
+    Account: &xdr.LedgerKeyAccount{AccountId: xdr.MustAddress(accountID)},
+  })
+  if err != nil || entry == nil || entry.Account == nil {
+    return "0"
+  }
+  return fmt.Sprintf("%.1f", scaleAsset(entry.Account.Balance))
+}
+
+// Show CLAW balances
+func showCLAWBalances(accounts []txnbuild.Account) {
+  fmt.Println("\n=== CLAW BALANCES ===")
+  for _, acc := range accounts {
+    accountID := acc.GetAccountID()
+    fmt.Printf("%s: %s CLAW\n", formatAccount(accountID), getBalance(accountID))
+  }
+}
+
+// Get CLAW balance using the trustline ledger entry
+func getBalance(accountID string) string {
+  trustLineAsset, err := ASSET.MustToTrustLineAsset().ToXDR()
+  check(err)
+  entry, err := getLedgerEntry(xdr.LedgerKey{
+    Type: xdr.LedgerEntryTypeTrustline,
+    TrustLine: &xdr.LedgerKeyTrustLine{
+      AccountId: xdr.MustAddress(accountID),
+      Asset:     trustLineAsset,
+    },
+  })
+  if err != nil || entry == nil || entry.TrustLine == nil {
+    return "0"
+  }
+  return fmt.Sprintf("%.1f", scaleAsset(entry.TrustLine.Balance))
+}
+
+// Helps simplify creating & signing a transaction.
+func buildTx(source txnbuild.Account, signer *keypair.Full, ops ...txnbuild.Operation) *txnbuild.Transaction {
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        source,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           ops,
+  })
+  check(err)
+  tx, err = tx.Sign(network.TestNetworkPassphrase, signer)
+  check(err)
+  return tx
+}
+
+// Helper function to submit transaction and poll for completion using RPC
+func submitAndPollTransaction(tx *txnbuild.Transaction, description string) protocol.GetTransactionResponse {
+  envelope, err := tx.Base64()
+  check(err)
+  submitResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  check(err)
+  if submitResponse.Status != "PENDING" {
+    log.Fatalf("Transaction submission failed: %s", submitResponse.Status)
+  }
+
+  fmt.Printf("%s submitted: %s\n", description, submitResponse.Hash)
+
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  finalResponse, err := server.PollTransaction(pollCtx, submitResponse.Hash)
+  switch {
+  case errors.Is(err, context.DeadlineExceeded):
+    // Not in a ledger yet: the outcome is unknown, not failed.
+    fmt.Printf("%s not found yet: %s\n", description, submitResponse.Hash)
+  case err != nil:
+    log.Fatal(err)
+  case finalResponse.Status == protocol.TransactionStatusSuccess:
+    fmt.Printf("%s completed successfully\n", description)
+  default:
+    fmt.Printf("%s failed: %s\n", description, finalResponse.Status)
+  }
+  return finalResponse
+}
+
+// Makes payment from `fromAccount` to `toAccount` of `amount`
+func makePayment(toAccount, fromAccount txnbuild.Account, fromKey *keypair.Full, amount string) protocol.GetTransactionResponse {
+  fmt.Printf("\nPayment: %s → %s (%s CLAW)\n",
+    formatAccount(fromAccount.GetAccountID()), formatAccount(toAccount.GetAccountID()), amount)
+  return submitAndPollTransaction(
+    buildTx(fromAccount, fromKey, &txnbuild.Payment{
+      Destination: toAccount.GetAccountID(),
+      Asset:       ASSET,
+      Amount:      amount,
+    }),
+    fmt.Sprintf("Payment of %s CLAW", amount),
+  )
+}
+
+// Creates a claimable balance from `fromAccount` to `toAccount` of `amount`,
+// and returns the new balance ID
+func createClaimable(fromAccount txnbuild.Account, fromKey *keypair.Full, toAccount txnbuild.Account, amount string) string {
+  fmt.Printf("\nCreating claimable balance: %s → %s (%s CLAW)\n",
+    formatAccount(fromAccount.GetAccountID()), formatAccount(toAccount.GetAccountID()), amount)
+  tx := buildTx(fromAccount, fromKey, &txnbuild.CreateClaimableBalance{
+    Asset:        ASSET,
+    Amount:       amount,
+    Destinations: []txnbuild.Claimant{txnbuild.NewClaimant(toAccount.GetAccountID(), nil)},
+  })
+  submitAndPollTransaction(tx, fmt.Sprintf("Create Claimable Balance of %s CLAW", amount))
+  return getBalanceID(tx)
+}
+
+// The ClaimableBalanceId comes from the source account, sequence number and
+// operation index, so the Go SDK computes it from the built transaction
+func getBalanceID(tx *txnbuild.Transaction) string {
+  balanceID, err := tx.ClaimableBalanceID(0)
+  check(err)
+  return balanceID
+}
+
+// Clawback the claimable balance using its ID
+func clawbackClaimable(issuerAccount txnbuild.Account, issuerKey *keypair.Full, balanceID string) protocol.GetTransactionResponse {
+  fmt.Printf("\nClawback claimable balance: %s clawing back balance %s\n",
+    formatAccount(issuerAccount.GetAccountID()), balanceID)
+  return submitAndPollTransaction(
+    buildTx(issuerAccount, issuerKey, &txnbuild.ClawbackClaimableBalance{BalanceID: balanceID}),
+    "Clawback Claimable Balance",
+  )
+}
+
+// Clawback `amount` of CLAW from `fromAccount` by `byAccount`
+func doClawback(byAccount txnbuild.Account, byKey *keypair.Full, fromAccount txnbuild.Account, amount string) protocol.GetTransactionResponse {
+  fmt.Printf("\nClawback: %s clawing back %s CLAW from %s\n",
+    formatAccount(byAccount.GetAccountID()), amount, formatAccount(fromAccount.GetAccountID()))
+  return submitAndPollTransaction(
+    buildTx(byAccount, byKey, &txnbuild.Clawback{
+      From:   fromAccount.GetAccountID(),
+      Asset:  ASSET,
+      Amount: amount,
+    }),
+    fmt.Sprintf("Clawback of %s CLAW", amount),
+  )
+}
+
+// Disable clawback for a trustline by the issuer
+func disableClawback(issuerAccount txnbuild.Account, issuerKeys *keypair.Full, forTrustor txnbuild.Account) protocol.GetTransactionResponse {
+  fmt.Printf("\nDisabling clawback for %s on asset %s\n", formatAccount(forTrustor.GetAccountID()), ASSET.Code)
+  return submitAndPollTransaction(
+    buildTx(issuerAccount, issuerKeys, &txnbuild.SetTrustLineFlags{
+      Trustor:    forTrustor.GetAccountID(),
+      Asset:      ASSET,
+      ClearFlags: []txnbuild.TrustLineFlag{txnbuild.TrustLineClawbackEnabled},
+    }),
+    "Disable Clawback on Trustline",
+  )
+}
+
+// Enables clawback on A, and establishes trustlines for the CLAW asset for
+// accounts B and C.
+func preamble() {
+  fmt.Println("\n=== SETTING UP CLAWBACK AND TRUSTLINES ===")
+  accounts := getAccounts()
+
+  enableClawback(accounts[0], A)
+  fmt.Println("Clawback enabled successfully")
+
+  // Get fresh accounts after enabling clawback
+  accounts = getAccounts()
+  establishTrustline(accounts[1], B)
+  establishTrustline(accounts[2], C)
+  fmt.Println("All trustlines established successfully")
+}
+```
+
+```java Java
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+
+import org.stellar.sdk.AccountFlag;
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.AssetTypeCreditAlphaNum;
+import org.stellar.sdk.ChangeTrustAsset;
+import org.stellar.sdk.Claimant;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Predicate;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.TrustLineAsset;
+import org.stellar.sdk.Util;
+import org.stellar.sdk.operations.ChangeTrustOperation;
+import org.stellar.sdk.operations.ClawbackClaimableBalanceOperation;
+import org.stellar.sdk.operations.ClawbackOperation;
+import org.stellar.sdk.operations.CreateClaimableBalanceOperation;
+import org.stellar.sdk.operations.Operation;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.operations.SetOptionsOperation;
+import org.stellar.sdk.operations.SetTrustlineFlagsOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.xdr.ClaimableBalanceEntry;
+import org.stellar.sdk.xdr.ClaimableBalanceID;
+import org.stellar.sdk.xdr.LedgerEntry;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+import org.stellar.sdk.xdr.TrustLineFlags;
+
+public final class Clawbacks {
+  private static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  private static final KeyPair A = KeyPair.random();
+  private static final KeyPair B = KeyPair.random();
+  private static final KeyPair C = KeyPair.random();
+
+  private static final AssetTypeCreditAlphaNum ASSET =
+    (AssetTypeCreditAlphaNum) Asset.createNonNativeAsset("CLAW", A.getAccountId());
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  private static final long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+  private static final long fee = Math.min(server.getFeeStats().getInclusionFee().getP90(), maxFee);
+
+  static {
+    System.out.println("=== ACCOUNT SETUP ===");
+    System.out.println("Account A (Issuer): " + A.getAccountId());
+    System.out.println("Account B (Trustor): " + B.getAccountId());
+    System.out.println("Account C (Trustor): " + C.getAccountId());
+    System.out.println();
+  }
+
+  // Helper function to format account ID with label
+  private static String formatAccount(String accountId) {
+    String shortId = accountId.substring(0, 8);
+    if (accountId.equals(A.getAccountId())) return shortId + " (Account A)";
+    if (accountId.equals(B.getAccountId())) return shortId + " (Account B)";
+    if (accountId.equals(C.getAccountId())) return shortId + " (Account C)";
+    return shortId;
+  }
+
+  // Helper function to scale int64 asset amounts
+  private static double scaleAsset(long x) {
+    return (x * 10 / 10_000_000) / 10.0; // one decimal place
+  }
+
+  // Helper function to read one ledger entry with getLedgerEntries
+  private static LedgerEntry.LedgerEntryData getLedgerEntry(LedgerKey key) {
+    GetLedgerEntriesResponse response = server.getLedgerEntries(List.of(key));
+    if (response.getEntries() == null || response.getEntries().isEmpty()) {
+      return null;
+    }
+    return response.getEntries().get(0).parseXdr();
+  }
+
+  // Helper function to fetch claimable balance details
+  private static boolean fetchClaimableBalance(String balanceId, String description) throws Exception {
+    System.out.printf("%n--- Checking %s ---%n", description);
+    System.out.println("Looking up balance ID: " + balanceId);
+
+    ClaimableBalanceID id = ClaimableBalanceID.fromXdrByteArray(Util.hexToBytes(balanceId));
+    LedgerEntry.LedgerEntryData entry = getLedgerEntry(LedgerKey.builder()
+      .discriminant(LedgerEntryType.CLAIMABLE_BALANCE)
+      .claimableBalance(LedgerKey.LedgerKeyClaimableBalance.builder().balanceID(id).build())
+      .build());
+    if (entry == null || entry.getClaimableBalance() == null) {
+      System.out.printf("❌ Claimable balance not found (Claimable balance %s not found)%n", balanceId);
+      return false; // Balance doesn't exist
+    }
+
+    ClaimableBalanceEntry claimableBalance = entry.getClaimableBalance();
+    String code = ((AssetTypeCreditAlphaNum) Asset.fromXdr(claimableBalance.getAsset())).getCode();
+    System.out.println("✅ Found claimable balance");
+    System.out.printf("   Amount: %.1f %s%n", scaleAsset(claimableBalance.getAmount().getInt64()), code);
+    System.out.printf("   Number of claimants: %d%n", claimableBalance.getClaimants().length);
+
+    // Show claimant details
+    for (int index = 0; index < claimableBalance.getClaimants().length; index++) {
+      String claimantAddress = KeyPair.fromXdrPublicKey(
+        claimableBalance.getClaimants()[index].getV0().getDestination().getAccountID()).getAccountId();
+      System.out.printf("   Claimant %d: %s%n", index + 1, formatAccount(claimantAddress));
+    }
+
+    return true; // Balance exists
+  }
+
+  // Fund accounts first
+  private static void fundAccounts() throws Exception {
+    System.out.println("=== FUNDING ACCOUNTS WITH XLM ===");
+    String friendbotUrl = server.getNetwork().getFriendbotUrl();
+    HttpClient http = HttpClient.newHttpClient();
+    for (KeyPair kp : List.of(A, B, C)) {
+      HttpRequest request = HttpRequest.newBuilder(
+          URI.create(friendbotUrl + "?addr=" + URLEncoder.encode(kp.getAccountId(), StandardCharsets.UTF_8)))
+        .GET()
+        .build();
+      HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200) {
+        throw new IllegalStateException("friendbot returned " + response.statusCode());
+      }
+    }
+    System.out.println("All accounts funded with XLM via airdrop");
+    // Wait for funding to complete
+    Thread.sleep(3000);
+  }
+
+  // Enables AuthClawbackEnabled on an account.
+  private static GetTransactionResponse enableClawback(TransactionBuilderAccount account, KeyPair keys)
+      throws InterruptedException {
+    System.out.println("Enabling clawback flags on account " + formatAccount(account.getAccountId()));
+    return submitAndPollTransaction(
+      buildTx(account, keys, SetOptionsOperation.builder()
+        .setFlags(AccountFlag.AUTH_CLAWBACK_ENABLED_FLAG.getValue() | AccountFlag.AUTH_REVOCABLE_FLAG.getValue())
+        .build()),
+      "Enable Clawback Flags");
+  }
+
+  // Establishes a trustline for `recipient` for the CLAW Asset
+  private static GetTransactionResponse establishTrustline(TransactionBuilderAccount recipient, KeyPair key)
+      throws InterruptedException {
+    String label = formatAccount(recipient.getAccountId());
+    System.out.printf("%s establishing trustline for %s%n", label, ASSET.getCode());
+    return submitAndPollTransaction(
+      buildTx(recipient, key, ChangeTrustOperation.builder()
+        .asset(new ChangeTrustAsset(ASSET))
+        .limit(new BigDecimal("5000")) // arbitrary
+        .build()),
+      "Establish Trustline (" + label + ")");
+  }
+
+  // Retrieves latest account info for all accounts.
+  private static List<TransactionBuilderAccount> getAccounts() {
+    List<TransactionBuilderAccount> accounts = new ArrayList<>();
+    for (KeyPair kp : List.of(A, B, C)) {
+      accounts.add(server.getAccount(kp.getAccountId()));
+    }
+    return accounts;
+  }
+
+  // Show XLM balances (after funding)
+  private static void showXLMBalances(List<TransactionBuilderAccount> accounts) {
+    System.out.println("\n=== XLM BALANCES ===");
+    for (TransactionBuilderAccount acc : accounts) {
+      String accountId = acc.getAccountId();
+      System.out.printf("%s: %s XLM%n", formatAccount(accountId), getXLMBalance(accountId));
+    }
+  }
+
+  // Get XLM balance using account ledger entry
+  private static String getXLMBalance(String accountId) {
+    LedgerEntry.LedgerEntryData entry = getLedgerEntry(LedgerKey.builder()
+      .discriminant(LedgerEntryType.ACCOUNT)
+      .account(LedgerKey.LedgerKeyAccount.builder()
+        .accountID(KeyPair.fromAccountId(accountId).getXdrAccountId())
+        .build())
+      .build());
+    if (entry == null || entry.getAccount() == null) {
+      return "0";
+    }
+    return String.format("%.1f", scaleAsset(entry.getAccount().getBalance().getInt64()));
+  }
+
+  // Show CLAW balances
+  private static void showCLAWBalances(List<TransactionBuilderAccount> accounts) {
+    System.out.println("\n=== CLAW BALANCES ===");
+    for (TransactionBuilderAccount acc : accounts) {
+      String accountId = acc.getAccountId();
+      System.out.printf("%s: %s CLAW%n", formatAccount(accountId), getBalance(accountId));
+    }
+  }
+
+  // Get CLAW balance using the trustline ledger entry
+  private static String getBalance(String accountId) {
+    LedgerEntry.LedgerEntryData entry = getLedgerEntry(LedgerKey.builder()
+      .discriminant(LedgerEntryType.TRUSTLINE)
+      .trustLine(LedgerKey.LedgerKeyTrustLine.builder()
+        .accountID(KeyPair.fromAccountId(accountId).getXdrAccountId())
+        .asset(new TrustLineAsset(ASSET).toXdr())
+        .build())
+      .build());
+    if (entry == null || entry.getTrustLine() == null) {
+      return "0";
+    }
+    return String.format("%.1f", scaleAsset(entry.getTrustLine().getBalance().getInt64()));
+  }
+
+  // Helps simplify creating & signing a transaction.
+  private static Transaction buildTx(TransactionBuilderAccount source, KeyPair signer, Operation... ops) {
+    TransactionBuilder builder = new TransactionBuilder(source, Network.TESTNET)
+      .setBaseFee(fee)
+      .setTimeout(30);
+    for (Operation op : ops) {
+      builder.addOperation(op);
+    }
+    Transaction tx = builder.build();
+    tx.sign(signer);
+    return tx;
+  }
+
+  // Helper function to submit transaction and poll for completion using RPC
+  private static GetTransactionResponse submitAndPollTransaction(Transaction tx, String description)
+      throws InterruptedException {
+    SendTransactionResponse submitResponse = server.sendTransaction(tx);
+    if (submitResponse.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("Transaction submission failed: " + submitResponse.getStatus());
+    }
+
+    System.out.printf("%s submitted: %s%n", description, submitResponse.getHash());
+
+    GetTransactionResponse finalResponse = server.pollTransaction(submitResponse.getHash());
+    if (finalResponse.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Not in a ledger yet: the outcome is unknown, not failed.
+      System.out.printf("%s not found yet: %s%n", description, submitResponse.getHash());
+    } else if (finalResponse.getStatus() == GetTransactionStatus.SUCCESS) {
+      System.out.printf("%s completed successfully%n", description);
+    } else {
+      System.out.printf("%s failed: %s%n", description, finalResponse.getStatus());
+    }
+    return finalResponse;
+  }
+
+  // Makes payment from `fromAccount` to `toAccount` of `amount`
+  private static GetTransactionResponse makePayment(
+      TransactionBuilderAccount toAccount, TransactionBuilderAccount fromAccount, KeyPair fromKey, String amount)
+      throws InterruptedException {
+    System.out.printf("%nPayment: %s → %s (%s CLAW)%n",
+      formatAccount(fromAccount.getAccountId()), formatAccount(toAccount.getAccountId()), amount);
+    return submitAndPollTransaction(
+      buildTx(fromAccount, fromKey, PaymentOperation.builder()
+        .destination(toAccount.getAccountId())
+        .asset(ASSET)
+        .amount(new BigDecimal(amount))
+        .build()),
+      "Payment of " + amount + " CLAW");
+  }
+
+  // Creates a claimable balance from `fromAccount` to `toAccount` of `amount`,
+  // and returns the new balance ID
+  private static String createClaimable(
+      TransactionBuilderAccount fromAccount, KeyPair fromKey, TransactionBuilderAccount toAccount, String amount)
+      throws InterruptedException {
+    System.out.printf("%nCreating claimable balance: %s → %s (%s CLAW)%n",
+      formatAccount(fromAccount.getAccountId()), formatAccount(toAccount.getAccountId()), amount);
+    Transaction tx = buildTx(fromAccount, fromKey, CreateClaimableBalanceOperation.builder()
+      .asset(ASSET)
+      .amount(new BigDecimal(amount))
+      .claimants(List.of(new Claimant(toAccount.getAccountId(), new Predicate.Unconditional())))
+      .build());
+    submitAndPollTransaction(tx, "Create Claimable Balance of " + amount + " CLAW");
+    return getBalanceID(tx);
+  }
+
+  // The ClaimableBalanceId comes from the source account, sequence number and
+  // operation index, so the Java SDK computes it from the built transaction
+  private static String getBalanceID(Transaction tx) {
+    return tx.getClaimableBalanceId(0);
+  }
+
+  // Clawback the claimable balance using its ID
+  private static GetTransactionResponse clawbackClaimable(
+      TransactionBuilderAccount issuerAccount, KeyPair issuerKey, String balanceId) throws InterruptedException {
+    System.out.printf("%nClawback claimable balance: %s clawing back balance %s%n",
+      formatAccount(issuerAccount.getAccountId()), balanceId);
+    return submitAndPollTransaction(
+      buildTx(issuerAccount, issuerKey, ClawbackClaimableBalanceOperation.builder().balanceId(balanceId).build()),
+      "Clawback Claimable Balance");
+  }
+
+  // Clawback `amount` of CLAW from `fromAccount` by `byAccount`
+  private static GetTransactionResponse doClawback(
+      TransactionBuilderAccount byAccount, KeyPair byKey, TransactionBuilderAccount fromAccount, String amount)
+      throws InterruptedException {
+    System.out.printf("%nClawback: %s clawing back %s CLAW from %s%n",
+      formatAccount(byAccount.getAccountId()), amount, formatAccount(fromAccount.getAccountId()));
+    return submitAndPollTransaction(
+      buildTx(byAccount, byKey, ClawbackOperation.builder()
+        .from(fromAccount.getAccountId())
+        .asset(ASSET)
+        .amount(new BigDecimal(amount))
+        .build()),
+      "Clawback of " + amount + " CLAW");
+  }
+
+  // Disable clawback for a trustline by the issuer
+  private static GetTransactionResponse disableClawback(
+      TransactionBuilderAccount issuerAccount, KeyPair issuerKeys, TransactionBuilderAccount forTrustor)
+      throws InterruptedException {
+    System.out.printf("%nDisabling clawback for %s on asset %s%n",
+      formatAccount(forTrustor.getAccountId()), ASSET.getCode());
+    return submitAndPollTransaction(
+      buildTx(issuerAccount, issuerKeys, SetTrustlineFlagsOperation.builder()
+        .trustor(forTrustor.getAccountId())
+        .asset(ASSET)
+        .setFlags(EnumSet.noneOf(TrustLineFlags.class))
+        .clearFlags(EnumSet.of(TrustLineFlags.TRUSTLINE_CLAWBACK_ENABLED_FLAG))
+        .build()),
+      "Disable Clawback on Trustline");
+  }
+
+  // Enables clawback on A, and establishes trustlines for the CLAW asset for
+  // accounts B and C.
+  private static void preamble() throws InterruptedException {
+    System.out.println("\n=== SETTING UP CLAWBACK AND TRUSTLINES ===");
+    List<TransactionBuilderAccount> accounts = getAccounts();
+
+    enableClawback(accounts.get(0), A);
+    System.out.println("Clawback enabled successfully");
+
+    // Get fresh accounts after enabling clawback
+    accounts = getAccounts();
+    establishTrustline(accounts.get(1), B);
+    establishTrustline(accounts.get(2), C);
+    System.out.println("All trustlines established successfully");
+  }
+
+  // Add the methods from the examples below here, plus a main method that
+  // calls runExample1(), runExample2(), or runExample3().
+}
+```
+
 </CodeGroup>
 
 ### Example 1: Payments
@@ -464,9 +1546,111 @@ function runExample1() {
 }
 ```
 
+```python Python
+def example_payment_and_then_clawback():
+    print("\n=== PAYMENT AND CLAWBACK EXAMPLE ===")
+    account_a, account_b, account_c = get_accounts()
+
+    # A issues 1000 CLAW to B
+    make_payment(account_b, account_a, A, "1000")
+    print("\n--- After A → B payment ---")
+    account_a, account_b, account_c = get_accounts()
+    show_claw_balances([account_a, account_b, account_c])
+
+    # B sends 500 CLAW to C
+    make_payment(account_c, account_b, B, "500")
+    print("\n--- After B → C payment ---")
+    account_a, account_b, account_c = get_accounts()
+    show_claw_balances([account_a, account_b, account_c])
+
+    # A claws back 250 CLAW from C
+    do_clawback(account_a, A, account_c, "250")
+    return get_accounts()
+
+
+def run_example1():
+    try:
+        fund_accounts()
+        show_xlm_balances(get_accounts())
+        preamble()
+        final_accounts = example_payment_and_then_clawback()
+        print("\n--- FINAL BALANCES ---")
+        show_claw_balances(final_accounts)
+        print("\n=== CLAWBACK DEMO COMPLETED ===")
+    except Exception as error:
+        print("Error in example:", error)
+```
+
+```go Go
+func examplePaymentAndThenClawback() []txnbuild.Account {
+  fmt.Println("\n=== PAYMENT AND CLAWBACK EXAMPLE ===")
+  accounts := getAccounts()
+
+  // A issues 1000 CLAW to B
+  makePayment(accounts[1], accounts[0], A, "1000")
+  fmt.Println("\n--- After A → B payment ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts)
+
+  // B sends 500 CLAW to C
+  makePayment(accounts[2], accounts[1], B, "500")
+  fmt.Println("\n--- After B → C payment ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts)
+
+  // A claws back 250 CLAW from C
+  doClawback(accounts[0], A, accounts[2], "250")
+  return getAccounts()
+}
+
+func runExample1() {
+  fundAccounts()
+  showXLMBalances(getAccounts())
+  preamble()
+  finalAccounts := examplePaymentAndThenClawback()
+  fmt.Println("\n--- FINAL BALANCES ---")
+  showCLAWBalances(finalAccounts)
+  fmt.Println("\n=== CLAWBACK DEMO COMPLETED ===")
+}
+```
+
+```java Java
+  private static List<TransactionBuilderAccount> examplePaymentAndThenClawback()
+      throws InterruptedException {
+    System.out.println("\n=== PAYMENT AND CLAWBACK EXAMPLE ===");
+    List<TransactionBuilderAccount> accounts = getAccounts();
+
+    // A issues 1000 CLAW to B
+    makePayment(accounts.get(1), accounts.get(0), A, "1000");
+    System.out.println("\n--- After A → B payment ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts);
+
+    // B sends 500 CLAW to C
+    makePayment(accounts.get(2), accounts.get(1), B, "500");
+    System.out.println("\n--- After B → C payment ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts);
+
+    // A claws back 250 CLAW from C
+    doClawback(accounts.get(0), A, accounts.get(2), "250");
+    return getAccounts();
+  }
+
+  private static void runExample1() throws Exception {
+    fundAccounts();
+    showXLMBalances(getAccounts());
+    preamble();
+    List<TransactionBuilderAccount> finalAccounts = examplePaymentAndThenClawback();
+    System.out.println("\n--- FINAL BALANCES ---");
+    showCLAWBalances(finalAccounts);
+    System.out.println("\n=== CLAWBACK DEMO COMPLETED ===");
+  }
+```
+
 </CodeGroup>
 
-When you invoke `runExample1()`, you should see output similar to:
+When you invoke `runExample1()` (`run_example1()` in Python), you should see output similar to:
 
 ```text
 === ACCOUNT SETUP ===
@@ -636,9 +1820,144 @@ function runExample2() {
 }
 ```
 
+```python Python
+def example_claimable_balance_clawback():
+    print("\n=== CLAIMABLE BALANCE CLAWBACK EXAMPLE ===")
+    account_a, account_b, account_c = get_accounts()
+
+    print("\n--- Initial CLAW balances ---")
+    show_claw_balances([account_a, account_b, account_c])
+
+    # A pays 1000 CLAW to B
+    make_payment(account_b, account_a, A, "1000")
+    print("\n--- After A → B payment ---")
+    account_a, account_b, account_c = get_accounts()
+    show_claw_balances([account_a, account_b, account_c])
+
+    # B creates claimable balance for C
+    tx_resp = create_claimable(account_b, B, account_c, "300")
+    balance_id = get_balance_id(tx_resp)
+    print(f"Claimable balance created with ID: {balance_id}")
+
+    print("\n--- After claimable balance creation ---")
+    account_a, account_b, account_c = get_accounts()
+    show_claw_balances([account_a, account_b, account_c])
+
+    # Check that the claimable balance exists
+    fetch_claimable_balance(balance_id, "claimable balance after creation")
+
+    # A claws back the claimable balance
+    clawback_claimable(account_a, A, balance_id)
+
+    # Check that the claimable balance no longer exists
+    fetch_claimable_balance(balance_id, "claimable balance after clawback")
+    return get_accounts()
+
+
+def run_example2():
+    try:
+        fund_accounts()
+        show_xlm_balances(get_accounts())
+        preamble()
+        final_accounts = example_claimable_balance_clawback()
+        print("\n--- FINAL BALANCES ---")
+        show_claw_balances(final_accounts)
+        print("\n=== CLAIMABLE BALANCE CLAWBACK DEMO COMPLETED ===")
+    except Exception as error:
+        print("Error in example:", error)
+```
+
+```go Go
+func exampleClaimableBalanceClawback() []txnbuild.Account {
+  fmt.Println("\n=== CLAIMABLE BALANCE CLAWBACK EXAMPLE ===")
+  accounts := getAccounts()
+
+  fmt.Println("\n--- Initial CLAW balances ---")
+  showCLAWBalances(accounts)
+
+  // A pays 1000 CLAW to B
+  makePayment(accounts[1], accounts[0], A, "1000")
+  fmt.Println("\n--- After A → B payment ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts)
+
+  // B creates claimable balance for C
+  balanceID := createClaimable(accounts[1], B, accounts[2], "300")
+  fmt.Printf("Claimable balance created with ID: %s\n", balanceID)
+
+  fmt.Println("\n--- After claimable balance creation ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts)
+
+  // Check that the claimable balance exists
+  fetchClaimableBalance(balanceID, "claimable balance after creation")
+
+  // A claws back the claimable balance
+  clawbackClaimable(accounts[0], A, balanceID)
+
+  // Check that the claimable balance no longer exists
+  fetchClaimableBalance(balanceID, "claimable balance after clawback")
+  return getAccounts()
+}
+
+func runExample2() {
+  fundAccounts()
+  showXLMBalances(getAccounts())
+  preamble()
+  finalAccounts := exampleClaimableBalanceClawback()
+  fmt.Println("\n--- FINAL BALANCES ---")
+  showCLAWBalances(finalAccounts)
+  fmt.Println("\n=== CLAIMABLE BALANCE CLAWBACK DEMO COMPLETED ===")
+}
+```
+
+```java Java
+  private static List<TransactionBuilderAccount> exampleClaimableBalanceClawback() throws Exception {
+    System.out.println("\n=== CLAIMABLE BALANCE CLAWBACK EXAMPLE ===");
+    List<TransactionBuilderAccount> accounts = getAccounts();
+
+    System.out.println("\n--- Initial CLAW balances ---");
+    showCLAWBalances(accounts);
+
+    // A pays 1000 CLAW to B
+    makePayment(accounts.get(1), accounts.get(0), A, "1000");
+    System.out.println("\n--- After A → B payment ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts);
+
+    // B creates claimable balance for C
+    String balanceId = createClaimable(accounts.get(1), B, accounts.get(2), "300");
+    System.out.println("Claimable balance created with ID: " + balanceId);
+
+    System.out.println("\n--- After claimable balance creation ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts);
+
+    // Check that the claimable balance exists
+    fetchClaimableBalance(balanceId, "claimable balance after creation");
+
+    // A claws back the claimable balance
+    clawbackClaimable(accounts.get(0), A, balanceId);
+
+    // Check that the claimable balance no longer exists
+    fetchClaimableBalance(balanceId, "claimable balance after clawback");
+    return getAccounts();
+  }
+
+  private static void runExample2() throws Exception {
+    fundAccounts();
+    showXLMBalances(getAccounts());
+    preamble();
+    List<TransactionBuilderAccount> finalAccounts = exampleClaimableBalanceClawback();
+    System.out.println("\n--- FINAL BALANCES ---");
+    showCLAWBalances(finalAccounts);
+    System.out.println("\n=== CLAIMABLE BALANCE CLAWBACK DEMO COMPLETED ===");
+  }
+```
+
 </CodeGroup>
 
-When you invoke `runExample2()`, you should see output similar to:
+When you invoke `runExample2()` (`run_example2()` in Python), you should see output similar to:
 
 ```
 === ACCOUNT SETUP ===
@@ -807,9 +2126,134 @@ function runExample3() {
 }
 ```
 
+```python Python
+def example_selective_clawback_then_disable_clawback():
+    print("\n=== SELECTIVE CLAWBACK EXAMPLE ===")
+    account_a, account_b, _ = get_accounts()
+
+    print("\n--- Initial CLAW balances ---")
+    show_claw_balances([account_a, account_b])
+    try:
+        # A pays 1000 CLAW to B
+        make_payment(account_b, account_a, A, "1000")
+        print("\n--- After A → B payment ---")
+        account_a, account_b, _ = get_accounts()
+        show_claw_balances([account_a, account_b])
+
+        # A claws back 500 CLAW from B (should work)
+        do_clawback(account_a, A, account_b, "500")
+        print("\n--- After first clawback ---")
+        account_a, account_b, _ = get_accounts()
+        show_claw_balances([account_a, account_b])
+
+        # A disables clawback for B's trustline
+        disable_clawback(account_a, A, account_b)
+
+        # Try to clawback again (should fail)
+        do_clawback(account_a, A, account_b, "250")
+    except Exception as err:
+        print("Error:", err)
+    return get_accounts()
+
+
+def run_example3():
+    try:
+        fund_accounts()
+        accounts = get_accounts()
+        show_xlm_balances([accounts[0], accounts[1]])  # Only show A and B
+        preamble()  # This sets up clawback and trustlines for A, B, C
+        final_accounts = example_selective_clawback_then_disable_clawback()
+        print("\n--- FINAL BALANCES ---")
+        show_claw_balances([final_accounts[0], final_accounts[1]])  # Only A and B
+        print("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===")
+    except Exception as error:
+        print("Error in example:", error)
+```
+
+```go Go
+func exampleSelectiveClawbackThenDisableClawback() []txnbuild.Account {
+  fmt.Println("\n=== SELECTIVE CLAWBACK EXAMPLE ===")
+  accounts := getAccounts()
+
+  fmt.Println("\n--- Initial CLAW balances ---")
+  showCLAWBalances(accounts[:2])
+
+  // A pays 1000 CLAW to B
+  makePayment(accounts[1], accounts[0], A, "1000")
+  fmt.Println("\n--- After A → B payment ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts[:2])
+
+  // A claws back 500 CLAW from B (should work)
+  doClawback(accounts[0], A, accounts[1], "500")
+  fmt.Println("\n--- After first clawback ---")
+  accounts = getAccounts()
+  showCLAWBalances(accounts[:2])
+
+  // A disables clawback for B's trustline
+  disableClawback(accounts[0], A, accounts[1])
+
+  // Try to clawback again (should fail)
+  doClawback(accounts[0], A, accounts[1], "250")
+  return getAccounts()
+}
+
+func runExample3() {
+  fundAccounts()
+  accounts := getAccounts()
+  showXLMBalances(accounts[:2]) // Only show A and B
+  preamble()                    // This sets up clawback and trustlines for A, B, C
+  finalAccounts := exampleSelectiveClawbackThenDisableClawback()
+  fmt.Println("\n--- FINAL BALANCES ---")
+  showCLAWBalances(finalAccounts[:2]) // Only A and B
+  fmt.Println("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===")
+}
+```
+
+```java Java
+  private static List<TransactionBuilderAccount> exampleSelectiveClawbackThenDisableClawback()
+      throws InterruptedException {
+    System.out.println("\n=== SELECTIVE CLAWBACK EXAMPLE ===");
+    List<TransactionBuilderAccount> accounts = getAccounts();
+
+    System.out.println("\n--- Initial CLAW balances ---");
+    showCLAWBalances(accounts.subList(0, 2));
+
+    // A pays 1000 CLAW to B
+    makePayment(accounts.get(1), accounts.get(0), A, "1000");
+    System.out.println("\n--- After A → B payment ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts.subList(0, 2));
+
+    // A claws back 500 CLAW from B (should work)
+    doClawback(accounts.get(0), A, accounts.get(1), "500");
+    System.out.println("\n--- After first clawback ---");
+    accounts = getAccounts();
+    showCLAWBalances(accounts.subList(0, 2));
+
+    // A disables clawback for B's trustline
+    disableClawback(accounts.get(0), A, accounts.get(1));
+
+    // Try to clawback again (should fail)
+    doClawback(accounts.get(0), A, accounts.get(1), "250");
+    return getAccounts();
+  }
+
+  private static void runExample3() throws Exception {
+    fundAccounts();
+    List<TransactionBuilderAccount> accounts = getAccounts();
+    showXLMBalances(accounts.subList(0, 2)); // Only show A and B
+    preamble(); // This sets up clawback and trustlines for A, B, C
+    List<TransactionBuilderAccount> finalAccounts = exampleSelectiveClawbackThenDisableClawback();
+    System.out.println("\n--- FINAL BALANCES ---");
+    showCLAWBalances(finalAccounts.subList(0, 2)); // Only A and B
+    System.out.println("\n=== SELECTIVE CLAWBACK DEMO COMPLETED ===");
+  }
+```
+
 </CodeGroup>
 
-When you invoke `runExample3()`, you should see output similar to:
+When you invoke `runExample3()` (`run_example3()` in Python), you should see output similar to:
 
 ```text
 === ACCOUNT SETUP ===

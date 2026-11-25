@@ -67,13 +67,30 @@ SDK v16 and earlier wrap 64-bit integers in classes, so older code calls `new xd
 
 For the other XDR types, see the [v17 XDR migration guide](https://stellar.github.io/js-stellar-sdk/migration/xdr-migration/). It shows the v17 shapes of unions, enums, integers, and bytes, so it should be your primary guide to navigating the XDR if you're using JavaScript.
 
-Other languages, such as Python (see `stellar-sdk`'s [uint64.html](https://stellar-sdk.readthedocs.io/en/stable/_modules/stellar_sdk/xdr/uint64.html) documentation), support arbitrarily-sized integers by default, so there are no such variations:
+Python, Go, and Java have no such variations. Python (see `stellar-sdk`'s [uint64.html](https://stellar-sdk.readthedocs.io/en/stable/_modules/stellar_sdk/xdr/uint64.html) documentation) supports arbitrarily-sized integers by default. In Go, `xdr.Uint64` is a named `uint64` type, so a plain conversion works. In Java, `Uint64` wraps an `XdrUnsignedHyperInteger`, which takes a `Long` or, for values above `Long.MAX_VALUE`, a `BigInteger`:
 
-```python
+<CodeGroup>
+
+```python Python
 from stellar_sdk import xdr
 
 u64 = xdr.Uint64(1_000_000_000_000_000)
 ```
+
+```go Go
+import "github.com/stellar/go-stellar-sdk/xdr"
+
+u64 := xdr.Uint64(1_000_000_000_000_000)
+```
+
+```java Java
+import org.stellar.sdk.xdr.Uint64;
+import org.stellar.sdk.xdr.XdrUnsignedHyperInteger;
+
+Uint64 u64 = new Uint64(new XdrUnsignedHyperInteger(1_000_000_000_000_000L));
+```
+
+</CodeGroup>
 
 As a result, many of the basic primitives can be initialized in the "intuitive" way for your respective language.
 
@@ -81,7 +98,7 @@ As a result, many of the basic primitives can be initialized in the "intuitive" 
 
 This is where things get a little more complicated. A _union type_ is a generic type that switches between different "arms", each of which is a different internal type. When parsing an XDR union type, it's important to determine which arm is being used before you try parsing what's inside.
 
-Let's take an [`SCAddress`](https://github.com/stellar/stellar-xdr/blob/70180d5e8d9caee9e8645ed8a38c36a8cf403cd9/Stellar-contract.x#L185-L191), for example. From the type definition, we can see that it's either an account (i.e. `SC_ADDRESS_TYPE_ACCOUNT`) or the hash of a contract (`SC_ADDRESS_TYPE_CONTRACT`). Right above that definition, you can see that these are constants of the `SCAddressType` enum defined as 0 or 1, respectively.
+Let's take an [`SCAddress`](https://github.com/stellar/stellar-xdr/blob/4f524bbac80c781c06e4fb5fc93a2d0d331d6705/Stellar-contract.x#L179-L215), for example. From the type definition, we can see that it has several arms. Two of them are an account (i.e. `SC_ADDRESS_TYPE_ACCOUNT`) and the hash of a contract (`SC_ADDRESS_TYPE_CONTRACT`). Right above that definition, you can see that these are constants of the `SCAddressType` enum defined as 0 and 1, respectively. The other arms hold a muxed account, a claimable balance, a liquidity pool, and, from Protocol 30, a muxed contract. The examples below handle the first two arms and treat every other arm as unexpected.
 
 In general, unions follow a particular pattern: switch on the type and match the arm you expect. So when you have one of these unions, you need to figure out which one it is:
 
@@ -118,9 +135,51 @@ else:
     raise Exception(f"Unexpected address type: {scAddr.type}")
 ```
 
+```go Go
+import (
+  "fmt"
+
+  "github.com/stellar/go-stellar-sdk/xdr"
+)
+
+// suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
+switch scAddr.Type {
+case xdr.ScAddressTypeScAddressTypeAccount:
+  fmt.Println("The account is:", scAddr.MustAccountId().Address())
+
+case xdr.ScAddressTypeScAddressTypeContract:
+  contractID := scAddr.MustContractId()
+  fmt.Printf("The contract is: %x\n", contractID[:])
+
+default:
+  panic(fmt.Sprintf("Unexpected address type: %v", scAddr.Type))
+}
+```
+
+```java Java
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.StrKey;
+
+// suppose `scAddr` is an instance of `org.stellar.sdk.xdr.SCAddress` we're parsing
+switch (scAddr.getDiscriminant()) {
+  case SC_ADDRESS_TYPE_ACCOUNT:
+    KeyPair account = KeyPair.fromXdrPublicKey(scAddr.getAccountId().getAccountID());
+    System.out.println("The account is: " + account.getAccountId());
+    break;
+
+  case SC_ADDRESS_TYPE_CONTRACT:
+    byte[] contractId = scAddr.getContractId().getContractID().getHash();
+    System.out.println("The contract is: " + StrKey.encodeContract(contractId));
+    break;
+
+  default:
+    throw new IllegalArgumentException("Unexpected address type: " + scAddr.getDiscriminant());
+}
+```
+
 </CodeGroup>
 
-In the JavaScript SDK (v17 and later), `.type` is the name of the arm as a string, and the arm's payload is a plain property named after it (`scAddr.accountId`). TypeScript narrows the union inside each `case`, so it knows which property exists. Every arm also exposes its payload as `.value`. You can see the references for these in the documentation ([Python](https://stellar-sdk.readthedocs.io/en/stable/api.html#scaddress) and [JavaScript](https://stellar.github.io/js-stellar-sdk/migration/xdr-migration/#2-union-types-discriminated-classes-not-switchvalue-pairs), respectively).
+In the JavaScript SDK (v17 and later), `.type` is the name of the arm as a string, and the arm's payload is a plain property named after it (`scAddr.accountId`). TypeScript narrows the union inside each `case`, so it knows which property exists. Every arm also exposes its payload as `.value`. In Go, `Type` is an enum constant and each arm is a pointer field (`scAddr.AccountId`). The generated `MustAccountId()` returns the arm and panics if the union holds another one, while `GetAccountId()` returns it with an `ok` flag. In Java, `getDiscriminant()` returns an enum constant and each arm has its own getter (`scAddr.getAccountId()`), which returns `null` when the union holds another arm. You can see the references for these in the documentation ([Python](https://stellar-sdk.readthedocs.io/en/stable/api.html#scaddress), [JavaScript](https://stellar.github.io/js-stellar-sdk/migration/xdr-migration/#2-union-types-discriminated-classes-not-switchvalue-pairs), [Go](https://pkg.go.dev/github.com/stellar/go-stellar-sdk/xdr#ScAddress), and [Java](https://github.com/lightsail-network/java-stellar-sdk/blob/6.0.0/src/main/java/org/stellar/sdk/xdr/SCAddress.java), respectively).
 
 If you only expect one arm, the JavaScript SDK has two helpers that narrow the union for you:
 
@@ -140,7 +199,7 @@ Underneath, each arm is still identified by an enum value (`0` for an account an
 
 Unions appear in _many_ places throughout the XDR and they can be just one arm or a whole _bunch_ of arms. For example, the **s**mart **c**ontract **val**ue `ScVal` has 22 possible values since it's the universal representation for a value inside of a smart contract. You can see all of them being inspected in the JavaScript utility [`scValToNative`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#scvaltonative).
 
-Remember, XDR is the lowest level of communication on the Stellar Network. Generally speaking, there are high-level abstractions that should help with these structures. For example, the above parsing routine is exactly the purpose of the [`Address.fromScAddress`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#addressfromscaddressscaddress) and [`Address.from_xdr_sc_address`](https://stellar-sdk.readthedocs.io/en/stable/api.html#stellar_sdk.address.Address) abstractions in the JavaScript and Python SDKs, respectively. This greatly simplifies your code:
+Remember, XDR is the lowest level of communication on the Stellar network. Generally speaking, there are high-level abstractions that should help with these structures. For example, the above parsing routine is exactly the purpose of the [`Address.fromScAddress`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#addressfromscaddressscaddress) and [`Address.from_xdr_sc_address`](https://stellar-sdk.readthedocs.io/en/stable/api.html#stellar_sdk.address.Address) abstractions in the JavaScript and Python SDKs, respectively. In Go, [`ScAddress.String`](https://pkg.go.dev/github.com/stellar/go-stellar-sdk/xdr#ScAddress.String) does the same job and returns the strkey. In Java, `Address.fromSCAddress` does the same job, and the address's `toString()` returns the strkey. This greatly simplifies your code:
 
 <CodeGroup>
 
@@ -156,6 +215,18 @@ from stellar_sdk import Address
 
 # suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
 addr = Address.from_xdr_sc_address(scAddr)
+```
+
+```go Go
+// suppose `scAddr` is an instance of `xdr.ScAddress` we're parsing
+address, err := scAddr.String() // G... for an account, C... for a contract
+```
+
+```java Java
+import org.stellar.sdk.Address;
+
+// suppose `scAddr` is an instance of `org.stellar.sdk.xdr.SCAddress` we're parsing
+Address address = Address.fromSCAddress(scAddr); // address.toString() is G... or C...
 ```
 
 </CodeGroup>

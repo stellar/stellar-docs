@@ -15,7 +15,6 @@ import {
   Networks,
   Operation,
   Asset,
-  BASE_FEE,
 } from "@stellar/stellar-sdk";
 
 const horizonUrl = "https://horizon-testnet.stellar.org";
@@ -38,8 +37,13 @@ const server = new Horizon.Server(horizonUrl);
 const account = await server.loadAccount(issuerKeypair.publicKey());
 const abcAsset = new Asset("ABC", issuerKeypair.publicKey());
 
+// Bid what recent transactions paid, capped at what you're willing to spend.
+const { fee_charged } = await server.feeStats();
+const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+const fee = String(Math.min(Number(fee_charged.p90), MAX_FEE));
+
 const transaction = new TransactionBuilder(account, {
-  fee: BASE_FEE,
+  fee,
   networkPassphrase: Networks.TESTNET,
 })
   .addOperation(
@@ -83,11 +87,15 @@ server = Server('https://horizon-testnet.stellar.org')
 account = server.load_account(issuer_keypair.public_key)
 abc_asset = Asset('ABC', issuer_keypair.public_key)
 
+# Bid what recent transactions paid, capped at what you're willing to spend.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(int(server.fee_stats().call()["fee_charged"]["p90"]), MAX_FEE)
+
 transaction = (
     TransactionBuilder(
         source_account=account,
         network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
-        base_fee=100,
+        base_fee=fee,
     )
     .append_change_trust_op(
         asset=abc_asset,
@@ -107,6 +115,164 @@ transaction.sign(destination_keypair)
 
 res = server.submit_transaction(transaction)
 print(f"Transaction hash:\n{res['hash']}")
+```
+
+```go Go
+package main
+
+import (
+  "fmt"
+  "log"
+  "net/http"
+
+  "github.com/stellar/go-stellar-sdk/clients/horizonclient"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+)
+
+const friendbotURL = "https://friendbot.stellar.org"
+
+func main() {
+  issuerKeypair := keypair.MustRandom()
+  destinationKeypair := keypair.MustRandom()
+
+  fmt.Printf("issuer keys:\n%s\n%s\n\n", issuerKeypair.Address(), issuerKeypair.Seed())
+  fmt.Printf("destination account keys:\n%s\n%s\n\n", destinationKeypair.Address(), destinationKeypair.Seed())
+
+  // pre-fund the `issuer` and `destination` accounts using friendbot
+  for _, address := range []string{issuerKeypair.Address(), destinationKeypair.Address()} {
+    resp, err := http.Get(friendbotURL + "?addr=" + address)
+    check(err)
+    resp.Body.Close()
+  }
+
+  server := horizonclient.DefaultTestNetClient
+  account, err := server.AccountDetail(horizonclient.AccountRequest{AccountID: issuerKeypair.Address()})
+  check(err)
+  abcAsset := txnbuild.CreditAsset{Code: "ABC", Issuer: issuerKeypair.Address()}
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  feeStats, err := server.FeeStats()
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(feeStats.FeeCharged.P90, maxFee)
+
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        &account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.ChangeTrust{
+        Line:          abcAsset.MustToChangeTrustAsset(),
+        SourceAccount: destinationKeypair.Address(),
+      },
+      &txnbuild.Payment{
+        Destination: destinationKeypair.Address(),
+        Asset:       abcAsset,
+        Amount:      "100",
+      },
+    },
+  })
+  check(err)
+
+  tx, err = tx.Sign(network.TestNetworkPassphrase, issuerKeypair, destinationKeypair)
+  check(err)
+  res, err := server.SubmitTransaction(tx)
+  check(err)
+  fmt.Printf("transaction hash:\n%s\n", res.Hash)
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
+
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.ChangeTrustAsset;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Server;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.ChangeTrustOperation;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.TransactionResponse;
+
+public final class Quickstart {
+  private static final String FRIENDBOT_URL = "https://friendbot.stellar.org";
+
+  public static void main(String[] args) throws Exception {
+    KeyPair issuerKeypair = KeyPair.random();
+    KeyPair destinationKeypair = KeyPair.random();
+
+    System.out.printf("issuer keys:%n%s%n%s%n%n",
+      issuerKeypair.getAccountId(), new String(issuerKeypair.getSecretSeed()));
+    System.out.printf("destination account keys:%n%s%n%s%n%n",
+      destinationKeypair.getAccountId(), new String(destinationKeypair.getSecretSeed()));
+
+    // pre-fund the `issuer` and `destination` accounts using friendbot
+    HttpClient http = HttpClient.newHttpClient();
+    for (KeyPair keypair : List.of(issuerKeypair, destinationKeypair)) {
+      HttpRequest request = HttpRequest.newBuilder(URI.create(
+          FRIENDBOT_URL + "?addr=" + URLEncoder.encode(keypair.getAccountId(), StandardCharsets.UTF_8)))
+        .timeout(Duration.ofSeconds(30))
+        .GET()
+        .build();
+      HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200) {
+        throw new IllegalStateException("friendbot returned " + response.statusCode());
+      }
+    }
+
+    Server server = new Server("https://horizon-testnet.stellar.org");
+    TransactionBuilderAccount account = server.loadAccount(issuerKeypair.getAccountId());
+    Asset abcAsset = Asset.createNonNativeAsset("ABC", issuerKeypair.getAccountId());
+
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.feeStats().execute().getFeeCharged().getP90(), maxFee);
+
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(ChangeTrustOperation.builder()
+        .asset(new ChangeTrustAsset(abcAsset))
+        // The Java SDK has no default limit. This is the maximum trustline limit.
+        .limit(new BigDecimal("922337203685.4775807"))
+        .sourceAccount(destinationKeypair.getAccountId())
+        .build())
+      .addOperation(PaymentOperation.builder()
+        .destination(destinationKeypair.getAccountId())
+        .asset(abcAsset)
+        .amount(new BigDecimal("100"))
+        .build())
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(issuerKeypair);
+    transaction.sign(destinationKeypair);
+    TransactionResponse res = server.submitTransaction(transaction);
+    System.out.printf("transaction hash:%n%s%n", res.getHash());
+  }
+}
 ```
 
 </CodeGroup>

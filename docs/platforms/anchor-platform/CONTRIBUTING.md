@@ -42,8 +42,8 @@ full `https://developers.stellar.org/...` URLs so external spec consumers can
 resolve them.
 
 The sidebar comes from `docs.json`. When you add, remove, or move a page, update
-its entry in `navigation`, and add a redirect to `redirects.json` if a published
-URL changes.
+its entry in `navigation`, and add a redirect to `config/redirects.json` if a
+published URL changes.
 
 ## Generated Reference Content
 

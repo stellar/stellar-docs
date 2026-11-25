@@ -62,7 +62,6 @@ In this variant, we will leverage the "source account authorization" variant: th
 ```javascript JavaScript
 import {
   Asset,
-  BASE_FEE,
   Keypair,
   Networks,
   Operation,
@@ -78,9 +77,15 @@ const signer = Keypair.random();
 const xlmContract = Asset.native().contractId(Networks.TESTNET);
 
 async function main() {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  const { sorobanInclusionFee } = await s.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = String(Math.min(Number(sorobanInclusionFee.p90), MAX_FEE));
+
   const tx = new TransactionBuilder(await s.getAccount(signer.publicKey()), {
     networkPassphrase: Networks.TESTNET,
-    fee: BASE_FEE,
+    fee,
   })
     .addOperation(
       Operation.invokeContractFunction({
@@ -102,6 +107,304 @@ async function main() {
 main().catch((e) => console.error(e));
 ```
 
+```python Python
+from stellar_sdk import Asset, Keypair, Network, SorobanServer, TransactionBuilder, scval
+
+s = SorobanServer("https://soroban-testnet.stellar.org")
+
+# Pretend this is a real, funded account.
+signer = Keypair.random()
+xlm_contract = Asset.native().contract_id(Network.TESTNET_NETWORK_PASSPHRASE)
+
+
+def main():
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(s.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    tx = (
+        TransactionBuilder(
+            s.load_account(signer.public_key),
+            Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_invoke_contract_function_op(
+            contract_id=xlm_contract,
+            function_name="balance",
+            parameters=[scval.to_address(signer.public_key)],
+        )
+        .set_timeout(30)
+        .build()
+    )
+
+    prepped_tx = s.prepare_transaction(tx)
+    prepped_tx.sign(signer)
+
+    send_tx = s.send_transaction(prepped_tx)
+    return s.poll_transaction(send_tx.hash)
+
+
+if __name__ == "__main__":
+    print(main())
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var s = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+// Pretend this is a real, funded account.
+var signer = keypair.MustRandom()
+var xlmContract = nativeContractID(network.TestNetworkPassphrase)
+
+func main() {
+  ctx := context.Background()
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := s.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  account, err := s.LoadAccount(ctx, signer.Address())
+  check(err)
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.InvokeHostFunction{
+        HostFunction: contractCall(xlmContract, "balance", addressScVal(signer.Address())),
+      },
+    },
+  })
+  check(err)
+
+  preppedTx, err := prepareTransaction(ctx, tx)
+  check(err)
+  preppedTx, err = preppedTx.Sign(network.TestNetworkPassphrase, signer)
+  check(err)
+
+  result, err := sendAndPoll(ctx, preppedTx)
+  check(err)
+  fmt.Println(result.Status)
+}
+
+// The Go SDK has no prepareTransaction, so this helper simulates the
+// transaction, then assembles it with the simulation results.
+func prepareTransaction(ctx context.Context, tx *txnbuild.Transaction) (*txnbuild.Transaction, error) {
+  sim, err := simulate(ctx, tx)
+  if err != nil {
+    return nil, err
+  }
+  return assembleTransaction(tx, sim)
+}
+
+// simulate simulates a transaction and fails on a simulation error.
+func simulate(ctx context.Context, tx *txnbuild.Transaction) (protocol.SimulateTransactionResponse, error) {
+  envelope, err := tx.Base64()
+  if err != nil {
+    return protocol.SimulateTransactionResponse{}, err
+  }
+  sim, err := s.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return sim, err
+  }
+  if sim.Error != "" {
+    return sim, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+  return sim, nil
+}
+
+// assembleTransaction builds tx again with the same sequence number and the
+// simulated resources and resource fee. It keeps the operation's own auth
+// entries; otherwise it adds the simulated ones.
+func assembleTransaction(
+  tx *txnbuild.Transaction,
+  sim protocol.SimulateTransactionResponse,
+) (*txnbuild.Transaction, error) {
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  original, ok := tx.Operations()[0].(*txnbuild.InvokeHostFunction)
+  if !ok {
+    return nil, errors.New("expected an InvokeHostFunction operation")
+  }
+  // Work on a copy, so that tx itself stays unchanged.
+  operation := *original
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  // NewTransaction adds the resource fee to the base fee.
+  source := tx.SourceAccount()
+  return txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount: &source,
+    BaseFee:       tx.BaseFee(),
+    Memo:          tx.Memo(),
+    Preconditions: txnbuild.Preconditions{TimeBounds: tx.Timebounds()},
+    Operations:    []txnbuild.Operation{&operation},
+  })
+}
+
+// sendAndPoll sends the transaction, then waits up to 30 seconds for it.
+func sendAndPoll(ctx context.Context, tx *txnbuild.Transaction) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+  sendTx, err := s.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+  if sendTx.Status != "PENDING" && sendTx.Status != "DUPLICATE" {
+    return none, fmt.Errorf("send failed: %s %s", sendTx.Status, sendTx.ErrorResultXDR)
+  }
+
+  // PollTransaction polls until the context ends, so give it a deadline.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  result, err := s.PollTransaction(pollCtx, sendTx.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    return none, fmt.Errorf("status of %s unknown after 30s: look it up later", sendTx.Hash)
+  }
+  return result, err
+}
+
+// nativeContractID returns the contract ID (C...) of the XLM contract.
+func nativeContractID(networkPassphrase string) string {
+  xlm, err := txnbuild.NativeAsset{}.ToXDR()
+  check(err)
+  id, err := xlm.ContractID(networkPassphrase)
+  check(err)
+  return strkey.MustEncode(strkey.VersionByteContract, id[:])
+}
+
+// contractCall builds the host function that calls `function` on a contract.
+func contractCall(contractID, function string, args ...xdr.ScVal) xdr.HostFunction {
+  var id xdr.ContractId
+  copy(id[:], strkey.MustDecode(strkey.VersionByteContract, contractID))
+  return xdr.HostFunction{
+    Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+    InvokeContract: &xdr.InvokeContractArgs{
+      ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id},
+      FunctionName:    xdr.ScSymbol(function),
+      Args:            args,
+    },
+  }
+}
+
+// addressScVal converts a G... account address to an address ScVal.
+func addressScVal(address string) xdr.ScVal {
+  scAddress := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: xdr.MustAddressPtr(address)}
+  return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddress}
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import java.util.List;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.scval.Scv;
+
+public final class SourceAccountAuth {
+  private static final SorobanServer s = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  // Pretend this is a real, funded account.
+  private static final KeyPair signer = KeyPair.random();
+  private static final String xlmContract = new AssetTypeNative().getContractId(Network.TESTNET);
+
+  public static void main(String[] args) throws InterruptedException {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // prepareTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(s.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    Transaction tx = new TransactionBuilder(s.getAccount(signer.getAccountId()), Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(
+        InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+            xlmContract, "balance", List.of(Scv.toAddress(signer.getAccountId())))
+          .build())
+      .setTimeout(30)
+      .build();
+
+    Transaction preppedTx = s.prepareTransaction(tx);
+    preppedTx.sign(signer);
+
+    GetTransactionResponse result = sendAndPoll(preppedTx);
+    System.out.println(result.getStatus());
+  }
+
+  // sendAndPoll sends the transaction, then polls for it up to 30 times,
+  // one second apart.
+  static GetTransactionResponse sendAndPoll(Transaction tx) throws InterruptedException {
+    SendTransactionResponse sendTx = s.sendTransaction(tx);
+    if (sendTx.getStatus() != SendTransactionStatus.PENDING
+        && sendTx.getStatus() != SendTransactionStatus.DUPLICATE) {
+      throw new IllegalStateException(
+        "send failed: " + sendTx.getStatus() + " " + sendTx.getErrorResultXdr());
+    }
+
+    GetTransactionResponse result = s.pollTransaction(sendTx.getHash());
+    if (result.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Still NOT_FOUND: the status is unknown, not failed.
+      throw new IllegalStateException(
+        "status of " + sendTx.getHash() + " unknown after 30 attempts: look it up later");
+    }
+    return result;
+  }
+}
+```
+
 </CodeGroup>
 
 Notice that, in contrast to the following example, we didn't need to do simulation separately. This is because we can sign the transaction as-is rather than needing to inspect its authorization entries.
@@ -116,7 +419,6 @@ In this variant, we'll extend the required signatures to more than one party, so
 import {
   Address,
   Asset,
-  BASE_FEE,
   Keypair,
   Networks,
   Operation,
@@ -133,6 +435,12 @@ const signers = [Keypair.random(), Keypair.random()];
 const xlmContract = Asset.native().contractId(Networks.TESTNET);
 
 async function main() {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // assembleTransaction adds the resource fee on top of this inclusion fee.
+  const { sorobanInclusionFee } = await s.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = String(Math.min(Number(sorobanInclusionFee.p90), MAX_FEE));
+
   // Notice that the source account is the first keypair, but the transfer
   // occurs *from* the second keypair, which means the second keypair will
   // need to sign for an authorization entry to approve the transfer.
@@ -140,7 +448,7 @@ async function main() {
     await s.getAccount(signers[0].publicKey()),
     {
       networkPassphrase: Networks.TESTNET,
-      fee: BASE_FEE,
+      fee,
     },
   )
     .addOperation(
@@ -206,6 +514,427 @@ async function main() {
 main().catch((e) => console.error(e));
 ```
 
+```python Python
+from stellar_sdk import (
+    Address,
+    Asset,
+    Keypair,
+    Network,
+    SorobanServer,
+    TransactionBuilder,
+    scval,
+)
+from stellar_sdk.auth import authorize_entry
+from stellar_sdk.xdr import SorobanAuthorizationEntry, SorobanCredentialsType
+
+s = SorobanServer("https://soroban-testnet.stellar.org")
+
+# Pretend these are real, funded accounts.
+signers = [Keypair.random(), Keypair.random()]
+xlm_contract = Asset.native().contract_id(Network.TESTNET_NETWORK_PASSPHRASE)
+
+
+def main():
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(s.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    # Notice that the source account is the first keypair, but the transfer
+    # occurs *from* the second keypair, which means the second keypair will
+    # need to sign for an authorization entry to approve the transfer.
+    tx = (
+        TransactionBuilder(
+            s.load_account(signers[0].public_key),
+            Network.TESTNET_NETWORK_PASSPHRASE,
+            base_fee=fee,
+        )
+        .append_invoke_contract_function_op(
+            contract_id=xlm_contract,
+            function_name="transfer",
+            parameters=[
+                scval.to_address(signers[1].public_key),  # from
+                scval.to_address(signers[0].public_key),  # to
+                scval.to_int128(1000),  # amount
+            ],
+        )
+        .set_timeout(30)
+        .build()
+    )
+
+    sim_result = s.simulate_transaction(tx)
+    if sim_result.error or not sim_result.results:
+        raise RuntimeError(f"Simulation failed: {sim_result.error}")
+
+    # For every auth entry that needs signing, sign it with the correct keypair.
+    signed_auth = []
+    for entry_xdr in sim_result.results[0].auth or []:
+        entry = SorobanAuthorizationEntry.from_xdr(entry_xdr)
+        credentials = entry.credentials
+        # Ignore source account entries, which the transaction signature covers.
+        # Simulation returns address entries as V2 (or legacy) credentials.
+        if credentials.type == SorobanCredentialsType.SOROBAN_CREDENTIALS_ADDRESS_V2:
+            address_credentials = credentials.address_v2
+        elif credentials.type == SorobanCredentialsType.SOROBAN_CREDENTIALS_ADDRESS:
+            address_credentials = credentials.address
+        else:
+            signed_auth.append(entry)
+            continue
+
+        # Find the keypair that matches the entry's address.
+        address = Address.from_xdr_sc_address(address_credentials.address).address
+        signer = next((kp for kp in signers if kp.public_key == address), None)
+        if signer is None:
+            raise RuntimeError(f"No keypair for {address}")
+
+        signed_auth.append(
+            authorize_entry(
+                entry,
+                signer,
+                sim_result.latest_ledger + 12,  # signature is valid for ~1m
+                Network.TESTNET_NETWORK_PASSPHRASE,
+            )
+        )
+
+    # Put the signed entries on the operation. prepare_transaction keeps an
+    # operation's own auth entries instead of the unsigned ones from simulation.
+    tx.transaction.operations[0].auth = signed_auth
+    prepped_tx = s.prepare_transaction(tx, sim_result)
+    prepped_tx.sign(signers[0])
+
+    send_tx = s.send_transaction(prepped_tx)
+    return s.poll_transaction(send_tx.hash)
+
+
+if __name__ == "__main__":
+    print(main())
+```
+
+```go Go
+// Copy simulate, assembleTransaction, sendAndPoll, nativeContractID,
+// contractCall, addressScVal, and check from Example 1 into this file.
+package main
+
+import (
+  "context"
+  "crypto/sha256"
+  "errors"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var s = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+// Pretend these are real, funded accounts.
+var signers = []*keypair.Full{keypair.MustRandom(), keypair.MustRandom()}
+var xlmContract = nativeContractID(network.TestNetworkPassphrase)
+
+func main() {
+  ctx := context.Background()
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // assembleTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := s.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  // Notice that the source account is the first keypair, but the transfer
+  // occurs *from* the second keypair, which means the second keypair will
+  // need to sign for an authorization entry to approve the transfer.
+  account, err := s.LoadAccount(ctx, signers[0].Address())
+  check(err)
+  operation := &txnbuild.InvokeHostFunction{
+    HostFunction: contractCall(xlmContract, "transfer",
+      addressScVal(signers[1].Address()), // from
+      addressScVal(signers[0].Address()), // to
+      i128ScVal(1000),                    // amount
+    ),
+  }
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{operation},
+  })
+  check(err)
+
+  simResult, err := simulate(ctx, tx)
+  check(err)
+  if len(simResult.Results) == 0 || simResult.Results[0].AuthXDR == nil {
+    log.Fatal("simulation returned no auth entries")
+  }
+
+  // For every auth entry that needs signing, sign it with the correct keypair.
+  var signedAuth []xdr.SorobanAuthorizationEntry
+  for _, entryXDR := range *simResult.Results[0].AuthXDR {
+    var entry xdr.SorobanAuthorizationEntry
+    check(xdr.SafeUnmarshalBase64(entryXDR, &entry))
+
+    // Ignore source account entries, which the transaction signature covers.
+    credentials, ok := addressCredentials(entry)
+    if !ok {
+      signedAuth = append(signedAuth, entry)
+      continue
+    }
+
+    // Find the keypair that matches the entry's address.
+    address, err := credentials.Address.String()
+    check(err)
+    var signer *keypair.Full
+    for _, kp := range signers {
+      if kp.Address() == address {
+        signer = kp
+      }
+    }
+    if signer == nil {
+      log.Fatalf("No keypair for %s", address)
+    }
+
+    entry, err = authorizeEntry(
+      entry,
+      signer,
+      simResult.LatestLedger+12, // signature is valid for ~1m
+      network.TestNetworkPassphrase,
+    )
+    check(err)
+    signedAuth = append(signedAuth, entry)
+  }
+
+  // Put the signed entries on the operation. The transaction holds this same
+  // operation, and assembleTransaction keeps an operation's own auth entries
+  // instead of the unsigned ones from simulation.
+  operation.Auth = signedAuth
+  preppedTx, err := assembleTransaction(tx, simResult)
+  check(err)
+  preppedTx, err = preppedTx.Sign(network.TestNetworkPassphrase, signers[0])
+  check(err)
+
+  result, err := sendAndPoll(ctx, preppedTx)
+  check(err)
+  fmt.Println(result.Status)
+}
+
+// addressCredentials returns the address credentials of an auth entry.
+// Simulation returns them as V2 (or legacy) credentials. Source account
+// entries have none.
+func addressCredentials(entry xdr.SorobanAuthorizationEntry) (*xdr.SorobanAddressCredentials, bool) {
+  switch entry.Credentials.Type {
+  case xdr.SorobanCredentialsTypeSorobanCredentialsAddressV2:
+    return entry.Credentials.AddressV2, true
+  case xdr.SorobanCredentialsTypeSorobanCredentialsAddress:
+    return entry.Credentials.Address, true
+  }
+  return nil, false
+}
+
+// The Go SDK has no auth-entry signer, so authorizeEntry signs an address
+// entry with a keypair, valid until and including validUntilLedger.
+func authorizeEntry(
+  entry xdr.SorobanAuthorizationEntry,
+  signer *keypair.Full,
+  validUntilLedger uint32,
+  networkPassphrase string,
+) (xdr.SorobanAuthorizationEntry, error) {
+  original, ok := addressCredentials(entry)
+  if !ok {
+    return entry, nil // source account credentials need no signature
+  }
+  credentials := *original
+  credentials.SignatureExpirationLedger = xdr.Uint32(validUntilLedger)
+  isV2 := entry.Credentials.Type == xdr.SorobanCredentialsTypeSorobanCredentialsAddressV2
+
+  // Legacy credentials sign the ENVELOPE_TYPE_SOROBAN_AUTHORIZATION preimage.
+  // V2 credentials sign ENVELOPE_TYPE_SOROBAN_AUTHORIZATION_WITH_ADDRESS,
+  // which also holds the address.
+  networkID := xdr.Hash(sha256.Sum256([]byte(networkPassphrase)))
+  preimage := xdr.HashIdPreimage{
+    Type: xdr.EnvelopeTypeEnvelopeTypeSorobanAuthorization,
+    SorobanAuthorization: &xdr.HashIdPreimageSorobanAuthorization{
+      NetworkId:                 networkID,
+      Nonce:                     credentials.Nonce,
+      SignatureExpirationLedger: credentials.SignatureExpirationLedger,
+      Invocation:                entry.RootInvocation,
+    },
+  }
+  if isV2 {
+    preimage = xdr.HashIdPreimage{
+      Type: xdr.EnvelopeTypeEnvelopeTypeSorobanAuthorizationWithAddress,
+      SorobanAuthorizationWithAddress: &xdr.HashIdPreimageSorobanAuthorizationWithAddress{
+        NetworkId:                 networkID,
+        Nonce:                     credentials.Nonce,
+        SignatureExpirationLedger: credentials.SignatureExpirationLedger,
+        Address:                   credentials.Address,
+        Invocation:                entry.RootInvocation,
+      },
+    }
+  }
+  payload, err := preimage.MarshalBinary()
+  if err != nil {
+    return entry, err
+  }
+  hash := sha256.Sum256(payload)
+  signature, err := signer.Sign(hash[:])
+  if err != nil {
+    return entry, err
+  }
+
+  // A G-account expects a vector of {public_key, signature} maps
+  publicKey := xdr.ScBytes(strkey.MustDecode(strkey.VersionByteAccountID, signer.Address()))
+  signatureBytes := xdr.ScBytes(signature)
+  publicKeyName := xdr.ScSymbol("public_key")
+  signatureName := xdr.ScSymbol("signature")
+  signatureMap := &xdr.ScMap{
+    {
+      Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &publicKeyName},
+      Val: xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &publicKey},
+    },
+    {
+      Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &signatureName},
+      Val: xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &signatureBytes},
+    },
+  }
+  signatures := &xdr.ScVec{{Type: xdr.ScValTypeScvMap, Map: &signatureMap}}
+  credentials.Signature = xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &signatures}
+
+  if isV2 {
+    entry.Credentials.AddressV2 = &credentials
+  } else {
+    entry.Credentials.Address = &credentials
+  }
+  return entry, nil
+}
+
+// i128ScVal converts a non-negative amount to an i128 ScVal.
+func i128ScVal(amount int64) xdr.ScVal {
+  parts := xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(amount)}
+  return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &parts}
+}
+```
+
+```java Java
+// Copy sendAndPoll from Example 1 into this class.
+
+import java.io.IOException;
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import org.stellar.sdk.Account;
+import org.stellar.sdk.Address;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.Auth;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.operations.InvokeHostFunctionOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SimulateTransactionResponse;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SorobanAddressCredentials;
+import org.stellar.sdk.xdr.SorobanAuthorizationEntry;
+
+public final class MultiPartyAuth {
+  private static final SorobanServer s = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  // Pretend these are real, funded accounts.
+  private static final KeyPair[] signers = {KeyPair.random(), KeyPair.random()};
+  private static final String xlmContract = new AssetTypeNative().getContractId(Network.TESTNET);
+
+  public static void main(String[] args) throws IOException, InterruptedException {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    // assembleTransaction adds the resource fee on top of this inclusion fee.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(s.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+    // Notice that the source account is the first keypair, but the transfer
+    // occurs _from_ the second keypair, which means the second keypair will
+    // need to sign for an authorization entry to approve the transfer.
+    InvokeHostFunctionOperation operation =
+      InvokeHostFunctionOperation.invokeContractFunctionOperationBuilder(
+          xlmContract,
+          "transfer",
+          List.of(
+            Scv.toAddress(signers[1].getAccountId()), // from
+            Scv.toAddress(signers[0].getAccountId()), // to
+            Scv.toInt128(BigInteger.valueOf(1000)))) // amount
+        .build();
+    Transaction tx = new TransactionBuilder(s.getAccount(signers[0].getAccountId()), Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    SimulateTransactionResponse simResult = s.simulateTransaction(tx);
+    if (simResult.getError() != null
+        || simResult.getResults() == null
+        || simResult.getResults().isEmpty()) {
+      throw new IllegalStateException("Simulation failed: " + simResult.getError());
+    }
+
+    // For every auth entry that needs signing, sign it with the correct keypair.
+    List<SorobanAuthorizationEntry> signedAuth = new ArrayList<>();
+    List<String> auth = simResult.getResults().get(0).getAuth();
+    for (String entryXdr : auth == null ? List.<String>of() : auth) {
+      SorobanAuthorizationEntry entry = SorobanAuthorizationEntry.fromXdrBase64(entryXdr);
+      // Ignore source account entries, which the transaction signature covers.
+      // getAddressCredentials reads V2 (or legacy) credentials and returns null
+      // for a source account entry.
+      SorobanAddressCredentials credentials = Auth.getAddressCredentials(entry.getCredentials());
+      if (credentials == null) {
+        signedAuth.add(entry);
+        continue;
+      }
+
+      // Find the keypair that matches the entry's address.
+      String address = Address.fromSCAddress(credentials.getAddress()).toString();
+      KeyPair signer = Arrays.stream(signers)
+        .filter(kp -> kp.getAccountId().equals(address))
+        .findFirst()
+        .orElseThrow(() -> new IllegalStateException("No keypair for " + address));
+
+      signedAuth.add(
+        Auth.authorizeEntry(
+          entry,
+          signer,
+          simResult.getLatestLedger() + 12, // signature is valid for ~1m
+          Network.TESTNET));
+    }
+
+    // Put the signed entries on the operation. assembleTransaction keeps an
+    // operation's own auth entries instead of the unsigned ones from simulation.
+    // build() adds one to the sequence number, so start one below tx's.
+    Transaction signedTx = new TransactionBuilder(
+        new Account(tx.getSourceAccount(), tx.getSequenceNumber() - 1), Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(operation.toBuilder().auth(signedAuth).build())
+      .addPreconditions(tx.getPreconditions())
+      .build();
+    Transaction preppedTx = SorobanServer.assembleTransaction(signedTx, simResult);
+    preppedTx.sign(signers[0]);
+
+    GetTransactionResponse result = sendAndPoll(preppedTx);
+    System.out.println(result.getStatus());
+  }
+}
+```
+
 </CodeGroup>
 
 Alternatively, we could go a step lower in the stack and build the authorization entries ourselves using [`authorizeInvocation`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#authorizeinvocation), giving us full control over the actual "call stack" that is being invoked. This can be useful if you want to authorize specific invocations, build the invocations yourself, or lower the network bandwidth you use when sharing entries for other parties to sign.
@@ -216,7 +945,9 @@ In this example, we'll leverage transaction [simulation][sim-tx]'s auth ["enforc
 
 To keep things really simple, we won't do much coding. Instead, we'll just show the difference from the previous example: all we need to do is run simulation once more.
 
-```diff
+<CodeGroup>
+
+```diff JavaScript
 -  preppedTx.sign(signers[0]);
 -
 -  const sendTx = await s.sendTransaction(preppedTx);
@@ -224,6 +955,39 @@ To keep things really simple, we won't do much coding. Instead, we'll just show 
 +  resimTx.sign(signers[0]);
 +  const sendTx = await s.sendTransaction(resimTx);
 ```
+
+```diff Python
+-    prepped_tx.sign(signers[0])
+-
+-    send_tx = s.send_transaction(prepped_tx)
++    resim_tx = s.prepare_transaction(prepped_tx)
++    resim_tx.sign(signers[0])
++    send_tx = s.send_transaction(resim_tx)
+```
+
+```diff Go
+-  preppedTx, err = preppedTx.Sign(network.TestNetworkPassphrase, signers[0])
+-  check(err)
+-
+-  result, err := sendAndPoll(ctx, preppedTx)
++  // Copy prepareTransaction from Example 1 too.
++  resimTx, err := prepareTransaction(ctx, preppedTx)
++  check(err)
++  resimTx, err = resimTx.Sign(network.TestNetworkPassphrase, signers[0])
++  check(err)
++  result, err := sendAndPoll(ctx, resimTx)
+```
+
+```diff Java
+-    preppedTx.sign(signers[0]);
+-
+-    GetTransactionResponse result = sendAndPoll(preppedTx);
++    Transaction resimTx = s.prepareTransaction(preppedTx);
++    resimTx.sign(signers[0]);
++    GetTransactionResponse result = sendAndPoll(resimTx);
+```
+
+</CodeGroup>
 
 [auth-data]: stellar-transaction#authorization-data
 [auth-invoke]: https://github.com/stellar/stellar-xdr/blob/v22.0/Stellar-transaction.x#L558

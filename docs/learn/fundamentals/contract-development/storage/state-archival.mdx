@@ -213,9 +213,13 @@ Remember, though, that any combination of these scenarios can occur in reality.
 
 ### Preparation
 
-In order to help the scaffolding of the code, we'll reuse the rudimentary, retry-enabled transaction polling function `submitTx` which we outlined in [another guide](../../../../build/guides/transactions/submit-transaction-wait-js).
+In order to help the scaffolding of the code, we'll reuse the rudimentary, retry-enabled transaction polling function `submitTx` (`submit_tx` in Python) which we outlined in [another guide](/docs/build/guides/transactions/submit-transaction-wait).
 
 In the following code, we will also leverage [`Server.prepareTransaction`](https://stellar.github.io/js-stellar-sdk/reference/network-rpc/#serverpreparetransactiontx-useupgradedauth). This is a helpful method that, given a transaction, will simulate it, then amend the transaction with the simulation results (fees, etc.) and return that. Then, it can just be signed and submitted. We will also use [`SorobanDataBuilder`](https://stellar.github.io/js-stellar-sdk/reference/core-soroban-primitives/#sorobandatabuilder), a convenient abstraction that lets us use a [builder pattern](https://en.wikipedia.org/wiki/Builder_pattern) to set the appropriate storage footprints for a transaction.
+
+The Go SDK has neither helper. Its examples define a small `assembleTransaction` or `prepareTransaction` function, and they set the footprint on the operation's `Ext` field.
+
+The Java SDK has both helpers. The Java examples are methods for the `SubmitTx` class from that guide.
 
 ### Example: My data is archived!
 
@@ -229,9 +233,10 @@ In this example, we will assume two things: the contract itself is still live (i
 
 Let's see that in code:
 
-```typescript
+<CodeGroup>
+
+```typescript TypeScript
 import {
-  BASE_FEE,
   Networks,
   Keypair,
   Operation,
@@ -269,8 +274,13 @@ async function submitOrRestoreAndRetry(
   // Build the restoration operation using the RPC server's hints.
   //
   const account = await server.getAccount(signer.publicKey());
-  let fee = parseInt(BASE_FEE);
-  fee += parseInt(sim.restorePreamble.minResourceFee);
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // build() adds the resource fee from the restore preamble's transaction data
+  // on top of this inclusion fee.
+  const { sorobanInclusionFee } = await server.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = Math.min(Number(sorobanInclusionFee.p90), MAX_FEE);
 
   const restoreTx = new TransactionBuilder(account, { fee: fee.toString() })
     .setNetworkPassphrase(Networks.TESTNET)
@@ -289,12 +299,10 @@ async function submitOrRestoreAndRetry(
   //
   // now that we've restored the necessary data, we can retry our tx using
   // the initial data from the simulation (which, hopefully, is still
-  // up-to-date)
+  // up-to-date). assembleTransaction adds the simulated resources, resource
+  // fee, and authorization entries.
   //
-  const retryTxBuilder = TransactionBuilder.cloneFrom(tx, {
-    fee: (parseInt(tx.fee) + parseInt(sim.minResourceFee)).toString(),
-    sorobanData: sim.transactionData.build(),
-  });
+  const retryTxBuilder = assembleTransaction(tx, sim);
   // because we consumed a sequence number when restoring, we need to make sure
   // we set the correct value on this copy
   retryTxBuilder.source.incrementSequenceNumber();
@@ -305,6 +313,304 @@ async function submitOrRestoreAndRetry(
   return submitTx(retryTx);
 }
 ```
+
+```python Python
+from stellar_sdk import Keypair, Network, SorobanDataBuilder, TransactionBuilder
+from stellar_sdk.soroban_rpc import GetTransactionResponse, GetTransactionStatus
+
+# assume that `server` is the SorobanServer() instance from submit_tx
+
+
+def submit_or_restore_and_retry(signer: Keypair, tx) -> GetTransactionResponse:
+    # We simulate first and pass the result to `prepare_transaction` ourselves,
+    # because we want to do restoration if necessary.
+    sim = server.simulate_transaction(tx)
+
+    # Other failures are out of scope of this tutorial.
+    if sim.error:
+        raise RuntimeError(sim.error)
+
+    # No restore_preamble (the usual case since Protocol 23): just send it.
+    # The invocation restores any archived entries in its restore list.
+    if sim.restore_preamble is None:
+        prep_tx = server.prepare_transaction(tx, sim)
+        prep_tx.sign(signer)
+        return submit_tx(prep_tx)
+
+    #
+    # Build the restoration operation using the RPC server's hints.
+    #
+    account = server.load_account(signer.public_key)
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # build() then adds the resource fee from the restore preamble.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+    restore_data = (
+        SorobanDataBuilder.from_xdr(sim.restore_preamble.transaction_data)
+        .set_resource_fee(sim.restore_preamble.min_resource_fee)
+        .build()
+    )
+
+    restore_tx = (
+        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=fee)
+        .set_soroban_data(restore_data)
+        .append_restore_footprint_op()
+        .set_timeout(30)
+        .build()
+    )
+
+    restore_tx.sign(signer)
+
+    resp = submit_tx(restore_tx)
+    if resp.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"Restoration failed: {resp.status}")
+
+    #
+    # now that we've restored the necessary data, we can retry our tx using
+    # the initial data from the simulation (which, hopefully, is still
+    # up-to-date)
+    #
+    retry_tx = server.prepare_transaction(tx, sim)
+    # because we consumed a sequence number when restoring, we need to make sure
+    # we set the correct value on this copy
+    retry_tx.transaction.sequence += 1
+    retry_tx.sign(signer)
+
+    return submit_tx(retry_tx)
+```
+
+```go Go
+// Add these imports to the ones from submitTx:
+//
+//   "github.com/stellar/go-stellar-sdk/keypair"
+//   "github.com/stellar/go-stellar-sdk/network"
+//   "github.com/stellar/go-stellar-sdk/xdr"
+//
+// assume that `server` is the client from submitTx
+
+func submitOrRestoreAndRetry(
+  ctx context.Context,
+  signer *keypair.Full,
+  tx *txnbuild.Transaction,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+
+  // We simulate first and assemble the result ourselves, because we want to
+  // do restoration if necessary.
+  envelope, err := tx.Base64()
+  if err != nil {
+    return none, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return none, err
+  }
+
+  // Other failures are out of scope of this tutorial.
+  if sim.Error != "" {
+    return none, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  // No RestorePreamble (the usual case since Protocol 23): just send it.
+  // The invocation restores any archived entries in its restore list.
+  if sim.RestorePreamble == nil {
+    prepTx, err := assembleTransaction(tx, sim, tx.SequenceNumber())
+    if err != nil {
+      return none, err
+    }
+    prepTx, err = prepTx.Sign(network.TestNetworkPassphrase, signer)
+    if err != nil {
+      return none, err
+    }
+    return submitTx(ctx, prepTx.ToGenericTransaction())
+  }
+
+  //
+  // Build the restoration operation using the RPC server's hints.
+  //
+  account, err := server.LoadAccount(ctx, signer.Address())
+  if err != nil {
+    return none, err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // NewTransaction adds the resource fee from the restore preamble's
+  // transaction data on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  var restoreData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.RestorePreamble.TransactionDataXDR, &restoreData); err != nil {
+    return none, err
+  }
+  restoreTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.RestoreFootprint{
+        Ext: xdr.TransactionExt{V: 1, SorobanData: &restoreData},
+      },
+    },
+  })
+  if err != nil {
+    return none, err
+  }
+
+  restoreTx, err = restoreTx.Sign(network.TestNetworkPassphrase, signer)
+  if err != nil {
+    return none, err
+  }
+
+  if _, err := submitTx(ctx, restoreTx.ToGenericTransaction()); err != nil {
+    return none, fmt.Errorf("restoration failed: %w", err)
+  }
+
+  //
+  // now that we've restored the necessary data, we can retry our tx using
+  // the initial data from the simulation (which, hopefully, is still
+  // up-to-date)
+  //
+  // because we consumed a sequence number when restoring, we need to make sure
+  // we set the correct value on this copy
+  retryTx, err := assembleTransaction(tx, sim, tx.SequenceNumber()+1)
+  if err != nil {
+    return none, err
+  }
+  retryTx, err = retryTx.Sign(network.TestNetworkPassphrase, signer)
+  if err != nil {
+    return none, err
+  }
+
+  return submitTx(ctx, retryTx.ToGenericTransaction())
+}
+
+// assembleTransaction builds tx again at the given sequence number, with the
+// simulated resources, resource fee, and authorization entries.
+func assembleTransaction(
+  tx *txnbuild.Transaction,
+  sim protocol.SimulateTransactionResponse,
+  sequence int64,
+) (*txnbuild.Transaction, error) {
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  original, ok := tx.Operations()[0].(*txnbuild.InvokeHostFunction)
+  if !ok {
+    return nil, errors.New("expected an InvokeHostFunction operation")
+  }
+  // Work on a copy, so that tx itself stays unchanged.
+  operation := *original
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Keep the operation's own auth entries; otherwise use the simulated ones.
+  if len(operation.Auth) == 0 && len(sim.Results) > 0 && sim.Results[0].AuthXDR != nil {
+    for _, entryXDR := range *sim.Results[0].AuthXDR {
+      var entry xdr.SorobanAuthorizationEntry
+      if err := xdr.SafeUnmarshalBase64(entryXDR, &entry); err != nil {
+        return nil, err
+      }
+      operation.Auth = append(operation.Auth, entry)
+    }
+  }
+
+  source := tx.SourceAccount()
+  source.Sequence = sequence
+  return txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount: &source,
+    BaseFee:       tx.BaseFee(),
+    Memo:          tx.Memo(),
+    Preconditions: txnbuild.Preconditions{TimeBounds: tx.Timebounds()},
+    Operations:    []txnbuild.Operation{&operation},
+  })
+}
+```
+
+```java Java
+// Add these imports to the ones from SubmitTx:
+//
+//   import org.stellar.sdk.Account;
+//   import org.stellar.sdk.KeyPair;
+//   import org.stellar.sdk.Network;
+//   import org.stellar.sdk.TransactionBuilder;
+//   import org.stellar.sdk.TransactionBuilderAccount;
+//   import org.stellar.sdk.operations.RestoreFootprintOperation;
+//   import org.stellar.sdk.responses.sorobanrpc.SimulateTransactionResponse;
+//
+// assume that `server` is the SorobanServer from SubmitTx
+
+public static GetTransactionResponse submitOrRestoreAndRetry(KeyPair signer, Transaction tx)
+    throws InterruptedException {
+  // We simulate first, instead of letting `prepareTransaction` do it,
+  // because we want to do restoration if necessary.
+  SimulateTransactionResponse sim = server.simulateTransaction(tx);
+
+  // Other failures are out of scope of this tutorial.
+  if (sim.getError() != null) {
+    throw new IllegalStateException("Simulation failed: " + sim.getError());
+  }
+
+  // No restorePreamble (the usual case since Protocol 23): just send it.
+  // The invocation restores any archived entries in its restore list.
+  if (sim.getRestorePreamble() == null) {
+    Transaction prepTx = server.prepareTransaction(tx, sim);
+    prepTx.sign(signer);
+    return submitTx(prepTx);
+  }
+
+  //
+  // Build the restoration operation using the RPC server's hints.
+  //
+  TransactionBuilderAccount account = server.getAccount(signer.getAccountId());
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // build() adds the resource fee from the restore preamble's transaction data
+  // on top of this inclusion fee.
+  long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+  long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+  Transaction restoreTx = new TransactionBuilder(account, Network.TESTNET)
+    .setBaseFee(fee)
+    .setSorobanData(sim.getRestorePreamble().getTransactionData())
+    .addOperation(RestoreFootprintOperation.builder().build())
+    .setTimeout(30)
+    .build();
+
+  restoreTx.sign(signer);
+
+  // submitTx throws if the restoration does not succeed
+  submitTx(restoreTx);
+
+  //
+  // now that we've restored the necessary data, we can retry our tx using
+  // the initial data from the simulation (which, hopefully, is still
+  // up-to-date)
+  //
+  // because we consumed a sequence number when restoring, we need to make sure
+  // we set the correct value on this copy: build() adds one to the sequence
+  // number of `retrySource`, so the copy uses tx's sequence number plus one
+  Account retrySource = new Account(tx.getSourceAccount(), tx.getSequenceNumber());
+  Transaction retryBase = new TransactionBuilder(retrySource, tx.getNetwork())
+    .setBaseFee(tx.getFee())
+    .addOperation(tx.getOperations()[0])
+    .addMemo(tx.getMemo())
+    .addPreconditions(tx.getPreconditions())
+    .build();
+  Transaction retryTx = SorobanServer.assembleTransaction(retryBase, sim);
+  retryTx.sign(signer);
+
+  return submitTx(retryTx);
+}
+```
+
+</CodeGroup>
 
 Since Protocol 23, simulation of an invocation normally returns no `restorePreamble`. It adds the archived entries to the [restore list](#contract-data-automatic-restoration) instead, so the code takes the first branch and the invocation restores them automatically. The restore branch runs only in the rare case that the RPC's response includes a `restorePreamble`. Simulation still succeeds then. The preamble contains both the footprint and fee needed for restoration, while the rest of the response contains the invocation simulation **as if** that restoration was done first.
 
@@ -325,9 +631,10 @@ Let's work through how these can be recovered. The recovery process is slightly 
 
 We also need simulation to figure out the fees for our restoration. This, however, can be easily covered by the SDK's [`Server.prepareTransaction`](https://stellar.github.io/js-stellar-sdk/reference/network-rpc/#serverpreparetransactiontx-useupgradedauth) helper, which will do simulation and assembly for us:
 
-```typescript
+<CodeGroup>
+
+```typescript TypeScript
 import {
-  BASE_FEE,
   Contract,
   Keypair,
   Networks,
@@ -351,7 +658,13 @@ async function restoreContract(
   }
   const wasmEntry = getWasmLedgerKey(entries[0].val);
 
-  const restoreTx = new TransactionBuilder(account, { fee: BASE_FEE })
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  const { sorobanInclusionFee } = await server.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = String(Math.min(Number(sorobanInclusionFee.p90), MAX_FEE));
+
+  const restoreTx = new TransactionBuilder(account, { fee })
     .setNetworkPassphrase(Networks.TESTNET)
     .setSorobanData(
       // Set the restoration footprint (remember, it should be in the
@@ -386,6 +699,323 @@ function getWasmLedgerKey(data: xdr.LedgerEntryData): xdr.LedgerKey {
   );
 }
 ```
+
+```python Python
+from stellar_sdk import Address, Keypair, Network, SorobanDataBuilder, TransactionBuilder
+from stellar_sdk.soroban_rpc import GetTransactionResponse
+from stellar_sdk.xdr import (
+    ContractDataDurability,
+    LedgerEntryData,
+    LedgerEntryType,
+    LedgerKey,
+    LedgerKeyContractCode,
+    LedgerKeyContractData,
+    SCVal,
+    SCValType,
+)
+
+# assume that `server` is the SorobanServer() instance from submit_tx
+
+
+def restore_contract(signer: Keypair, contract_id: str) -> GetTransactionResponse:
+    # The ledger key of the contract instance
+    instance = LedgerKey(
+        LedgerEntryType.CONTRACT_DATA,
+        contract_data=LedgerKeyContractData(
+            contract=Address(contract_id).to_xdr_sc_address(),
+            key=SCVal(SCValType.SCV_LEDGER_KEY_CONTRACT_INSTANCE),
+            durability=ContractDataDurability.PERSISTENT,
+        ),
+    )
+
+    account = server.load_account(signer.public_key)
+    response = server.get_ledger_entries([instance])
+    if not response.entries:
+        raise RuntimeError(f"No instance entry found for {contract_id}")
+    wasm_entry = get_wasm_ledger_key(
+        LedgerEntryData.from_xdr(response.entries[0].xdr)
+    )
+
+    # Bid what recent transactions paid, capped at what you're willing to spend.
+    # prepare_transaction adds the resource fee on top of this inclusion fee.
+    MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+    fee = min(server.get_fee_stats().soroban_inclusion_fee.p90, MAX_FEE)
+
+    restore_tx = (
+        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=fee)
+        .set_soroban_data(
+            # Set the restoration footprint (remember, it should be in the
+            # read-write part!)
+            SorobanDataBuilder().set_read_write([instance, wasm_entry]).build()
+        )
+        .append_restore_footprint_op()
+        .set_timeout(30)
+        .build()
+    )
+
+    prepped_tx = server.prepare_transaction(restore_tx)
+    prepped_tx.sign(signer)
+    return submit_tx(prepped_tx)
+
+
+# Read the Wasm hash out of the contract instance entry
+def get_wasm_ledger_key(data: LedgerEntryData) -> LedgerKey:
+    wasm_hash = data.contract_data.val.instance.executable.wasm_hash
+    return LedgerKey(
+        LedgerEntryType.CONTRACT_CODE,
+        contract_code=LedgerKeyContractCode(hash=wasm_hash),
+    )
+```
+
+```go Go
+// Add these imports to the ones from submitTx:
+//
+//   "github.com/stellar/go-stellar-sdk/keypair"
+//   "github.com/stellar/go-stellar-sdk/network"
+//   "github.com/stellar/go-stellar-sdk/strkey"
+//   "github.com/stellar/go-stellar-sdk/xdr"
+//
+// assume that `server` is the client from submitTx
+
+func restoreContract(
+  ctx context.Context,
+  signer *keypair.Full,
+  contractID string,
+) (protocol.GetTransactionResponse, error) {
+  var none protocol.GetTransactionResponse
+  instance, err := getInstanceLedgerKey(contractID)
+  if err != nil {
+    return none, err
+  }
+
+  account, err := server.LoadAccount(ctx, signer.Address())
+  if err != nil {
+    return none, err
+  }
+  instanceXDR, err := xdr.MarshalBase64(instance)
+  if err != nil {
+    return none, err
+  }
+  response, err := server.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{
+    Keys: []string{instanceXDR},
+  })
+  if err != nil {
+    return none, err
+  }
+  if len(response.Entries) == 0 {
+    return none, fmt.Errorf("no instance entry found for %s", contractID)
+  }
+  wasmEntry, err := getWasmLedgerKey(response.Entries[0].DataXDR)
+  if err != nil {
+    return none, err
+  }
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return none, err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.SorobanInclusionFee.P90), maxFee)
+
+  restoreOp := &txnbuild.RestoreFootprint{
+    Ext: xdr.TransactionExt{
+      V: 1,
+      SorobanData: &xdr.SorobanTransactionData{
+        Resources: xdr.SorobanResources{
+          // Set the restoration footprint (remember, it should be in the
+          // read-write part!)
+          Footprint: xdr.LedgerFootprint{ReadWrite: []xdr.LedgerKey{instance, wasmEntry}},
+        },
+      },
+    },
+  }
+
+  preppedTx, err := prepareTransaction(ctx, txnbuild.TransactionParams{
+    SourceAccount:        account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           []txnbuild.Operation{restoreOp},
+  })
+  if err != nil {
+    return none, err
+  }
+  preppedTx, err = preppedTx.Sign(network.TestNetworkPassphrase, signer)
+  if err != nil {
+    return none, err
+  }
+  return submitTx(ctx, preppedTx.ToGenericTransaction())
+}
+
+// The ledger key of the contract instance (what Contract.getFootprint()
+// returns in JavaScript)
+func getInstanceLedgerKey(contractID string) (xdr.LedgerKey, error) {
+  var key xdr.LedgerKey
+  decoded, err := strkey.Decode(strkey.VersionByteContract, contractID)
+  if err != nil {
+    return key, err
+  }
+  var id xdr.ContractId
+  copy(id[:], decoded)
+  err = key.SetContractData(
+    xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id},
+    xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+    xdr.ContractDataDurabilityPersistent,
+  )
+  return key, err
+}
+
+// Read the Wasm hash out of the contract instance entry
+func getWasmLedgerKey(entryXDR string) (xdr.LedgerKey, error) {
+  var key xdr.LedgerKey
+  var data xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(entryXDR, &data); err != nil {
+    return key, err
+  }
+  contractData, ok := data.GetContractData()
+  if !ok {
+    return key, errors.New("expected a contract data entry")
+  }
+  instance, ok := contractData.Val.GetInstance()
+  if !ok {
+    return key, errors.New("expected a contract instance")
+  }
+  wasmHash, ok := instance.Executable.GetWasmHash()
+  if !ok {
+    return key, errors.New("expected a Wasm executable")
+  }
+
+  err := key.SetContractCode(wasmHash)
+  return key, err
+}
+
+// prepareTransaction simulates the transaction, then builds it again with the
+// simulated resources and resource fee.
+func prepareTransaction(ctx context.Context, params txnbuild.TransactionParams) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(params)
+  if err != nil {
+    return nil, err
+  }
+  envelope, err := tx.Base64()
+  if err != nil {
+    return nil, err
+  }
+  sim, err := server.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return nil, err
+  }
+  if sim.Error != "" {
+    return nil, fmt.Errorf("simulation failed: %s", sim.Error)
+  }
+
+  var sorobanData xdr.SorobanTransactionData
+  if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &sorobanData); err != nil {
+    return nil, err
+  }
+  // Takes one RestoreFootprint operation; any other type panics here.
+  operation := params.Operations[0].(*txnbuild.RestoreFootprint)
+  operation.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+
+  // Build again with the same sequence number.
+  source := tx.SourceAccount()
+  params.SourceAccount = &source
+  params.IncrementSequenceNum = false
+  return txnbuild.NewTransaction(params)
+}
+```
+
+```java Java
+// Add these imports to the ones from SubmitTx:
+//
+//   import java.util.List;
+//   import org.stellar.sdk.Address;
+//   import org.stellar.sdk.KeyPair;
+//   import org.stellar.sdk.Network;
+//   import org.stellar.sdk.SorobanDataBuilder;
+//   import org.stellar.sdk.TransactionBuilder;
+//   import org.stellar.sdk.TransactionBuilderAccount;
+//   import org.stellar.sdk.operations.RestoreFootprintOperation;
+//   import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+//   import org.stellar.sdk.scval.Scv;
+//   import org.stellar.sdk.xdr.ContractDataDurability;
+//   import org.stellar.sdk.xdr.ContractExecutable;
+//   import org.stellar.sdk.xdr.ContractExecutableType;
+//   import org.stellar.sdk.xdr.LedgerEntry;
+//   import org.stellar.sdk.xdr.LedgerEntryType;
+//   import org.stellar.sdk.xdr.LedgerKey;
+//   import org.stellar.sdk.xdr.SCVal;
+//
+// assume that `server` is the SorobanServer from SubmitTx
+
+public static GetTransactionResponse restoreContract(KeyPair signer, String contractId)
+    throws InterruptedException {
+  LedgerKey instance = getInstanceLedgerKey(contractId);
+
+  TransactionBuilderAccount account = server.getAccount(signer.getAccountId());
+  GetLedgerEntriesResponse response = server.getLedgerEntries(List.of(instance));
+  if (response.getEntries().isEmpty()) {
+    throw new IllegalStateException("No instance entry found for " + contractId);
+  }
+  LedgerKey wasmEntry = getWasmLedgerKey(response.getEntries().get(0).parseXdr());
+
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  // prepareTransaction adds the resource fee on top of this inclusion fee.
+  long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+  long fee = Math.min(server.getFeeStats().getSorobanInclusionFee().getP90(), maxFee);
+
+  Transaction restoreTx = new TransactionBuilder(account, Network.TESTNET)
+    .setBaseFee(fee)
+    .setSorobanData(
+      // Set the restoration footprint (remember, it should be in the
+      // read-write part!)
+      new SorobanDataBuilder().setReadWrite(List.of(instance, wasmEntry)).build())
+    .addOperation(RestoreFootprintOperation.builder().build())
+    .setTimeout(30)
+    .build();
+
+  Transaction preppedTx = server.prepareTransaction(restoreTx);
+  preppedTx.sign(signer);
+  return submitTx(preppedTx);
+}
+
+// The ledger key of the contract instance (what Contract.getFootprint()
+// returns in JavaScript)
+static LedgerKey getInstanceLedgerKey(String contractId) {
+  return LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_DATA)
+    .contractData(LedgerKey.LedgerKeyContractData.builder()
+      .contract(new Address(contractId).toSCAddress())
+      .key(Scv.toLedgerKeyContractInstance())
+      .durability(ContractDataDurability.PERSISTENT)
+      .build())
+    .build();
+}
+
+// Read the Wasm hash out of the contract instance entry
+static LedgerKey getWasmLedgerKey(LedgerEntry.LedgerEntryData data) {
+  if (data.getDiscriminant() != LedgerEntryType.CONTRACT_DATA) {
+    throw new IllegalArgumentException("Expected a contract data entry");
+  }
+  SCVal val = data.getContractData().getVal();
+  if (val.getInstance() == null) {
+    throw new IllegalArgumentException("Expected a contract instance");
+  }
+  ContractExecutable executable = val.getInstance().getExecutable();
+  if (executable.getDiscriminant() != ContractExecutableType.CONTRACT_EXECUTABLE_WASM) {
+    throw new IllegalArgumentException("Expected a Wasm executable");
+  }
+
+  return LedgerKey.builder()
+    .discriminant(LedgerEntryType.CONTRACT_CODE)
+    .contractCode(
+      LedgerKey.LedgerKeyContractCode.builder().hash(executable.getWasm_hash()).build())
+    .build();
+}
+```
+
+</CodeGroup>
 
 The nice part about this approach is that it will restore both the instance and the backing WASM code if necessary, skipping either if they're already in the ledger state.
 

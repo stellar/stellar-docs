@@ -21,7 +21,7 @@ The site is built with Mintlify. Hold PRs to Mintlify's conventions and this rep
   `https://developers.stellar.org/...` URLs. Every link should resolve to a real page; treat
   `#anchor` resolution as best-effort.
 - New, moved, or removed pages: check `docs.json` `navigation` was updated, and that moved or
-  removed URLs get an entry in `redirects.json`. Flag Docusaurus-only frontmatter
+  removed URLs get an entry in `config/redirects.json`. Flag Docusaurus-only frontmatter
   (`sidebar_position`, `sidebar_label`, `hide_title`, `slug`) and new `_category_.json` files.
 - Components: flag Docusaurus syntax (`:::note` admonitions, `<CodeExample>`, `<TabItem>`,
   `import` from `@site/` or `@theme/`). Block component tags need a blank line after the opening

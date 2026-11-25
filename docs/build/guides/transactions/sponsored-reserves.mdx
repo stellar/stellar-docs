@@ -99,13 +99,17 @@ import {
   TransactionBuilder,
   Operation,
   Networks,
-  BASE_FEE,
 } from "@stellar/stellar-sdk";
 import { Server } from "@stellar/stellar-sdk/rpc";
 
 let server = new Server("https://soroban-testnet.stellar.org");
 
 async function main() {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  const { inclusionFee } = await server.getFeeStats();
+  const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+  const fee = String(Math.min(Number(inclusionFee.p90), MAX_FEE));
+
   // Create & fund the new accounts.
   let keypairs = [Keypair.random(), Keypair.random(), Keypair.random()];
 
@@ -127,6 +131,53 @@ async function main() {
   ];
 
   // ...
+```
+
+```python Python
+import requests
+from stellar_sdk import (
+    Asset,
+    BeginSponsoringFutureReserves,
+    ChangeTrust,
+    EndSponsoringFutureReserves,
+    Keypair,
+    Network,
+    RevokeSponsorship,
+    SorobanServer,
+    TransactionBuilder,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+
+server = SorobanServer("https://soroban-testnet.stellar.org")
+
+# The send_transaction() helper is defined in the Footnote at the end of this page.
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+# Create & fund the new accounts.
+keypairs = [Keypair.random(), Keypair.random(), Keypair.random()]
+
+friendbot_url = server.get_network().friendbot_url
+for keypair in keypairs:
+    print(f"Funding:\n {keypair.secret}\n {keypair.public_key}")
+    try:
+        requests.get(
+            friendbot_url, params={"addr": keypair.public_key}, timeout=30
+        ).raise_for_status()
+    except requests.RequestException as err:
+        print("  failed:", err)
+
+# Arbitrary assets to sponsor trustlines for. Let's assume they make sense.
+S1, A, S2 = keypairs
+assets = [
+    Asset("ABCD", S1.public_key),
+    Asset("EFGH", S1.public_key),
+    Asset("IJKL", S2.public_key),
+]
+
+# ...
 ```
 
 ```go Go
@@ -179,6 +230,68 @@ func main() {
   // ...
 ```
 
+```java Java
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.ChangeTrustAsset;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.TrustLineAsset;
+import org.stellar.sdk.operations.BeginSponsoringFutureReservesOperation;
+import org.stellar.sdk.operations.ChangeTrustOperation;
+import org.stellar.sdk.operations.EndSponsoringFutureReservesOperation;
+import org.stellar.sdk.operations.RevokeTrustlineSponsorshipOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+
+public final class SponsoredReserves {
+  private static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  // The sendTransaction() helper is defined in the Footnote at the end of this page.
+
+  public static void main(String[] args) throws Exception {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(server.getFeeStats().getInclusionFee().getP90(), maxFee);
+
+    // Create & fund the new accounts.
+    KeyPair[] keypairs = {KeyPair.random(), KeyPair.random(), KeyPair.random()};
+
+    String friendbotUrl = server.getNetwork().getFriendbotUrl();
+    HttpClient http = HttpClient.newHttpClient();
+    for (KeyPair keypair : keypairs) {
+      System.out.printf("Funding:%n %s%n %s%n", new String(keypair.getSecretSeed()), keypair.getAccountId());
+      HttpRequest request = HttpRequest.newBuilder(URI.create(friendbotUrl + "?addr=" + keypair.getAccountId()))
+        .GET()
+        .build();
+      HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200) {
+        System.out.println("  failed: " + response.body());
+      }
+    }
+
+    // Arbitrary assets to sponsor trustlines for. Let's assume they make sense.
+    KeyPair S1 = keypairs[0], A = keypairs[1], S2 = keypairs[2];
+    Asset[] assets = {
+      Asset.createNonNativeAsset("ABCD", S1.getAccountId()),
+      Asset.createNonNativeAsset("EFGH", S1.getAccountId()),
+      Asset.createNonNativeAsset("IJKL", S2.getAccountId()),
+    };
+
+    // ...
+```
+
 </CodeGroup>
 
 ### 1. Sponsoring trustlines
@@ -194,7 +307,7 @@ Now, let’s sponsor trustlines for Account A. Notice how the `CHANGE_TRUST` ope
 // 1. S1 will sponsor a trustline for Account A.
 //
 let s1Account = await server.getAccount(S1.publicKey()).catch(accountFail);
-let tx = new TransactionBuilder(s1Account, { fee: BASE_FEE })
+let tx = new TransactionBuilder(s1Account, { fee })
   .addOperation(
     Operation.beginSponsoringFutureReserves({
       sponsoredId: A.publicKey(),
@@ -227,6 +340,39 @@ if (!txResponse) {
 console.log("Sponsored a trustline of", A.publicKey());
 ```
 
+```python Python
+#
+# 1. S1 will sponsor a trustline for Account A.
+#
+s1_account = server.load_account(S1.public_key)
+tx = (
+    TransactionBuilder(
+        source_account=s1_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_operation(BeginSponsoringFutureReserves(sponsored_id=A.public_key))
+    .append_operation(
+        ChangeTrust(
+            source=A.public_key,
+            asset=assets[0],
+            limit="1000",  # This limit can vary according with your application;
+            # if left empty, it defaults to the max limit.
+        )
+    )
+    .append_operation(EndSponsoringFutureReserves(source=A.public_key))
+    .set_timeout(180)
+    .build()
+)
+
+# Note that while either can submit this transaction, both must sign it.
+tx.sign(S1)
+tx.sign(A)
+send_transaction(tx)
+
+print("Sponsored a trustline of", A.public_key)
+```
+
 ```go Go
   //
   // 1. S1 will sponsor a trustline for Account A.
@@ -248,6 +394,38 @@ console.log("Sponsored a trustline of", A.publicKey());
   fmt.Println("Sponsored a trustline of", A.Address())
 ```
 
+```java Java
+    //
+    // 1. S1 will sponsor a trustline for Account A.
+    //
+    TransactionBuilderAccount s1Account = server.getAccount(S1.getAccountId());
+    Transaction tx = new TransactionBuilder(s1Account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(
+        BeginSponsoringFutureReservesOperation.builder()
+          .sponsoredId(A.getAccountId())
+          .build())
+      .addOperation(
+        ChangeTrustOperation.builder()
+          .sourceAccount(A.getAccountId())
+          .asset(new ChangeTrustAsset(assets[0]))
+          .limit(new BigDecimal("1000")) // This limit can vary according with your application.
+          .build())
+      .addOperation(
+        EndSponsoringFutureReservesOperation.builder()
+          .sourceAccount(A.getAccountId())
+          .build())
+      .setTimeout(180)
+      .build();
+
+    // Note that while either can submit this transaction, both must sign it.
+    tx.sign(S1);
+    tx.sign(A);
+    sendTransaction(tx);
+
+    System.out.println("Sponsored a trustline of " + A.getAccountId());
+```
+
 </CodeGroup>
 </Accordion>
 
@@ -259,7 +437,7 @@ console.log("Sponsored a trustline of", A.publicKey());
 // 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
 //
 let aAccount = await server.getAccount(A.publicKey()).catch(accountFail);
-tx = new TransactionBuilder(aAccount, { fee: BASE_FEE })
+tx = new TransactionBuilder(aAccount, { fee })
   .addOperation(
     Operation.beginSponsoringFutureReserves({
       source: S1.publicKey(),
@@ -300,6 +478,40 @@ if (!txResponse) {
 console.log("Sponsored two trustlines of", A.publicKey());
 ```
 
+```python Python
+#
+# 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
+#
+a_account = server.load_account(A.public_key)
+tx = (
+    TransactionBuilder(
+        source_account=a_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_operation(
+        BeginSponsoringFutureReserves(source=S1.public_key, sponsored_id=A.public_key)
+    )
+    .append_operation(ChangeTrust(asset=assets[1], limit="5000"))
+    .append_operation(EndSponsoringFutureReserves())
+    .append_operation(
+        BeginSponsoringFutureReserves(source=S2.public_key, sponsored_id=A.public_key)
+    )
+    .append_operation(ChangeTrust(asset=assets[2], limit="2500"))
+    .append_operation(EndSponsoringFutureReserves())
+    .set_timeout(180)
+    .build()
+)
+
+# Note that all 3 accounts must approve/sign this transaction.
+tx.sign(S1)
+tx.sign(S2)
+tx.sign(A)
+send_transaction(tx)
+
+print("Sponsored two trustlines of", A.public_key)
+```
+
 ```go Go
   //
   // 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
@@ -331,6 +543,47 @@ console.log("Sponsored two trustlines of", A.publicKey());
   fmt.Println("Sponsored two trustlines of", A.Address())
 ```
 
+```java Java
+    //
+    // 2. Both S1 and S2 sponsor trustlines for Account A for different assets.
+    //
+    TransactionBuilderAccount aAccount = server.getAccount(A.getAccountId());
+    tx = new TransactionBuilder(aAccount, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(
+        BeginSponsoringFutureReservesOperation.builder()
+          .sourceAccount(S1.getAccountId())
+          .sponsoredId(A.getAccountId())
+          .build())
+      .addOperation(
+        ChangeTrustOperation.builder()
+          .asset(new ChangeTrustAsset(assets[1]))
+          .limit(new BigDecimal("5000"))
+          .build())
+      .addOperation(EndSponsoringFutureReservesOperation.builder().build())
+      .addOperation(
+        BeginSponsoringFutureReservesOperation.builder()
+          .sourceAccount(S2.getAccountId())
+          .sponsoredId(A.getAccountId())
+          .build())
+      .addOperation(
+        ChangeTrustOperation.builder()
+          .asset(new ChangeTrustAsset(assets[2]))
+          .limit(new BigDecimal("2500"))
+          .build())
+      .addOperation(EndSponsoringFutureReservesOperation.builder().build())
+      .setTimeout(180)
+      .build();
+
+    // Note that all 3 accounts must approve/sign this transaction.
+    tx.sign(S1);
+    tx.sign(S2);
+    tx.sign(A);
+    sendTransaction(tx);
+
+    System.out.println("Sponsored two trustlines of " + A.getAccountId());
+```
+
 </CodeGroup>
 </Accordion>
 </AccordionGroup>
@@ -347,7 +600,7 @@ An intuitive way to think of a sponsorship transfer is that the very act of spon
 //
 // 3. Transfer sponsorship of B's second trustline from S1 to S2.
 //
-tx = new TransactionBuilder(s1Account, { fee: BASE_FEE })
+tx = new TransactionBuilder(s1Account, { fee })
   .addOperation(
     Operation.beginSponsoringFutureReserves({
       source: S2.publicKey(),
@@ -376,6 +629,38 @@ if (!txResponse) {
 console.log("Transferred sponsorship for", A.publicKey());
 ```
 
+```python Python
+#
+# 3. Transfer sponsorship of B's second trustline from S1 to S2.
+#
+tx = (
+    TransactionBuilder(
+        source_account=s1_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_operation(
+        BeginSponsoringFutureReserves(source=S2.public_key, sponsored_id=S1.public_key)
+    )
+    .append_operation(
+        RevokeSponsorship.revoke_trustline_sponsorship(
+            account_id=A.public_key, asset=assets[1]
+        )
+    )
+    .append_operation(EndSponsoringFutureReserves())
+    .set_timeout(180)
+    .build()
+)
+
+# Notice that while the old sponsor *sends* the transaction, both sponsors
+# must *approve* the transfer.
+tx.sign(S1)
+tx.sign(S2)
+send_transaction(tx)
+
+print("Transferred sponsorship for", A.public_key)
+```
+
 ```go Go
   //
   // 3. Transfer sponsorship of B's second trustline from S1 to S2.
@@ -402,6 +687,35 @@ console.log("Transferred sponsorship for", A.publicKey());
   fmt.Println("Transferred sponsorship for", A.Address())
 ```
 
+```java Java
+    //
+    // 3. Transfer sponsorship of B's second trustline from S1 to S2.
+    //
+    tx = new TransactionBuilder(s1Account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(
+        BeginSponsoringFutureReservesOperation.builder()
+          .sourceAccount(S2.getAccountId())
+          .sponsoredId(S1.getAccountId())
+          .build())
+      .addOperation(
+        RevokeTrustlineSponsorshipOperation.builder()
+          .accountId(A.getAccountId())
+          .asset(new TrustLineAsset(assets[1]))
+          .build())
+      .addOperation(EndSponsoringFutureReservesOperation.builder().build())
+      .setTimeout(180)
+      .build();
+
+    // Notice that while the old sponsor _sends_ the transaction, both sponsors
+    // must _approve_ the transfer.
+    tx.sign(S1);
+    tx.sign(S2);
+    sendTransaction(tx);
+
+    System.out.println("Transferred sponsorship for " + A.getAccountId());
+```
+
 </CodeGroup>
 
 At this point, Signer 1 is only sponsoring the first asset (arbitrarily coded as ABCD), while Signer 2 is sponsoring the other two assets. (Recall that initially Signer 1 was also sponsoring EFGH.)
@@ -417,7 +731,7 @@ Finally, we can demonstrate complete revocation of sponsorships. Below, Signer 2
   // 4. S2 revokes sponsorship of B's trustlines entirely.
   //
   let s2Account = await server.getAccount(S2.publicKey()).catch(accountFail);
-  tx = new TransactionBuilder(s2Account, { fee: BASE_FEE })
+  tx = new TransactionBuilder(s2Account, { fee })
     .addOperation(
       Operation.revokeTrustlineSponsorship({
         account: A.publicKey(),
@@ -442,6 +756,37 @@ Finally, we can demonstrate complete revocation of sponsorships. Below, Signer 2
 
   console.log("Revoked sponsorship for", A.publicKey());
 } // ends main()
+```
+
+```python Python
+#
+# 4. S2 revokes sponsorship of B's trustlines entirely.
+#
+s2_account = server.load_account(S2.public_key)
+tx = (
+    TransactionBuilder(
+        source_account=s2_account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_operation(
+        RevokeSponsorship.revoke_trustline_sponsorship(
+            account_id=A.public_key, asset=assets[1]
+        )
+    )
+    .append_operation(
+        RevokeSponsorship.revoke_trustline_sponsorship(
+            account_id=A.public_key, asset=assets[2]
+        )
+    )
+    .set_timeout(180)
+    .build()
+)
+
+tx.sign(S2)
+send_transaction(tx)
+
+print("Revoked sponsorship for", A.public_key)
 ```
 
 ```go Go
@@ -470,6 +815,33 @@ Finally, we can demonstrate complete revocation of sponsorships. Below, Signer 2
   SignAndSend(client, s2Account, []*keypair.Full{S2}, revokeOps...)
   fmt.Println("Revoked sponsorship for", A.Address())
 } // ends main()
+```
+
+```java Java
+    //
+    // 4. S2 revokes sponsorship of B's trustlines entirely.
+    //
+    TransactionBuilderAccount s2Account = server.getAccount(S2.getAccountId());
+    tx = new TransactionBuilder(s2Account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(
+        RevokeTrustlineSponsorshipOperation.builder()
+          .accountId(A.getAccountId())
+          .asset(new TrustLineAsset(assets[1]))
+          .build())
+      .addOperation(
+        RevokeTrustlineSponsorshipOperation.builder()
+          .accountId(A.getAccountId())
+          .asset(new TrustLineAsset(assets[2]))
+          .build())
+      .setTimeout(180)
+      .build();
+
+    tx.sign(S2);
+    sendTransaction(tx);
+
+    System.out.println("Revoked sponsorship for " + A.getAccountId());
+  } // ends main()
 ```
 
 </CodeGroup>
@@ -534,6 +906,22 @@ function accountFail(err) {
 }
 ```
 
+```python Python
+def send_transaction(tx):
+    send_resp = server.send_transaction(tx)
+    if send_resp.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(f"Send failed: {send_resp}")
+
+    get_resp = server.poll_transaction(send_resp.hash)
+    if get_resp.status == GetTransactionStatus.NOT_FOUND:
+        # Not in a ledger yet: the outcome is unknown, not failed.
+        raise RuntimeError(f"Transaction {send_resp.hash} not found yet")
+    if get_resp.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"Transaction failed: {get_resp}")
+
+    return get_resp
+```
+
 ```go Go
 
 // Builds a transaction containing `operations...`, signed (by `signers`), and
@@ -544,12 +932,18 @@ func SignAndSend(
   signers []*keypair.Full,
   operations ...txnbuild.Operation,
 ) protocol.GetTransactionResponse {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  feeStats, err := client.GetFeeStats(context.Background())
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(int64(feeStats.InclusionFee.P90), maxFee)
+
   // Build, sign, and submit the transaction
   tx, err := txnbuild.NewTransaction(
     txnbuild.TransactionParams{
       SourceAccount:        account,
       IncrementSequenceNum: true,
-      BaseFee:              txnbuild.MinBaseFee,
+      BaseFee:              fee,
       Preconditions: txnbuild.Preconditions{
         TimeBounds: txnbuild.NewInfiniteTimeout(),
       },
@@ -594,6 +988,28 @@ func SignAndSend(
 func check(err error) {
   if err != nil {
     panic(err)
+  }
+}
+```
+
+```java Java
+  // Add this method to the SponsoredReserves class, after main().
+  private static GetTransactionResponse sendTransaction(Transaction tx) throws InterruptedException {
+    SendTransactionResponse sendResp = server.sendTransaction(tx);
+    if (sendResp.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("Send failed: " + sendResp);
+    }
+
+    GetTransactionResponse getResp = server.pollTransaction(sendResp.getHash());
+    if (getResp.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Not in a ledger yet: the outcome is unknown, not failed.
+      throw new IllegalStateException("Transaction " + sendResp.getHash() + " not found yet");
+    }
+    if (getResp.getStatus() != GetTransactionStatus.SUCCESS) {
+      throw new IllegalStateException("Transaction failed: " + getResp);
+    }
+
+    return getResp;
   }
 }
 ```

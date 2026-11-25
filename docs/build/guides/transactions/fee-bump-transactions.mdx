@@ -48,6 +48,8 @@ Read more about transaction fees in our [Fees section](../../../learn/fundamenta
 
 You can apply a fee-bump transaction to increase a fee originating from your own account. However, if you submit two distinct transactions with the same source account and sequence number with the second transaction being a fee-bump transaction, the second transaction will replace the first transaction in the queue if and only if the fee bid of the second transaction is 10x the fee bid of the first transaction. This number may seem random, it is a deliberate design decision to limit DOS attacks without introducing too much complexity to the protocol.
 
+A fee-bump transaction needs only the fee account's signature, so anyone who has the signed inner transaction can submit it in a fee-bump transaction of their own. The inner transaction is still applied at most once, because its sequence number can be used only once, but the fee-bump transaction that gets it into the ledger may not be the one you submitted. So track a fee-bump transaction by the hash of its inner transaction. Stellar RPC's [`getTransaction`](/docs/data/apis/rpc/api-reference/methods/getTransaction) and Horizon's [`GET /transactions/:transaction_hash`](/docs/data/apis/horizon/api-reference/retrieve-a-transaction) both find a fee-bump transaction by its inner transaction hash, whichever fee-bump transaction got it into the ledger.
+
 ### Fee-bump transaction envelope
 
 When a fee-bump transaction is ready to be signed, it’s wrapped in a transaction envelope. This envelope contains the fee-bump transaction and the signature of the specified fee account.
@@ -91,7 +93,8 @@ const feeKeypair = StellarSdk.Keypair.fromSecret("SECREY_KEY_2");
 const server = new StellarSdk.rpc.Server("https://soroban-testnet.stellar.org");
 const sourceAccount = await server.getAccount(sourceKeypair.publicKey());
 
-// Construct the inner transaction, just a example tx, to transfer 10 XLM to a destination account
+// Construct the inner transaction, just a example tx, to transfer 10 XLM to a destination account.
+// The fee account pays the fee below, so the inner transaction can bid the network minimum.
 const innerTransaction = new StellarSdk.TransactionBuilder(sourceAccount, {
   fee: StellarSdk.BASE_FEE,
   networkPassphrase,
@@ -109,11 +112,17 @@ const innerTransaction = new StellarSdk.TransactionBuilder(sourceAccount, {
 // Sign the inner transaction with the source account
 innerTransaction.sign(sourceKeypair);
 
+// The fee account bids what recent transactions paid, capped at what it's willing to spend.
+// BASE_FEE is the network minimum and gets outbid when the network is busy.
+const { inclusionFee } = await server.getFeeStats();
+const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+const fee = String(Math.min(Number(inclusionFee.p90), MAX_FEE));
+
 // Build the fee-bump transaction
 const feeBumpTransaction =
   StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
     feeKeypair,
-    StellarSdk.BASE_FEE * 2,
+    fee,
     innerTransaction,
     networkPassphrase,
   );
@@ -129,7 +138,9 @@ server
       throw response;
     }
 
-    return server.pollTransaction(response.hash, {
+    // Poll the inner transaction hash, which finds the transaction whichever
+    // fee-bump transaction gets it into the ledger.
+    return server.pollTransaction(innerTransaction.hash().toString("hex"), {
       sleepStrategy: StellarSdk.rpc.LinearSleepStrategy,
       attempts: 5,
     });
@@ -140,6 +151,281 @@ server
   .catch((error) => {
     console.error("Something went wrong!", error);
   });
+```
+
+```python Python
+from stellar_sdk import Asset, Keypair, Network, SorobanServer, TransactionBuilder
+from stellar_sdk.soroban_rpc import LinearSleepStrategy, SendTransactionStatus
+
+# Define the network passphrase (use Network.PUBLIC_NETWORK_PASSPHRASE for production)
+network_passphrase = Network.TESTNET_NETWORK_PASSPHRASE
+
+# Create keypairs for the source account and the fee account
+source_keypair = Keypair.from_secret("SECREY_KEY_1")
+fee_keypair = Keypair.from_secret("SECREY_KEY_2")
+
+# Load the source account (this requires network interaction)
+server = SorobanServer("https://soroban-testnet.stellar.org")
+source_account = server.load_account(source_keypair.public_key)
+
+# Construct the inner transaction, just a example tx, to transfer 10 XLM to a
+# destination account. The fee account pays the fee below, so the inner
+# transaction can bid the network minimum.
+inner_transaction = (
+    TransactionBuilder(
+        source_account=source_account,
+        network_passphrase=network_passphrase,
+        base_fee=100,
+    )
+    .append_payment_op(
+        destination="GDWH3P3MNTCMOY42CA7RVEACUUAUPZ73XDYKPYUL3TWOFRF37FD6OVM6",
+        asset=Asset.native(),
+        amount="10",
+    )
+    .set_timeout(30)
+    .build()
+)
+
+# Sign the inner transaction with the source account
+inner_transaction.sign(source_keypair)
+
+# The fee account bids what recent transactions paid, capped at what it's
+# willing to spend. 100 stroops is the network minimum and gets outbid when
+# the network is busy.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+# Build the fee-bump transaction
+fee_bump_transaction = TransactionBuilder.build_fee_bump_transaction(
+    fee_source=fee_keypair,
+    base_fee=fee,
+    inner_transaction_envelope=inner_transaction,
+    network_passphrase=network_passphrase,
+)
+
+# Sign the fee-bump transaction with the fee account
+fee_bump_transaction.sign(fee_keypair)
+
+# Submit the fee-bump transaction to the Stellar network
+try:
+    response = server.send_transaction(fee_bump_transaction)
+    if response.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(f"Submission failed: {response}")
+
+    # Poll the inner transaction hash, which finds the transaction whichever
+    # fee-bump transaction gets it into the ledger.
+    response = server.poll_transaction(
+        inner_transaction.hash_hex(),
+        max_attempts=5,
+        sleep_strategy=LinearSleepStrategy,
+    )
+    print("transaction response:", response)
+except Exception as error:
+    print("Something went wrong!", error)
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+func main() {
+  ctx := context.Background()
+
+  // Define the network passphrase (use network.PublicNetworkPassphrase for production)
+  networkPassphrase := network.TestNetworkPassphrase
+
+  // Create keypairs for the source account and the fee account
+  sourceKeypair := keypair.MustParseFull("SECREY_KEY_1")
+  feeKeypair := keypair.MustParseFull("SECREY_KEY_2")
+
+  // Load the source account (this requires network interaction)
+  server := client.NewClient("https://soroban-testnet.stellar.org", nil)
+  defer server.Close()
+  sourceAccount, err := server.LoadAccount(ctx, sourceKeypair.Address())
+  check(err)
+
+  // Construct the inner transaction, just a example tx, to transfer 10 XLM to a
+  // destination account. The fee account pays the fee below, so the inner
+  // transaction can bid the network minimum.
+  innerTransaction, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        sourceAccount,
+    IncrementSequenceNum: true,
+    BaseFee:              txnbuild.MinBaseFee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.Payment{
+        Destination: "GDWH3P3MNTCMOY42CA7RVEACUUAUPZ73XDYKPYUL3TWOFRF37FD6OVM6",
+        Asset:       txnbuild.NativeAsset{},
+        Amount:      "10",
+      },
+    },
+  })
+  check(err)
+
+  // Sign the inner transaction with the source account
+  innerTransaction, err = innerTransaction.Sign(networkPassphrase, sourceKeypair)
+  check(err)
+
+  // The fee account bids what recent transactions paid, capped at what it's
+  // willing to spend. MinBaseFee is the network minimum and gets outbid when
+  // the network is busy.
+  feeStats, err := server.GetFeeStats(ctx)
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := max(min(int64(feeStats.InclusionFee.P90), maxFee), txnbuild.MinBaseFee)
+
+  // Build the fee-bump transaction
+  feeBumpTransaction, err := txnbuild.NewFeeBumpTransaction(txnbuild.FeeBumpTransactionParams{
+    Inner:      innerTransaction,
+    FeeAccount: feeKeypair.Address(),
+    BaseFee:    fee,
+  })
+  check(err)
+
+  // Sign the fee-bump transaction with the fee account
+  feeBumpTransaction, err = feeBumpTransaction.Sign(networkPassphrase, feeKeypair)
+  check(err)
+
+  // Submit the fee-bump transaction to the Stellar network
+  envelope, err := feeBumpTransaction.Base64()
+  check(err)
+  sendResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  check(err)
+  if sendResponse.Status != "PENDING" {
+    log.Fatalf("Something went wrong! %+v", sendResponse)
+  }
+
+  // Poll the inner transaction hash, which finds the transaction whichever
+  // fee-bump transaction gets it into the ledger.
+  innerHash, err := innerTransaction.HashHex(networkPassphrase)
+  check(err)
+
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  response, err := server.PollTransaction(pollCtx, innerHash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    // Still NOT_FOUND: the status is unknown, not failed.
+    log.Fatalf("Status unknown, look up %s again later", innerHash)
+  }
+  check(err)
+  log.Printf("transaction response: %+v", response)
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal("Something went wrong! ", err)
+  }
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.FeeBumpTransaction;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+
+public final class FeeBump {
+  private static final String RPC_URL = "https://soroban-testnet.stellar.org";
+
+  public static void main(String[] args) throws Exception {
+    // Define the network (use Network.PUBLIC for production)
+    Network network = Network.TESTNET;
+
+    // Create keypairs for the source account and the fee account
+    KeyPair sourceKeypair = KeyPair.fromSecretSeed("SECREY_KEY_1");
+    KeyPair feeKeypair = KeyPair.fromSecretSeed("SECREY_KEY_2");
+
+    // Load the source account (this requires network interaction)
+    SorobanServer server = new SorobanServer(RPC_URL);
+    TransactionBuilderAccount sourceAccount = server.getAccount(sourceKeypair.getAccountId());
+
+    // Construct the inner transaction, just a example tx, to transfer 10 XLM to a
+    // destination account. The fee account pays the fee below, so the inner
+    // transaction can bid the network minimum.
+    Transaction innerTransaction = new TransactionBuilder(sourceAccount, network)
+      .setBaseFee(Transaction.MIN_BASE_FEE)
+      .addOperation(
+        PaymentOperation.builder()
+          .destination("GDWH3P3MNTCMOY42CA7RVEACUUAUPZ73XDYKPYUL3TWOFRF37FD6OVM6")
+          .asset(new AssetTypeNative())
+          .amount(new BigDecimal("10"))
+          .build())
+      .setTimeout(30)
+      .build();
+
+    // Sign the inner transaction with the source account
+    innerTransaction.sign(sourceKeypair);
+
+    // The fee account bids what recent transactions paid, capped at what it's
+    // willing to spend. MIN_BASE_FEE is the network minimum and gets outbid when
+    // the network is busy.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.max(
+      Math.min(server.getFeeStats().getInclusionFee().getP90(), maxFee),
+      Transaction.MIN_BASE_FEE);
+
+    // Build the fee-bump transaction
+    FeeBumpTransaction feeBumpTransaction =
+      FeeBumpTransaction.createWithBaseFee(feeKeypair.getAccountId(), fee, innerTransaction);
+
+    // Sign the fee-bump transaction with the fee account
+    feeBumpTransaction.sign(feeKeypair);
+
+    // Submit the fee-bump transaction to the Stellar network. SorobanServer.sendTransaction
+    // takes only a Transaction, so send the fee-bump envelope with a plain JSON-RPC request.
+    String body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"sendTransaction\","
+      + "\"params\":{\"transaction\":\"" + feeBumpTransaction.toEnvelopeXdrBase64() + "\"}}";
+    HttpRequest request = HttpRequest.newBuilder(URI.create(RPC_URL))
+      .header("Content-Type", "application/json")
+      .POST(HttpRequest.BodyPublishers.ofString(body))
+      .build();
+    String sendResponse = HttpClient.newHttpClient()
+      .send(request, HttpResponse.BodyHandlers.ofString())
+      .body();
+    if (!sendResponse.contains("\"status\":\"PENDING\"")) {
+      throw new IllegalStateException("Something went wrong! " + sendResponse);
+    }
+
+    // Poll the inner transaction hash, which finds the transaction whichever
+    // fee-bump transaction gets it into the ledger.
+    String hash = innerTransaction.hashHex();
+    GetTransactionResponse response = server.pollTransaction(hash, 5, attempt -> 1_000L * attempt);
+    if (response.getStatus() == GetTransactionResponse.GetTransactionStatus.NOT_FOUND) {
+      // Still NOT_FOUND: the status is unknown, not failed.
+      throw new IllegalStateException("Status unknown, look up " + hash + " again later");
+    }
+    System.out.println("transaction response: " + response);
+  }
+}
 ```
 
 </CodeGroup>

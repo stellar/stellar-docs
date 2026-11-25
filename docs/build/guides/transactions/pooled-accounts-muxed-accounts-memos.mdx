@@ -31,6 +31,12 @@ It is safe for all wallets to implement sending to muxed accounts.
 
 If you wish to receive deposits to muxed accounts please keep in mind that they are not yet supported by all wallets and exchanges.
 
+<Note>
+
+From Protocol 30 ([CAP-84](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0084.md)), a contract address can also be multiplexed. A muxed contract address starts with `W` and combines a `C…` contract address with a 64-bit integer ID. You can use it only as an argument of a contract function that accepts a muxed address, such as the `to` argument of the Stellar Asset Contract `transfer` function. You can't use it in the operations listed below. See [Sending to a muxed address](/docs/tokens/stellar-asset-contract#sending-to-a-muxed-address).
+
+</Note>
+
 ### Address format
 
 Muxed accounts have their own address format that starts with an M prefix. For example, from a traditional Stellar account address: `GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ`, we can create new muxed accounts with different IDs. The IDs are embedded into the address itself- when you parse the muxed account addresses, you get the G address from above plus another number.
@@ -93,7 +99,7 @@ The account balance decreases only by the transaction fee. You may want to detec
 
 ## Code Implementation
 
-_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` or execute individual examples using their respective functions._
+_The following code demonstrates all three examples using Stellar RPC. You can run all examples sequentially with `runAllMuxedExamples()` (`run_all_muxed_examples()` in Python; the same name in Go and Java) or execute individual examples using their respective functions._
 
 <CodeGroup>
 
@@ -101,6 +107,11 @@ _The following code demonstrates all three examples using Stellar RPC. You can r
 import * as sdk from "@stellar/stellar-sdk";
 
 const server = new sdk.rpc.Server("https://soroban-testnet.stellar.org");
+
+// Bid what recent transactions paid, capped at what you're willing to spend.
+const { inclusionFee } = await server.getFeeStats();
+const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+const fee = String(Math.min(Number(inclusionFee.p90), MAX_FEE));
 
 const custodian = sdk.Keypair.random();
 const outsider = sdk.Keypair.random();
@@ -298,7 +309,7 @@ function submitAndPollTransaction(transaction, description = "Transaction") {
 
 function buildTx(source, signer, ops) {
   var tx = new sdk.TransactionBuilder(source, {
-    fee: sdk.BASE_FEE,
+    fee,
     networkPassphrase: sdk.Networks.TESTNET,
   });
 
@@ -353,6 +364,875 @@ async function makePayment(source, dest, description = "Payment") {
 
 // Run the main function
 runAllMuxedExamples();
+```
+
+```python Python
+import requests
+from stellar_sdk import (
+    Asset,
+    Keypair,
+    MuxedAccount,
+    Network,
+    Payment,
+    SorobanServer,
+    StrKey,
+    TransactionBuilder,
+)
+from stellar_sdk.soroban_rpc import GetTransactionStatus, SendTransactionStatus
+from stellar_sdk.xdr import (
+    LedgerEntryData,
+    LedgerEntryType,
+    LedgerKey,
+    LedgerKeyAccount,
+)
+
+server = SorobanServer("https://soroban-testnet.stellar.org")
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(server.get_fee_stats().inclusion_fee.p90, MAX_FEE)
+
+custodian = Keypair.random()
+outsider = Keypair.random()
+
+custodian_acc = outsider_acc = None
+customers = []
+
+
+# Setup function to fund accounts and create muxed customers
+def preamble():
+    global custodian_acc, outsider_acc, customers
+    print("=== FUNDING ACCOUNTS WITH XLM ===")
+    friendbot_url = server.get_network().friendbot_url
+    for keypair in (custodian, outsider):
+        response = requests.get(
+            friendbot_url, params={"addr": keypair.public_key}, timeout=30
+        )
+        response.raise_for_status()
+    print("All accounts funded with XLM via airdrop")
+
+    custodian_acc = server.load_account(custodian.public_key)
+    outsider_acc = server.load_account(outsider.public_key)
+
+    customers = [
+        MuxedAccount(custodian.public_key, int(customer_id))
+        for customer_id in ["1", "22", "333", "4444"]
+    ]
+
+    print("\n=== ACCOUNT SETUP ===")
+    print("Custodian:\n       ", custodian.public_key)
+    print("Outsider:\n       ", outsider.public_key)
+    print("Customers:")
+    for customer in customers:
+        print(f" {customer.account_muxed_id:>4}:", customer.universal_account_id)
+
+
+# Example 1: Basic payment between two G accounts
+def run_unmuxed_example():
+    print("=== BASIC PAYMENT EXAMPLE (G → G) ===")
+
+    print("=== INITIAL BALANCES ===")
+    show_balance(custodian_acc)
+    show_balance(outsider_acc)
+
+    make_payment(custodian_acc, outsider_acc, "Basic Payment from G to G address")
+
+    print("\n=== FINAL BALANCES ===")
+    show_balance(server.load_account(custodian.public_key))
+    show_balance(server.load_account(outsider.public_key))
+
+    print("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===")
+
+
+# Example 2: Payment from M account to G account
+def run_muxed_to_unmuxed_example():
+    print("=== MUXED TO UNMUXED PAYMENT EXAMPLE (M → G) ===")
+
+    print("=== INITIAL BALANCES ===")
+    show_balance(custodian_acc)
+    show_balance(outsider_acc)
+    src = customers[0]
+    print(
+        f"Sending 10 XLM from Customer {src.account_muxed_id} to "
+        f"{format_account(outsider_acc.universal_account_id)}."
+    )
+
+    make_payment(src, outsider_acc, "Payment from M to G address")
+
+    print("\n=== FINAL BALANCES ===")
+    show_balance(server.load_account(custodian.public_key))
+    show_balance(server.load_account(outsider.public_key))
+
+    print("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===")
+
+
+# Example 3: Payment between two M accounts
+def run_muxed_to_muxed_example():
+    print("=== MUXED TO MUXED PAYMENT EXAMPLE (M → M) ===")
+
+    print("=== INITIAL BALANCES ===")
+    show_balance(custodian_acc)
+
+    src = customers[1]  # Customer 22
+    dest = customers[2]  # Customer 333
+
+    print(
+        f"Sending 10 XLM from Customer {src.account_muxed_id} "
+        f"to Customer {dest.account_muxed_id}."
+    )
+
+    make_payment(src, dest, "Payment from M to M address")
+
+    print("\n=== FINAL BALANCES ===")
+    show_balance(server.load_account(custodian.public_key))
+
+    print("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===")
+
+
+# Main function that runs preamble once and then all three examples
+def run_all_muxed_examples():
+    try:
+        # Run setup/funding only once
+        preamble()
+
+        # Show initial state
+        print("=== OVERALL INITIAL BALANCES ===")
+        show_balance(custodian_acc)
+        show_balance(outsider_acc)
+        print("\n" + "=" * 60 + "\n")
+
+        # Run all three examples sequentially
+        run_unmuxed_example()
+        print("\n" + "=" * 60 + "\n")
+
+        run_muxed_to_unmuxed_example()
+        print("\n" + "=" * 60 + "\n")
+
+        run_muxed_to_muxed_example()
+
+        print("\n=== ALL MUXED ACCOUNT EXAMPLES COMPLETED ===")
+    except Exception as error:
+        print("Error in examples:", error)
+
+
+# Helper function to format account ID with label
+def format_account(account_id):
+    short_id = account_id[:8]
+    if account_id == custodian.public_key:
+        return f"{short_id} (Custodian)"
+    elif account_id == outsider.public_key:
+        return f"{short_id} (Outsider)"
+
+    # Check if it's a muxed account by finding the matching customer
+    for customer in customers:
+        if customer.universal_account_id == account_id:
+            return (
+                f"{account_id[:8]}...{account_id[-6:]} "
+                f"(Customer {customer.account_muxed_id})"
+            )
+    return short_id
+
+
+def scale_asset(x):
+    return x / 10_000_000  # Preserves decimal precision
+
+
+# Helper function to get XLM balance using RPC
+def get_xlm_balance(account_id):
+    key = LedgerKey(
+        LedgerEntryType.ACCOUNT,
+        account=LedgerKeyAccount(
+            account_id=Keypair.from_public_key(account_id).xdr_account_id()
+        ),
+    )
+    response = server.get_ledger_entries([key])
+    if not response.entries:
+        return "0"
+    account_entry = LedgerEntryData.from_xdr(response.entries[0].xdr).account
+    return f"{scale_asset(account_entry.balance.int64):.7f}"
+
+
+# Helper function to submit transaction and poll for completion using RPC
+def submit_and_poll_transaction(transaction, description="Transaction"):
+    submit_response = server.send_transaction(transaction)
+    if submit_response.status != SendTransactionStatus.PENDING:
+        raise RuntimeError(
+            f"Transaction submission failed: {submit_response.status.value}"
+        )
+
+    print(f"{description} submitted: {submit_response.hash}")
+
+    final_response = server.poll_transaction(submit_response.hash)
+    if final_response.status == GetTransactionStatus.NOT_FOUND:
+        # Not in a ledger yet: the outcome is unknown, not failed.
+        raise RuntimeError(f"{description} not found yet: {submit_response.hash}")
+    if final_response.status != GetTransactionStatus.SUCCESS:
+        raise RuntimeError(f"{description} failed: {final_response.status.value}")
+
+    print(f"{description} completed successfully")
+    return {
+        "hash": submit_response.hash,
+        "status": final_response.status,
+        "result_xdr": final_response.result_xdr,
+    }
+
+
+def build_tx(source, signer, ops):
+    builder = TransactionBuilder(
+        source_account=source,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    for op in ops:
+        builder.append_operation(op)
+    tx = builder.set_timeout(30).build()
+    tx.sign(signer)
+    return tx
+
+
+# Helper function to load account, handling muxed accounts
+def load_account(account):
+    address = account.universal_account_id
+    if StrKey.is_valid_med25519_public_key(address):
+        # Muxed accounts do not exist on the ledger: load the base G account
+        return server.load_account(MuxedAccount.from_account(address).account_id)
+    return server.load_account(address)
+
+
+# Helper function to display balance of an account
+def show_balance(acc):
+    address = acc.universal_account_id
+    print(f"{format_account(address)}: {get_xlm_balance(address)} XLM")
+
+
+# Function to make a payment from source to destination account
+def make_payment(source, dest, description="Payment"):
+    source_address = source.universal_account_id
+    dest_address = dest.universal_account_id
+    print(
+        f"\nPayment: {format_account(source_address)} → "
+        f"{format_account(dest_address)} (10 XLM)"
+    )
+
+    account_before_payment = load_account(source)
+    print("Before payment:")
+    show_balance(account_before_payment)
+
+    payment = Payment(
+        source=source_address,
+        destination=dest_address,
+        asset=Asset.native(),
+        amount="10",
+    )
+
+    tx = build_tx(account_before_payment, custodian, [payment])
+
+    submit_and_poll_transaction(tx, description)
+
+    account_after_payment = load_account(source)
+    print("After payment:")
+    show_balance(account_after_payment)
+
+
+# Run the main function
+run_all_muxed_examples()
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "errors"
+  "fmt"
+  "log"
+  "net/http"
+  "net/url"
+  "strings"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/amount"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var ctx = context.Background()
+var server = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+var custodian = keypair.MustRandom()
+var outsider = keypair.MustRandom()
+
+// A muxed customer: an M... address over the custodian's G... account
+type customer struct {
+  id      uint64
+  address string
+}
+
+var customers []customer
+var fee int64
+
+// Setup function to fund accounts and create muxed customers
+func preamble() error {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  feeStats, err := server.GetFeeStats(ctx)
+  if err != nil {
+    return err
+  }
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee = min(int64(feeStats.InclusionFee.P90), maxFee)
+
+  fmt.Println("=== FUNDING ACCOUNTS WITH XLM ===")
+  networkInfo, err := server.GetNetwork(ctx)
+  if err != nil {
+    return err
+  }
+  for _, kp := range []*keypair.Full{custodian, outsider} {
+    resp, err := http.Get(networkInfo.FriendbotURL + "?addr=" + url.QueryEscape(kp.Address()))
+    if err != nil {
+      return err
+    }
+    resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+      return fmt.Errorf("friendbot returned %s", resp.Status)
+    }
+  }
+  fmt.Println("All accounts funded with XLM via airdrop")
+
+  for _, id := range []uint64{1, 22, 333, 4444} {
+    muxed, err := xdr.MuxedAccountFromAccountId(custodian.Address(), id)
+    if err != nil {
+      return err
+    }
+    customers = append(customers, customer{id: id, address: muxed.Address()})
+  }
+
+  fmt.Println("\n=== ACCOUNT SETUP ===")
+  fmt.Println("Custodian:\n       ", custodian.Address())
+  fmt.Println("Outsider:\n       ", outsider.Address())
+  fmt.Println("Customers:")
+  for _, c := range customers {
+    fmt.Printf(" %4d: %s\n", c.id, c.address)
+  }
+  return nil
+}
+
+// Example 1: Basic payment between two G accounts
+func runUnmuxedExample() error {
+  fmt.Println("=== BASIC PAYMENT EXAMPLE (G → G) ===")
+
+  fmt.Println("=== INITIAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+
+  if err := makePayment(custodian.Address(), outsider.Address(), "Basic Payment from G to G address"); err != nil {
+    return err
+  }
+
+  fmt.Println("\n=== FINAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+
+  fmt.Println("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===")
+  return nil
+}
+
+// Example 2: Payment from M account to G account
+func runMuxedToUnmuxedExample() error {
+  fmt.Println("=== MUXED TO UNMUXED PAYMENT EXAMPLE (M → G) ===")
+
+  fmt.Println("=== INITIAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+  src := customers[0]
+  fmt.Printf("Sending 10 XLM from Customer %d to %s.\n", src.id, formatAccount(outsider.Address()))
+
+  if err := makePayment(src.address, outsider.Address(), "Payment from M to G address"); err != nil {
+    return err
+  }
+
+  fmt.Println("\n=== FINAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+
+  fmt.Println("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===")
+  return nil
+}
+
+// Example 3: Payment between two M accounts
+func runMuxedToMuxedExample() error {
+  fmt.Println("=== MUXED TO MUXED PAYMENT EXAMPLE (M → M) ===")
+
+  fmt.Println("=== INITIAL BALANCES ===")
+  showBalance(custodian.Address())
+
+  src := customers[1]  // Customer 22
+  dest := customers[2] // Customer 333
+
+  fmt.Printf("Sending 10 XLM from Customer %d to Customer %d.\n", src.id, dest.id)
+
+  if err := makePayment(src.address, dest.address, "Payment from M to M address"); err != nil {
+    return err
+  }
+
+  fmt.Println("\n=== FINAL BALANCES ===")
+  showBalance(custodian.Address())
+
+  fmt.Println("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===")
+  return nil
+}
+
+// Main function that runs preamble once and then all three examples
+func runAllMuxedExamples() error {
+  // Run setup/funding only once
+  if err := preamble(); err != nil {
+    return err
+  }
+
+  // Show initial state
+  fmt.Println("=== OVERALL INITIAL BALANCES ===")
+  showBalance(custodian.Address())
+  showBalance(outsider.Address())
+  fmt.Println("\n" + strings.Repeat("=", 60) + "\n")
+
+  // Run all three examples sequentially
+  if err := runUnmuxedExample(); err != nil {
+    return err
+  }
+  fmt.Println("\n" + strings.Repeat("=", 60) + "\n")
+
+  if err := runMuxedToUnmuxedExample(); err != nil {
+    return err
+  }
+  fmt.Println("\n" + strings.Repeat("=", 60) + "\n")
+
+  if err := runMuxedToMuxedExample(); err != nil {
+    return err
+  }
+
+  fmt.Println("\n=== ALL MUXED ACCOUNT EXAMPLES COMPLETED ===")
+  return nil
+}
+
+// Helper function to format account ID with label
+func formatAccount(accountID string) string {
+  shortID := accountID[:8]
+  switch accountID {
+  case custodian.Address():
+    return shortID + " (Custodian)"
+  case outsider.Address():
+    return shortID + " (Outsider)"
+  }
+
+  // Check if it's a muxed account by finding the matching customer
+  for _, c := range customers {
+    if c.address == accountID {
+      return fmt.Sprintf("%s...%s (Customer %d)", accountID[:8], accountID[len(accountID)-6:], c.id)
+    }
+  }
+  return shortID
+}
+
+// Helper function to get XLM balance using RPC
+func getXLMBalance(accountID string) string {
+  account := xdr.MustAddress(accountID)
+  key, err := account.LedgerKey()
+  if err != nil {
+    return "0"
+  }
+  keyB64, err := xdr.MarshalBase64(key)
+  if err != nil {
+    return "0"
+  }
+  response, err := server.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
+  if err != nil || len(response.Entries) == 0 {
+    return "0"
+  }
+  var entry xdr.LedgerEntryData
+  if err := xdr.SafeUnmarshalBase64(response.Entries[0].DataXDR, &entry); err != nil || entry.Account == nil {
+    return "0"
+  }
+  return amount.String(entry.Account.Balance)
+}
+
+// Helper function to submit transaction and poll for completion using RPC
+func submitAndPollTransaction(tx *txnbuild.Transaction, description string) error {
+  envelope, err := tx.Base64()
+  if err != nil {
+    return err
+  }
+  submitResponse, err := server.SendTransaction(ctx, protocol.SendTransactionRequest{Transaction: envelope})
+  if err != nil {
+    return err
+  }
+  if submitResponse.Status != "PENDING" {
+    return fmt.Errorf("transaction submission failed: %s", submitResponse.Status)
+  }
+
+  fmt.Printf("%s submitted: %s\n", description, submitResponse.Hash)
+
+  // PollTransaction keeps polling until the context times out.
+  pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+  defer cancel()
+  finalResponse, err := server.PollTransaction(pollCtx, submitResponse.Hash)
+  if errors.Is(err, context.DeadlineExceeded) {
+    // Not in a ledger yet: the outcome is unknown, not failed.
+    return fmt.Errorf("%s not found yet: %s", description, submitResponse.Hash)
+  }
+  if err != nil {
+    return err
+  }
+  if finalResponse.Status != protocol.TransactionStatusSuccess {
+    return fmt.Errorf("%s failed: %s", description, finalResponse.Status)
+  }
+
+  fmt.Printf("%s completed successfully\n", description)
+  return nil
+}
+
+func buildTx(source txnbuild.Account, signer *keypair.Full, ops []txnbuild.Operation) (*txnbuild.Transaction, error) {
+  tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        source,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations:           ops,
+  })
+  if err != nil {
+    return nil, err
+  }
+  return tx.Sign(network.TestNetworkPassphrase, signer)
+}
+
+// Helper function to resolve muxed accounts to their base G account
+func baseAccount(address string) string {
+  if strkey.IsValidMuxedAccountEd25519PublicKey(address) {
+    // Muxed accounts do not exist on the ledger: use the base G account
+    muxed := xdr.MustMuxedAddress(address)
+    return muxed.ToAccountId().Address()
+  }
+  return address
+}
+
+// Helper function to display balance of an account
+func showBalance(address string) {
+  fmt.Printf("%s: %s XLM\n", formatAccount(address), getXLMBalance(baseAccount(address)))
+}
+
+// Function to make a payment from source to destination account
+func makePayment(source, dest, description string) error {
+  fmt.Printf("\nPayment: %s → %s (10 XLM)\n", formatAccount(source), formatAccount(dest))
+
+  accountBeforePayment, err := server.LoadAccount(ctx, baseAccount(source))
+  if err != nil {
+    return err
+  }
+  fmt.Println("Before payment:")
+  showBalance(baseAccount(source))
+
+  payment := &txnbuild.Payment{
+    SourceAccount: source,
+    Destination:   dest,
+    Asset:         txnbuild.NativeAsset{},
+    Amount:        "10",
+  }
+
+  tx, err := buildTx(accountBeforePayment, custodian, []txnbuild.Operation{payment})
+  if err != nil {
+    return err
+  }
+
+  if err := submitAndPollTransaction(tx, description); err != nil {
+    return err
+  }
+
+  fmt.Println("After payment:")
+  showBalance(baseAccount(source))
+  return nil
+}
+
+// Run the main function
+func main() {
+  if err := runAllMuxedExamples(); err != nil {
+    log.Println("Error in examples:", err)
+  }
+}
+```
+
+```java Java
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.MuxedAccount;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.StrKey;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.Operation;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.sorobanrpc.GetLedgerEntriesResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetTransactionResponse.GetTransactionStatus;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse;
+import org.stellar.sdk.responses.sorobanrpc.SendTransactionResponse.SendTransactionStatus;
+import org.stellar.sdk.xdr.LedgerEntry;
+import org.stellar.sdk.xdr.LedgerEntryType;
+import org.stellar.sdk.xdr.LedgerKey;
+
+public final class MuxedAccounts {
+  private static final SorobanServer server = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  private static final KeyPair custodian = KeyPair.random();
+  private static final KeyPair outsider = KeyPair.random();
+
+  // A muxed customer: an M... address over the custodian's G... account
+  record Customer(long id, String address) {}
+
+  private static final List<Customer> customers = new ArrayList<>();
+  private static long fee;
+
+  // Setup function to fund accounts and create muxed customers
+  private static void preamble() throws Exception {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    fee = Math.min(server.getFeeStats().getInclusionFee().getP90(), maxFee);
+
+    System.out.println("=== FUNDING ACCOUNTS WITH XLM ===");
+    String friendbotUrl = server.getNetwork().getFriendbotUrl();
+    HttpClient http = HttpClient.newHttpClient();
+    for (KeyPair kp : List.of(custodian, outsider)) {
+      HttpRequest request = HttpRequest.newBuilder(
+          URI.create(friendbotUrl + "?addr=" + URLEncoder.encode(kp.getAccountId(), StandardCharsets.UTF_8)))
+        .GET()
+        .build();
+      HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200) {
+        throw new IllegalStateException("friendbot returned " + response.statusCode());
+      }
+    }
+    System.out.println("All accounts funded with XLM via airdrop");
+
+    for (long id : new long[] {1, 22, 333, 4444}) {
+      MuxedAccount muxed = new MuxedAccount(custodian.getAccountId(), BigInteger.valueOf(id));
+      customers.add(new Customer(id, muxed.getAddress()));
+    }
+
+    System.out.println("\n=== ACCOUNT SETUP ===");
+    System.out.println("Custodian:\n        " + custodian.getAccountId());
+    System.out.println("Outsider:\n        " + outsider.getAccountId());
+    System.out.println("Customers:");
+    for (Customer c : customers) {
+      System.out.printf(" %4d: %s%n", c.id(), c.address());
+    }
+  }
+
+  // Example 1: Basic payment between two G accounts
+  static void runUnmuxedExample() throws InterruptedException {
+    System.out.println("=== BASIC PAYMENT EXAMPLE (G → G) ===");
+
+    System.out.println("=== INITIAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+
+    makePayment(custodian.getAccountId(), outsider.getAccountId(), "Basic Payment from G to G address");
+
+    System.out.println("\n=== FINAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+
+    System.out.println("\n=== BASIC PAYMENT EXAMPLE COMPLETED ===");
+  }
+
+  // Example 2: Payment from M account to G account
+  static void runMuxedToUnmuxedExample() throws InterruptedException {
+    System.out.println("=== MUXED TO UNMUXED PAYMENT EXAMPLE (M → G) ===");
+
+    System.out.println("=== INITIAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+    Customer src = customers.get(0);
+    System.out.printf("Sending 10 XLM from Customer %d to %s.%n", src.id(), formatAccount(outsider.getAccountId()));
+
+    makePayment(src.address(), outsider.getAccountId(), "Payment from M to G address");
+
+    System.out.println("\n=== FINAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+
+    System.out.println("\n=== MUXED TO UNMUXED EXAMPLE COMPLETED ===");
+  }
+
+  // Example 3: Payment between two M accounts
+  static void runMuxedToMuxedExample() throws InterruptedException {
+    System.out.println("=== MUXED TO MUXED PAYMENT EXAMPLE (M → M) ===");
+
+    System.out.println("=== INITIAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+
+    Customer src = customers.get(1); // Customer 22
+    Customer dest = customers.get(2); // Customer 333
+
+    System.out.printf("Sending 10 XLM from Customer %d to Customer %d.%n", src.id(), dest.id());
+
+    makePayment(src.address(), dest.address(), "Payment from M to M address");
+
+    System.out.println("\n=== FINAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+
+    System.out.println("\n=== MUXED TO MUXED EXAMPLE COMPLETED ===");
+  }
+
+  // Main function that runs preamble once and then all three examples
+  static void runAllMuxedExamples() throws Exception {
+    // Run setup/funding only once
+    preamble();
+
+    // Show initial state
+    System.out.println("=== OVERALL INITIAL BALANCES ===");
+    showBalance(custodian.getAccountId());
+    showBalance(outsider.getAccountId());
+    System.out.println("\n" + "=".repeat(60) + "\n");
+
+    // Run all three examples sequentially
+    runUnmuxedExample();
+    System.out.println("\n" + "=".repeat(60) + "\n");
+
+    runMuxedToUnmuxedExample();
+    System.out.println("\n" + "=".repeat(60) + "\n");
+
+    runMuxedToMuxedExample();
+
+    System.out.println("\n=== ALL MUXED ACCOUNT EXAMPLES COMPLETED ===");
+  }
+
+  // Helper function to format account ID with label
+  private static String formatAccount(String accountId) {
+    String shortId = accountId.substring(0, 8);
+    if (accountId.equals(custodian.getAccountId())) return shortId + " (Custodian)";
+    if (accountId.equals(outsider.getAccountId())) return shortId + " (Outsider)";
+
+    // Check if it's a muxed account by finding the matching customer
+    for (Customer c : customers) {
+      if (c.address().equals(accountId)) {
+        return String.format("%s...%s (Customer %d)",
+          accountId.substring(0, 8), accountId.substring(accountId.length() - 6), c.id());
+      }
+    }
+    return shortId;
+  }
+
+  // Helper function to get XLM balance using RPC
+  private static String getXLMBalance(String accountId) {
+    LedgerKey key = LedgerKey.builder()
+      .discriminant(LedgerEntryType.ACCOUNT)
+      .account(LedgerKey.LedgerKeyAccount.builder()
+        .accountID(KeyPair.fromAccountId(accountId).getXdrAccountId())
+        .build())
+      .build();
+    GetLedgerEntriesResponse response = server.getLedgerEntries(List.of(key));
+    if (response.getEntries() == null || response.getEntries().isEmpty()) {
+      return "0";
+    }
+    LedgerEntry.LedgerEntryData entry = response.getEntries().get(0).parseXdr();
+    if (entry.getAccount() == null) {
+      return "0";
+    }
+    return Operation.fromXdrAmount(entry.getAccount().getBalance().getInt64()).toPlainString();
+  }
+
+  // Helper function to submit transaction and poll for completion using RPC
+  private static void submitAndPollTransaction(Transaction tx, String description) throws InterruptedException {
+    SendTransactionResponse submitResponse = server.sendTransaction(tx);
+    if (submitResponse.getStatus() != SendTransactionStatus.PENDING) {
+      throw new IllegalStateException("transaction submission failed: " + submitResponse.getStatus());
+    }
+
+    System.out.printf("%s submitted: %s%n", description, submitResponse.getHash());
+
+    GetTransactionResponse finalResponse = server.pollTransaction(submitResponse.getHash());
+    if (finalResponse.getStatus() == GetTransactionStatus.NOT_FOUND) {
+      // Not in a ledger yet: the outcome is unknown, not failed.
+      throw new IllegalStateException(description + " not found yet: " + submitResponse.getHash());
+    }
+    if (finalResponse.getStatus() != GetTransactionStatus.SUCCESS) {
+      throw new IllegalStateException(description + " failed: " + finalResponse.getStatus());
+    }
+
+    System.out.printf("%s completed successfully%n", description);
+  }
+
+  private static Transaction buildTx(TransactionBuilderAccount source, KeyPair signer, Operation op) {
+    Transaction tx = new TransactionBuilder(source, Network.TESTNET)
+      .setBaseFee(fee)
+      .setTimeout(30)
+      .addOperation(op)
+      .build();
+    tx.sign(signer);
+    return tx;
+  }
+
+  // Helper function to resolve muxed accounts to their base G account
+  private static String baseAccount(String address) {
+    if (StrKey.isValidMed25519PublicKey(address)) {
+      // Muxed accounts do not exist on the ledger: use the base G account
+      return new MuxedAccount(address).getAccountId();
+    }
+    return address;
+  }
+
+  // Helper function to display balance of an account
+  private static void showBalance(String address) {
+    System.out.printf("%s: %s XLM%n", formatAccount(address), getXLMBalance(baseAccount(address)));
+  }
+
+  // Function to make a payment from source to destination account
+  private static void makePayment(String source, String dest, String description) throws InterruptedException {
+    System.out.printf("%nPayment: %s → %s (10 XLM)%n", formatAccount(source), formatAccount(dest));
+
+    TransactionBuilderAccount accountBeforePayment = server.getAccount(baseAccount(source));
+    System.out.println("Before payment:");
+    showBalance(baseAccount(source));
+
+    PaymentOperation payment = PaymentOperation.builder()
+      .sourceAccount(source)
+      .destination(dest)
+      .asset(new AssetTypeNative())
+      .amount(new BigDecimal("10"))
+      .build();
+
+    Transaction tx = buildTx(accountBeforePayment, custodian, payment);
+    submitAndPollTransaction(tx, description);
+
+    System.out.println("After payment:");
+    showBalance(baseAccount(source));
+  }
+
+  // Run the main function
+  public static void main(String[] args) {
+    try {
+      runAllMuxedExamples();
+    } catch (Exception error) {
+      System.out.println("Error in examples: " + error);
+    }
+  }
+}
 ```
 
 </CodeGroup>

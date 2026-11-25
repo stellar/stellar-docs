@@ -173,7 +173,7 @@ Due to the fact that a node with diagnostic events enabled will be executing cod
 
 ## Tracking the movement of value
 
-Starting in protocol 23, classic operations can emit `transfer`, `mint`, `burn`, `clawback`, `fee`, and `set_authorized` events so that the movement of assets and trusline updates can be tracked using a single stream of data. These events will be emitted if a node has `EMIT_CLASSIC_EVENTS=true` set. If `BACKFILL_STELLAR_ASSET_EVENTS=true` is also set, then events will be emitted for any ledger, regardless of protocol version.
+Starting in protocol 23, classic operations can emit `transfer`, `mint`, `burn`, `clawback`, `fee`, and `set_authorized` events so that the movement of assets and trustline updates can be tracked using a single stream of data. These events will be emitted if a node has `EMIT_CLASSIC_EVENTS=true` set. If `BACKFILL_STELLAR_ASSET_EVENTS=true` is also set, then events will be emitted for any ledger, regardless of protocol version.
 
 ## Reading events
 
@@ -187,7 +187,7 @@ Events are ephemeral: RPC providers typically only keep short chunks (less than 
 
 To learn more about working with events, take a look at the [events guides](/docs/build/guides/events) and [this example contract](../../../build/smart-contracts/example-contracts/events).
 
-For a quick high-level demonstration, though, we'll use the [TypeScript SDK](/docs/tools/sdks) to infinitely fetch all `transfer` events (defined by the [Soroban Token Interface](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md#interface)) involving the [XLM contract](https://stellar.expert/explorer/testnet/contract/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC) and display them in a human-friendly format.
+For a quick high-level demonstration, though, we'll use the [JavaScript, Python, Go, or Java SDK](/docs/tools/sdks) to infinitely fetch all `transfer` events (defined by the [Soroban Token Interface](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md#interface)) involving the [XLM contract](https://stellar.expert/explorer/testnet/contract/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC) and display them in a human-friendly format.
 
 <CodeGroup>
 
@@ -288,6 +288,342 @@ function cereal(data) {
 }
 
 main().catch((e) => console.error(e));
+```
+
+```python Python
+import json
+import time
+
+from stellar_sdk import Address, Asset, Network, SorobanServer, scval
+from stellar_sdk.soroban_rpc import EventFilter, EventFilterType
+
+s = SorobanServer("https://soroban-testnet.stellar.org")
+
+
+def main():
+    response = s.get_latest_ledger()
+    xlm_filter = EventFilter(
+        event_type=EventFilterType.CONTRACT,
+        contract_ids=[Asset.native().contract_id(Network.TESTNET_NETWORK_PASSPHRASE)],
+        topics=[
+            # Defined in https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md#interface
+            # for all compatible transfer events.
+            [
+                scval.to_symbol("transfer").to_xdr(),
+                "*",  # from anyone
+                "*",  # to anyone
+                "*",  # any asset (it'll be XLM anyway)
+            ],
+        ],
+    )
+    page = s.get_events(
+        start_ledger=response.sequence - 120,  # start ~10m in the past
+        filters=[xlm_filter],
+        limit=10,
+    )
+
+    # Run forever until Ctrl+C'd by user
+    while True:
+        if not page.events:
+            time.sleep(2)
+        else:
+            #
+            # Two ways to output a human-friendly version:
+            #  1. the decoded topics and value alone
+            #  2. the same, with the event type and contract ID
+            #
+            print(cereal(simple_event_log(page.events)))
+            print(cereal(full_event_log(page.events)))
+
+        # Fetch the next page until events are exhausted, then wait.
+        page = s.get_events(filters=[xlm_filter], cursor=page.cursor, limit=10)
+
+
+def simple_event_log(events):
+    return [
+        {
+            "topics": [scval.to_native(t) for t in event.topic],
+            "value": scval.to_native(event.value),
+        }
+        for event in events
+    ]
+
+
+def full_event_log(events):
+    return [
+        {
+            "type": event.event_type,
+            "contract_id": event.contract_id,
+            "topics": [scval.to_native(t) for t in event.topic],
+            "data": scval.to_native(event.value),
+        }
+        for event in events
+    ]
+
+
+# A custom JSONification method to handle addresses and bytes.
+def cereal(data):
+    def default(value):
+        if isinstance(value, Address):
+            return value.address
+        if isinstance(value, bytes):
+            return value.hex()
+        return str(value)
+
+    return json.dumps(data, default=default, indent=2)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+```go Go
+package main
+
+import (
+  "context"
+  "encoding/json"
+  "fmt"
+  "log"
+  "time"
+
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/strkey"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+  "github.com/stellar/go-stellar-sdk/xdr"
+
+  client "github.com/stellar/go-stellar-sdk/clients/rpcclient"
+  protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+)
+
+var s = client.NewClient("https://soroban-testnet.stellar.org", nil)
+
+func main() {
+  ctx := context.Background()
+  response, err := s.GetLatestLedger(ctx)
+  if err != nil {
+    log.Fatal(err)
+  }
+  xlmFilter, err := transferFilter()
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // Ask for XDR-JSON, so the topics and value arrive human-readable.
+  page, err := s.GetEvents(ctx, protocol.GetEventsRequest{
+    StartLedger: response.Sequence - 120, // start ~10m in the past
+    Filters:     []protocol.EventFilter{xlmFilter},
+    Pagination:  &protocol.PaginationOptions{Limit: 10},
+    Format:      protocol.FormatJSON,
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // Run forever until Ctrl+C'd by user
+  for {
+    if len(page.Events) == 0 {
+      time.Sleep(2 * time.Second)
+    } else {
+      //
+      // Two ways to output a human-friendly version:
+      //  1. the decoded topics and value alone
+      //  2. the same, with the event type and contract ID
+      //
+      fmt.Println(cereal(simpleEventLog(page.Events)))
+      fmt.Println(cereal(fullEventLog(page.Events)))
+    }
+
+    // Fetch the next page until events are exhausted, then wait.
+    cursor, err := protocol.ParseCursor(page.Cursor)
+    if err != nil {
+      log.Fatal(err)
+    }
+    page, err = s.GetEvents(ctx, protocol.GetEventsRequest{
+      Filters:    []protocol.EventFilter{xlmFilter},
+      Pagination: &protocol.PaginationOptions{Cursor: &cursor, Limit: 10},
+      Format:     protocol.FormatJSON,
+    })
+    if err != nil {
+      log.Fatal(err)
+    }
+  }
+}
+
+// transferFilter matches the `transfer` events of the XLM contract on Testnet.
+func transferFilter() (protocol.EventFilter, error) {
+  var none protocol.EventFilter
+  xlm, err := txnbuild.NativeAsset{}.ToXDR()
+  if err != nil {
+    return none, err
+  }
+  id, err := xlm.ContractID(network.TestNetworkPassphrase)
+  if err != nil {
+    return none, err
+  }
+  xlmContractID, err := strkey.Encode(strkey.VersionByteContract, id[:])
+  if err != nil {
+    return none, err
+  }
+
+  transfer := xdr.ScSymbol("transfer")
+  transferTopic, err := xdr.MarshalBase64(xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &transfer})
+  if err != nil {
+    return none, err
+  }
+  // A TopicFilter decodes from the same base64 strings and "*" wildcards
+  // that the RPC request takes.
+  segments, err := json.Marshal([]string{
+    // Defined in https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md#interface
+    // for all compatible transfer events.
+    transferTopic,
+    "*", // from anyone
+    "*", // to anyone
+    "*", // any asset (it'll be XLM anyway)
+  })
+  if err != nil {
+    return none, err
+  }
+  var topics protocol.TopicFilter
+  if err := json.Unmarshal(segments, &topics); err != nil {
+    return none, err
+  }
+
+  return protocol.EventFilter{
+    EventType:   protocol.EventTypeSet{protocol.EventTypeContract: nil},
+    ContractIDs: []string{xlmContractID},
+    Topics:      []protocol.TopicFilter{topics},
+  }, nil
+}
+
+type simpleEvent struct {
+  Topics []json.RawMessage `json:"topics"`
+  Value  json.RawMessage   `json:"value"`
+}
+
+func simpleEventLog(events []protocol.EventInfo) []simpleEvent {
+  out := make([]simpleEvent, 0, len(events))
+  for _, event := range events {
+    out = append(out, simpleEvent{Topics: event.TopicJSON, Value: event.ValueJSON})
+  }
+  return out
+}
+
+type fullEvent struct {
+  Type       string            `json:"type"`
+  ContractID string            `json:"contractId"`
+  Topics     []json.RawMessage `json:"topics"`
+  Data       json.RawMessage   `json:"data"`
+}
+
+func fullEventLog(events []protocol.EventInfo) []fullEvent {
+  out := make([]fullEvent, 0, len(events))
+  for _, event := range events {
+    out = append(out, fullEvent{
+      Type:       event.EventType,
+      ContractID: event.ContractID,
+      Topics:     event.TopicJSON,
+      Data:       event.ValueJSON,
+    })
+  }
+  return out
+}
+
+// cereal turns the data into indented JSON.
+func cereal(data any) string {
+  out, err := json.MarshalIndent(data, "", "  ")
+  if err != nil {
+    log.Fatal(err)
+  }
+  return string(out)
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import java.io.IOException;
+import java.util.List;
+import java.util.stream.Collectors;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.SorobanServer;
+import org.stellar.sdk.requests.sorobanrpc.EventFilterType;
+import org.stellar.sdk.requests.sorobanrpc.GetEventsRequest;
+import org.stellar.sdk.responses.sorobanrpc.GetEventsResponse;
+import org.stellar.sdk.responses.sorobanrpc.GetEventsResponse.EventInfo;
+import org.stellar.sdk.scval.Scv;
+import org.stellar.sdk.xdr.SCVal;
+
+public final class TransferEvents {
+  private static final SorobanServer s = new SorobanServer("https://soroban-testnet.stellar.org");
+
+  public static void main(String[] args) throws IOException, InterruptedException {
+    long latestLedger = s.getLatestLedger().getSequence();
+    GetEventsRequest.EventFilter xlmFilter = GetEventsRequest.EventFilter.builder()
+      .type(EventFilterType.CONTRACT)
+      .contractIds(List.of(new AssetTypeNative().getContractId(Network.TESTNET)))
+      .topics(List.of(List.of(
+        // Defined in https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md#interface
+        // for all compatible transfer events.
+        Scv.toSymbol("transfer").toXdrBase64(),
+        "*", // from anyone
+        "*", // to anyone
+        "*"))) // any asset (it'll be XLM anyway)
+      .build();
+    GetEventsResponse page = s.getEvents(GetEventsRequest.builder()
+      .startLedger(latestLedger - 120) // start ~10m in the past
+      .filters(List.of(xlmFilter))
+      .pagination(GetEventsRequest.PaginationOptions.builder().limit(10L).build())
+      .build());
+
+    // Run forever until Ctrl+C'd by user
+    while (true) {
+      if (page.getEvents().isEmpty()) {
+        Thread.sleep(2000);
+      } else {
+        //
+        // Two ways to output a human-friendly version:
+        //  1. the decoded topics and value alone
+        //  2. the same, with the event type and contract ID
+        //
+        System.out.println(simpleEventLog(page.getEvents()));
+        System.out.println(fullEventLog(page.getEvents()));
+      }
+
+      // Fetch the next page until events are exhausted, then wait.
+      page = s.getEvents(GetEventsRequest.builder()
+        .filters(List.of(xlmFilter))
+        .pagination(GetEventsRequest.PaginationOptions.builder()
+          .cursor(page.getCursor())
+          .limit(10L)
+          .build())
+        .build());
+    }
+  }
+
+  static String simpleEventLog(List<EventInfo> events) {
+    return events.stream()
+      .map(event -> "  {\"topics\": " + cereal(event.parseTopic())
+        + ", \"value\": " + event.parseValue().toJson() + "}")
+      .collect(Collectors.joining(",\n", "[\n", "\n]"));
+  }
+
+  static String fullEventLog(List<EventInfo> events) {
+    return events.stream()
+      .map(event -> "  {\"type\": \"" + event.getType().name().toLowerCase()
+        + "\", \"contractId\": \"" + event.getContractId()
+        + "\", \"topics\": " + cereal(event.parseTopic())
+        + ", \"data\": " + event.parseValue().toJson() + "}")
+      .collect(Collectors.joining(",\n", "[\n", "\n]"));
+  }
+
+  // cereal turns the values into a JSON array of their XDR-JSON forms.
+  static String cereal(List<SCVal> values) {
+    return values.stream().map(SCVal::toJson).collect(Collectors.joining(", ", "[", "]"));
+  }
+}
 ```
 
 </CodeGroup>

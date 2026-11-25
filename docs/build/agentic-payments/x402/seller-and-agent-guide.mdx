@@ -1,0 +1,233 @@
+---
+title: x402 Seller and Agent Guide
+sidebarTitle: Seller and Agent Guide
+description: "After the x402 quickstart: make a paid endpoint discoverable, build an agent that finds and pays it under a spending cap, and move to mainnet."
+keywords:
+  [
+    x402,
+    x402 seller,
+    x402 agent,
+    agentic payments,
+    Bazaar,
+    x402 discovery,
+    fee sponsorship,
+    auth entries,
+    USDC,
+    SEP-41,
+  ]
+---
+
+This guide picks up where the [x402 Quickstart Guide](/docs/build/agentic-payments/x402/quickstart-guide) leaves off. You'll make a paid endpoint discoverable, build an agent that finds a paid resource through a facilitator's Bazaar and pays for it (within a spending cap), and look at what changes when you move to mainnet. Everything here uses the stock x402 packages.
+
+## Before you start
+
+You'll need [Node.js](https://nodejs.org) and two testnet accounts (a buyer and a seller), each with a USDC trustline. The buyer's account also needs some testnet USDC. The [quickstart](/docs/build/agentic-payments/x402/quickstart-guide#setting-up-a-testnet-wallet) walks through setting these up. The commands below were tested with Node.js 24 and `@x402/*` 2.30.0.
+
+## Networks, assets, and trustlines
+
+| Network | x402 network id | USDC contract (7 decimals) |
+| --- | --- | --- |
+| Testnet | `stellar:testnet` | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+| Mainnet | `stellar:pubnet` | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
+
+A dollar price such as `"$0.01"` is converted to USDC on whichever network you register. On `stellar:testnet`, that's `amount: "100000"` of the testnet USDC contract; on `stellar:pubnet`, it's the same amount of the mainnet contract. To charge in a different [SEP-41](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md) token, set the price as `{ asset: "<contract id>", amount: "<base units>" }` instead (the facilitator must support that asset).
+
+A classic `G…` account needs a USDC trustline before it can hold USDC. That goes for both the buyer (who sends USDC) and the seller's `payTo` account (which receives it). If `payTo` doesn't have a trustline, the payment fails. Contract addresses (`C…`, such as a smart wallet) don't need trustlines.
+
+Every facilitator publishes what it supports at `/supported`. Look for `"scheme": "exact"` on your network with `"extra": {"areFeesSponsored": true}`. A facilitator that catalogs resources for discovery also lists `"bazaar"` in its top-level `extensions`.
+
+## Make an endpoint discoverable
+
+The `declareDiscoveryExtension` function describes a route's input and output. A Bazaar-enabled facilitator uses that description to catalog the route, and agents use it to call the route without needing to read your docs.
+
+```bash
+mkdir x402-seller && cd x402-seller
+npm init -y && npm pkg set type=module
+npm install express @x402/express @x402/core @x402/stellar @x402/extensions
+```
+
+```js seller.js
+import express from "express";
+import { HTTPFacilitatorClient, x402ResourceServer } from "@x402/core/server";
+import { paymentMiddleware } from "@x402/express";
+import {
+  bazaarResourceServerExtension,
+  declareDiscoveryExtension,
+} from "@x402/extensions/bazaar";
+import { ExactStellarScheme } from "@x402/stellar/exact/server";
+
+const NETWORK = process.env.NETWORK ?? "stellar:testnet"; // or "stellar:pubnet"
+const PAY_TO = process.env.PAY_TO; // the account that receives the payments
+const facilitator = new HTTPFacilitatorClient({
+  url: process.env.FACILITATOR_URL,
+});
+
+const resourceServer = new x402ResourceServer(facilitator)
+  .register(NETWORK, new ExactStellarScheme())
+  .registerExtension(bazaarResourceServerExtension);
+
+const app = express();
+app.use(
+  paymentMiddleware(
+    {
+      "GET /weather": {
+        accepts: {
+          scheme: "exact",
+          price: "$0.01",
+          network: NETWORK,
+          payTo: PAY_TO,
+        },
+        description: "Current weather for a city",
+        mimeType: "application/json",
+        extensions: declareDiscoveryExtension({
+          input: { city: "Lisbon" },
+          inputSchema: {
+            properties: { city: { type: "string", description: "City name" } },
+            required: ["city"],
+          },
+          output: {
+            example: { city: "Lisbon", temperature: 21, conditions: "sunny" },
+          },
+        }),
+      },
+    },
+    resourceServer,
+  ),
+);
+app.get("/weather", (req, res) => {
+  res.json({
+    city: String(req.query.city ?? "Lisbon"),
+    temperature: 21,
+    conditions: "sunny",
+  });
+});
+app.listen(4021, () =>
+  console.log("listening on http://localhost:4021/weather"),
+);
+```
+
+```bash
+PAY_TO=G... FACILITATOR_URL=https://... node seller.js
+```
+
+Sellers don't need to register anywhere. When a payment carrying the `bazaar` extension settles through a Bazaar-enabled facilitator, that facilitator _may_ add the resource to its catalog. Facilitators validate the metadata first, and some refuse resources on non-public hosts (like `localhost`). The result comes back in the `EXTENSION-RESPONSES` header as `success`, `processing`, or `rejected` (with a reason), and the stock `HTTPFacilitatorClient` logs it. Either way, the payment still settles. To get listed, deploy your seller on a public hostname.
+
+## Build an agent that discovers and pays
+
+Facilitators that implement the x402 [Bazaar extension](https://docs.x402.org/extensions/bazaar) can serve their catalog at `GET /discovery/resources` and `GET /discovery/search`:
+
+```bash
+curl -s "<DISCOVERY_URL>/discovery/search?query=current%20weather%20for%20a%20city&network=stellar:testnet"
+```
+
+The `withBazaar` helper from `@x402/extensions/bazaar` adds those same discovery calls to the stock facilitator client. The agent below searches the catalog, keeps only results it can pay for on testnet at 0.05 USDC or less, fills in the listing's example input, and then pays. As a backstop, `spendControls` refuses any payment above the cap before anything gets signed.
+
+```bash
+mkdir x402-agent && cd x402-agent
+npm init -y && npm pkg set type=module
+npm install @x402/fetch @x402/core @x402/stellar @x402/extensions
+```
+
+```js agent.js
+import { HTTPFacilitatorClient } from "@x402/core/server";
+import { withBazaar } from "@x402/extensions/bazaar";
+import {
+  decodePaymentResponseHeader,
+  wrapFetchWithPaymentFromConfig,
+} from "@x402/fetch";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/client";
+
+const NETWORK = "stellar:testnet";
+const MAX_AMOUNT = 500_000n; // 0.05 USDC in base units (7 decimals)
+
+// 1. Discover: search a facilitator's Bazaar for a resource that is paid on this network.
+const discovery = withBazaar(
+  new HTTPFacilitatorClient({ url: process.env.DISCOVERY_URL }),
+);
+const { resources } = await discovery.extensions.bazaar.search({
+  query: process.argv[2] ?? "current weather for a city",
+  network: NETWORK,
+  type: "http",
+});
+const match = resources.find((item) =>
+  item.accepts.some(
+    (option) =>
+      option.network === NETWORK &&
+      option.scheme === "exact" &&
+      BigInt(option.amount) <= MAX_AMOUNT,
+  ),
+);
+if (match === undefined) throw new Error("no affordable resource found");
+
+// 2. Build the request from the listing's own example input.
+const info = match.extensions?.bazaar?.info;
+const url = new URL(match.resource);
+for (const [key, value] of Object.entries(info?.input?.queryParams ?? {}))
+  url.searchParams.set(key, value);
+console.log(`paying for ${url} (${match.description ?? "no description"})`);
+
+// 3. Pay with the stock client, capped per payment.
+const fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
+  schemes: [
+    {
+      network: NETWORK,
+      client: new ExactStellarScheme(
+        createEd25519Signer(process.env.BUYER_SECRET, NETWORK),
+      ),
+    },
+  ],
+  spendControls: { maxAmountPerPayment: "$0.05" },
+});
+const response = await fetchWithPayment(url);
+console.log(response.status, await response.json());
+const receipt = response.headers.get("PAYMENT-RESPONSE");
+if (receipt !== null) console.log(decodePaymentResponseHeader(receipt));
+```
+
+```bash
+BUYER_SECRET=S... DISCOVERY_URL=https://... node agent.js "current weather for a city"
+```
+
+Set `DISCOVERY_URL` to any facilitator whose `/supported` endpoint lists the `bazaar` extension. The [community facilitators](/docs/build/agentic-payments/x402#community-facilitators) list notes which ones catalog resources.
+
+The receipt's `transaction` field is the settlement transaction hash. Look it up on a block explorer to see the buyer's USDC move to `payTo`, with the fee paid by the facilitator.
+
+<Warning>
+
+Listings are supplied by sellers, so treat them as untrusted data. Check the price, network, and `payTo` before paying. The agent above checks the price and network, and `spendControls` enforces the cap again at signing time.
+
+</Warning>
+
+## What the payer signs
+
+The buyer signs a Soroban authorization entry for exactly one call: `transfer(from = buyer, to = payTo, amount)` on the asset contract named in the payment requirements. Changing the recipient, the amount, or the asset invalidates the signature. The entry expires after roughly `maxTimeoutSeconds` (its expiration ledger is the current ledger plus `maxTimeoutSeconds` divided by the ledger close time), so an unsettled payment can't be settled later. And since the buyer isn't the transaction source, paying doesn't consume the buyer's sequence number.
+
+## Fee sponsorship
+
+When `extra.areFeesSponsored` is `true`, the facilitator pays the network fee for the settlement transaction, so the buyer doesn't need any XLM to cover it. This is fee sponsorship only, not [sponsored reserves](/docs/build/guides/transactions/sponsored-reserves). A classic account still needs its own base reserve plus the reserve for its USDC trustline (see [Lumens](/docs/learn/fundamentals/lumens#minimum-balance)).
+
+## Moving to mainnet
+
+- **Network.** Use `stellar:pubnet` on both sides. A `"$0.01"` price then resolves to mainnet USDC.
+- **Facilitator.** Choose one whose `/supported` endpoint lists `exact` on `stellar:pubnet`. Some require an API key, which the seller sends using the `createAuthHeaders` option on `HTTPFacilitatorClient`.
+- **RPC.** On mainnet, the stock client has no default RPC endpoint and throws an error if you don't provide one. Pick one from the [RPC providers](/docs/data/apis/rpc/providers) list and pass it in: `new ExactStellarScheme(signer, { url: "<mainnet RPC URL>" })`.
+- **Accounts.** The buyer and any `G…` `payTo` account need a trustline to mainnet USDC (issuer `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`), plus enough XLM for their reserves.
+- **Keys and limits.** Keep secret keys out of your code, give agents a separate low-balance account, and set `spendControls` to the most you're willing to lose on a single payment.
+
+## Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| `Stellar trustline is missing for account G… and asset C…: HostError: Error(Contract, #13)` when paying | The account named in the message has no trustline to the asset. If it's the buyer's account, add the trustline (`changeTrust`) and fund it with USDC. |
+| The same error names the seller's `payTo` account | `payTo` cannot receive the asset. Add the trustline to the seller's account, or use a `C…` address. |
+| `All payment requirements were rejected by spendControls.maxAmountPerPayment` | The price is above the client's cap. Raise the cap only if you mean to pay that much. |
+| `Stellar mainnet requires a non-empty rpcUrl` | Pass an RPC URL to `ExactStellarScheme` on `stellar:pubnet`. |
+| `EXTENSION-RESPONSES` reports `rejected` for `bazaar` | The payment settled, but the facilitator did not catalog the resource. The reason says why. |
+
+## Learn more
+
+- [x402 on Stellar](/docs/build/agentic-payments/x402): wallets, assets, facilitators, and examples
+- [x402 `exact` scheme on Stellar](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_stellar.md): what facilitators must check
+- [Bazaar extension](https://docs.x402.org/extensions/bazaar): discovery metadata and endpoints
+- [Signing Soroban invocations](/docs/build/guides/transactions/signing-soroban-invocations): authorization entries in depth

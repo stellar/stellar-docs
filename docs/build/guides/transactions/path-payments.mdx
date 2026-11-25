@@ -36,14 +36,15 @@ Allows a user to specify the amount of the asset received. The amount sent will 
 
 First, ensure the receiver has a trustline established for the asset they will receive. In this example, we will use USDC as the asset received. The sender will send XLM, which will be converted to USDC through the path payment operation.
 
-```js
+<CodeGroup>
+
+```js JavaScript
 import {
   Horizon,
   Asset,
   Keypair,
   TransactionBuilder,
   Networks,
-  BASE_FEE,
   Operation,
   Memo,
 } from "@stellar/stellar-sdk";
@@ -55,11 +56,16 @@ const RECEIVER_SECRET = "S..."; // Receiver's secret key
 const SENDER_SECRET = "S..."; // Sender's secret key
 const horizonServer = new Horizon.Server("https://horizon-testnet.stellar.org");
 
+// Bid what recent transactions paid, capped at what you're willing to spend.
+const { fee_charged } = await horizonServer.feeStats();
+const MAX_FEE = 100_000; // stroops per operation (0.01 XLM): pick your own cap
+const fee = String(Math.min(Number(fee_charged.p90), MAX_FEE));
+
 // Create a USDC trustline for the receiver
 const receiverKP = Keypair.fromSecret(RECEIVER_SECRET);
 let account = await horizonServer.loadAccount(receiverKP.publicKey());
 let transaction = new TransactionBuilder(account, {
-  fee: BASE_FEE * 100,
+  fee,
   networkPassphrase: Networks.TESTNET,
 })
   .addOperation(
@@ -73,18 +79,177 @@ let transaction = new TransactionBuilder(account, {
   .build();
 
 transaction.sign(receiverKP);
-const resp = await SERVER.submitTransaction(transaction);
+let resp = await horizonServer.submitTransaction(transaction);
 console.log("resp", resp);
 ```
 
+```python Python
+from stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder
+
+# USDC issuer on Stellar Testnet
+USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+USDC_ASSET = Asset("USDC", USDC_ISSUER)  # USDC asset on Stellar Testnet
+RECEIVER_SECRET = "S..."  # Receiver's secret key
+
+SENDER_SECRET = "S..."  # Sender's secret key
+horizon_server = Server("https://horizon-testnet.stellar.org")
+
+# Bid what recent transactions paid, capped at what you're willing to spend.
+fee_charged = horizon_server.fee_stats().call()["fee_charged"]
+MAX_FEE = 100_000  # stroops per operation (0.01 XLM): pick your own cap
+fee = min(int(fee_charged["p90"]), MAX_FEE)
+
+# Create a USDC trustline for the receiver
+receiver_kp = Keypair.from_secret(RECEIVER_SECRET)
+account = horizon_server.load_account(receiver_kp.public_key)
+transaction = (
+    TransactionBuilder(
+        source_account=account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_change_trust_op(asset=USDC_ASSET, limit="10")
+    .add_text_memo("Trusting USDC")
+    .set_timeout(30)
+    .build()
+)
+
+transaction.sign(receiver_kp)
+resp = horizon_server.submit_transaction(transaction)
+print("resp", resp)
+```
+
+```go Go
+package main
+
+import (
+  "log"
+
+  "github.com/stellar/go-stellar-sdk/clients/horizonclient"
+  "github.com/stellar/go-stellar-sdk/keypair"
+  "github.com/stellar/go-stellar-sdk/network"
+  "github.com/stellar/go-stellar-sdk/txnbuild"
+)
+
+const usdcIssuer = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" // USDC issuer on Stellar Testnet
+const receiverSecret = "S..."                                                  // Receiver's secret key
+const senderSecret = "S..."                                                    // Sender's secret key
+
+var usdcAsset = txnbuild.CreditAsset{Code: "USDC", Issuer: usdcIssuer} // USDC asset on Stellar Testnet
+var horizonServer = horizonclient.DefaultTestNetClient
+
+func main() {
+  // Bid what recent transactions paid, capped at what you're willing to spend.
+  feeStats, err := horizonServer.FeeStats()
+  check(err)
+  const maxFee = 100_000 // stroops per operation (0.01 XLM): pick your own cap
+  fee := min(feeStats.FeeCharged.P90, maxFee)
+
+  // Create a USDC trustline for the receiver
+  receiverKP := keypair.MustParseFull(receiverSecret)
+  account, err := horizonServer.AccountDetail(horizonclient.AccountRequest{AccountID: receiverKP.Address()})
+  check(err)
+  transaction, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        &account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Memo:                 txnbuild.MemoText("Trusting USDC"),
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.ChangeTrust{
+        Line:  usdcAsset.MustToChangeTrustAsset(),
+        Limit: "10",
+      },
+    },
+  })
+  check(err)
+
+  transaction, err = transaction.Sign(network.TestNetworkPassphrase, receiverKP)
+  check(err)
+  resp, err := horizonServer.SubmitTransaction(transaction)
+  check(err)
+  log.Printf("resp %+v", resp)
+
+  // The next step defines sendPathPayment.
+  sendPathPayment(fee, receiverKP)
+}
+
+func check(err error) {
+  if err != nil {
+    log.Fatal(err)
+  }
+}
+```
+
+```java Java
+// Dependencies (Maven coordinates):
+//   network.lightsail:stellar-sdk:6.0.0
+
+import java.math.BigDecimal;
+
+import org.stellar.sdk.Asset;
+import org.stellar.sdk.AssetTypeNative;
+import org.stellar.sdk.ChangeTrustAsset;
+import org.stellar.sdk.KeyPair;
+import org.stellar.sdk.Memo;
+import org.stellar.sdk.Network;
+import org.stellar.sdk.Server;
+import org.stellar.sdk.Transaction;
+import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionBuilderAccount;
+import org.stellar.sdk.operations.ChangeTrustOperation;
+import org.stellar.sdk.operations.PathPaymentStrictReceiveOperation;
+import org.stellar.sdk.responses.TransactionResponse;
+
+public final class PathPayments {
+  private static final String USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"; // USDC issuer on Stellar Testnet
+  private static final Asset USDC_ASSET = Asset.createNonNativeAsset("USDC", USDC_ISSUER); // USDC asset on Stellar Testnet
+  private static final String RECEIVER_SECRET = "S..."; // Receiver's secret key
+
+  private static final String SENDER_SECRET = "S..."; // Sender's secret key
+  private static final Server horizonServer = new Server("https://horizon-testnet.stellar.org");
+
+  public static void main(String[] args) {
+    // Bid what recent transactions paid, capped at what you're willing to spend.
+    long maxFee = 100_000L; // stroops per operation (0.01 XLM): pick your own cap
+    long fee = Math.min(horizonServer.feeStats().execute().getFeeCharged().getP90(), maxFee);
+
+    // Create a USDC trustline for the receiver
+    KeyPair receiverKP = KeyPair.fromSecretSeed(RECEIVER_SECRET);
+    TransactionBuilderAccount account = horizonServer.loadAccount(receiverKP.getAccountId());
+    Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+      .setBaseFee(fee)
+      .addOperation(
+        ChangeTrustOperation.builder()
+          .asset(new ChangeTrustAsset(USDC_ASSET))
+          .limit(new BigDecimal("10"))
+          .build())
+      .addMemo(Memo.text("Trusting USDC"))
+      .setTimeout(30)
+      .build();
+
+    transaction.sign(receiverKP);
+    TransactionResponse resp = horizonServer.submitTransaction(transaction);
+    System.out.println("resp " + resp);
+
+    // The next step defines sendPathPayment.
+    sendPathPayment(fee, receiverKP);
+  }
+}
+```
+
+</CodeGroup>
+
 Now let's send a path payment from the sender to the receiver, converting XLM to USDC.
 
-```js
+<CodeGroup>
+
+```js JavaScript
 // Use path payment to send XLM from the receiver to the sender, who receives USDC
 let senderKP = Keypair.fromSecret(SENDER_SECRET);
-let account = await horizonServer.loadAccount(senderKP.publicKey());
-let transaction = new TransactionBuilder(account, {
-  fee: BASE_FEE * 100,
+account = await horizonServer.loadAccount(senderKP.publicKey());
+transaction = new TransactionBuilder(account, {
+  fee,
   networkPassphrase: Networks.TESTNET,
 })
   .addOperation(
@@ -101,6 +266,96 @@ let transaction = new TransactionBuilder(account, {
   .build();
 
 transaction.sign(senderKP);
-const resp = await horizonServer.submitTransaction(transaction);
+resp = await horizonServer.submitTransaction(transaction);
 console.log("resp", resp);
 ```
+
+```python Python
+# Use path payment to send XLM from the receiver to the sender, who receives USDC
+sender_kp = Keypair.from_secret(SENDER_SECRET)
+account = horizon_server.load_account(sender_kp.public_key)
+transaction = (
+    TransactionBuilder(
+        source_account=account,
+        network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE,
+        base_fee=fee,
+    )
+    .append_path_payment_strict_receive_op(
+        destination=receiver_kp.public_key,  # Receiver's public key
+        send_asset=Asset.native(),  # Sending XLM
+        send_max="10",  # Maximum amount of XLM to send
+        dest_asset=USDC_ASSET,  # Receiving USDC
+        dest_amount="1",  # Amount of USDC to receive
+        path=[],  # No intermediate assets: XLM converts straight to USDC
+    )
+    .add_text_memo("XLM to USDC")
+    .set_timeout(30)
+    .build()
+)
+
+transaction.sign(sender_kp)
+resp = horizon_server.submit_transaction(transaction)
+print("resp", resp)
+```
+
+```go Go
+// Use path payment to send XLM from the sender to the receiver, who receives USDC
+func sendPathPayment(fee int64, receiverKP *keypair.Full) {
+  senderKP := keypair.MustParseFull(senderSecret)
+  account, err := horizonServer.AccountDetail(horizonclient.AccountRequest{AccountID: senderKP.Address()})
+  check(err)
+  transaction, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+    SourceAccount:        &account,
+    IncrementSequenceNum: true,
+    BaseFee:              fee,
+    Memo:                 txnbuild.MemoText("XLM to USDC"),
+    Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(30)},
+    Operations: []txnbuild.Operation{
+      &txnbuild.PathPaymentStrictReceive{
+        SendAsset:   txnbuild.NativeAsset{}, // Sending XLM
+        SendMax:     "10",                   // Maximum amount of XLM to send
+        DestAsset:   usdcAsset,              // Receiving USDC
+        DestAmount:  "1",                    // Amount of USDC to receive
+        Destination: receiverKP.Address(),   // Receiver's public key
+        Path:        []txnbuild.Asset{},     // No intermediate assets: XLM converts straight to USDC
+      },
+    },
+  })
+  check(err)
+
+  transaction, err = transaction.Sign(network.TestNetworkPassphrase, senderKP)
+  check(err)
+  resp, err := horizonServer.SubmitTransaction(transaction)
+  check(err)
+  log.Printf("resp %+v", resp)
+}
+```
+
+```java Java
+// Add this method to the PathPayments class from the previous step.
+// Use path payment to send XLM from the sender to the receiver, who receives USDC
+private static void sendPathPayment(long fee, KeyPair receiverKP) {
+  KeyPair senderKP = KeyPair.fromSecretSeed(SENDER_SECRET);
+  TransactionBuilderAccount account = horizonServer.loadAccount(senderKP.getAccountId());
+  Transaction transaction = new TransactionBuilder(account, Network.TESTNET)
+    .setBaseFee(fee)
+    .addOperation(
+      PathPaymentStrictReceiveOperation.builder()
+        .sendAsset(new AssetTypeNative()) // Sending XLM
+        .sendMax(new BigDecimal("10")) // Maximum amount of XLM to send
+        .destAsset(USDC_ASSET) // Receiving USDC
+        .destAmount(new BigDecimal("1")) // Amount of USDC to receive
+        .destination(receiverKP.getAccountId()) // Receiver's public key
+        .path(new Asset[0]) // No intermediate assets: XLM converts straight to USDC
+        .build())
+    .addMemo(Memo.text("XLM to USDC"))
+    .setTimeout(30)
+    .build();
+
+  transaction.sign(senderKP);
+  TransactionResponse resp = horizonServer.submitTransaction(transaction);
+  System.out.println("resp " + resp);
+}
+```
+
+</CodeGroup>
