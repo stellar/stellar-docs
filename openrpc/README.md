@@ -24,10 +24,11 @@ If you're here to add a new method to one of the specfiles, you'll want to:
    OpenRPC specification concerning [method objects] for defining this file.
 2. Feel free to use any existing (or create new) `$ref` objects along the way.
    More about them [later on](#json-refs).
-3. Once your method is defined the way you want it, run the [build](#building)
-   and [validate](#testing) scripts to generate updated "bundled" specfiles.
-4. Run `pnpm rpcspec:docs` to generate the method's page. Method pages are MDX
-   generated from the bundled specfile (between `{/* rpc-method ... */}` and
+3. Once your method is defined the way you want it, run `pnpm rpcspec`. It
+   [builds](#building) and [validates](#testing) the "bundled" specfiles, then
+   [generates the method pages](#generating-method-pages) from them.
+4. Commit the sources, the specfiles, and the pages together. Method pages are
+   MDX generated from the bundled specfile (between `{/* rpc-method ... */}` and
    `{/* /rpc-method */}` comments), with any hand-written prose before or after
    the generated part. The script rewrites only the generated part, and creates
    a page for a new method. A new page also needs an entry in `docs.json`
@@ -108,8 +109,15 @@ pnpm rpcspec:docs           # regenerate the method pages
 pnpm rpcspec:docs --check   # list out-of-date pages, without writing them
 ```
 
-CI runs `pnpm rpcspec:check`, which rebuilds the specfiles and fails if the
-committed specfiles or method pages differ from what the sources produce.
+To run all three steps (build, validate, and generate the pages) in order:
+
+```bash
+pnpm rpcspec
+```
+
+`pnpm check` and CI run `pnpm rpcspec:check`, which builds the specfiles in
+memory and fails if the committed specfiles or method pages differ from what the
+sources produce. It doesn't write any files.
 
 ### JSON `$ref`s
 

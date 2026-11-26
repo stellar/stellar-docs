@@ -3,6 +3,12 @@ import mergeAllOf from "json-schema-merge-allof";
 import { dereferenceDocument } from "@open-rpc/schema-utils-js";
 import defaultResolver from "@json-schema-tools/reference-resolver";
 
+// Usage: node openrpc/scripts/build.mjs [--check]
+// With --check, builds the specfiles in memory, prints the committed ones that
+// are out of date, and exits 1 instead of writing any file.
+const check = process.argv.includes("--check");
+const stale = [];
+
 // Only *.json files are spec sources. This skips editor swap files and the like.
 function jsonFiles(dir) {
   return fs.readdirSync(dir).filter(f => f.endsWith(".json"));
@@ -113,7 +119,9 @@ async function buildSpecFile(serviceName) {
     },
   }
 
-  fs.writeFileSync(`openrpc/${serviceName}.refs-openrpc.json`, JSON.stringify(doc, null, 2));
+  if (!check) {
+    fs.writeFileSync(`openrpc/${serviceName}.refs-openrpc.json`, JSON.stringify(doc, null, 2));
+  }
 
   let spec = await dereferenceDocument(doc, defaultResolver.default)
   spec.components = {};
@@ -127,8 +135,16 @@ async function buildSpecFile(serviceName) {
   }
 
   let data = JSON.stringify(spec, null, 2);
+  const committed = `${services[serviceName].saveDir ?? '.'}/${serviceName}.openrpc.json`;
+
+  if (check) {
+    const current = fs.existsSync(committed) ? fs.readFileSync(committed, "utf8") : null;
+    if (current !== data) stale.push(committed);
+    return;
+  }
+
   fs.writeFileSync(`openrpc/${serviceName}.openrpc.json`, data);
-  fs.writeFileSync(`${services[serviceName].saveDir ?? '.'}/${serviceName}.openrpc.json`, data);
+  fs.writeFileSync(committed, data);
 
   console.log(`Built ${serviceName} specfile successfully.`);
 }
@@ -221,6 +237,10 @@ const services = {
   }
 };
 
-Object.keys(services).forEach(async (service) => {
-  await buildSpecFile(service)
-})
+await Promise.all(Object.keys(services).map(buildSpecFile));
+
+if (check && stale.length) {
+  for (const file of stale) console.log(`out of date: ${file}`);
+  console.log("Run `pnpm rpcspec` and commit the result.");
+  process.exit(1);
+}
