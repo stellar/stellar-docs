@@ -3,7 +3,7 @@ name: standards
 description: Stellar standards, ecosystem, and reference. Covers SEPs (Stellar Ecosystem Proposals), CAPs (Core Advancement Proposals), and a quick map for picking the right standard for wallets, anchors, payments, deposits/withdrawals, federation, deep links, and KYC. Also bundles ecosystem references (DeFi protocols, dev tools, wallets, infra, community projects), curated documentation links, and MCP servers (live tools such as Raven). Use when you need to know which SEP applies, or want a starting point for ecosystem integrations, official docs, or live MCP tooling.
 user-invocable: true
 argument-hint: "[standards or ecosystem lookup]"
-source: https://github.com/stellar/stellar-dev-skill/tree/f954e6a0f35c7a26d688dc1a24f66af068cd0f02/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/9098e8ba24de3299cda24b21bb5cb80aa1cb5d2b/skills
 ---
 
 # Standards, Ecosystem, and Resources
@@ -337,6 +337,27 @@ SDK for integrating multiple Stellar wallets.
 - **GitHub**: https://github.com/Creit-Tech/Stellar-Wallets-Kit
 - **Supports**: Varial, LOBSTR, xBull, Albedo, Rabet, Hana, Ledger, Trezor, WalletConnect
 
+#### WalletConnect
+Open protocol that connects mobile wallets to dapps. It defines a `stellar` namespace.
+- **Docs**: https://docs.walletconnect.com/wallets/chains/stellar
+- **Chains (CAIP-2)**: `stellar:pubnet`, `stellar:testnet`. Accounts are CAIP-10, for example `stellar:pubnet:G...`
+- **Methods**: `stellar_signXDR`, `stellar_signAndSubmitXDR`, `stellar_signMessage`, `stellar_signAuthEntry`
+- **Events**: `accountsChanged`, `chainChanged`
+- **Status**: the Stellar RPC standard is a proposal under review, so shapes can change
+- **Dapp integration**: the Stellar Wallets Kit WalletConnect module needs a project ID and app metadata. See [dapp/walletconnect.md](/.well-known/agent-skills/dapp/skill.md#walletconnect-on-stellar)
+
+#### WalletConnect Pay
+Payment network where WalletConnect Pay builds the payment and the wallet only signs. Supports Stellar since 29 October 2026; LOBSTR was the first live wallet.
+- **Docs**: https://docs.walletconnect.com/payments/wallets/token-chain-support/stellar-support
+- **Network and asset**: `stellar:pubnet` only, Circle USDC (`stellar:pubnet/asset:USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`)
+- **Fees**: WalletConnect Pay wraps the signed transaction in a fee bump and pays the XLM fee. The buyer needs only USDC
+- **Wallet rules**:
+  - Sign with `stellar_signXDR` and return the envelope. Never use `stellar_signAndSubmitXDR`: the buyer then pays the fee and uses the payment's sequence number
+  - Advertise only `G...` accounts. Muxed (`M...`) accounts are not valid
+  - The account must exist and hold a USDC trustline with enough USDC, or the gateway does not offer Stellar
+  - Do not change the fee, sequence number, time bounds, memo or operations. The gateway rejects a changed envelope
+- **Implementation guide**: [dapp/walletconnect.md](/.well-known/agent-skills/dapp/skill.md#wallet-accept-walletconnect-pay)
+
 ## Developer Tools
 
 ### Smart Account & Authentication
@@ -668,6 +689,7 @@ Notable teams shipping production-level code on Stellar. For a broader directory
 | **Creit Tech** | [creit.tech](https://creit.tech) | [Creit-Tech](https://github.com/Creit-Tech) | [@CreitTech_](https://x.com/CreitTech_) | Stellar Wallets Kit, xBull, SorobanHub |
 | **Ultra Stellar** | [ultrastellar.com](https://ultrastellar.com) | [lobstrco](https://github.com/lobstrco) | [@Lobstrco](https://x.com/Lobstrco) | LOBSTR wallet, StellarExpert |
 | **Trustless Work** | [trustlesswork.com](https://www.trustlesswork.com) | [Trustless-Work](https://github.com/Trustless-Work) | [@TrustlessWork](https://x.com/TrustlessWork) | Escrow-as-a-Service platform |
+| **Boundless** | [boundlessfi.xyz](https://www.boundlessfi.xyz) | [boundlessfi](https://github.com/boundlessfi) | [@boundless_fi](https://x.com/boundless_fi) | Hackathon, bounty, grant, and crowdfunding platform |
 
 ## Project Directories
 
@@ -694,6 +716,17 @@ Grants up to $150K per funding round.
 Security audit funding for SCF projects.
 - **Website**: https://stellar.org/grants-and-funding/soroban-audit-bank
 - **Features**: Pre-negotiated audit rates, readiness checklist
+
+### Hackathon & Bounty Platforms
+
+#### Boundless
+Platform for Stellar hackathons, bounties, grants, and crowdfunding. Builders find open programs and submit work. Organizers fund prizes into a Soroban escrow contract and winners are paid in USDC.
+- **Website**: https://www.boundlessfi.xyz
+- **Browse**: [Hackathons](https://www.boundlessfi.xyz/hackathons), [Bounties](https://www.boundlessfi.xyz/bounties), [Grants](https://www.boundlessfi.xyz/grants)
+- **Docs**: https://docs.boundlessfi.xyz
+- **GitHub**: https://github.com/boundlessfi
+- **Mainnet Escrow Contract**: `CCFVEGOQJEM47LRAJU2LHEK4KTL5VYN7AOGZ2HH2GNHAMXTILNMMJGQZ`
+- **Features**: Built-in USDC wallet, application credits that keep spam out, regional chapters, testing quests, judge panels and scoring, milestone releases for crowdfunding, one reputation and leaderboard across every program
 
 ## Real-World Assets
 
