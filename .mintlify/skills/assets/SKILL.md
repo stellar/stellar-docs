@@ -3,7 +3,7 @@ name: assets
 description: Stellar Assets (classic) + trustlines + Stellar Asset Contract (SAC) bridge to smart contracts. Covers asset issuance, distribution, authorization flags, clawback, regulated assets, trustline management, and the SAC interop layer that exposes classic assets as SEP-41 contract tokens. Use when tokenizing real-world assets, issuing stablecoins, managing trustlines, or bridging classic assets to smart contracts.
 user-invocable: true
 argument-hint: "[asset task]"
-source: https://github.com/stellar/stellar-dev-skill/tree/f954e6a0f35c7a26d688dc1a24f66af068cd0f02/skills
+source: https://github.com/stellar/stellar-dev-skill/tree/9098e8ba24de3299cda24b21bb5cb80aa1cb5d2b/skills
 ---
 
 # Stellar Assets, Trustlines, and SAC
